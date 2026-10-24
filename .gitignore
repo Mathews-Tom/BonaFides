@@ -1,6 +1,3 @@
-# Local planning and research; keep docs/ tracked.
-/.docs/
-
 # Secrets and machine-specific configuration. Examples must contain placeholders only.
 .env
 .env.*
