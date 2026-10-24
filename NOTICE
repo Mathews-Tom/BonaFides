@@ -1,0 +1,18 @@
+Offerloom
+Copyright (c) 2026 Offerloom contributors
+
+Original Offerloom material is offered under MIT OR Apache-2.0. Recipients
+may choose either license. See LICENSE-MIT and LICENSE-APACHE.
+
+This notice describes the design-stage repository. It is not a third-party
+component inventory or a certification of legal independence. No application
+distribution, bundled model weights, fonts, or dependency binaries are
+provided by this design package. Research citations identify sources of
+technical facts, not incorporated third-party software.
+
+Third-party material incorporated in a future distribution retains its own
+license. Its required notices and license texts must accompany that exact
+distribution. Do not add attribution for components merely proposed in an
+architecture, and do not remove obligations from components actually shipped.
+
+This NOTICE is informational and does not modify either license.

@@ -1,0 +1,11 @@
+# Third-party attribution policy
+
+Maintain notices from what is actually incorporated/distributed, not a wish list of proposed technologies. The root [NOTICE](../../NOTICE) currently describes original design material and does not pretend third-party binaries or fonts are bundled. Technical citations are research references; they do not justify copying licensed prose/code or create fictional attribution obligations.
+
+Before shipping any source archive, browser bundle, wheel, container, font pack or model, produce an artifact-specific inventory with package/version/digest, copyright holder, full license text, required upstream notices, modifications, chosen license branch and source/source-offer/relink obligations. Preserve copyright and license files. Include required readable notices in the artifact's documentation/licenses location and any UI/about display required by the actual terms; an SBOM link alone is not a substitute. Do not put personal résumé data in attribution records.
+
+Apache-licensed incorporations require section 4 handling, including upstream NOTICE notices that pertain and prominent modification notices where applicable. MIT/BSD/PostgreSQL components require their text/notices according to their terms. Weak-copyleft and font obligations are separate and may require source availability or font-specific notices/naming restrictions; follow the exact reviewed license, not a generic notice template. Do not relabel these components under Offerloom's dual license.
+
+Release review compares inventory to final built contents (including compressed/vendor assets, platform wheels, OS/native packages, fonts, dictionaries and generated bundles). Missing notices, unknown licenses, or inaccessible required source blocks release. An attribution update accompanies dependency removal/version change so stale attributions are not presented as shipped components. Retain release evidence for the supported release lifetime and any longer legal source-offer period, as determined for that artifact.
+
+Source reviewed 2026-10-24: [Apache-2.0 section 4](https://www.apache.org/licenses/LICENSE-2.0.txt), [MIT text](https://spdx.org/licenses/MIT.html), [OFL 1.1](https://openfontlicense.org/open-font-license-official-text/).

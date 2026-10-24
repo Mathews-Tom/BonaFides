@@ -1,0 +1,81 @@
+# Local planning and research; keep docs/ tracked.
+/.docs/
+
+# Secrets and machine-specific configuration. Examples must contain placeholders only.
+.env
+.env.*
+!.env.example
+!.env.*.example
+!.env.template
+!.env.*.template
+*.pem
+*.key
+*.p12
+*.pfx
+
+# Python / uv environments, bytecode, packaging and tool caches.
+.venv/
+venv/
+__pypackages__/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+.uv-cache/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.hypothesis/
+.tox/
+.nox/
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/
+
+# React / TypeScript / Vite / pnpm dependencies, caches and test output.
+node_modules/
+.pnpm-store/
+.vite/
+.vite-temp/
+.eslintcache
+*.tsbuildinfo
+coverage/
+playwright-report/
+test-results/
+blob-report/
+
+# Local PostgreSQL/blob data, user documents, backups and mounted secrets.
+# Root-anchored so source modules and documented fixtures remain trackable.
+/data/
+/uploads/
+/exports/
+/backups/
+/secrets/
+/models/
+/logs/
+/tmp/
+/temp/
+*.dump
+*.sql.gz
+*.sql.zst
+
+# Runtime logs.
+*.log
+
+# Local editor and operating-system state.
+.idea/
+.vscode/
+*.iml
+*.swp
+*.swo
+*~
+.DS_Store
+._*
+Thumbs.db
+Desktop.ini
+
+# Commit dependency locks (uv.lock, pnpm-lock.yaml), SQL migrations, environment
+# examples and synthetic test fixtures outside the private .docs/ directory.
