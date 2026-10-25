@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react';
-import { Api, ApiError, errorText, terminal, type ObservationDetail, type ObservationPage, type ObservationSummary, type PostingDetail, type PostingPage, type PostingSummary, type PostingWrite, type Source, type SourcePage, type SourceRefreshAccepted, type SourceWrite, type Workflow } from './api';
+import { Api, ApiError, errorText, terminal, type DuplicateCandidate, type DuplicateDecision, type DuplicatePage, type ObservationDetail, type ObservationPage, type ObservationSummary, type PostingDetail, type PostingDisposition, type PostingFilters, type PostingPage, type PostingSummary, type PostingWrite, type Source, type SourcePage, type SourceRefreshAccepted, type SourceWrite, type Workflow } from './api';
 
 export interface JobSourcesProps {
   api: Api; disabled?: boolean; onDirtyChange?: (dirty: boolean) => void; onBusyChange?: (busy: boolean) => void;
@@ -9,6 +9,49 @@ interface SourceEditor { id?: string; version?: number; draft: SourceWrite; base
 interface RefreshRun { id: string; sourceId: string | null; workflow: Workflow | null }
 const emptyPosting = (): PostingWrite => ({ title: '', company: '', location_text: '', description_text: '', canonical_url: '' });
 const sourceDraft = (source: Source): SourceWrite => ({ source_kind: 'greenhouse', board_token: source.board_token ?? '', company: source.company, terms_url: source.terms_url, terms_revision: source.terms_revision, terms_review_acknowledged: false, enabled: source.enabled, request_limit_per_minute: source.request_limit_per_minute });
+type PostingCommand = { posting: PostingDetail; disposition: PostingDisposition; candidateId?: never; decision?: never } | { posting: PostingDetail; candidateId: string; decision: DuplicateDecision; disposition?: never };
+interface SourceCommand { source: Source; action: 'disable' | 'retire' | 'refresh' }
+const filterKeys = ['q', 'location', 'source_id', 'status', 'disposition', 'observed_after'] as const;
+const emptyFilters = (): PostingFilters => ({ q: '', location: '', source_id: '', status: '', disposition: '', observed_after: '' });
+function urlFilters(): PostingFilters {
+  const parameters = new URLSearchParams(window.location.search);
+  const selected = emptyFilters();
+  for (const key of filterKeys) selected[key] = parameters.get(key) ?? '';
+  return selected;
+}
+function observedSinceInput(value: string): string | null {
+  if (!value) return '';
+  const parts = /^(\d{4}-\d{2}-\d{2})[Tt](\d{2}:\d{2})(?::(\d{2})(\.\d+)?)?(?:[Zz]|[+-]\d{2}:\d{2})$/.exec(value);
+  if (!parts) return null;
+  const [, date, time, seconds, fraction] = parts;
+  if (!date || !time || date.startsWith('0000')) return null;
+  const wallTime = `${date}T${time}:${seconds ?? '00'}`;
+  const calendar = new Date(`${wallTime}${fraction ?? ''}Z`);
+  const instant = new Date(value);
+  if (!Number.isFinite(calendar.getTime()) || calendar.toISOString().slice(0, 19) !== wallTime || !Number.isFinite(instant.getTime())) return null;
+  // Keep the submitted string (including sub-millisecond precision) in filters until the field is edited.
+  return instant.toISOString().slice(0, -1);
+}
+function catalogPath(filters: PostingFilters, cursor?: string): string {
+  const parameters = new URLSearchParams();
+  for (const key of filterKeys) if (filters[key]) parameters.set(key, filters[key]);
+  if (cursor) parameters.set('cursor', cursor);
+  return `/postings${parameters.size ? `?${parameters}` : ''}`;
+}
+function retainContext(filters: PostingFilters, postingId: string | null = new URLSearchParams(window.location.search).get('posting_id')) {
+  const url = new URL(window.location.href);
+  for (const key of filterKeys) { if (filters[key]) url.searchParams.set(key, filters[key]); else url.searchParams.delete(key); }
+  if (postingId) url.searchParams.set('posting_id', postingId); else url.searchParams.delete('posting_id');
+  if (url.href !== window.location.href) window.history.pushState(null, '', url);
+}
+function filterSummary(filters: PostingFilters): string {
+  const labels = { q: 'Search', location: 'Location', source_id: 'Source', status: 'Status', disposition: 'Disposition', observed_after: 'Observed since' };
+  return filterKeys.filter(key => filters[key]).map(key => `${labels[key]}: ${filters[key]}`).join(' · ') || 'All retained postings';
+}
+function PostingFacts({ posting }: { posting: PostingSummary }) {
+  return <><p>{posting.location_text || 'Location not supplied'} · {posting.status} · {posting.disposition ?? 'unmarked'} · updated {posting.updated_at}</p>
+    <p>Source {posting.source_config_id ?? 'Not recorded'} ({posting.source_kind ?? 'unknown'}); external ID {posting.external_id ?? 'Not recorded'}. Last observed {posting.last_observed_at ?? 'Not recorded'}.</p></>;
+}
 
 // References are displayed only, never fetched. Server validation remains authoritative.
 function reference(value: string | null): string | null {
@@ -32,6 +75,7 @@ function Reference({ value, label }: { value: string | null; label: string }) {
 }
 function SourceFacts({ source }: { source: Source }) {
   return <><p>Health: {source.health.replaceAll('_', ' ')}. {source.enabled ? 'Enabled' : 'Disabled'}. Policy version {source.policy_version}; source version {source.version}.</p>
+    {source.removed_at && <p><strong>Retired source</strong> · {source.removed_at}. New reads and edits are unavailable. Existing postings, observations and your dispositions remain retained.</p>}
     <p>Last successful read: {source.last_success_at ?? 'Never'}. Next allowed read: {source.rate_limit_blocked ? 'No representable permitted retry time; source remains paused' : source.next_allowed_at ?? 'Not scheduled'}.</p>
     <p className="hint">Freshness describes the last successful collection, not a live guarantee that the employer still publishes every retained role.</p>
     <p>Provider quota: unknown. Your own request limit: {source.request_limit_per_minute} per minute. This is not a provider allowance.</p>
@@ -46,9 +90,23 @@ export function JobSources({ api, disabled = false, onDirtyChange, onBusyChange 
   const [postings, setPostings] = useState<PostingSummary[] | null>(null);
   const [postingCursor, setPostingCursor] = useState<string | null>(null);
   const [catalogError, setCatalogError] = useState('');
+  const [filters, setFilters] = useState<PostingFilters>(urlFilters);
+  const desiredFilters = useRef(filters);
+  const [resultFilters, setResultFilters] = useState<PostingFilters | null>(null);
+  const [catalogMetadata, setCatalogMetadata] = useState<{ asOf: string; elapsed: number } | null>(null);
+  const [urlContextPending, setUrlContextPending] = useState(false);
   const [sources, setSources] = useState<Source[] | null>(null);
   const [sourceError, setSourceError] = useState('');
   const [detail, setDetail] = useState<PostingDetail | null>(null);
+  const [duplicates, setDuplicates] = useState<DuplicateCandidate[] | null>(null);
+  const [duplicateCursor, setDuplicateCursor] = useState<string | null>(null);
+  const [postingCommand, setPostingCommand] = useState<PostingCommand | null>(null);
+  const [postingConflict, setPostingConflict] = useState(false);
+  const [postingComparison, setPostingComparison] = useState<PostingDetail | null>(null);
+  const [undo, setUndo] = useState<{ postingId: string; disposition: PostingDisposition } | null>(null);
+  const [sourceCommand, setSourceCommand] = useState<SourceCommand | null>(null);
+  const [sourceCommandConflict, setSourceCommandConflict] = useState(false);
+  const [sourceCommandComparison, setSourceCommandComparison] = useState<Source | null>(null);
   const [observations, setObservations] = useState<ObservationSummary[] | null>(null);
   const [observationCursor, setObservationCursor] = useState<string | null>(null);
   const [observation, setObservation] = useState<ObservationDetail | null>(null);
@@ -74,17 +132,24 @@ export function JobSources({ api, disabled = false, onDirtyChange, onBusyChange 
   const completed = useRef(new Set<string>());
   const catalogRead = useRef(0);
   const sourceRead = useRef(0);
+  const detailRead = useRef(0);
   const errorRef = useRef<HTMLDivElement>(null);
   const callbacks = useRef({ onDirtyChange, onBusyChange });
   callbacks.current = { onDirtyChange, onBusyChange };
   const manualDirty = Object.values(posting).some(value => typeof value === 'string' && value.length > 0);
+  const observedSince = observedSinceInput(filters.observed_after);
   const sourceDirty = !!editor && JSON.stringify(editor.draft) !== editor.baseline;
-  const dirty = manualDirty || sourceDirty;
+  const dirty = manualDirty || sourceDirty || !!postingCommand || !!sourceCommand;
   const activeRun = !!run && (!run.workflow || !terminal(run.workflow.state));
   const busy = operation || activeRun || completionPending;
   const locked = disabled || operation;
   const runId = run?.id;
   const runState = run?.workflow?.state;
+  function canRefresh(value: Source): boolean {
+    const next = Math.max(Date.parse(value.next_allowed_at ?? '') || 0, retryAt[value.id] ?? 0);
+    const blocked = value.rate_limit_blocked || (!value.next_allowed_at && (value.health === 'rate_limited' || blockedPolicies[value.id] === value.policy_version));
+    return value.enabled && !!value.terms_reviewed_at && !value.removed_at && !activeRun && !completionPending && !blocked && next <= now;
+  }
 
   useEffect(() => {
     mounted.current = true;
@@ -129,9 +194,10 @@ export function JobSources({ api, disabled = false, onDirtyChange, onBusyChange 
   const reloadCatalog = useCallback(async (signal: AbortSignal) => {
     const generation = ++catalogRead.current;
     try {
-      const page = await request<PostingPage>(signal, '/postings');
-      if (catalogRead.current === generation) { setPostings(page.items); setPostingCursor(page.next_cursor); setCatalogError(''); }
-    } catch (failure) { if (!signal.aborted && mounted.current && catalogRead.current === generation) setCatalogError(errorText(failure)); throw failure; }
+      const selected = { ...desiredFilters.current };
+      const page = await request<PostingPage>(signal, catalogPath(selected));
+      if (catalogRead.current === generation) { setPostings(page.items); setPostingCursor(page.next_cursor); setResultFilters(selected); setCatalogMetadata({ asOf: page.as_of, elapsed: page.query_elapsed_ms }); setCatalogError(''); }
+    } catch (failure) { if (mounted.current && catalogRead.current === generation) setCatalogError(signal.aborted ? 'The catalog request stopped before reconciliation completed. Reload the catalog to confirm the latest list.' : errorText(failure)); throw failure; }
   }, [request]);
   const reloadSources = useCallback(async (signal: AbortSignal) => {
     const generation = ++sourceRead.current;
@@ -145,7 +211,6 @@ export function JobSources({ api, disabled = false, onDirtyChange, onBusyChange 
     void Promise.allSettled([reloadCatalog(controller.signal), reloadSources(controller.signal)]).then(results => {
       clearTimeout(timer); controllers.current.delete(controller);
       if (!stopped && mounted.current && controller.signal.aborted) {
-        if (results[0]?.status === 'rejected') setCatalogError(existing => existing || 'Initial catalog request stopped. Reload the catalog to try again.');
         if (results[1]?.status === 'rejected') setSourceError(existing => existing || 'Initial source request stopped. Reload sources to try again.');
       }
     });
@@ -174,22 +239,108 @@ export function JobSources({ api, disabled = false, onDirtyChange, onBusyChange 
     const key = crypto.randomUUID(); mutationKeys.current.set(slot, { fingerprint, key }); return key;
   }
   async function createPosting(event: FormEvent) {
-    event.preventDefault(); if (locked || sourceDirty) return;
+    event.preventDefault(); if (locked || sourceDirty || postingCommand || sourceCommand) return;
     const body = { ...posting, canonical_url: posting.canonical_url || null };
     await perform(async signal => {
+      detailRead.current += 1;
       const value = await request<PostingDetail>(signal, '/postings', 'POST', body, undefined, keyFor('posting', '/postings', body));
-      mutationKeys.current.delete('posting'); setPosting(emptyPosting()); setDetail(value); setObservations(null); setObservation(null);
-      catalogRead.current += 1;
-      setPostings(existing => [value, ...(existing ?? []).filter(item => item.id !== value.id)]);
+      mutationKeys.current.delete('posting'); setPosting(emptyPosting()); setDetail(value); setObservations(null); setObservation(null); setObservationCursor(null); setDuplicates(null); setDuplicateCursor(null); setUndo(null);
+      retainContext(desiredFilters.current, value.id);
       setNotice('Manual posting saved with an attributable observation. No reference URL was fetched.');
+      try { await reloadCatalog(signal); } catch { /* Creation succeeded; a failed catalog reload is shown separately without losing the receipt. */ }
     });
   }
   async function openPosting(id: string) {
+    if (postingCommand) return;
     await perform(async signal => {
+      const generation = ++detailRead.current;
       const value = await request<PostingDetail>(signal, `/postings/${encodeURIComponent(id)}`);
-      setDetail(value); setObservations(null); setObservation(null); setObservationCursor(null);
+      if (generation !== detailRead.current) return;
+      setDetail(value); setObservations(null); setObservation(null); setObservationCursor(null); setDuplicates(null); setDuplicateCursor(null); setUndo(null);
+      retainContext(desiredFilters.current, id);
     });
   }
+  async function applyFilters(next: PostingFilters) {
+    if (locked) return;
+    desiredFilters.current = next; setFilters(next); retainContext(next);
+    await perform(reloadCatalog);
+  }
+  async function nextPostings() {
+    if (!postingCursor || !resultFilters) return;
+    await perform(async signal => {
+      const generation = ++catalogRead.current;
+      try {
+        const page = await request<PostingPage>(signal, catalogPath(resultFilters, postingCursor));
+        if (catalogRead.current !== generation) return;
+        setPostings(existing => [...(existing ?? []), ...page.items.filter(item => !existing?.some(old => old.id === item.id))]);
+        setPostingCursor(page.next_cursor); setCatalogMetadata({ asOf: page.as_of, elapsed: page.query_elapsed_ms }); setCatalogError('');
+      } catch (failure) { if (mounted.current && catalogRead.current === generation) setCatalogError(signal.aborted ? 'The catalog request stopped before reconciliation completed. Reload the catalog to confirm the latest list.' : errorText(failure)); throw failure; }
+    });
+  }
+  async function loadDuplicates(cursor?: string) {
+    if (!detail) return;
+    await perform(async signal => {
+      const page = await request<DuplicatePage>(signal, `/postings/${encodeURIComponent(detail.id)}/duplicates${cursor ? `?cursor=${encodeURIComponent(cursor)}` : ''}`);
+      setDuplicates(existing => cursor ? [...(existing ?? []), ...page.items.filter(item => !existing?.some(old => old.id === item.id))] : page.items);
+      setDuplicateCursor(page.next_cursor);
+    });
+  }
+  function receivePosting(value: PostingDetail) {
+    detailRead.current += 1;
+    catalogRead.current += 1;
+    setDetail(value);
+    setPostings(existing => existing?.flatMap(item => item.id !== value.id ? [item] : resultFilters?.disposition && resultFilters.disposition !== (value.disposition ?? 'unmarked') ? [] : [value]) ?? null);
+  }
+  async function mutatePosting(command: PostingCommand) {
+    if (locked || postingConflict) return;
+    setPostingCommand(command);
+    const path = `/postings/${encodeURIComponent(command.posting.id)}/${command.candidateId ? `duplicates/${encodeURIComponent(command.candidateId)}/decision` : 'disposition'}`;
+    const body = command.candidateId ? { decision: command.decision } : { disposition: command.disposition };
+    await perform(async signal => {
+      try {
+        const value = await request<PostingDetail>(signal, path, command.candidateId ? 'POST' : 'PUT', body, command.posting.version, keyFor('posting-command', path, body, command.posting.version));
+        receivePosting(value); setPostingCommand(null); setPostingConflict(false); setPostingComparison(null); mutationKeys.current.delete('posting-command');
+        if (command.candidateId) {
+          setDuplicates(existing => existing?.map(item => item.id === command.candidateId ? { ...item, decision: command.decision! } : item) ?? null);
+          setNotice(`Duplicate review recorded as ${command.decision}. Both posting identities and all observations remain separate; nothing was merged.`);
+        } else {
+          setUndo({ postingId: value.id, disposition: command.posting.disposition ?? 'unmarked' });
+          setNotice(`Posting marked ${value.disposition ?? 'unmarked'}. This changes your catalog disposition, not application status or source history.`);
+          try { await reloadCatalog(signal); } catch { /* The disposition receipt is authoritative; failed list reconciliation retains its own visible warning. */ }
+        }
+      } catch (failure) { if (failure instanceof ApiError && failure.status === 412) { setPostingConflict(true); setPostingComparison(null); } throw failure; }
+    });
+  }
+  useEffect(() => {
+    const id = new URLSearchParams(window.location.search).get('posting_id');
+    if (!id) return;
+    const generation = ++detailRead.current;
+    const controller = new AbortController(); controllers.current.add(controller);
+    const timer = setTimeout(() => controller.abort(), 20_000);
+    void request<PostingDetail>(controller.signal, `/postings/${encodeURIComponent(id)}`).then(value => { if (detailRead.current === generation) setDetail(value); }).catch(failure => { if (mounted.current && !controller.signal.aborted && detailRead.current === generation) setError(errorText(failure)); }).finally(() => { clearTimeout(timer); controllers.current.delete(controller); });
+    return () => { controller.abort(); clearTimeout(timer); };
+  }, [request]);
+  async function restoreUrlContext() {
+    if (locked || dirty) return;
+    const selected = urlFilters(); desiredFilters.current = selected; setFilters(selected);
+    const id = new URLSearchParams(window.location.search).get('posting_id');
+    await perform(async signal => {
+      const generation = ++detailRead.current;
+      await reloadCatalog(signal);
+      const value = id ? await request<PostingDetail>(signal, `/postings/${encodeURIComponent(id)}`) : null;
+      if (detailRead.current !== generation) return;
+      setDetail(value); setObservations(null); setObservation(null); setObservationCursor(null); setDuplicates(null); setDuplicateCursor(null); setUndo(null); setUrlContextPending(false);
+    });
+  }
+  useEffect(() => {
+    const restore = () => {
+      // History navigation never discards an unresolved command or an edited buffer.
+      if (operationLock.current || dirty || disabled || JSON.stringify(filters) !== JSON.stringify(desiredFilters.current)) { setUrlContextPending(true); setNotice('URL context changed. Your existing work remains here. Finish or discard your current buffer, then explicitly load the URL context.'); return; }
+      setUrlContextPending(true); void restoreUrlContext();
+    };
+    window.addEventListener('popstate', restore);
+    return () => window.removeEventListener('popstate', restore);
+  });
   async function loadObservations(cursor?: string) {
     if (!detail) return;
     await perform(async signal => {
@@ -198,9 +349,10 @@ export function JobSources({ api, disabled = false, onDirtyChange, onBusyChange 
     });
   }
   async function editSource(source: Source) {
-    if (dirty || locked) return;
+    if (dirty || locked || source.removed_at) return;
     await perform(async signal => {
       const latest = await request<Source>(signal, `/sources/${encodeURIComponent(source.id)}`); receiveSource(latest);
+      if (latest.removed_at) { setNotice('This source has been retired. History is retained, but editing is unavailable.'); return; }
       const draft = sourceDraft(latest); setEditor({ id: latest.id, version: latest.version, draft, baseline: JSON.stringify(draft) });
       setConflict(false); setComparison(null);
     });
@@ -218,24 +370,33 @@ export function JobSources({ api, disabled = false, onDirtyChange, onBusyChange 
       setNotice(value.enabled ? 'Reviewed source saved and explicitly enabled. A read starts only when you refresh.' : 'Source saved disabled. No board read was started.');
     }, true);
   }
-  async function disableSource(source: Source) {
-    const path = `/sources/${encodeURIComponent(source.id)}`;
-    const body = { ...sourceDraft(source), enabled: false };
+  async function mutateSource(command: SourceCommand) {
+    if (locked || sourceCommandConflict || command.source.removed_at) return;
+    if (command.action === 'refresh') { await refreshSource(command.source, true); return; }
+    setSourceCommand(command);
+    const path = `/sources/${encodeURIComponent(command.source.id)}`;
+    const body = command.action === 'retire' ? undefined : { ...sourceDraft(command.source), enabled: false };
+    const slot = `${command.action}:${command.source.id}`;
     await perform(async signal => {
-      const value = await request<Source>(signal, path, 'PUT', body, source.version, keyFor(`disable:${source.id}`, path, body, source.version));
-      receiveSource(value); mutationKeys.current.delete(`disable:${source.id}`);
-      setNotice('Source disabled. Old policy work cannot publish; retained postings and observations remain available.');
+      try {
+        const value = await request<Source>(signal, path, command.action === 'retire' ? 'DELETE' : 'PUT', body, command.source.version, keyFor(slot, path, body, command.source.version));
+        receiveSource(value); mutationKeys.current.delete(slot); setSourceCommand(null); setSourceCommandConflict(false); setSourceCommandComparison(null);
+        if (editor?.id === value.id && value.removed_at) { setEditor(null); setComparison(null); setConflict(false); }
+        setNotice(command.action === 'retire' ? 'Source retired. New collection is fenced off; all retained postings, observations and dispositions remain available.' : 'Source disabled. Old policy work cannot publish; retained postings and observations remain available.');
+      } catch (failure) { if (failure instanceof ApiError && failure.status === 412) { setSourceCommandConflict(true); setSourceCommandComparison(null); } throw failure; }
     });
   }
-  async function refreshSource(source: Source) {
-    if (activeRun || dirty || locked) return;
+  async function refreshSource(source: Source, retained = false) {
+    if (!canRefresh(source) || locked || (!retained && dirty) || (retained && sourceCommandConflict)) return;
     const path = `/sources/${encodeURIComponent(source.id)}/refresh`;
     await perform(async signal => {
       try {
         const value = await request<SourceRefreshAccepted>(signal, path, 'POST', {}, source.version, keyFor(`refresh:${source.id}`, path, {}, source.version));
         mutationKeys.current.delete(`refresh:${source.id}`); setCompletionPending(false); setRun({ id: value.workflow_id, sourceId: value.source_id, workflow: null });
+        if (retained) { setSourceCommand(null); setSourceCommandConflict(false); setSourceCommandComparison(null); }
         setPollPaused(false); setPollGeneration(value => value + 1); setNotice('Source read accepted as a durable task. Existing catalog remains visible while it runs.');
       } catch (failure) {
+        if (failure instanceof ApiError && failure.status === 412) { setSourceCommand({ source, action: 'refresh' }); setSourceCommandConflict(true); setSourceCommandComparison(null); }
         if (failure instanceof ApiError && failure.status === 429) {
           const next = failure.retryAfterSeconds === undefined ? NaN : Date.now() + failure.retryAfterSeconds * 1000;
           if (Number.isFinite(next) && next <= 8_640_000_000_000_000) setRetryAt(existing => ({ ...existing, [source.id]: next }));
@@ -307,9 +468,10 @@ export function JobSources({ api, disabled = false, onDirtyChange, onBusyChange 
     <p>Keep complete posting text and attributable source history. Manual entries never fetch a URL. Board reads require your specific terms review; public API access is not permission to collect content.</p>
     {disabled && <p className="hint">Finish the other open operation before changing job postings or sources. Your buffers remain here.</p>}
     <div className="error" role="alert" tabIndex={-1} ref={errorRef} hidden={!error}>{error}</div><p role="status">{notice}</p>
+    {urlContextPending && <p className="disclosure">The address bar has a different catalog context. <button className="secondary" disabled={locked || dirty} onClick={() => { void restoreUrlContext(); }}>Load current URL context</button></p>}
     {operation && <p role="status">Waiting for the server. Your existing catalog and buffers stay visible.</p>}
     {completionPending && <p role="status">Reconciling the retained catalog and source health after the task ended…</p>}
-    <form onSubmit={event => { void createPosting(event); }}><fieldset disabled={locked || sourceDirty}><legend>Add a manual posting</legend>
+    <form onSubmit={event => { void createPosting(event); }}><fieldset disabled={locked || sourceDirty || !!postingCommand || !!sourceCommand}><legend>Add a manual posting</legend>
       <label>Job title<input required maxLength={500} value={posting.title} onChange={event => { const value = event.target.value; setPosting(existing => ({ ...existing, title: value })); }} /></label>
       <label>Employer<input required maxLength={500} value={posting.company} onChange={event => { const value = event.target.value; setPosting(existing => ({ ...existing, company: value })); }} /></label>
       <label>Location<input maxLength={2000} value={posting.location_text} onChange={event => { const value = event.target.value; setPosting(existing => ({ ...existing, location_text: value })); }} /></label>
@@ -319,13 +481,49 @@ export function JobSources({ api, disabled = false, onDirtyChange, onBusyChange 
       <div className="actions"><button>Save manual posting</button><button type="button" className="secondary" disabled={!manualDirty} onClick={() => { setPosting(emptyPosting()); mutationKeys.current.delete('posting'); }}>Discard manual buffer</button></div>
     </fieldset></form>
     <section aria-labelledby="catalog-title"><h3 id="catalog-title">Retained posting catalog</h3>
-      <button className="secondary" disabled={locked} onClick={() => { void perform(reloadCatalog); }}>Reload posting catalog</button>
-      {catalogError && <p className="error" role="status">{catalogError} {postings !== null ? 'Earlier loaded postings remain visible; this list may be stale.' : 'Catalog is unavailable, not known to be empty.'}</p>}
-      {postings === null ? <p role="status">{catalogError ? 'Load the catalog again when the server is available.' : 'Loading posting catalog…'}</p> : postings.length === 0 ? <p>No retained postings. Paste a manual posting above or explicitly refresh a reviewed source below.</p> : <ul>{postings.map(item => <li key={item.id}><button className="secondary" disabled={locked} onClick={() => { void openPosting(item.id); }}>Read {item.title} at {item.company}</button><p>{item.location_text || 'Location not supplied'} · {item.status} · updated {item.updated_at}</p></li>)}</ul>}
-      {postingCursor && <button className="secondary" disabled={locked} onClick={() => { void perform(async signal => { const page = await request<PostingPage>(signal, `/postings?cursor=${encodeURIComponent(postingCursor)}`); setPostings(existing => [...(existing ?? []), ...page.items.filter(item => !existing?.some(old => old.id === item.id))]); setPostingCursor(page.next_cursor); }); }}>Load more postings</button>}
-      {detail && <article className="comparison" aria-labelledby="posting-detail-title"><h3 id="posting-detail-title">{detail.title}</h3><p>{detail.company} · {detail.location_text || 'Location not supplied'} · {detail.status}</p>
+      <form onSubmit={event => { event.preventDefault(); void applyFilters({ ...filters }); }}><fieldset disabled={locked}><legend>Find retained postings</legend>
+        <div className="catalog-filters">
+          <label>Search posting text<input type="search" maxLength={300} value={filters.q} onChange={event => setFilters(existing => ({ ...existing, q: event.target.value }))} /></label>
+          <label>Filter location<input maxLength={2000} value={filters.location} onChange={event => setFilters(existing => ({ ...existing, location: event.target.value }))} /></label>
+          <label>Filter source<select value={filters.source_id} onChange={event => setFilters(existing => ({ ...existing, source_id: event.target.value }))}><option value="">All sources</option>{filters.source_id && !sources?.some(item => item.id === filters.source_id) && <option value={filters.source_id}>Source {filters.source_id} (not loaded)</option>}{sources?.map(item => <option key={item.id} value={item.id}>{item.source_kind === 'manual' ? 'Manual entries' : `${item.company} · ${item.board_token}`}{item.removed_at ? ' · retired' : ''}</option>)}</select></label>
+          <label>Posting status<select value={filters.status} onChange={event => setFilters(existing => ({ ...existing, status: event.target.value }))}><option value="">All statuses</option><option value="open">Open</option><option value="closed">Closed</option><option value="unknown">Unknown</option></select></label>
+          <label>Catalog disposition<select value={filters.disposition} onChange={event => setFilters(existing => ({ ...existing, disposition: event.target.value }))}><option value="">All dispositions</option><option value="saved">Saved</option><option value="dismissed">Dismissed</option><option value="archived">Archived</option><option value="unmarked">Unmarked</option></select></label>
+          <label>Observed since (UTC)<input type="datetime-local" step="any" value={observedSince ?? ''} aria-invalid={observedSince === null} aria-describedby={observedSince === null ? 'observed-since-error' : undefined} onChange={event => setFilters(existing => ({ ...existing, observed_after: event.target.value ? `${event.target.value}Z` : '' }))} /></label>
+        </div>
+        {observedSince === null && <p id="observed-since-error" className="error" role="status">Invalid observed-since value: <code>{filters.observed_after}</code>. Supply a valid timestamp with Z or a numeric UTC offset in the URL, edit the UTC field, or clear catalog filters. The invalid value has not been converted or removed.</p>}
+        <p className="hint">Search covers retained title, employer, location and original text. Location is a literal substring, not a hiring-eligibility or worldwide-remote inference. Recency uses the last observation, not the date you saved a role. Submitted filters and the selected posting are kept in this URL, not browser storage.</p>
+        <div className="actions"><button>Apply catalog filters</button><button type="button" className="secondary" onClick={() => { void applyFilters(emptyFilters()); }}>Clear catalog filters</button><button type="button" className="secondary" onClick={() => { void perform(reloadCatalog); }}>Reload posting catalog</button></div>
+      </fieldset></form>
+      {resultFilters && <p role="status" aria-label="Loaded catalog filters"><strong>Loaded results:</strong> {filterSummary(resultFilters)}</p>}
+      {catalogMetadata && <p className="hint">Newest retained entries first · {postings?.length} loaded (total unavailable) · query {catalogMetadata.elapsed.toFixed(2)} ms · cutoff {catalogMetadata.asOf}. New entries appear on a fresh query; edits or removals can change membership between pages.</p>}
+      {catalogError && <p className="error" role="status">{catalogError} {postings !== null ? 'Earlier loaded postings remain visible; this list may be stale. The loaded-filter summary describes those earlier results, not the failed request.' : 'Catalog is unavailable, not known to be empty.'}</p>}
+      {postings === null ? <p role="status">{catalogError ? 'Load the catalog again when the server is available.' : 'Loading posting catalog…'}</p> : postings.length === 0 ? <p>{catalogError ? 'The earlier successful result contained no rows; the latest request is unavailable, not confirmed empty.' : resultFilters && filterKeys.some(key => resultFilters[key]) ? 'No postings match these filters. Clear catalog filters to return to all retained postings.' : 'No retained postings. Paste a manual posting above or explicitly refresh a reviewed source below.'}</p> : <ul>{postings.map(item => <li key={item.id}><button className="secondary" disabled={locked || !!postingCommand} onClick={() => { void openPosting(item.id); }}>Read {item.title} at {item.company}</button><PostingFacts posting={item} /></li>)}</ul>}
+      {postingCursor && <button className="secondary" disabled={locked} onClick={() => { void nextPostings(); }}>Load more postings</button>}
+      {detail && <article className="comparison" aria-labelledby="posting-detail-title"><h3 id="posting-detail-title">{detail.title}</h3><p>{detail.company}</p><PostingFacts posting={detail} />
+        <p><strong>Your disposition: {detail.disposition ?? 'unmarked'}</strong>. Saving, dismissing or archiving does not create an application, change its stage, delete text or merge records.</p>
+        <div className="actions">{(['saved', 'dismissed', 'archived', 'unmarked'] as const).map(value => <button key={value} className="secondary" disabled={locked || dirty || (detail.disposition ?? 'unmarked') === value} onClick={() => { void mutatePosting({ posting: detail, disposition: value }); }}>{value === 'saved' ? 'Save opportunity' : value === 'dismissed' ? 'Dismiss opportunity' : value === 'archived' ? 'Archive opportunity' : 'Unmark opportunity'}</button>)}
+          {undo?.postingId === detail.id && <button className="secondary" disabled={locked || dirty} onClick={() => { void mutatePosting({ posting: detail, disposition: undo.disposition }); }}>Undo disposition change</button>}
+        </div>
+        {postingCommand && <section className="disclosure" aria-labelledby="posting-command-title"><h4 id="posting-command-title">Retained posting decision</h4>
+          <p>Your intended decision: {postingCommand.candidateId ? `${postingCommand.decision} for candidate ${postingCommand.candidateId}` : postingCommand.disposition}. Original precondition: posting version {postingCommand.posting.version}. This decision is not confirmed saved.</p>
+          {postingConflict && <p className="error">The posting changed elsewhere. Compare the latest text, source and disposition before explicitly choosing a new precondition. Your intended decision remains here.</p>}
+          <div className="actions"><button className="secondary" disabled={locked || postingConflict} onClick={() => { void mutatePosting(postingCommand); }}>Retry retained posting decision</button>
+            <button className="secondary" disabled={locked} onClick={() => { void perform(async signal => { setPostingComparison(await request<PostingDetail>(signal, `/postings/${encodeURIComponent(postingCommand.posting.id)}`)); }); }}>Load current posting for comparison</button>
+            <button className="secondary" disabled={locked} onClick={() => { setPostingCommand(null); setPostingConflict(false); setPostingComparison(null); mutationKeys.current.delete('posting-command'); setNotice('Local decision buffer discarded. If a response was lost, reload the posting to check the saved server state.'); }}>Discard retained posting decision</button></div>
+          {postingComparison && <section className="comparison" aria-labelledby="posting-comparison-title"><h4 id="posting-comparison-title">Current saved posting · version {postingComparison.version}</h4><p>{postingComparison.title} · {postingComparison.company}</p><PostingFacts posting={postingComparison} /><pre className="import-source">{postingComparison.description_text}</pre><p>SHA-256 <code>{postingComparison.content_sha256}</code>. Your intended decision above is unchanged.</p>
+            <button className="secondary" disabled={locked} onClick={() => { const latest = postingComparison; receivePosting(latest); setPostingCommand(existing => existing ? { ...existing, posting: latest } : null); setPostingConflict(false); setPostingComparison(null); mutationKeys.current.delete('posting-command'); setNotice('Latest posting version selected explicitly. Review and retry your retained decision to save it.'); }}>Use current posting version and retain my decision</button>
+          </section>}
+        </section>}
         <h4>Complete original posting text</h4><pre className="import-source">{detail.description_text}</pre><Reference value={detail.canonical_url} label="Original posting reference" />
-        <p>Source {detail.source_config_id} ({detail.source_kind}); external ID {detail.external_id}. Last observed {detail.last_observed_at}.</p><p>Posting {detail.id} · SHA-256 <code>{detail.content_sha256}</code></p>
+        <p>Posting {detail.id} · version {detail.version} · SHA-256 <code>{detail.content_sha256}</code></p>
+        <section aria-labelledby="duplicate-review-title"><h4 id="duplicate-review-title">Cross-source duplicate review</h4>
+          <p>These are conservative review candidates, not verified duplicates. Different external IDs and locations retain separate identities. A distinct or suspected decision never merges, deletes or rewrites either posting.</p>
+          <button className="secondary" disabled={locked} onClick={() => { void loadDuplicates(); }}>Load duplicate review candidates</button>
+          {duplicates && (duplicates.length ? <ul>{duplicates.map(item => <li key={item.id}><h5>{item.title} · {item.company}</h5><PostingFacts posting={item} /><p>Posting {item.id} · Review decision: <strong>{item.decision}</strong></p>
+            <div className="actions"><button className="secondary" disabled={locked || dirty} onClick={() => { void openPosting(item.id); }}>Inspect candidate {item.id}</button><button className="secondary" disabled={locked || dirty} onClick={() => { void mutatePosting({ posting: detail, candidateId: item.id, decision: 'distinct' }); }}>Mark {item.id} as distinct</button><button className="secondary" disabled={locked || dirty} onClick={() => { void mutatePosting({ posting: detail, candidateId: item.id, decision: 'suspected' }); }}>Mark {item.id} as suspected duplicate</button></div>
+          </li>)}</ul> : <p>No conservative duplicate review candidates were returned. This is not proof that no other similar postings exist.</p>)}
+          {duplicateCursor && <button className="secondary" disabled={locked} onClick={() => { void loadDuplicates(duplicateCursor); }}>Load more duplicate candidates</button>}
+        </section>
         <button className="secondary" disabled={locked} onClick={() => { void loadObservations(); }}>Load attributable observation history</button>
         {observations && (observations.length ? <ol>{observations.map(item => <li key={item.id}><button className="secondary" disabled={locked} onClick={() => { void perform(async signal => { setObservation(await request<ObservationDetail>(signal, `/postings/${encodeURIComponent(detail.id)}/observations/${encodeURIComponent(item.id)}`)); }); }}>Read observation {item.id}</button><p>{item.source_kind} · board {item.board_token ?? 'Manual owner entry'} · source {item.source_config_id} · external ID {item.external_id} · policy {item.policy_version} · fetched {item.fetched_at}</p><p>SHA-256 <code>{item.content_sha256}</code></p></li>)}</ol> : <p>No observations returned for this posting.</p>)}
         {observationCursor && <button className="secondary" disabled={locked} onClick={() => { void loadObservations(observationCursor); }}>Load earlier observations</button>}
@@ -342,11 +540,23 @@ export function JobSources({ api, disabled = false, onDirtyChange, onBusyChange 
         return <li key={item.id}><h4>{item.company} · {item.board_token}</h4><SourceFacts source={item} />
           {next > now && <p>Refresh is waiting until at least {new Date(next).toISOString()}. Retry-After is a minimum wait.</p>}
           {blocked && <p>No finite permitted retry time is available. Refresh stays blocked; review the source policy instead of shortening the upstream wait.</p>}
-          <div className="actions"><button className="secondary" disabled={locked || dirty} onClick={() => { void editSource(item); }}>Review or edit {item.company} board</button>
-            <button className="secondary" disabled={locked || dirty || !item.enabled} onClick={() => { void disableSource(item); }}>Disable {item.company} board</button>
-            <button disabled={locked || dirty || activeRun || completionPending || blocked || !item.enabled || !item.terms_reviewed_at || next > now} onClick={() => { void refreshSource(item); }}>Refresh {item.company} board</button></div>
+          <div className="actions"><button className="secondary" disabled={locked || dirty || !!item.removed_at} onClick={() => { void editSource(item); }}>Review or edit {item.company} board</button>
+            <button className="secondary" disabled={locked || dirty || !item.enabled || !!item.removed_at} onClick={() => { void mutateSource({ source: item, action: 'disable' }); }}>Disable {item.company} board</button>
+            <button disabled={locked || dirty || activeRun || completionPending || blocked || !item.enabled || !!item.removed_at || !item.terms_reviewed_at || next > now} onClick={() => { void refreshSource(item); }}>Refresh {item.company} board</button>
+            <button className="secondary" disabled={locked || dirty || !!item.removed_at} onClick={() => { setSourceCommand({ source: item, action: 'retire' }); setSourceCommandConflict(false); setSourceCommandComparison(null); }}>Retire {item.company} board</button></div>
         </li>;
       })}</ul>}
+      {sourceCommand && <section className="disclosure" aria-labelledby="source-command-title"><h4 id="source-command-title">{sourceCommand.action === 'retire' ? 'Confirm source retirement' : sourceCommand.action === 'refresh' ? 'Retained source refresh decision' : 'Retained source disable decision'}</h4>
+        <p>{sourceCommand.source.company} · {sourceCommand.source.board_token} · source version {sourceCommand.source.version}. {sourceCommand.action === 'retire' ? 'Retiring permanently stops new reads and edits for this configured source. All retained postings, exact observations and your dispositions remain available.' : sourceCommand.action === 'refresh' ? 'A refresh starts a reviewed board read under the selected current policy. Existing postings remain retained.' : 'Disabling stops new collection without removing source history.'}</p>
+        {sourceCommandConflict && <p className="error">The source changed elsewhere. Your intended action remains here. Compare the current source before explicitly choosing its latest version and retrying.</p>}
+        <div className="actions"><button disabled={locked || sourceCommandConflict || !!sourceCommand.source.removed_at || (sourceCommand.action === 'refresh' && !canRefresh(sourceCommand.source))} onClick={() => { void mutateSource(sourceCommand); }}>{sourceCommand.action === 'retire' ? 'Confirm retirement and retain history' : sourceCommand.action === 'refresh' ? 'Retry source refresh' : 'Retry source disable'}</button>
+          <button className="secondary" disabled={locked} onClick={() => { void perform(async signal => { setSourceCommandComparison(await request<Source>(signal, `/sources/${encodeURIComponent(sourceCommand.source.id)}`)); }); }}>Load current source action comparison</button>
+          <button className="secondary" disabled={locked} onClick={() => { mutationKeys.current.delete(`${sourceCommand.action}:${sourceCommand.source.id}`); setSourceCommand(null); setSourceCommandConflict(false); setSourceCommandComparison(null); }}>Discard source action</button></div>
+        {sourceCommandComparison && <section className="comparison" aria-labelledby="source-action-comparison-title"><h4 id="source-action-comparison-title">Current source action precondition · version {sourceCommandComparison.version}</h4><p>{sourceCommandComparison.company} · {sourceCommandComparison.board_token}</p><SourceFacts source={sourceCommandComparison} />
+          <button className="secondary" disabled={locked || !!sourceCommandComparison.removed_at} onClick={() => { const latest = sourceCommandComparison; receiveSource(latest); setSourceCommand(existing => existing ? { ...existing, source: latest } : null); setSourceCommandConflict(false); setSourceCommandComparison(null); mutationKeys.current.delete(`${sourceCommand.action}:${latest.id}`); }}>Use current source version and retain my action</button>
+          {sourceCommandComparison.removed_at && <p>The source is already retired. Discard this local action; history remains available.</p>}
+        </section>}
+      </section>}
       {editor && source && <form onSubmit={event => { void saveSource(event); }}><fieldset disabled={locked || manualDirty}><legend>{editor.id ? 'Review and edit configured board' : 'New board · disabled by default'}</legend>
         <label>Board employer<input required maxLength={500} value={source.company} onChange={event => changeSource({ company: event.target.value })} /></label>
         <label>Greenhouse board token<input required readOnly={!!editor.id} pattern="[A-Za-z0-9_-]{1,120}" maxLength={120} value={source.board_token} onChange={event => changeSource({ board_token: event.target.value })} /></label>
@@ -358,12 +568,12 @@ export function JobSources({ api, disabled = false, onDirtyChange, onBusyChange 
         <label className="check"><input type="checkbox" disabled={!reviewReady} checked={source.terms_review_acknowledged} onChange={event => changeSource({ terms_review_acknowledged: event.target.checked }, false)} />I reviewed these exact board-specific terms and policy and acknowledge permission for this configured board</label>
         <label className="check"><input type="checkbox" disabled={!source.enabled && !source.terms_review_acknowledged} checked={source.enabled} onChange={event => changeSource({ enabled: event.target.checked }, false)} />Explicitly enable this reviewed source</label>
         {conflict && <p className="error">The source changed elsewhere. Your board review and edited values remain here. Load and compare the current source before explicitly rebasing.</p>}
-        <div className="actions"><button disabled={conflict || (source.enabled && (!reviewReady || !source.terms_review_acknowledged))}>Save board configuration</button><button type="button" className="secondary" onClick={() => { setEditor(null); setComparison(null); setConflict(false); mutationKeys.current.delete('source'); }}>Discard board buffer</button>
+        <div className="actions"><button disabled={conflict || !!comparison?.removed_at || (source.enabled && (!reviewReady || !source.terms_review_acknowledged))}>Save board configuration</button><button type="button" className="secondary" onClick={() => { setEditor(null); setComparison(null); setConflict(false); mutationKeys.current.delete('source'); }}>Discard board buffer</button>
           {editor.id && <button type="button" className="secondary" onClick={() => { void perform(async signal => { setComparison(await request<Source>(signal, `/sources/${encodeURIComponent(editor.id!)}`)); }); }}>Load current source for comparison</button>}</div>
       </fieldset>
         {comparison && <section className="comparison" aria-labelledby="source-comparison-title"><h4 id="source-comparison-title">Current saved source · version {comparison.version}</h4><p>Employer: {comparison.company}. Board: {comparison.board_token}. Own limit: {comparison.request_limit_per_minute} per minute.</p><SourceFacts source={comparison} />
           <p>Your buffer above is unchanged. Rebasing only selects the current save precondition, clears your old acknowledgement and requires a fresh review before enablement.</p>
-          <button type="button" className="secondary" disabled={locked} onClick={() => { const latest = comparison; setEditor(existing => existing ? { ...existing, version: latest.version, baseline: JSON.stringify(sourceDraft(latest)), draft: { ...existing.draft, terms_review_acknowledged: false } } : existing); receiveSource(latest); setConflict(false); setComparison(null); mutationKeys.current.delete('source'); setNotice('Current source version selected explicitly. Retained values need your review before saving.'); }}>Use current version and retain my board buffer</button>
+          <button type="button" className="secondary" disabled={locked || !!comparison.removed_at} onClick={() => { const latest = comparison; setEditor(existing => existing ? { ...existing, version: latest.version, baseline: JSON.stringify(sourceDraft(latest)), draft: { ...existing.draft, terms_review_acknowledged: false } } : existing); receiveSource(latest); setConflict(false); setComparison(null); mutationKeys.current.delete('source'); setNotice('Current source version selected explicitly. Retained values need your review before saving.'); }}>Use current version and retain my board buffer</button>
         </section>}
       </form>}
     </section>

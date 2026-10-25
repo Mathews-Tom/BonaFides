@@ -2,16 +2,16 @@
 import { useState } from 'react';
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { JobSources } from './JobSources';
-import { Api, ApiError, type ObservationDetail, type PostingDetail, type PostingWrite, type Source, type SourceWrite, type Workflow } from './api';
+import { Api, ApiError, type DuplicateCandidate, type ObservationDetail, type PostingDetail, type PostingWrite, type Source, type SourceWrite, type Workflow } from './api';
 
 const text = 'Fictional engineering role.\n<script>window.sourceExecuted = true</script>\n<a href="https://untrusted.example.com">Inert source words</a>';
 const savedPosting: PostingDetail = {
   id: 'posting-one', version: 1, title: 'Fictional engineer', company: 'Fictional North', location_text: 'Remote', status: 'open',
   created_at: '2026-01-01T12:00:00Z', updated_at: '2026-01-01T12:00:00Z', description_text: text,
   canonical_url: 'https://jobs.example.com/fictional-one', content_sha256: 'a'.repeat(64), source_config_id: 'manual-source',
-  source_kind: 'manual', external_id: 'manual-posting-one', last_observed_at: '2026-01-01T12:00:00Z',
+  source_kind: 'manual', external_id: 'manual-posting-one', last_observed_at: '2026-01-01T12:00:00Z', disposition: null,
 };
 const retainedObservation: ObservationDetail = {
   id: 'observation-one', source_config_id: 'manual-source', source_kind: 'manual', board_token: null, external_id: 'manual-posting-one',
@@ -22,13 +22,13 @@ function reviewedSource(): Source {
   return { id: 'source-one', version: 3, source_kind: 'greenhouse', board_token: 'fictional_north', company: 'Fictional North', enabled: true,
     terms_url: 'https://careers.example.com/terms', terms_revision: 'Reviewed 2026-01-01', terms_reviewed_at: '2026-01-01T12:00:00Z',
     policy_version: 2, allowed_host: 'boards-api.greenhouse.io', request_limit_per_minute: 2, last_success_at: '2026-01-01T12:00:00Z',
-    last_error_code: null, next_allowed_at: null, rate_limit_blocked: false, retry_after_seconds: null, health: 'healthy', quota: { known: false, limit: null }, created_at: '2026-01-01T12:00:00Z' };
+    last_error_code: null, next_allowed_at: null, rate_limit_blocked: false, retry_after_seconds: null, removed_at: null, health: 'healthy', quota: { known: false, limit: null }, created_at: '2026-01-01T12:00:00Z' };
 }
 function runningWorkflow(): Workflow {
   return { id: 'source-task-one', kind: 'source_refresh', version: 7, state: 'running', attempt: 1, max_attempts: 3,
     next_attempt_at: null, last_error_code: null, result: null };
 }
-interface Submission { path: string; body: unknown; version: number | undefined; key: boolean | string }
+interface Submission { path: string; method: string; body: unknown; version: number | undefined; key: boolean | string }
 function server() {
   const api = new Api();
   const state = {
@@ -36,23 +36,68 @@ function server() {
     postingFailures: [] as Error[], sourceWriteFailures: [] as Error[], refreshFailures: [] as Error[], cancelFailures: [] as Error[],
     catalogFailure: null as Error | null, workflowFailure: null as Error | null, submissions: [] as Submission[], workflowReads: 0,
     postingCursor: null as string | null, sourceExists: true,
+    catalogWaitsForAbort: false,
+    decisionFailures: [] as Error[], retireFailures: [] as Error[],
+    duplicates: [{ ...savedPosting, id: 'candidate-one', source_config_id: 'source-one', source_kind: 'greenhouse', external_id: 'board-role-42', decision: 'suspected' }] as DuplicateCandidate[],
+    duplicateCursor: null as string | null,
   };
-  const request = vi.spyOn(api, 'request').mockImplementation(async <T,>(path: string, method = 'GET', body?: unknown, version?: number, key: boolean | string = false): Promise<T> => {
-    if (method !== 'GET') state.submissions.push({ path, body, version, key });
-    if (path === '/postings' && method === 'GET') {
+  const request = vi.spyOn(api, 'request').mockImplementation(async <T,>(path: string, method = 'GET', body?: unknown, version?: number, key: boolean | string = false, signal?: AbortSignal): Promise<T> => {
+    if (method !== 'GET') state.submissions.push({ path, method, body, version, key });
+    const url = new URL(path, 'http://offerloom.local');
+    if (url.pathname === '/postings' && method === 'GET') {
+      if (state.catalogWaitsForAbort) {
+        if (!signal) throw new Error('Expected an abortable catalog request');
+        // The project's ES2022 library target does not expose Promise.withResolvers.
+        await new Promise<void>((_resolve, reject) => {
+          const stopped = () => reject(new DOMException('Catalog request stopped', 'AbortError'));
+          if (signal.aborted) stopped(); else signal.addEventListener('abort', stopped, { once: true });
+        });
+      }
       if (state.catalogFailure) throw state.catalogFailure;
-      return { items: state.postings, next_cursor: state.postingCursor } as T;
+      if (url.searchParams.has('cursor')) return { items: [{ ...savedPosting, id: 'posting-two', title: 'Fictional designer' }], next_cursor: null, query_elapsed_ms: 0.7, as_of: '2026-01-02T12:00:00Z' } as T;
+      const items = state.postings.filter(item => {
+        const filter = url.searchParams;
+        return (!filter.get('q') || `${item.title} ${item.company} ${item.description_text}`.toLowerCase().includes(filter.get('q')!.toLowerCase()))
+          && (!filter.get('location') || item.location_text.toLowerCase().includes(filter.get('location')!.toLowerCase()))
+          && (!filter.get('source_id') || item.source_config_id === filter.get('source_id'))
+          && (!filter.get('status') || item.status === filter.get('status'))
+          && (!filter.get('disposition') || (item.disposition ?? 'unmarked') === filter.get('disposition'))
+          && (!filter.get('observed_after') || (item.last_observed_at !== null && Date.parse(item.last_observed_at) >= Date.parse(filter.get('observed_after')!)));
+      });
+      return { items, next_cursor: state.postingCursor, query_elapsed_ms: 1.25, as_of: '2026-01-02T12:00:00Z' } as T;
     }
-    if (path === '/postings?cursor=page-two' && method === 'GET') return { items: [{ ...savedPosting, id: 'posting-two', title: 'Fictional designer' }], next_cursor: null } as T;
     if (path === '/postings' && method === 'POST') {
       const failure = state.postingFailures.shift(); if (failure) throw failure;
       state.postings = [savedPosting]; return savedPosting as T;
     }
-    if (path === '/postings/posting-one') return state.postings[0] as T;
+    if (path === '/postings/posting-one/disposition' && method === 'PUT') {
+      const failure = state.decisionFailures.shift(); if (failure) throw failure;
+      if (!body || typeof body !== 'object' || !('disposition' in body)) throw new Error('Expected disposition command');
+      const disposition = body.disposition;
+      if (disposition !== 'saved' && disposition !== 'dismissed' && disposition !== 'archived' && disposition !== 'unmarked') throw new Error('Unexpected disposition');
+      const current = state.postings.find(item => item.id === 'posting-one')!;
+      const updated: PostingDetail = { ...current, disposition: disposition === 'unmarked' ? null : disposition, version: current.version + 1 };
+      state.postings = state.postings.map(item => item.id === updated.id ? updated : item); return updated as T;
+    }
+    if (url.pathname === '/postings/posting-one/duplicates' && method === 'GET') return { items: url.searchParams.has('cursor') ? [{ ...state.duplicates[0], id: 'candidate-two', external_id: 'board-role-43' }] : state.duplicates, next_cursor: url.searchParams.has('cursor') ? null : state.duplicateCursor } as T;
+    if (/^\/postings\/posting-one\/duplicates\/[^/]+\/decision$/.test(path) && method === 'POST') {
+      const failure = state.decisionFailures.shift(); if (failure) throw failure;
+      if (!body || typeof body !== 'object' || !('decision' in body) || (body.decision !== 'distinct' && body.decision !== 'suspected')) throw new Error('Expected duplicate decision');
+      const candidateId = path.split('/')[4]; const decision = body.decision;
+      state.duplicates = state.duplicates.map(item => item.id === candidateId ? { ...item, decision } : item);
+      state.postings = state.postings.map(item => item.id === 'posting-one' ? { ...item, version: item.version + 1 } : item);
+      return state.postings[0] as T;
+    }
+    if (/^\/postings\/[^/]+$/.test(path) && method === 'GET') return state.postings.find(item => item.id === path.split('/')[2]) as T;
     if (path === '/postings/posting-one/observations') return { items: [retainedObservation], next_cursor: null } as T;
     if (path === '/postings/posting-one/observations/observation-one') return retainedObservation as T;
-    if (path === '/sources' && method === 'GET') return { items: state.sourceExists ? [state.source] : [] } as T;
+    if (path === '/sources' && method === 'GET') return { items: [...(state.sourceExists ? [state.source] : []), { ...reviewedSource(), id: 'manual-source', source_kind: 'manual', company: 'Manual entries', board_token: null, enabled: false }] } as T;
     if (path === '/sources/source-one' && method === 'GET') return state.source as T;
+    if (path === '/sources/source-one' && method === 'DELETE') {
+      const failure = state.retireFailures.shift(); if (failure) throw failure;
+      state.source = { ...state.source, version: state.source.version + 1, enabled: false, removed_at: '2026-01-03T12:00:00Z', health: 'disabled' };
+      return state.source as T;
+    }
     if ((path === '/sources' && method === 'POST') || (path === '/sources/source-one' && method === 'PUT')) {
       const failure = state.sourceWriteFailures.shift(); if (failure) throw failure;
       const input = body as SourceWrite;
@@ -87,7 +132,8 @@ function fillManual() {
   fireEvent.change(screen.getByLabelText('Complete original posting text'), { target: { value: text } });
   fireEvent.change(screen.getByLabelText('Optional HTTPS reference URL'), { target: { value: savedPosting.canonical_url } });
 }
-afterEach(() => { vi.useRealTimers(); vi.restoreAllMocks(); });
+beforeEach(() => { window.history.replaceState(null, '', '/'); });
+afterEach(() => { window.history.replaceState(null, '', '/'); vi.useRealTimers(); vi.restoreAllMocks(); });
 
 describe('manual postings and retained source history', () => {
   it('retains the full manual buffer and retry identity, then exposes inert text and exact attribution without a profile precondition', async () => {
@@ -118,6 +164,35 @@ describe('manual postings and retained source history', () => {
     expect(container.querySelector('script')).toBeNull();
   });
 
+  it('keeps the successful creation receipt and detail when catalog reconciliation reaches its abort deadline', async () => {
+    const { api, state, request } = server(); state.postings = [];
+    render(<Harness api={api} />);
+    await screen.findByText(/^No retained postings/);
+    fillManual(); state.catalogWaitsForAbort = true; vi.useFakeTimers();
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Save manual posting' })); });
+    expect(screen.getByRole('heading', { level: 3, name: savedPosting.title })).toBeVisible();
+    expect(screen.getByText(/Manual posting saved with an attributable observation/)).toBeVisible();
+    expect(screen.getByRole('button', { name: 'Sign out guard' })).toBeDisabled();
+    const pending = request.mock.calls.at(-1)?.[5]; expect(pending).toBeInstanceOf(AbortSignal);
+    await act(async () => { await vi.advanceTimersByTimeAsync(20_000); });
+    expect(pending?.aborted).toBe(true);
+    expect(screen.getByText(/Earlier loaded postings remain visible/)).toHaveTextContent('catalog request stopped');
+    expect(screen.getByText(/latest request is unavailable, not confirmed empty/)).toBeVisible();
+    expect(screen.queryByText(/^No retained postings/)).not.toBeInTheDocument();
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Retry retained posting decision' })).not.toBeInTheDocument();
+    expect(screen.getByLabelText('Complete original posting text')).toHaveValue('');
+    expect(screen.getByRole('button', { name: 'Discard manual buffer' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Sign out guard' })).toBeEnabled();
+    expect(state.submissions).toHaveLength(1);
+    expect(screen.getByText(/Manual posting saved with an attributable observation/)).toBeVisible();
+    state.catalogWaitsForAbort = false;
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Reload posting catalog' })); });
+    expect(screen.getByRole('button', { name: 'Read Fictional engineer at Fictional North' })).toBeVisible();
+    expect(screen.queryByText(/Earlier loaded postings remain visible/)).not.toBeInTheDocument();
+    expect(state.submissions).toHaveLength(1);
+  });
+
   it('loads the real next catalog page and preserves the retained list on a later read failure', async () => {
     const user = userEvent.setup(); const { api, state } = server(); state.postingCursor = 'page-two';
     render(<Harness api={api} />);
@@ -138,6 +213,357 @@ describe('manual postings and retained source history', () => {
     await screen.findByRole('heading', { level: 3, name: 'Fictional engineer' });
     expect(screen.queryByRole('link', { name: 'Original posting reference' })).toBeNull();
     expect(screen.getByText('javascript:alert(1)', { selector: 'code' })).toBeVisible();
+  });
+});
+
+describe('durable filtered catalog and reviewed decisions', () => {
+  it('submits all filters explicitly, binds next pages to loaded filters and restores selection and filters from the URL', async () => {
+    const user = userEvent.setup(); const { api, state, request } = server();
+    window.history.replaceState(null, '', '/?visit=retained#opportunities');
+    state.postingCursor = 'signed+opaque/==&next';
+    const view = render(<Harness api={api} />);
+    await screen.findByRole('button', { name: 'Read Fictional engineer at Fictional North' });
+    fireEvent.change(screen.getByLabelText('Search posting text'), { target: { value: 'Fictional' } });
+    fireEvent.change(screen.getByLabelText('Filter location'), { target: { value: 'Remote' } });
+    await user.selectOptions(screen.getByLabelText('Filter source'), 'manual-source');
+    await user.selectOptions(screen.getByLabelText('Posting status'), 'open');
+    await user.selectOptions(screen.getByLabelText('Catalog disposition'), 'unmarked');
+    fireEvent.change(screen.getByLabelText('Observed since (UTC)'), { target: { value: '2026-01-01T00:00:01' } });
+    expect(request.mock.calls.filter(call => call[0].startsWith('/postings?'))).toHaveLength(0);
+    await user.click(screen.getByRole('button', { name: 'Apply catalog filters' }));
+    await waitFor(() => expect(screen.getByLabelText('Loaded catalog filters')).toHaveTextContent('Search: Fictional'));
+    const expected = { q: 'Fictional', location: 'Remote', source_id: 'manual-source', status: 'open', disposition: 'unmarked' };
+    const filteredCall = request.mock.calls.find(call => call[0].startsWith('/postings?q='));
+    const received = new URL(filteredCall![0], window.location.origin);
+    expect(Date.parse(received.searchParams.get('observed_after')!)).toBe(Date.UTC(2026, 0, 1, 0, 0, 1));
+    expect(Object.fromEntries([...received.searchParams].filter(([key]) => key !== 'observed_after'))).toEqual(expected);
+    fireEvent.change(screen.getByLabelText('Search posting text'), { target: { value: 'unsubmitted draft' } });
+    await user.click(screen.getByRole('button', { name: 'Load more postings' }));
+    const nextCall = request.mock.calls.find(call => call[0].includes('cursor='));
+    const next = new URL(nextCall![0], window.location.origin);
+    expect(next.searchParams.get('cursor')).toBe('signed+opaque/==&next');
+    next.searchParams.delete('cursor'); expect(next.searchParams.toString()).toBe(received.searchParams.toString());
+    expect(screen.getByLabelText('Search posting text')).toHaveValue('unsubmitted draft');
+    expect(await screen.findByRole('button', { name: 'Read Fictional designer at Fictional North' })).toBeVisible();
+    await user.click(screen.getByRole('button', { name: 'Read Fictional engineer at Fictional North' }));
+    await screen.findByRole('heading', { level: 3, name: savedPosting.title });
+    expect(new URLSearchParams(window.location.search).get('q')).toBe('Fictional');
+    expect(new URLSearchParams(window.location.search).get('posting_id')).toBe(savedPosting.id);
+    view.unmount(); render(<Harness api={api} />);
+    expect(await screen.findByRole('heading', { level: 3, name: savedPosting.title })).toBeVisible();
+    expect(screen.getByLabelText('Search posting text')).toHaveValue('Fictional');
+    await user.click(screen.getByRole('button', { name: 'Clear catalog filters' }));
+    await waitFor(() => expect(screen.getByLabelText('Loaded catalog filters')).toHaveTextContent('All retained postings'));
+    expect(window.location.search).toBe('?visit=retained&posting_id=posting-one');
+    expect(window.location.hash).toBe('#opportunities');
+  });
+
+  it('displays offset URL timestamps in UTC, preserves their submitted precision and restores them across back and forward navigation', async () => {
+    const user = userEvent.setup(); const { api, request } = server();
+    const first = '2026-01-01T12:00:00.123456+05:30';
+    const second = '2025-12-31T23:15:59.654321-04:00';
+    window.history.replaceState(null, '', `/?${new URLSearchParams({ observed_after: first })}`);
+    render(<Harness api={api} />);
+    await screen.findByLabelText('Loaded catalog filters');
+    const input = screen.getByLabelText<HTMLInputElement>('Observed since (UTC)');
+    expect(Date.parse(`${input.value}Z`)).toBe(Date.parse('2026-01-01T06:30:00.123Z'));
+    expect(screen.getByLabelText('Loaded catalog filters')).toHaveTextContent(first);
+    fireEvent.change(screen.getByLabelText('Search posting text'), { target: { value: 'Fictional' } });
+    await user.click(screen.getByRole('button', { name: 'Apply catalog filters' }));
+    expect(new URLSearchParams(window.location.search).get('observed_after')).toBe(first);
+    expect(new URL(request.mock.calls.at(-1)![0], window.location.origin).searchParams.get('observed_after')).toBe(first);
+    window.history.pushState(null, '', `/?${new URLSearchParams({ observed_after: second })}`);
+    fireEvent(window, new PopStateEvent('popstate'));
+    await waitFor(() => expect(screen.getByLabelText('Loaded catalog filters')).toHaveTextContent(second));
+    expect(Date.parse(`${input.value}Z`)).toBe(Date.parse('2026-01-01T03:15:59.654Z'));
+    act(() => { window.history.back(); });
+    await waitFor(() => expect(screen.getByLabelText('Loaded catalog filters')).toHaveTextContent(first));
+    expect(Date.parse(`${input.value}Z`)).toBe(Date.parse('2026-01-01T06:30:00.123Z'));
+    expect(screen.getByLabelText('Search posting text')).toHaveValue('Fictional');
+    act(() => { window.history.forward(); });
+    await waitFor(() => expect(screen.getByLabelText('Loaded catalog filters')).toHaveTextContent(second));
+    expect(Date.parse(`${input.value}Z`)).toBe(Date.parse('2026-01-01T03:15:59.654Z'));
+    fireEvent.change(input, { target: { value: '2026-01-01T03:16:00.750' } });
+    await user.click(screen.getByRole('button', { name: 'Apply catalog filters' }));
+    const edited = new URLSearchParams(window.location.search).get('observed_after');
+    expect(edited).toMatch(/Z$/); expect(Date.parse(edited!)).toBe(Date.parse('2026-01-01T03:16:00.750Z'));
+    const readValues = request.mock.calls.filter(call => call[0].startsWith('/postings')).map(call => new URL(call[0], window.location.origin).searchParams.get('observed_after'));
+    expect(readValues).toContain(first); expect(readValues).toContain(second); expect(readValues).toContain(edited);
+  });
+
+  it.each(['not-a-timestamp', '2026-01-01T12:00:00', '2026-02-30T12:00:00+05:30'])('shows the invalid URL timestamp %s without converting it into another query', async invalid => {
+    const user = userEvent.setup(); const { api, state, request } = server();
+    state.catalogFailure = new ApiError(422, 'invalid_observed_after');
+    window.history.replaceState(null, '', `/?${new URLSearchParams({ observed_after: invalid })}`);
+    render(<Harness api={api} />);
+    expect(await screen.findByText(/Invalid observed-since value:/)).toHaveTextContent(invalid);
+    expect(screen.getByLabelText('Observed since (UTC)')).toHaveAttribute('aria-invalid', 'true');
+    expect(screen.getByLabelText('Observed since (UTC)')).toHaveValue('');
+    expect(new URLSearchParams(window.location.search).get('observed_after')).toBe(invalid);
+    expect(new URL(request.mock.calls.find(call => call[0].startsWith('/postings'))![0], window.location.origin).searchParams.get('observed_after')).toBe(invalid);
+    expect(await screen.findByText(/Catalog is unavailable, not known to be empty/)).toBeVisible();
+    expect(screen.queryByText(/^No retained postings/)).not.toBeInTheDocument();
+    state.catalogFailure = null;
+    await user.click(screen.getByRole('button', { name: 'Clear catalog filters' }));
+    await screen.findByRole('button', { name: 'Read Fictional engineer at Fictional North' });
+    expect(screen.queryByText(/Invalid observed-since value:/)).not.toBeInTheDocument();
+    expect(new URLSearchParams(window.location.search).has('observed_after')).toBe(false);
+  });
+
+  it('retains the old-filter results and every draft on a failed query instead of presenting a false empty result', async () => {
+    const user = userEvent.setup(); const { api, state } = server();
+    render(<Harness api={api} />); await screen.findByLabelText('Loaded catalog filters');
+    fillManual(); state.catalogFailure = new ApiError(503, 'catalog_offline');
+    fireEvent.change(screen.getByLabelText('Search posting text'), { target: { value: 'not confirmed' } });
+    await user.click(screen.getByRole('button', { name: 'Apply catalog filters' }));
+    expect(await screen.findByText(/Earlier loaded postings remain visible/)).toHaveTextContent('not the failed request');
+    expect(screen.getByLabelText('Loaded catalog filters')).toHaveTextContent('All retained postings');
+    expect(screen.getByRole('button', { name: 'Read Fictional engineer at Fictional North' })).toBeVisible();
+    expect(screen.getByLabelText('Search posting text')).toHaveValue('not confirmed');
+    expect(screen.getByLabelText('Complete original posting text')).toHaveValue(text);
+    expect(screen.queryByText(/^No postings match/)).not.toBeInTheDocument();
+    state.catalogFailure = null;
+    await user.click(screen.getByRole('button', { name: 'Reload posting catalog' }));
+    expect(await screen.findByText(/^No postings match these filters/)).toBeVisible();
+    expect(screen.getByLabelText('Complete original posting text')).toHaveValue(text);
+    await user.click(screen.getByRole('button', { name: 'Clear catalog filters' }));
+    expect(await screen.findByRole('button', { name: 'Read Fictional engineer at Fictional North' })).toBeVisible();
+  });
+
+  it('distinguishes an unavailable initial catalog from an honestly empty catalog', async () => {
+    const user = userEvent.setup(); const { api, state } = server(); state.catalogFailure = new TypeError('offline'); state.postings = [];
+    render(<Harness api={api} />);
+    expect(await screen.findByText(/Catalog is unavailable, not known to be empty/)).toBeVisible();
+    expect(screen.queryByText(/^No retained postings/)).not.toBeInTheDocument();
+    state.catalogFailure = null; await user.click(screen.getByRole('button', { name: 'Reload posting catalog' }));
+    expect(await screen.findByText(/^No retained postings/)).toBeVisible();
+  });
+
+  it('does not let an aborted superseded initial read mark a newer catalog result stale', async () => {
+    vi.useFakeTimers();
+    const { api, state } = server(); state.catalogWaitsForAbort = true;
+    await act(async () => { render(<Harness api={api} />); });
+    state.catalogWaitsForAbort = false;
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Reload posting catalog' })); });
+    expect(screen.getByRole('button', { name: 'Read Fictional engineer at Fictional North' })).toBeVisible();
+    await act(async () => { await vi.advanceTimersByTimeAsync(20_000); });
+    expect(screen.getByRole('button', { name: 'Read Fictional engineer at Fictional North' })).toBeVisible();
+    expect(screen.queryByText(/Earlier loaded postings remain visible/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/catalog request stopped/i)).not.toBeInTheDocument();
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+  });
+
+  it('persists save, dismiss, undo, archive and unmark without changing source status, application state or history', async () => {
+    const user = userEvent.setup(); const { api, state } = server(); const view = render(<Harness api={api} />);
+    await user.click(await screen.findByRole('button', { name: 'Read Fictional engineer at Fictional North' }));
+    await user.click(await screen.findByRole('button', { name: 'Save opportunity' }));
+    expect(await screen.findByText('Your disposition: saved')).toBeVisible();
+    await user.selectOptions(screen.getByLabelText('Catalog disposition'), 'saved');
+    await user.click(screen.getByRole('button', { name: 'Apply catalog filters' }));
+    await user.click(screen.getByRole('button', { name: 'Dismiss opportunity' }));
+    expect(await screen.findByText('Your disposition: dismissed')).toBeVisible();
+    expect(screen.queryByRole('button', { name: 'Read Fictional engineer at Fictional North' })).not.toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Undo disposition change' }));
+    expect(await screen.findByRole('button', { name: 'Read Fictional engineer at Fictional North' })).toBeVisible();
+    view.unmount(); render(<Harness api={api} />);
+    expect(await screen.findByText('Your disposition: saved')).toBeVisible();
+    await user.click(screen.getByRole('button', { name: 'Archive opportunity' }));
+    expect(await screen.findByText('Your disposition: archived')).toBeVisible();
+    await user.click(screen.getByRole('button', { name: 'Unmark opportunity' }));
+    expect(await screen.findByText('Your disposition: unmarked')).toBeVisible();
+    await user.click(screen.getByRole('button', { name: 'Load attributable observation history' }));
+    expect(await screen.findByRole('button', { name: 'Read observation observation-one' })).toBeVisible();
+    const changes = state.submissions.filter(item => item.path.endsWith('/disposition'));
+    expect(changes.map(item => item.body)).toEqual([{ disposition: 'saved' }, { disposition: 'dismissed' }, { disposition: 'saved' }, { disposition: 'archived' }, { disposition: 'unmarked' }]);
+    expect(changes.map(item => item.version)).toEqual([1, 2, 3, 4, 5]);
+    expect(changes.every(item => item.method === 'PUT')).toBe(true);
+    expect(state.postings[0]?.status).toBe('open'); expect(state.source).toEqual(reviewedSource());
+    expect(state.submissions.every(item => item.path.endsWith('/disposition'))).toBe(true);
+  });
+
+  it('keeps a confirmed disposition and undo without offering mutation retry when list reconciliation aborts', async () => {
+    const { api, state } = server();
+    window.history.replaceState(null, '', '/?disposition=unmarked&posting_id=posting-one');
+    render(<Harness api={api} />);
+    await screen.findByRole('heading', { level: 3, name: savedPosting.title });
+    await screen.findByLabelText('Loaded catalog filters');
+    state.catalogWaitsForAbort = true; vi.useFakeTimers();
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Save opportunity' })); });
+    expect(screen.getByText('Your disposition: saved')).toBeVisible();
+    await act(async () => { await vi.advanceTimersByTimeAsync(20_000); });
+    expect(screen.getByText(/Posting marked saved/)).toBeVisible();
+    expect(screen.getByText(/Earlier loaded postings remain visible/)).toHaveTextContent('catalog request stopped');
+    expect(screen.getByRole('button', { name: 'Undo disposition change' })).toBeEnabled();
+    expect(screen.queryByRole('region', { name: 'Retained posting decision' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Retry retained posting decision' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+    expect(screen.queryByText(/^No postings match these filters/)).not.toBeInTheDocument();
+    expect(state.submissions).toHaveLength(1); expect(state.postings[0]?.disposition).toBe('saved');
+    expect(screen.getByRole('button', { name: 'Sign out guard' })).toBeEnabled();
+  });
+
+  it('keeps an unconfirmed disposition and stable retry key after a lost response', async () => {
+    const user = userEvent.setup(); const { api, state } = server(); state.decisionFailures.push(new TypeError('offline'));
+    render(<Harness api={api} />);
+    await user.click(await screen.findByRole('button', { name: 'Read Fictional engineer at Fictional North' }));
+    await user.click(await screen.findByRole('button', { name: 'Dismiss opportunity' }));
+    expect(await screen.findByRole('alert')).toHaveTextContent('server could not be reached');
+    expect(screen.getByRole('region', { name: 'Retained posting decision' })).toHaveTextContent('dismissed');
+    expect(screen.getByText('Your disposition: unmarked')).toBeVisible();
+    expect(screen.getByRole('button', { name: 'Sign out guard' })).toBeDisabled();
+    await user.click(screen.getByRole('button', { name: 'Retry retained posting decision' }));
+    expect(await screen.findByText('Your disposition: dismissed')).toBeVisible();
+    expect(state.submissions).toHaveLength(2); expect(state.submissions[1]?.key).toBe(state.submissions[0]?.key);
+    expect(state.submissions[1]?.version).toBe(1);
+  });
+
+  it('requires explicit latest comparison and a separate retry after a posting conflict while preserving the intended decision', async () => {
+    const user = userEvent.setup(); const { api, state } = server(); state.decisionFailures.push(new ApiError(412, 'stale_version'));
+    render(<Harness api={api} />);
+    await user.click(await screen.findByRole('button', { name: 'Read Fictional engineer at Fictional North' }));
+    await user.click(await screen.findByRole('button', { name: 'Archive opportunity' }));
+    expect(await screen.findByRole('alert')).toHaveTextContent('newer revision');
+    expect(screen.getByRole('button', { name: 'Retry retained posting decision' })).toBeDisabled();
+    state.postings = [{ ...savedPosting, version: 9, disposition: 'saved', description_text: 'Concurrent retained original text.' }];
+    await user.click(screen.getByRole('button', { name: 'Load current posting for comparison' }));
+    const comparison = await screen.findByRole('region', { name: 'Current saved posting · version 9' });
+    expect(comparison).toHaveTextContent('Concurrent retained original text.');
+    expect(screen.getByText('Your disposition: unmarked')).toBeVisible();
+    expect(screen.getByRole('region', { name: 'Retained posting decision' })).toHaveTextContent('archived');
+    expect(state.submissions).toHaveLength(1);
+    await user.click(screen.getByRole('button', { name: 'Use current posting version and retain my decision' }));
+    expect(state.submissions).toHaveLength(1);
+    expect(screen.getByText('Your disposition: saved')).toBeVisible();
+    await user.click(screen.getByRole('button', { name: 'Retry retained posting decision' }));
+    expect(await screen.findByText('Your disposition: archived')).toBeVisible();
+    expect(state.submissions[1]?.version).toBe(9);
+    expect(state.submissions[1]?.key).not.toBe(state.submissions[0]?.key);
+    expect(state.submissions[1]?.body).toEqual({ disposition: 'archived' });
+  });
+
+  it('reviews and reloads cross-source pairs explicitly without merging identities and paginates candidates', async () => {
+    const user = userEvent.setup(); const { api, state, request } = server(); state.duplicateCursor = 'duplicate+cursor';
+    render(<Harness api={api} />);
+    await user.click(await screen.findByRole('button', { name: 'Read Fictional engineer at Fictional North' }));
+    await user.click(await screen.findByRole('button', { name: 'Load duplicate review candidates' }));
+    expect(await screen.findByRole('button', { name: 'Mark candidate-one as distinct' })).toBeEnabled();
+    expect(screen.getByRole('button', { name: 'Mark candidate-one as suspected duplicate' })).toBeEnabled();
+    await user.click(screen.getByRole('button', { name: 'Mark candidate-one as distinct' }));
+    expect(await screen.findByText(/Duplicate review recorded as distinct/)).toHaveTextContent('nothing was merged');
+    await user.click(screen.getByRole('button', { name: 'Load duplicate review candidates' }));
+    expect(within(screen.getByRole('region', { name: 'Cross-source duplicate review' })).getByText('distinct', { selector: 'strong' })).toBeVisible();
+    await user.click(screen.getByRole('button', { name: 'Mark candidate-one as suspected duplicate' }));
+    expect(await screen.findByText(/Duplicate review recorded as suspected/)).toBeVisible();
+    await user.click(screen.getByRole('button', { name: 'Load more duplicate candidates' }));
+    expect(await screen.findByRole('button', { name: 'Inspect candidate candidate-two' })).toBeVisible();
+    expect(request.mock.calls.some(call => call[0] === '/postings/posting-one/duplicates?cursor=duplicate%2Bcursor')).toBe(true);
+    const changes = state.submissions.filter(item => item.path.includes('/duplicates/'));
+    expect(changes.map(item => item.body)).toEqual([{ decision: 'distinct' }, { decision: 'suspected' }]);
+    expect(changes.map(item => item.version)).toEqual([1, 2]);
+    expect(changes.every(item => item.method === 'POST')).toBe(true);
+    expect(state.postings[0]?.id).toBe(savedPosting.id);
+    expect(state.duplicates[0]?.external_id).toBe('board-role-42');
+    expect(screen.queryByRole('button', { name: /merge/i })).not.toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Load attributable observation history' }));
+    expect(await screen.findByRole('button', { name: 'Read observation observation-one' })).toBeVisible();
+  });
+
+  it('retains a duplicate decision on conflict and never retries against a newly loaded version without consent', async () => {
+    const user = userEvent.setup(); const { api, state } = server(); state.decisionFailures.push(new ApiError(412, 'stale_version'));
+    render(<Harness api={api} />);
+    await user.click(await screen.findByRole('button', { name: 'Read Fictional engineer at Fictional North' }));
+    await user.click(await screen.findByRole('button', { name: 'Load duplicate review candidates' }));
+    await user.click(await screen.findByRole('button', { name: 'Mark candidate-one as distinct' }));
+    expect(await screen.findByRole('alert')).toHaveTextContent('newer revision');
+    expect(screen.getByRole('region', { name: 'Retained posting decision' })).toHaveTextContent('distinct for candidate candidate-one');
+    state.postings = [{ ...savedPosting, version: 7 }];
+    await user.click(screen.getByRole('button', { name: 'Load current posting for comparison' }));
+    await screen.findByRole('heading', { name: 'Current saved posting · version 7' });
+    expect(screen.getByRole('button', { name: 'Retry retained posting decision' })).toBeDisabled();
+    expect(state.submissions).toHaveLength(1);
+    await user.click(screen.getByRole('button', { name: 'Use current posting version and retain my decision' }));
+    await user.click(screen.getByRole('button', { name: 'Retry retained posting decision' }));
+    expect(await screen.findByText(/Duplicate review recorded as distinct/)).toBeVisible();
+    expect(state.submissions[1]?.version).toBe(7);
+    expect(state.submissions[1]?.body).toEqual({ decision: 'distinct' });
+  });
+
+  it('confirms retirement, retains a failed retry identity and keeps retired source data inspectable after reload', async () => {
+    const user = userEvent.setup(); const { api, state } = server(); state.retireFailures.push(new TypeError('offline'));
+    state.postings = [{ ...savedPosting, source_config_id: 'source-one', source_kind: 'greenhouse', disposition: 'saved' }];
+    render(<Harness api={api} />);
+    await user.click(await screen.findByRole('button', { name: 'Retire Fictional North board' }));
+    expect(state.submissions).toHaveLength(0);
+    await user.click(screen.getByRole('button', { name: 'Confirm retirement and retain history' }));
+    expect(await screen.findByRole('alert')).toHaveTextContent('server could not be reached');
+    expect(screen.getByRole('button', { name: 'Read Fictional engineer at Fictional North' })).toBeVisible();
+    await user.click(screen.getByRole('button', { name: 'Confirm retirement and retain history' }));
+    expect(await screen.findByText('Retired source', { selector: 'strong' })).toBeVisible();
+    expect(state.submissions[1]?.key).toBe(state.submissions[0]?.key);
+    expect(state.submissions[1]?.version).toBe(3); expect(state.submissions[1]?.body).toBeUndefined();
+    expect(state.submissions.every(item => item.method === 'DELETE')).toBe(true);
+    await user.click(screen.getByRole('button', { name: 'Reload sources' }));
+    expect(screen.getByRole('button', { name: 'Refresh Fictional North board' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Review or edit Fictional North board' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Retire Fictional North board' })).toBeDisabled();
+    expect(screen.queryByRole('button', { name: 'Retire Manual entries board' })).not.toBeInTheDocument();
+    await user.selectOptions(screen.getByLabelText('Filter source'), 'source-one');
+    await user.click(screen.getByRole('button', { name: 'Apply catalog filters' }));
+    await user.click(screen.getByRole('button', { name: 'Read Fictional engineer at Fictional North' }));
+    expect(await screen.findByText('Your disposition: saved')).toBeVisible();
+    await user.click(screen.getByRole('button', { name: 'Load attributable observation history' }));
+    expect(await screen.findByRole('button', { name: 'Read observation observation-one' })).toBeVisible();
+  });
+
+  it('requires a source action comparison and new explicit precondition before retrying retirement after a conflict', async () => {
+    const user = userEvent.setup(); const { api, state } = server(); state.retireFailures.push(new ApiError(412, 'stale_version'));
+    render(<Harness api={api} />);
+    await user.click(await screen.findByRole('button', { name: 'Retire Fictional North board' }));
+    await user.click(screen.getByRole('button', { name: 'Confirm retirement and retain history' }));
+    expect(await screen.findByRole('alert')).toHaveTextContent('newer revision');
+    expect(screen.getByRole('button', { name: 'Confirm retirement and retain history' })).toBeDisabled();
+    state.source = { ...state.source, version: 11, request_limit_per_minute: 1 };
+    await user.click(screen.getByRole('button', { name: 'Load current source action comparison' }));
+    expect(await screen.findByRole('heading', { name: 'Current source action precondition · version 11' })).toBeVisible();
+    expect(state.submissions).toHaveLength(1);
+    await user.click(screen.getByRole('button', { name: 'Use current source version and retain my action' }));
+    expect(state.submissions).toHaveLength(1);
+    await user.click(screen.getByRole('button', { name: 'Confirm retirement and retain history' }));
+    expect(await screen.findByText('Retired source', { selector: 'strong' })).toBeVisible();
+    expect(state.submissions[1]?.version).toBe(11);
+    expect(state.submissions[1]?.key).not.toBe(state.submissions[0]?.key);
+  });
+  it('restores history navigation without discarding a manual buffer and loads the URL context only when explicitly released', async () => {
+    const user = userEvent.setup(); const { api } = server();
+    render(<Harness api={api} />); await screen.findByLabelText('Loaded catalog filters'); fillManual();
+    window.history.replaceState(null, '', '/?q=no-match&posting_id=posting-one');
+    fireEvent(window, new PopStateEvent('popstate'));
+    expect(screen.getByLabelText('Complete original posting text')).toHaveValue(text);
+    expect(screen.getByRole('button', { name: 'Load current URL context' })).toBeDisabled();
+    expect(screen.getByLabelText('Loaded catalog filters')).toHaveTextContent('All retained postings');
+    await user.click(screen.getByRole('button', { name: 'Discard manual buffer' }));
+    await user.click(screen.getByRole('button', { name: 'Load current URL context' }));
+    expect(await screen.findByText(/^No postings match these filters/)).toBeVisible();
+    expect(await screen.findByRole('heading', { level: 3, name: savedPosting.title })).toBeVisible();
+    expect(screen.getByLabelText('Search posting text')).toHaveValue('no-match');
+  });
+
+  it('holds a stale source refresh behind explicit latest-policy comparison before authorizing its retry', async () => {
+    const user = userEvent.setup(); const { api, state } = server(); state.refreshFailures.push(new ApiError(412, 'stale_version'));
+    render(<Harness api={api} />);
+    await user.click(await screen.findByRole('button', { name: 'Refresh Fictional North board' }));
+    expect(await screen.findByRole('alert')).toHaveTextContent('newer revision');
+    expect(screen.getByRole('button', { name: 'Retry source refresh' })).toBeDisabled();
+    state.source = { ...state.source, version: 12, policy_version: 8 };
+    await user.click(screen.getByRole('button', { name: 'Load current source action comparison' }));
+    await screen.findByRole('heading', { name: 'Current source action precondition · version 12' });
+    expect(state.submissions).toHaveLength(1);
+    await user.click(screen.getByRole('button', { name: 'Use current source version and retain my action' }));
+    expect(state.submissions).toHaveLength(1);
+    await user.click(screen.getByRole('button', { name: 'Retry source refresh' }));
+    expect(await screen.findByRole('heading', { name: 'Source refresh task source-task-one' })).toBeVisible();
+    expect(state.submissions[1]?.version).toBe(12);
+    expect(state.submissions[1]?.key).not.toBe(state.submissions[0]?.key);
   });
 });
 

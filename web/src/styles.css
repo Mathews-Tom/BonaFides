@@ -34,3 +34,7 @@ button{overflow-wrap:anywhere}
 .job-sources ul,.job-sources ol{padding-left:1.25rem}
 .job-sources li{margin:1rem 0}
 .job-sources li>button{max-width:100%;text-align:left}
+.catalog-filters{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,16rem),1fr));gap:0 1rem}
+.job-sources .actions{flex-wrap:wrap}
+.job-sources h4,.job-sources h5,.job-sources code{overflow-wrap:anywhere}
+.job-sources .comparison{min-width:0}

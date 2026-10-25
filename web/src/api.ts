@@ -33,7 +33,7 @@ export interface Source {
   id: string; version: number; source_kind: 'manual' | 'greenhouse'; board_token: string | null; company: string; enabled: boolean;
   terms_url: string | null; terms_revision: string | null; terms_reviewed_at: string | null; policy_version: number; allowed_host: string | null;
   request_limit_per_minute: number; last_success_at: string | null; last_error_code: string | null; next_allowed_at: string | null;
-  rate_limit_blocked: boolean; retry_after_seconds: string | null;
+  rate_limit_blocked: boolean; retry_after_seconds: string | null; removed_at: string | null;
   health: 'disabled' | 'healthy' | 'rate_limited' | 'degraded' | 'unknown'; quota: { known: false; limit: null }; created_at: string;
 }
 export interface SourceWrite {
@@ -41,15 +41,23 @@ export interface SourceWrite {
   terms_review_acknowledged: boolean; enabled: boolean; request_limit_per_minute: number;
 }
 export interface SourcePage { items: Source[] }
+export type PostingDisposition = 'saved' | 'dismissed' | 'archived' | 'unmarked';
+export interface PostingFilters {
+  q: string; location: string; source_id: string; status: string; disposition: string; observed_after: string;
+}
 export interface PostingSummary {
   id: string; version: number; title: string; company: string; location_text: string; status: 'open' | 'closed' | 'unknown'; created_at: string; updated_at: string;
+  disposition: Exclude<PostingDisposition, 'unmarked'> | null; source_config_id: string | null; source_kind: 'manual' | 'greenhouse' | null;
+  external_id: string | null; last_observed_at: string | null;
 }
 export interface PostingWrite { title: string; company: string; location_text: string; description_text: string; canonical_url?: string | null }
 export interface PostingDetail extends PostingSummary {
-  description_text: string; canonical_url: string | null; content_sha256: string; source_config_id: string;
-  source_kind: 'manual' | 'greenhouse'; external_id: string; last_observed_at: string;
+  description_text: string; canonical_url: string | null; content_sha256: string;
 }
-export interface PostingPage { items: PostingSummary[]; next_cursor: string | null }
+export interface PostingPage { items: PostingSummary[]; next_cursor: string | null; query_elapsed_ms: number; as_of: string }
+export type DuplicateDecision = 'suspected' | 'distinct';
+export interface DuplicateCandidate extends PostingSummary { decision: DuplicateDecision }
+export interface DuplicatePage { items: DuplicateCandidate[]; next_cursor: string | null }
 export interface ObservationSummary {
   id: string; source_config_id: string; source_kind: 'manual' | 'greenhouse'; board_token: string | null;
   external_id: string; content_sha256: string; fetched_at: string; created_at: string; policy_version: number;
