@@ -602,6 +602,33 @@
         "restricted_implementation_access": "Not consulted for this contribution; no private origin paths or reference identities recorded",
         "limitations": "Actual exercised outcomes and exact image identities are recorded separately. No real board/account/model/provider/paid call, search/ranking/save-dismiss, complete M1, native amd64 pass or public-distribution approval is claimed. Earlier M0/OL-005/OL-006 image and inventory evidence remains historical."
       }
+    },
+    {
+      "id": "ol008-durable-catalog",
+      "requirement_ids": ["OL-008"],
+      "paths": ["src/offerloom/catalog.py", "src/offerloom/sources.py", "src/offerloom/db.py", "src/offerloom/api.py", "src/offerloom/workflows.py", "migrations/sql/008_catalog.up.sql", "migrations/versions/0005_catalog.py", "tests/test_catalog.py", "tests/test_sources.py", "tests/test_identity.py", "web/src/JobSources.tsx", "web/src/JobSources.test.tsx", "web/src/App.tsx", "web/src/api.ts", "web/src/styles.css", "tools/catalog_probe.py", "tools/m0_probe.py", "README.md", "docs/development/README.md", "docs/compliance/M0-evidence.md"],
+      "author": null,
+      "author_role": "OpenAI coding-assistant implementation under the owner's authorized local contribution identity; not a claim of human-authored code",
+      "reviewer": null,
+      "review_date": null,
+      "signoff": null,
+      "created_date": "2026-10-25",
+      "status": "pending",
+      "approach": "Independently extend existing owner/CAS/idempotency boundaries with parameterized PostgreSQL full-text/filter queries, purpose-separated authenticated keysets, independent opportunity disposition and conservative symmetric duplicate decisions. Preserve source identity and append-only history through one-way retirement and existing worker fencing. Verify real APIs, browser transitions, query/load measurements and nonempty recovery without inventing connector or model permission.",
+      "alternatives": ["Destructive cross-source merge, title-only identity or fuzzy matching presented as exact dedupe (rejected)", "Unsigned or cross-filter cursors, silent reverse-direction overwrite and automatic conflict retries (rejected)", "Delete referenced saved opportunities or source history, reactivate retired sources or suppress worker fences (rejected)", "Treat a successful mutation followed by a timed-out read as a current or empty catalog (rejected)"],
+      "research": [],
+      "incorporated_material": [],
+      "incorporated_material_scope": "No third-party implementation, real employer posting content, assets or new application dependencies incorporated. Fictional fixtures and local measurement data are independently authored. An isolated pinned axe-core audit installation is verification tooling, not shipped application material. Existing locked dependencies/base images/native packages/fonts/dictionaries retain their own terms and require independent exact-artifact review.",
+      "ai_assistance": {"used": true, "tool": "OpenAI coding assistant", "scope": "Independent catalog/source-retirement implementation, frontend integration, local AI-assisted code review and fixes, deterministic regressions, actual synthetic runtime verification and operational/provenance documentation"},
+      "human_review": "Owner explicitly authorized the configured Mathews-Tom contribution identity, DCO 1.1 and CONTRIBUTING.md MIT OR Apache-2.0 grant for qualifying original work on 2026-10-25. Independent human provenance/security/rights review and actual product walkthrough remain pending; no human review or authorship is inferred from AI-assisted review.",
+      "commit": null,
+      "artifact_sha256": null,
+      "rights_disposition": "Original current work is contributed under the owner's explicit MIT OR Apache-2.0 grant and authorized Signed-off-by workflow, subject to truthful origin and authority. Existing and new third-party rights require separate review; public distribution remains blocked. Native amd64 qualification remains independently deferred.",
+      "independent_design": {
+        "basis": "Owner-authorized complete M1 execution prompt, neutral OL-008 domain/UX/security requirements and existing deployed project conventions",
+        "restricted_implementation_access": "Not consulted for this contribution; no restricted source, copied prompts or private reverse-engineering material used",
+        "limitations": "Exact observed checks and artifacts are separately recorded. No real board, actual model route, paid call, semantic suitability, automatic merge/rejection/submission, human walkthrough, complete M1, amd64 pass or public-distribution approval is claimed."
+      }
     }
   ],
   "blockers": [
