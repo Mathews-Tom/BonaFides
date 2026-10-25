@@ -3,7 +3,7 @@
   "license": "MIT OR Apache-2.0",
   "recorded_date": "2026-10-25",
   "distribution_status": "blocked",
-  "scope": "M0 OL-001 through OL-004, OL-005 evidence-linked profiles/history/themes, OL-006 bounded reviewed local PDF/text imports, OL-007 manual postings and reviewed configured-board collection, OL-008 durable catalog, OL-009 reviewed requirements/evidence-linked suitability with an opt-in bounded local-provider adapter, and OL-010 schema-10 manual tracking. The private macOS/arm64 technical checkpoint does not qualify a real board or model. Native amd64 qualification remains separately deferred as DFR-001, not passed. Independent human contribution/rights review remains a public-distribution gate. M1 and public distribution are not complete.",
+  "scope": "M0 OL-001 through OL-004, OL-005 evidence-linked profiles/history/themes, OL-006 bounded reviewed local PDF/text imports, OL-007 manual postings and reviewed configured-board collection, OL-008 durable catalog, OL-009 reviewed requirements/evidence-linked suitability with an opt-in bounded local-provider adapter, OL-010 schema-10 manual tracking, and OL-011 schema-11 deterministic profile-only base résumés and reviewable document pairs. The private macOS/arm64 technical checkpoint does not qualify a real board, model or human factual review. OL-011 tailoring is implemented/live-unqualified; synthetic protocol results do not qualify real weights or an Ollama runtime. Native amd64 qualification remains separately deferred as DFR-001, not passed. Independent human contribution/rights review remains a public-distribution gate. M1 and public distribution are not complete.",
   "research_evidence_boundary": "The original OL-001 research records retain their inherited design-stage access basis. Later entries identify official documentation retrieval observed by the integration owner on 2026-10-24 and vendor lifecycle/security/format and Greenhouse Job Board API research on 2026-10-25. Documentation reference is not incorporation, board collection permission or exact package-artifact/license evidence. URLs elsewhere in components.json without evidence dates remain research candidates only.",
   "authorized_input_basis": "Approved neutral project requirements and independently authored design contracts, including the owner's complete M1 local-execution prompt; canonical public licensing ADR and compliance policies remain authoritative. Promoted SQL and synthetic fixtures are authorized project-design material, not an external implementation.",
   "contributor_attestations": {
@@ -682,6 +682,33 @@
         "basis": "Owner-authorized complete M1 execution prompt, neutral OL-010 domain/UX/security contracts and existing deployed project conventions",
         "restricted_implementation_access": "Not consulted for this contribution; no restricted implementation, copied prompts or private reverse-engineering material used",
         "limitations": "Exact observed runtime/gates are recorded separately; admission policy does not certify malware safety, manual tracking does not prove delivery, and no real model/board, human acceptance, complete M1 or release readiness is claimed."
+      }
+    },
+    {
+      "id": "ol011-reviewable-documents",
+      "requirement_ids": ["OL-011"],
+      "paths": ["src/offerloom/document_generation.py", "src/offerloom/document_frame.py", "src/offerloom/documents.py", "src/offerloom/profiles.py", "src/offerloom/local_model.py", "src/offerloom/suitability.py", "src/offerloom/render_service.py", "src/offerloom/worker.py", "src/offerloom/workflows.py", "src/offerloom/api.py", "src/offerloom/db.py", "src/offerloom/templates/evidence-v1.html", "src/offerloom/templates/compact-v1.html", "migrations/sql/011_documents.up.sql", "migrations/versions/0008_documents.py", "tests/test_document_generation.py", "tests/test_documents.py", "tests/test_identity.py", "tests/test_local_model.py", "web/src/Documents.tsx", "web/src/Documents.test.tsx", "web/src/document-state.ts", "web/src/App.tsx", "web/src/App.test.tsx", "web/src/api.ts", "web/src/api.test.ts", "web/src/styles.css", "README.md", "docs/development/README.md", "docs/compliance/M0-evidence.md", "compliance/provenance.json"],
+      "author": null,
+      "author_role": "OpenAI coding-assistant implementation under the owner's authorized local contribution identity; not a claim of human-authored code",
+      "reviewer": null,
+      "review_date": null,
+      "signoff": null,
+      "created_date": "2026-10-25",
+      "status": "pending",
+      "approach": "Independently implement deterministic exact-fact profile-only composition before provider lookup, immutable minimized tailoring context and separate printed identity/contact frames, two versioned built-in typed templates, strict bounded local-provider pair proposals, atomic publication and evidence-gated manual edit/history/append restoration/review/PDF. Reuse existing durable inference reservations, cumulative attempt caps, cancellation/CAS fences and isolated renderer rather than introducing a second transport or approval bypass.",
+      "alternatives": ["Require a posting, application or model for a general résumé, or silently fall back from inference to an invented pair (rejected)", "Put dedicated identity/contact or private tracking context in ordinary model prompts (rejected)", "Publish one successful half, overwrite manual revisions or rewrite immutable historical contact/PDF content (rejected)", "Allow unrelated citations, headings, intent labels or human review annotations to authorize unsupported claims (rejected)", "Treat synthetic HTTP responses, manifest pre/post checks or automated review as real-model semantics, per-inference immutable identity, human acceptance or legal clearance (rejected)"],
+      "research": [],
+      "incorporated_material": [],
+      "incorporated_material_scope": "No third-party implementation, real employer/contact content, external prompt/template code, model weights or new application dependencies incorporated. Independently authored built-in template markup and synthetic profile/posting/HTTP fixtures use existing frozen renderer/font artifacts. Existing package/base-image/native/font/dictionary components retain separate upstream terms and exact-artifact rights-review obligations.",
+      "ai_assistance": {"used": true, "tool": "OpenAI coding assistant", "scope": "Independent document/frame/schema/API/worker/provider/UI implementation, synthetic behavioral regressions, actual local protocol/browser/PDF verification and operational/provenance documentation"},
+      "human_review": "Owner authorized configured Mathews-Tom identity, DCO 1.1 and CONTRIBUTING.md MIT OR Apache-2.0 grant for qualifying original work on 2026-10-25. Genuine human factual/model-output review, assistive-technology walkthrough and independent provenance/security/rights review remain pending; no human authorship, acceptance or approval inferred from AI-assisted work.",
+      "commit": null,
+      "artifact_sha256": null,
+      "rights_disposition": "Original current work follows the owner's explicit MIT OR Apache-2.0 contribution grant and authorized Signed-off-by workflow, subject to truthful origin/authority. This does not approve existing dependencies, templates' bundled native/font chain, model licensing or public distribution. Native amd64 qualification remains independently deferred.",
+      "independent_design": {
+        "basis": "Owner-authorized complete M1 execution prompt, neutral OL-011 document/evidence/privacy/workflow/UX contracts and existing deployed project conventions",
+        "restricted_implementation_access": "Not consulted for this contribution; no restricted implementation, copied prompts or private reverse-engineering material used",
+        "limitations": "Deterministic evidence matching is deliberately conservative, not semantic model qualification. Synthetic local HTTP conformance does not exercise real weights/runtime or provide human factual acceptance. Deep PDF stress and targeted regeneration remain separately scoped to OL-012. No real model/board, sending, full M1 completion or release readiness is claimed."
       }
     }
   ],
