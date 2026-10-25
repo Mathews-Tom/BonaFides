@@ -46,7 +46,14 @@ function server(initial: ImportBatch = staged()) {
     }
     if (path === '/workflows/workflow-one/cancel' && method === 'POST') {
       state.cancelVersions.push(version); state.pendingMerge = false; state.batch = { ...state.batch, state: 'cancelled', version: state.batch.version + 1 };
-      return { id: 'workflow-one', state: 'cancelled', version: state.batch.version, attempt: 1, result: null, last_error_code: null } as T;
+      return {
+        id: 'workflow-one', kind: 'profile_import', state: 'cancelled', version: state.batch.version, attempt: 1, max_attempts: 3, result: null, last_error_code: null,
+        created_at: '2026-10-25T12:00:00Z', updated_at: '2026-10-25T12:00:00Z', deadline_at: '2030-01-01T00:00:00Z', next_attempt_at: null,
+        cancel_requested_at: '2026-10-25T12:00:00Z', lease_expires_at: null, last_heartbeat_at: null, queue_age_seconds: null,
+        remaining_attempts: 2, cancelable: false, retryable: false, retry_block_reason: 'state_not_retryable', delivery_state: 'not_attempted',
+        cancellation: { requested: true, local_fence_settled: true, provider_stopped: null, completed_effects_preserved: true, reason: 'local_publication_revoked_provider_may_continue' },
+        usage: { status: 'not_applicable', model_runs: 0, inference_post_attempts: 0, inference_post_limit: null, input_tokens: null, output_tokens: null, token_budget: 0, tokens_used: 0, cost_budget_microunits: 0, cost_used_microunits: null, currency: 'USD' },
+      } as T;
     }
     throw new ApiError(404, 'not_found');
   });

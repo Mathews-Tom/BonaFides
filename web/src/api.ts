@@ -19,9 +19,37 @@ export interface Profile { id: string; version: number; current_revision: Profil
 export interface RevisionPage { items: ProfileRevisionSummary[]; next_cursor: number | null }
 export interface FieldError { loc: (string | number)[]; code: string; message: string }
 export type WorkflowState = 'pending' | 'running' | 'waiting_for_approval' | 'retryable_failure' | 'permanent_failure' | 'cancelled' | 'succeeded';
+export interface WorkflowPage { items: Workflow[]; next_cursor: string | null }
+export interface TaskPage<T> { items: T[]; next_cursor: string | null }
+export interface WorkflowStep {
+  id: string; step_key: string; attempt: number; fence: number; state: string;
+  delivery_state: 'not_attempted' | 'known_failed' | 'confirmed' | 'unknown';
+  error_code: string | null; created_at: string; completed_at: string | null;
+}
+export interface AttemptEvent { id: string; attempt: number; fence: number; event: string; error_code: string | null; created_at: string }
+export interface ActionApproval {
+  id: string; workflow_run_id: string; action_kind: 'hosted_egress' | 'replace_workspace' | 'privacy_delete';
+  intent: Record<string, unknown>; payload_sha256: string; destination_sha256: string; revision_id: string | null;
+  target_version: number; expires_at: string; approved_at: string | null; consumed_at: string | null; version: number;
+  applicable: boolean; reason: string; capability_available: boolean;
+}
+export interface ActionApprovalRequest {
+  payload_sha256: string; destination_sha256: string; revision_id: string | null; target_version: number; confirmed: true;
+}
 export interface Workflow {
   id: string; version: number; state: WorkflowState; attempt: number; kind?: string; mode?: 'deterministic_base' | 'tailored_ai' | 'section_regeneration';
-  max_attempts?: number; next_attempt_at?: string | null; last_error_code: string | null;
+  max_attempts: number; next_attempt_at: string | null; last_error_code: string | null;
+  created_at: string; updated_at: string; deadline_at: string; cancel_requested_at: string | null;
+  lease_expires_at: string | null; last_heartbeat_at: string | null; queue_age_seconds: number | null;
+  remaining_attempts: number; cancelable: boolean; retryable: boolean; retry_block_reason: string | null;
+  cancellation: { requested: boolean; local_fence_settled: boolean; provider_stopped: null; completed_effects_preserved: true; reason: 'local_publication_revoked_provider_may_continue' | null };
+  delivery_state: WorkflowStep['delivery_state'];
+  usage: {
+    status: 'not_applicable' | 'known' | 'unknown'; model_runs: number; inference_post_attempts: number; inference_post_limit: number | null;
+    input_tokens: number | null; output_tokens: number | null; token_budget: number; tokens_used: number;
+    cost_budget_microunits: number; cost_used_microunits: number | null; currency: string;
+  };
+  steps?: TaskPage<WorkflowStep>; attempt_events?: TaskPage<AttemptEvent>; approval?: ActionApproval | null;
   result: {
     document_id?: string; revision_id?: string; artifact_id?: string; application_id?: string; model_run_id?: string;
     proposal_id?: string; target_revision_id?: string; section_key?: string;

@@ -27,7 +27,14 @@ function server() {
   const api = new Api();
   const state = { view: initialView(), profile: initialProfile(), failure: null as Error | null, readFailure: null as Error | null, reconcileFailure: false, submissions: [] as Submission[],
     workflowReads: 0, workflowSignal: null as AbortSignal | null, workflowHangs: false, reviewReads: 0, reviewReadWait: null as Promise<void> | null, postingContentSha256: 'c'.repeat(64),
-    workflow: { id: 'task-one', version: 1, state: 'succeeded', attempt: 1, kind: 'posting_extract', max_attempts: 2, last_error_code: null, result: { posting_id: 'posting-one', source_sha256: 'a'.repeat(64), requirements: [requirement] } } as Workflow };
+    workflow: {
+      id: 'task-one', version: 1, state: 'succeeded', attempt: 1, kind: 'posting_extract', max_attempts: 2, last_error_code: null, result: { posting_id: 'posting-one', source_sha256: 'a'.repeat(64), requirements: [requirement] },
+      created_at: '2026-10-25T12:00:00Z', updated_at: '2026-10-25T12:00:00Z', deadline_at: '2030-01-01T00:00:00Z', next_attempt_at: null,
+      cancel_requested_at: null, lease_expires_at: null, last_heartbeat_at: null, queue_age_seconds: null, remaining_attempts: 1,
+      cancelable: false, retryable: false, retry_block_reason: 'state_not_retryable', delivery_state: 'not_attempted',
+      cancellation: { requested: false, local_fence_settled: false, provider_stopped: null, completed_effects_preserved: true, reason: null },
+      usage: { status: 'known', model_runs: 1, inference_post_attempts: 1, inference_post_limit: 2, input_tokens: 40, output_tokens: 20, token_budget: 1000, tokens_used: 60, cost_budget_microunits: 1000, cost_used_microunits: 0, currency: 'USD' },
+    } as Workflow };
   vi.spyOn(api, 'request').mockImplementation(async <T,>(path: string, method = 'GET', body?: unknown, version?: number, key: boolean | string = false, signal?: AbortSignal): Promise<T> => {
     if (method !== 'GET') {
       state.submissions.push({ path, body, version, key });

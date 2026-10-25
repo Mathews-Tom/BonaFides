@@ -7,6 +7,7 @@ import { JobSources } from './JobSources';
 import { ThemePreference } from './ThemePreference';
 import { Tracking } from './Tracking';
 import { Documents } from './Documents';
+import { Tasks } from './Tasks';
 const emptyContact: ProfileContact = { email: '', phone: '', location: '', postal_address: '' };
 
 export function App({ api = defaultApi }: { api?: Api }) {
@@ -20,7 +21,7 @@ export function App({ api = defaultApi }: { api?: Api }) {
   const [comparison, setComparison] = useState<Profile | null>(null);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
-  const [busy, setBusy] = useState(false);
+  const [acting, setBusy] = useState(false);
   const [entriesDirty, setEntriesDirty] = useState(false);
   const [entriesBusy, setEntriesBusy] = useState(false);
   const [importDirty, setImportDirty] = useState(false);
@@ -33,7 +34,8 @@ export function App({ api = defaultApi }: { api?: Api }) {
   const [documentsBusy, setDocumentsBusy] = useState(false);
   const [benchmark, setBenchmark] = useState(true);
   const [workflow, setWorkflow] = useState<Workflow | null>(null);
-  const [savedTasks, setSavedTasks] = useState<Workflow[] | null>(null);
+  const [tasksBusy, setTasksBusy] = useState(false);
+  const busy = acting || tasksBusy;
   const [documentRequest, setDocumentRequest] = useState<{ id: string; key: string } | null>(null);
   const [scenario, setScenario] = useState('normal');
   const errorRef = useRef<HTMLDivElement>(null);
@@ -104,38 +106,29 @@ export function App({ api = defaultApi }: { api?: Api }) {
       acceptProfile(value); setNotice(`Saved as revision ${value.current_revision.revision_no}.`);
     });
   }
-  const workflowId = workflow?.id;
-  const workflowState = workflow?.state;
-  useEffect(() => {
-    if (!session || !workflowId || !workflowState || terminal(workflowState)) return;
-    let stopped = false; let timer: number | undefined; let delay = 1000;
-    const poll = async () => {
-      if (stopped) return;
-      if (document.hidden) { timer = window.setTimeout(() => { void poll(); }, 1000); return; }
-      try {
-        const value = await api.request<Workflow>(`/workflows/${workflowId}`);
-        if (stopped) return;
-        setWorkflow(value);
-        if (terminal(value.state)) {
-          if (value.state === 'succeeded') {
-            const id = value.result?.document_id ?? value.result?.documents?.find(item => item.kind === 'resume')?.document_id;
-            if (id) setDocumentRequest({ id, key: value.id });
-          }
-          return;
-        }
-      } catch (failure) { if (!stopped) setError(errorText(failure)); }
-      delay = Math.min(delay + 1000, 5000); if (!stopped) timer = window.setTimeout(() => { void poll(); }, delay);
-    };
-    timer = window.setTimeout(() => { void poll(); }, delay);
-    return () => { stopped = true; clearTimeout(timer); };
-  }, [api, session, workflowId, workflowState]);
+  const taskResultBlocked = profileLocked || jobsDirty || jobsBusy || trackingDirty || trackingBusy;
+  const resultGuard = useRef(taskResultBlocked); resultGuard.current = taskResultBlocked;
+  const syntheticTask = useRef(workflow); syntheticTask.current = workflow;
+  const openedSynthetic = useRef<string | null>(null);
+  const openTaskDocument = useCallback((id: string, key: string) => {
+    if (resultGuard.current) { setNotice('The saved task result is available. Save or discard current workspace edits and finish active work before opening it; no editor was replaced.'); return; }
+    setDocumentRequest({ id, key });
+  }, []);
+  const observeTask = useCallback((value: Workflow) => {
+    if (syntheticTask.current?.id !== value.id) return;
+    setWorkflow(previous => previous?.id === value.id && previous.version <= value.version ? value : previous);
+    if (value.state !== 'succeeded' || openedSynthetic.current === value.id) return;
+    openedSynthetic.current = value.id;
+    const id = value.result?.document_id ?? value.result?.documents?.find(item => item.kind === 'resume')?.document_id;
+    if (id) openTaskDocument(id, value.id);
+  }, [openTaskDocument]);
   async function benchmarkAction(action: () => Promise<void>) {
     await act(async () => { try { await action(); } catch (failure) { if (failure instanceof ApiError && failure.status === 404) { setBenchmark(false); setNotice('Benchmark controls are unavailable on this installation. No synthetic task was started.'); } else throw failure; } });
   }
   return <>
     <a className="skip" href="#main">Skip to workspace</a>
     <header><div className="brand"><svg aria-hidden="true" viewBox="0 0 32 36"><path d="M6 2v32M16 2v32M26 2v32M2 10h28M2 26h28M6 10l20 16M26 10 6 26" /></svg><span>Offerloom</span></div><span className="edition">Private career workspace</span><ThemePreference />{session && <button className="secondary" disabled={profileLocked || jobsDirty || jobsBusy || trackingDirty || trackingBusy || !!(workflow && !terminal(workflow.state))} onClick={() => { void act(async () => { await api.request('/session', 'DELETE'); setSession(null); setProfile(null); setName(''); setHeadline(''); setContact(emptyContact); setDocumentRequest(null); setWorkflow(null); latestProfileVersion.current = 0; identityEpoch.current++; const value = await api.request<Challenge>('/auth/challenge'); api.csrf = value.csrf_token; setChallenge(value); }); }}>Sign out</button>}</header>
-    <main id="main"><aside className="disclosure"><strong>Private development workspace · OL-011.</strong> Evidence-linked profiles, reviewed local résumé import, catalog decisions, owner-reviewed requirements/evidence coverage and manual activity tracking remain available. A base résumé needs no model or application; tailored generation requires reviewed requirements and an explicitly authorized, qualified local route. None is enabled by default. Source/structural checks do not prove semantic meaning or independently verify credentials. Real-model and human factual qualification remain outstanding. Greenhouse reads require board-specific terms review and authorization. Tracking Applied is not proof of delivery. No hosted fallback, automatic rejection, submission or sending authority.</aside>
+    <main id="main"><aside className="disclosure"><strong>Private prototype workspace.</strong> Evidence-linked profiles, reviewed local résumé import, catalog decisions, owner-reviewed requirements/evidence coverage and manual activity tracking remain available. A base résumé needs no model or application; tailored generation requires reviewed requirements and an explicitly authorized, qualified local route. None is enabled by default. Source/structural checks do not prove semantic meaning or independently verify credentials. Real-model and human factual qualification remain outstanding. Greenhouse reads require board-specific terms review and authorization. Tracking Applied is not proof of delivery. No hosted fallback, automatic rejection, submission or sending authority.</aside>
       <div ref={errorRef} className="error" role="alert" tabIndex={-1} hidden={!error}>{error}</div><p role="status" className="status">{notice}</p>
       {!ready ? <p role="status">Connecting to your installation…</p> : !session ? <section className="access"><div><h1>A dossier built on evidence.</h1><p>Keep the statement, its source and your review together. This proof starts with a secure owner session.</p></div><form onSubmit={event => { void authenticate(event); }}><h2>{challenge?.bootstrap_available ? 'Set up the installation owner' : 'Sign in'}</h2>{challenge?.bootstrap_available && <label>One-use bootstrap token<input name="bootstrap_token" type="password" autoComplete="off" required /></label>}<label>Login name<input name="login_name" autoComplete="username" required maxLength={128} /></label><label>Password<input name="password" type="password" autoComplete={challenge?.bootstrap_available ? 'new-password' : 'current-password'} minLength={15} maxLength={128} required /></label><p className="hint">15–128 characters. Credentials stay in this form until sent to your installation; no browser token storage.</p><button disabled={busy || !challenge}>{busy ? 'Connecting…' : challenge?.bootstrap_available ? 'Create owner account' : 'Sign in'}</button></form></section> : <>
       <div className="workspace-heading"><div><h1>Facts you can stand behind</h1><p>Signed in as {session.login_name}. Work from a saved, immutable profile revision.</p></div>{profile && <span className="revision">Profile revision {profile.current_revision.revision_no}</span>}</div>
@@ -161,11 +154,11 @@ export function App({ api = defaultApi }: { api?: Api }) {
       {profile && <ResumeImport api={api} profile={profile} disabled={busy || identityDirty || entriesBusy || entriesDirty || documentsDirty || documentsBusy} onProfile={acceptProfile} onDirtyChange={setImportDirty} onBusyChange={setImportBusy} />}
       <JobSources api={api} currentProfile={profile} onProfileChange={observeProfile} disabled={busy || documentsDirty || documentsBusy} onDirtyChange={setJobsDirty} onBusyChange={setJobsBusy} />
       <section className="panel"><h2>Evidence proof</h2><p>Explicitly load SYN-CORE: fictional Mira Vale, Linux and SQL evidence. This replaces the saved proof profile; it is not imported personal history. Benchmark tasks are synthetic mechanisms, separate from production composition.</p>{benchmark ? <><button className="secondary" disabled={profileLocked || !profile || !!(workflow && !terminal(workflow.state))} onClick={() => { if (profile) void benchmarkAction(async () => { acceptProfile(await api.request<Profile>('/benchmarks/profile', 'POST', { fixture: 'SYN-CORE' }, profile.version, true)); setNotice('SYN-CORE saved by the server.'); }); }}>Load SYN-CORE benchmark evidence</button><label>Proof scenario<select value={scenario} disabled={profileLocked} onChange={event => setScenario(event.target.value)}><option value="normal">Normal task</option><option value="slow">Slow task (cancellation proof)</option><option value="poison">Poison task (bounded failure proof)</option><option value="stage_pause">Stage pause (restart proof)</option></select></label><button disabled={profileLocked || !profile || profile.current_revision.snapshot.claim_revision_ids.length === 0 || !!(workflow && !terminal(workflow.state))} onClick={() => { if (profile) void benchmarkAction(async () => { const value = await api.request<Workflow>('/benchmarks/tasks', 'POST', { profile_revision_id: profile.current_revision.id, scenario, delay_seconds: scenario === 'normal' ? 0 : 15 }, profile.version, true); setWorkflow(value); }); }}>Start synthetic proof task</button></> : <p className="hint">Benchmark endpoints are disabled here. No synthetic task was started.</p>}
-      <div className="saved-tasks"><button className="secondary" disabled={busy || documentsDirty || documentsBusy} onClick={() => { void act(async () => { setSavedTasks((await api.request<{ items: Workflow[] }>('/workflows')).items); }); }}>Load saved tasks</button>{savedTasks && (savedTasks.length ? <ul>{savedTasks.map(task => <li key={task.id}><button className="secondary" disabled={busy || documentsDirty || documentsBusy} onClick={() => { void act(async () => { const value = await api.request<Workflow>(`/workflows/${task.id}`); setWorkflow(value); if (value.state === 'succeeded') { const id = value.result?.document_id ?? value.result?.documents?.find(item => item.kind === 'resume')?.document_id; if (id) setDocumentRequest({ id, key: `${value.id}-${crypto.randomUUID()}` }); } }); }}>{task.state.replaceAll('_', ' ')} · {task.id}</button></li>)}</ul> : <p>No saved tasks were returned.</p>)}</div>
-      {workflow && <div className="task" aria-live="polite"><h3>Task state: {workflow.state.replaceAll('_', ' ')}</h3><p>Attempt {workflow.attempt}. No estimated progress percentage.</p><small>Task {workflow.id}</small>{workflow.last_error_code && <p>Failure code: {workflow.last_error_code}</p>}{!terminal(workflow.state) && <button className="secondary" disabled={busy} onClick={() => { void act(async () => { setWorkflow(await api.request<Workflow>(`/workflows/${workflow.id}/cancel`, 'POST', {}, workflow.version, true)); setNotice('Cancellation requested. The task may still be stopping.'); }); }}>Cancel task</button>}</div>}</section>
+      </section>
+      <Tasks api={api} session={session} requestedTask={workflow} disabled={taskResultBlocked} resultDisabled={taskResultBlocked} onSession={setSession} onWorkflowChange={observeTask} onOpenDocument={openTaskDocument} onBusyChange={setTasksBusy} />
       <details className="panel"><summary>Change password</summary><form onSubmit={event => { event.preventDefault(); const form = event.currentTarget; const values = new FormData(form); void act(async () => { const value = await api.request<Session>('/session/password', 'POST', { current_password: String(values.get('current_password')), new_password: String(values.get('new_password')) }); api.csrf = value.csrf_token; setSession(value); form.reset(); setNotice('Password changed. This session has been rotated.'); }); }}><label>Current password<input type="password" name="current_password" autoComplete="current-password" required maxLength={128} /></label><label>New password<input type="password" name="new_password" autoComplete="new-password" minLength={15} maxLength={128} required /></label><button disabled={busy}>Change password</button></form></details></div>
       <Documents api={api} profile={profile} disabled={busy || identityDirty || entriesDirty || entriesBusy || importDirty || importBusy || jobsDirty || jobsBusy || trackingDirty || trackingBusy || !!(workflow && !terminal(workflow.state))} externalDocumentId={documentRequest?.id ?? null} externalRequestKey={documentRequest?.key ?? null} onDirtyChange={setDocumentsDirty} onBusyChange={setDocumentsBusy} /></div></>}
-    </main><footer>Offerloom · OL-011 private development · Manual tracking and PDF export, not delivery · No sending authority</footer>
+    </main><footer>Offerloom · Private prototype · Manual tracking and PDF export, not delivery · No sending authority</footer>
   </>;
 }
 const defaultApi = new Api();

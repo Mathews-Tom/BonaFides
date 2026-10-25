@@ -26,7 +26,12 @@ function reviewedSource(): Source {
 }
 function runningWorkflow(): Workflow {
   return { id: 'source-task-one', kind: 'source_refresh', version: 7, state: 'running', attempt: 1, max_attempts: 3,
-    next_attempt_at: null, last_error_code: null, result: null };
+    next_attempt_at: null, last_error_code: null, result: null,
+    created_at: '2026-10-25T12:00:00Z', updated_at: '2026-10-25T12:00:00Z', deadline_at: '2030-01-01T00:00:00Z',
+    cancel_requested_at: null, lease_expires_at: '2026-10-25T12:01:00Z', last_heartbeat_at: '2026-10-25T12:00:00Z', queue_age_seconds: null,
+    remaining_attempts: 2, cancelable: true, retryable: false, retry_block_reason: 'state_not_retryable', delivery_state: 'not_attempted',
+    cancellation: { requested: false, local_fence_settled: false, provider_stopped: null, completed_effects_preserved: true, reason: null },
+    usage: { status: 'not_applicable', model_runs: 0, inference_post_attempts: 0, inference_post_limit: null, input_tokens: null, output_tokens: null, token_budget: 0, tokens_used: 0, cost_budget_microunits: 0, cost_used_microunits: null, currency: 'USD' } };
 }
 interface Submission { path: string; method: string; body: unknown; version: number | undefined; key: boolean | string }
 function server() {

@@ -4,15 +4,26 @@ import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { App } from './App';
 import { Api, ApiError, type DocumentRecord, type Profile, type RequirementsView, type Session, type Snapshot, type Workflow } from './api';
-import { stages } from './tracking-api';
+import { stages, type ApplicationDetail } from './tracking-api';
 const session: Session = { owner_id: 'owner', login_name: 'mira', csrf_token: 'session-csrf', expires_at: '2030-01-01' };
 const profile: Profile = { id: 'profile', version: 1, current_revision: { id: 'revision-1', revision_no: 1, content_sha256: 'a'.repeat(64), created_at: '2026-01-01T00:00:00Z', author_owner_id: 'owner', reason: 'Initial profile', claims: [], snapshot: { display_name: 'Mira', headline: 'Engineer', claim_revision_ids: [] } }, evidence: [], quality_warnings: [] };
+function task(overrides: Partial<Workflow> = {}): Workflow {
+  return {
+    id: 'task-1', version: 1, state: 'pending', attempt: 0, max_attempts: 3, result: null, last_error_code: null,
+    created_at: '2026-10-25T12:00:00Z', updated_at: '2026-10-25T12:00:00Z', deadline_at: '2030-01-01T00:00:00Z', next_attempt_at: null,
+    cancel_requested_at: null, lease_expires_at: null, last_heartbeat_at: null, queue_age_seconds: 0, remaining_attempts: 3,
+    cancelable: true, retryable: false, retry_block_reason: 'state_not_retryable', delivery_state: 'not_attempted',
+    cancellation: { requested: false, local_fence_settled: false, provider_stopped: null, completed_effects_preserved: true, reason: null },
+    usage: { status: 'not_applicable', model_runs: 0, inference_post_attempts: 0, inference_post_limit: null, input_tokens: null, output_tokens: null, token_budget: 0, tokens_used: 0, cost_budget_microunits: 0, cost_used_microunits: null, currency: 'USD' },
+    steps: { items: [], next_cursor: null }, attempt_events: { items: [], next_cursor: null }, approval: null, ...overrides,
+  };
+}
 afterEach(() => { window.history.replaceState(null, '', '/'); });
-function mockRequest(api: Api, handler: (path: string, method: string, body?: unknown) => Promise<unknown>, baseDocument: DocumentRecord | null = null) {
+function mockRequest(api: Api, handler: (path: string, method: string, body?: unknown) => Promise<unknown>, baseDocument: DocumentRecord | null = null, applications: ApplicationDetail[] = []) {
   return vi.spyOn(api, 'request').mockImplementation(async <T,>(path: string, method = 'GET', body?: unknown) => {
     if (method === 'GET' && path === '/document-templates') return { items: [{ version: 'offerloom-evidence-v1', label: 'Evidence', language: 'en', paper: 'A4' }, { version: 'offerloom-compact-v1', label: 'Compact', language: 'en', paper: 'A4' }] } as T;
     if (method === 'GET' && path === '/profile/base-resume') { if (baseDocument) return baseDocument as T; throw new ApiError(404, 'base_resume_not_found'); }
-    if (method === 'GET' && path === '/applications') return { items: [], next_cursor: null, query_elapsed_ms: 1, as_of: '2026-10-25T12:00:00Z' } as T;
+    if (method === 'GET' && path === '/applications') return { items: applications, next_cursor: null, query_elapsed_ms: 1, as_of: '2026-10-25T12:00:00Z' } as T;
     if (method === 'GET' && path.startsWith('/applications/counts?')) {
       const query = new URLSearchParams(path.split('?')[1]);
       const zero = Object.fromEntries(stages.map(stage => [stage, 0]));
@@ -127,15 +138,16 @@ describe('evidence and document lifecycle', () => {
     const user = userEvent.setup(); const api = new Api();
     const evidenceProfile = { ...profile, current_revision: { ...profile.current_revision, snapshot: { ...profile.current_revision.snapshot, claim_revision_ids: ['claim-1'] } } };
     let document: DocumentRecord = { id: 'document-1', version: 4, kind: 'resume', scope: 'base', application_id: null, artifacts: [], current_revision: { id: 'document-revision', revision_no: 1, profile_revision_id: 'revision-1', template_version: 'offerloom-base-v1', origin: 'deterministic', created_at: '2026-10-25T12:00:00Z', validation_issues: [], provenance_snapshot: { mode: 'deterministic_base', model_run: null, facts: [{ claim_revision_id: 'claim-1', evidence_revision_id: 'evidence-1', claim_text: 'Maintained Linux service checks.', evidence_text: 'Synthetic service notes', source: 'SYN-CORE', status: 'supported', claim_sha256: 'a'.repeat(64), evidence_sha256: 'b'.repeat(64) }] }, content_sha256: 'exact-hash', body: { title: 'Mira dossier', sections: [{ key: 'facts', heading: 'Supported facts', blocks: [{ block_key: 'linux', text: 'Maintained Linux service checks.', claim_kind: 'factual', claim_revision_ids: ['claim-1'], evidence_revision_ids: ['evidence-1'] }] }] } }, reviewed: false, unsupported_claims: [], stale: false, stale_reason: null };
+    let proofReads = 0;
     mockRequest(api, async (path, method) => {
       if (path === '/session') return session;
       if (path === '/profile') return evidenceProfile;
-      if (path === '/benchmarks/tasks') return { id: 'task-1', version: 1, state: 'pending', attempt: 0, result: null, last_error_code: null };
-      if (path === '/workflows/task-1') return { id: 'task-1', version: 2, state: 'succeeded', attempt: 1, result: { document_id: 'document-1' }, last_error_code: null };
+      if (path === '/benchmarks/tasks') return task();
+      if (path === '/workflows/task-1') return ++proofReads === 1 ? task() : task({ version: 2, state: 'succeeded', attempt: 1, result: { document_id: 'document-1' } });
       if (path === '/documents/document-1') return document;
       if (path === '/documents/document-1/review' && method === 'POST') { document = { ...document, reviewed: true, version: 5 }; return document; }
-      if (path === '/documents/document-1/renders') return { id: 'render-1', version: 1, state: 'pending', attempt: 0, result: null, last_error_code: null };
-      if (path === '/workflows/render-1') { document = { ...document, artifacts: [{ id: 'pdf-1', revision_id: 'document-revision', format: 'pdf' }] }; return { id: 'render-1', version: 2, state: 'succeeded', attempt: 1, result: { document_id: 'document-1', artifact_id: 'pdf-1' }, last_error_code: null }; }
+      if (path === '/documents/document-1/renders') return task({ id: 'render-1' });
+      if (path === '/workflows/render-1') { document = { ...document, artifacts: [{ id: 'pdf-1', revision_id: 'document-revision', format: 'pdf' }] }; return task({ id: 'render-1', version: 2, state: 'succeeded', attempt: 1, result: { document_id: 'document-1', artifact_id: 'pdf-1' } }); }
       throw new ApiError(404, 'not_found');
     });
     render(<App api={api} />);
@@ -154,7 +166,14 @@ describe('evidence and document lifecycle', () => {
   it('protects dirty document text from sign-out, benchmark replacement and profile changes while allowing theme changes', async () => {
     const user = userEvent.setup(); const api = new Api();
     const document: DocumentRecord = { id: 'base', version: 1, scope: 'base', kind: 'resume', application_id: null, reviewed: false, unsupported_claims: [], stale: false, stale_reason: null, artifacts: [], current_revision: { id: 'saved-document-revision', revision_no: 1, profile_revision_id: profile.current_revision.id, template_version: 'offerloom-evidence-v1', origin: 'deterministic', created_at: '2026-10-25T12:00:00Z', content_sha256: 'a'.repeat(64), provenance_snapshot: { mode: 'deterministic_base', facts: [] }, validation_issues: [], body: { title: 'Base résumé', sections: [{ key: 'facts', heading: 'Experience', blocks: [{ block_key: 'b-1', text: 'Fictional accepted source text.', claim_kind: 'factual', claim_revision_ids: ['claim-1'], evidence_revision_ids: [] }] }] } } };
-    mockRequest(api, async path => { if (path === '/session') return session; if (path === '/profile') return profile; throw new ApiError(404, 'not_found'); }, document);
+    const savedTask = task({ state: 'succeeded', result: { document_id: 'different-result' } });
+    const request = mockRequest(api, async path => {
+      if (path === '/session') return session;
+      if (path === '/profile') return profile;
+      if (path === '/workflows?limit=30') return { items: [savedTask], next_cursor: null };
+      if (path === '/workflows/task-1') return savedTask;
+      throw new ApiError(404, 'not_found');
+    }, document);
     render(<App api={api} />); const input = await screen.findByLabelText('Block text: b-1');
     await waitFor(() => expect(input).toBeEnabled());
     fireEvent.change(input, { target: { value: 'Private unsaved document text.' } });
@@ -164,6 +183,12 @@ describe('evidence and document lifecycle', () => {
     expect(screen.getByRole('button', { name: 'Tracked application documents' })).toBeDisabled();
     await user.selectOptions(screen.getByLabelText('Theme'), 'dark');
     expect(input).toHaveValue('Private unsaved document text.');
+    await user.click(screen.getByRole('button', { name: 'Load tasks' }));
+    await user.click(await screen.findByRole('button', { name: /Succeeded · Task · task-1/ }));
+    await screen.findByRole('status', { name: 'Task state' });
+    expect(screen.getByRole('button', { name: 'Open document result' })).toBeDisabled();
+    expect(input).toHaveValue('Private unsaved document text.');
+    expect(request.mock.calls.some(call => call[0] === '/documents/different-result')).toBe(false);
     await user.click(screen.getByRole('button', { name: 'Discard document changes' }));
     await waitFor(() => expect(screen.getByRole('button', { name: 'Sign out' })).toBeEnabled());
     expect(input).toHaveValue('Fictional accepted source text.');
@@ -180,7 +205,7 @@ function connectedSuitabilityApi() {
       current_revision: { id: 'requirements-one', revision_no: 1, source_sha256: 'a'.repeat(64), requirements: [{ requirement_key: 'req-1', text: 'SQL', importance: 'required', span: { start: 0, end: 3, quote: 'SQL' }, hard_constraint: null }], confirmed: true, created_at: profile.current_revision.created_at, provenance: { origin: 'manual' }, stale: false },
       latest_assessment: { id: 'assessment-one', profile_revision_id: 'revision-1', requirements_revision_id: 'requirements-one', created_at: profile.current_revision.created_at, stale: false, stale_reasons: [], hard_eligibility: 'unknown', hard_constraints: [{ requirement_key: null, state: 'unknown', reason: 'no_reviewed_constraints' }], assessments: [{ requirement_key: 'req-1', coverage: 'not_evidenced', claim_revision_ids: [], evidence_revision_ids: [], explanation: 'No selected source.' }], evidence_coverage: { supported: 0, partial: 0, not_evidenced: 1, conflicting: 0, total: 1 }, provenance: { origin: 'owner_reviewed' } },
     } as RequirementsView,
-    workflow: { id: 'task-one', version: 1, state: 'running', attempt: 1, max_attempts: 2, kind: 'posting_extract', result: { posting_id: 'posting-one', source_sha256: 'a'.repeat(64) }, last_error_code: null } as Workflow,
+    workflow: task({ id: 'task-one', state: 'running', attempt: 1, max_attempts: 2, kind: 'posting_extract', result: { posting_id: 'posting-one', source_sha256: 'a'.repeat(64) } }),
   };
   mockRequest(api, async (path, method) => {
     if (path === '/session') return session;
@@ -247,5 +272,44 @@ describe('workspace suitability freshness propagation', () => {
     expect(await screen.findByText('Current server revision 2')).toBeVisible();
     expect(screen.getByLabelText('Professional headline')).toHaveValue('My unsaved identity wording.');
     expect(screen.getByText('Stale historical snapshot — not a current eligibility assertion')).toBeVisible();
+  });
+});
+
+describe('task navigation and workspace edit boundaries', () => {
+  it('retains profile and tracking drafts through task selection and completion without opening a result', async () => {
+    const user = userEvent.setup(); const api = new Api();
+    const application: ApplicationDetail = {
+      id: 'application-one', title: 'Engineer', company: 'Synthetic North', version: 3, attempt_no: 1,
+      posting_id: 'posting-one', opportunity_id: 'opportunity-one', current_stage: 'preparing', archived_at: null,
+      created_at: '2026-10-25T12:00:00Z', updated_at: '2026-10-25T12:00:00Z', next_action: null, current_stage_event_id: 'stage-one',
+      notes: [{ id: 'note-one', version: 1, body: 'Saved private note', created_at: '2026-10-25T12:00:00Z', updated_at: '2026-10-25T12:00:00Z' }],
+      contacts: [], appointments: [], attachments: [],
+    };
+    let workflow = task({ state: 'running', kind: 'document_generate' });
+    const request = mockRequest(api, async path => {
+      if (path === '/session') return session;
+      if (path === '/profile') return profile;
+      if (path === '/applications/application-one') return application;
+      if (path === '/applications/application-one/stage-events') return { items: [], next_cursor: null };
+      if (path === '/workflows?limit=30') return { items: [workflow], next_cursor: null };
+      if (path === '/workflows/task-1') return workflow;
+      throw new ApiError(404, 'not_found');
+    }, null, [application]);
+    render(<App api={api} />);
+    await user.click(await screen.findByRole('button', { name: 'Open Engineer at Synthetic North' }));
+    await user.click(await screen.findByRole('button', { name: 'Edit private note 1' }));
+    fireEvent.change(screen.getByLabelText(/Private note text/), { target: { value: 'Private unsaved tracking context.' } });
+    fireEvent.change(screen.getByLabelText('Professional headline'), { target: { value: 'Private unsaved profile context.' } });
+    await user.click(screen.getByRole('button', { name: 'Load tasks' }));
+    await user.click(await screen.findByRole('button', { name: /Running · document generate · task-1/ }));
+    await screen.findByRole('status', { name: 'Task state' });
+    workflow = { ...workflow, version: 2, state: 'succeeded', result: { document_id: 'retained-task-result' } };
+    await user.click(screen.getByRole('button', { name: 'Reload task status' }));
+    await waitFor(() => expect(screen.getByRole('status', { name: 'Task state' })).toHaveTextContent('Succeeded'));
+    expect(screen.getByLabelText('Professional headline')).toHaveValue('Private unsaved profile context.');
+    expect(screen.getByLabelText(/Private note text/)).toHaveValue('Private unsaved tracking context.');
+    expect(screen.getByRole('button', { name: 'Open document result' })).toBeDisabled();
+    expect(request.mock.calls.some(call => call[0] === '/documents/retained-task-result')).toBe(false);
+    expect(request.mock.calls.filter(call => call[1] === 'PUT' || call[1] === 'POST')).toHaveLength(0);
   });
 });
