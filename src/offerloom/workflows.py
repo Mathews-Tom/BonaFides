@@ -77,6 +77,7 @@ def migrate(settings: MigrationConfig) -> None:
                 "006_imports.up.sql",
                 "007_sources.up.sql",
                 "008_catalog.up.sql",
+                "009_suitability.up.sql",
             )
             if len(rows) != len(names):
                 raise RuntimeError("unsupported migration ledger")
@@ -102,7 +103,14 @@ class Claim:
 
 
 def enqueue(conn: Connection, owner_id: UUID, kind: str, input_snapshot: dict[str, object]) -> UUID:
-    if kind not in {"document_generate", "pdf_render", "profile_import", "source_refresh"}:
+    if kind not in {
+        "document_generate",
+        "pdf_render",
+        "profile_import",
+        "source_refresh",
+        "posting_extract",
+        "matching",
+    }:
         raise Problem(422, "unsupported_workflow_kind")
     epoch = lock_installation(conn)
     workflow_id = uuid4()
@@ -113,7 +121,7 @@ def enqueue(conn: Connection, owner_id: UUID, kind: str, input_snapshot: dict[st
         text("""WITH moment AS MATERIALIZED (SELECT clock_timestamp() AS now)
         INSERT INTO offerloom.workflow_runs(owner_id,id,kind,input,dedupe_key,request_sha256,deadline_at,maintenance_epoch,max_attempts,
         source_config_id,source_policy_version,source_policy_review_id,source_policy_sha256,created_at)
-        SELECT :owner,:id,:kind,CAST(:input AS jsonb),:dedupe,:sha,now+interval '180 seconds',:epoch,:attempts,
+        SELECT :owner,:id,:kind,CAST(:input AS jsonb),:dedupe,:sha,now+make_interval(secs=>:deadline),:epoch,:attempts,
         :source,:policy_version,:policy_review,:policy_sha,now FROM moment"""),
         {
             "owner": owner_id,
@@ -123,7 +131,12 @@ def enqueue(conn: Connection, owner_id: UUID, kind: str, input_snapshot: dict[st
             "dedupe": str(workflow_id),
             "sha": sha,
             "epoch": epoch,
-            "attempts": 4 if kind == "profile_import" else 3,
+            "attempts": 2
+            if kind in {"posting_extract", "matching"}
+            else 4
+            if kind == "profile_import"
+            else 3,
+            "deadline": 480 if kind in {"posting_extract", "matching"} else 180,
             "source": pinned.get("source_id") if kind == "source_refresh" else None,
             "policy_version": pinned.get("policy_version") if kind == "source_refresh" else None,
             "policy_review": pinned.get("policy_review_id") if kind == "source_refresh" else None,
@@ -144,7 +157,7 @@ def enqueue(conn: Connection, owner_id: UUID, kind: str, input_snapshot: dict[st
 def get_workflow(conn: Connection, owner_id: UUID, workflow_id: UUID) -> dict[str, object]:
     row = (
         conn.execute(
-            text("""SELECT id,kind,version,state,attempt,max_attempts,next_attempt_at,last_error_code,result,created_at,updated_at,finished_at
+            text("""SELECT id,kind,version,state,attempt,max_attempts,next_attempt_at,last_error_code,result,input,created_at,updated_at,finished_at
         FROM offerloom.workflow_runs WHERE owner_id=:owner AND id=:id"""),
             {"owner": owner_id, "id": workflow_id},
         )
@@ -153,14 +166,28 @@ def get_workflow(conn: Connection, owner_id: UUID, workflow_id: UUID) -> dict[st
     )
     if row is None:
         raise Problem(404, "workflow_not_found")
-    return {
+    result = {
         key: str(value)
         if isinstance(value, UUID)
         else value.isoformat()
         if isinstance(value, datetime)
         else value
         for key, value in row.items()
+        if key != "input"
     }
+    if row["kind"] in {"posting_extract", "matching"}:
+        snapshot = row["input"]
+        pins = {
+            key: snapshot.get(key)
+            for key in (
+                "posting_id",
+                "profile_revision_id",
+                "requirements_revision_id",
+                "source_sha256",
+            )
+        }
+        result["result"] = {**pins, **(row["result"] or {})}
+    return result
 
 
 def claim(conn: Connection, holder: UUID) -> Claim | None:
@@ -229,8 +256,8 @@ def publish(
     )
     assert_fence(conn, task)
     result = effect(conn)
-    if task.kind == "source_refresh":
-        # A bounded board may take time to persist; an expired attempt never commits it.
+    if task.kind in {"source_refresh", "posting_extract", "matching"}:
+        # Recheck independently after bounded domain persistence and validation.
         assert_fence(conn, task)
     conn.execute(
         text("""INSERT INTO offerloom.workflow_steps(owner_id,workflow_run_id,step_key,attempt,fence,state,request_sha256,checkpoint,completed_at)

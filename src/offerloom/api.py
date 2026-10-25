@@ -71,6 +71,31 @@ _VALIDATION_FIELDS = frozenset(
         "source_id",
         "posting_id",
         "observation_id",
+        "confirmed",
+        "requirements",
+        "requirement_key",
+        "importance",
+        "span",
+        "start",
+        "end",
+        "quote",
+        "hard_constraint",
+        "operator",
+        "required_value",
+        "owner_value",
+        "jurisdiction",
+        "owner_jurisdiction",
+        "currency",
+        "owner_currency",
+        "period",
+        "owner_period",
+        "owner_confirmed",
+        "contradictory",
+        "profile_revision_id",
+        "requirements_revision_id",
+        "assessments",
+        "coverage",
+        "explanation",
         "login_name",
         "password",
         "current_password",
@@ -278,7 +303,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return JSONResponse(
             {
                 "status": "ready" if available else "unavailable",
-                "schema_version": 8,
+                "schema_version": 9,
                 "version": __version__,
             },
             status_code=200 if available else 503,
@@ -286,12 +311,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     app.include_router(auth.build_router(db, resolved))
     app.include_router(profiles.build_router(db, resolved))
-    from offerloom import documents, imports, sources, workflows
+    from offerloom import documents, imports, sources, suitability, workflows
 
     app.include_router(workflows.build_router(db, resolved))
     app.include_router(documents.build_router(db, resolved))
     app.include_router(imports.build_router(db, resolved))
     app.include_router(sources.build_router(db, resolved))
+    app.include_router(suitability.build_router(db, resolved))
     if (resolved.web_dist / "index.html").is_file():
         app.mount("/", StaticFiles(directory=resolved.web_dist, html=True), name="ui")
     return app

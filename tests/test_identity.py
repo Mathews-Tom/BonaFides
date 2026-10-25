@@ -117,8 +117,17 @@ def identity(tmp_path: Path) -> Iterator[IdentityContext]:
     finally:
         with admin.transaction() as conn:
             # RESTRICT preserves evidence pins; remove this fixture's links before its owner.
+            conn.execute(
+                text("""UPDATE offerloom.local_model_reservations SET owner_id=NULL,
+                workflow_run_id=NULL,fence=NULL,reserved_until='-infinity'
+                WHERE owner_id=(SELECT id FROM offerloom.owners WHERE login_name=:login)"""),
+                {"login": context.login_name},
+            )
             for table in (
                 "idempotency_records",
+                "match_assessments",
+                "posting_requirement_revisions",
+                "model_runs",
                 "posting_duplicate_decisions",
                 "applications",
                 "saved_opportunities",

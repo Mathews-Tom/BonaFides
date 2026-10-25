@@ -11,7 +11,7 @@ from uuid import UUID, uuid4
 from sqlalchemy import text
 from sqlalchemy.exc import DBAPIError, OperationalError
 
-from offerloom import documents, imports, sources
+from offerloom import documents, imports, local_model, sources, suitability
 from offerloom.commands import canonical_json, lock_installation
 from offerloom.config import Settings
 from offerloom.db import Database
@@ -96,6 +96,8 @@ class Worker:
                 imports.execute_import(self.db, self.settings, task, interrupted)
             elif task.kind == "source_refresh":
                 sources.execute_refresh(self.db, task, interrupted)
+            elif task.kind in {"posting_extract", "matching"}:
+                suitability.execute_model(self.db, self.settings, task, interrupted)
             elif task.kind == "document_generate":
                 if self.settings.mode != "benchmark":
                     raise Problem(422, "no_production_generation_provider")
@@ -146,6 +148,12 @@ class Worker:
             self._record_failure(task, exc.code, False)
         except RenderFailure as exc:
             self._record_failure(task, exc.code, exc.code in {"render_timeout", "benchmark_poison"})
+        except local_model.ModelFailure as exc:
+            # Shutdown/lease-loss Events are execution interruption, not an owner
+            # cancellation command or a new terminal model failure. PostgreSQL's
+            # reaper retains authority over cancellation, deadlines and budgets.
+            if not interrupted.is_set() and exc.code != "model_interrupted":
+                self._record_failure(task, exc.code, exc.retryable)
         except ImportFailure as exc:
             if exc.code != "import_interrupted":
                 self._record_failure(

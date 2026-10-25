@@ -24,6 +24,7 @@ x-settings: &settings
   OFFERLOOM_RENDERER_SPOOL: /spool
   OFFERLOOM_IMPORT_SPOOL: /import-spool
   OFFERLOOM_MODE: ${OFFERLOOM_MODE:-production}
+  OFFERLOOM_LOCAL_MODEL_ROUTE_FILE: ${OFFERLOOM_LOCAL_MODEL_ROUTE_FILE:-}
 services:
   prepare:
     <<: *app

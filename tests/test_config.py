@@ -67,6 +67,18 @@ def test_settings_load_only_explicit_secret_files(tmp_path: Path) -> None:
     assert "private-password" not in repr(settings.keyring)
     assert settings.renderer_spool != settings.blob_root
     assert settings.migration_dsn is None
+    assert settings.local_model_route_file is None
+
+
+def test_local_model_route_is_explicit_and_not_auto_provisioned(tmp_path: Path) -> None:
+    env = environment(tmp_path)
+    path = tmp_path / "operator-owned-route.json"
+    env["OFFERLOOM_LOCAL_MODEL_ROUTE_FILE"] = str(path)
+    settings = Settings.from_env(env)
+    assert settings.local_model_route_file == path
+    assert not path.exists()
+    env["OFFERLOOM_LOCAL_MODEL_ROUTE_FILE"] = ""
+    assert Settings.from_env(env).local_model_route_file is None
 
 
 @pytest.mark.parametrize(

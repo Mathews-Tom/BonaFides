@@ -40,7 +40,7 @@ class Database:
                 text("SELECT max(version) FROM offerloom.schema_migrations")
             ).scalar_one()
             return bool(
-                version == 8
+                version == 9
                 and conn.execute(text("SHOW server_version_num")).scalar_one()[:2] == "18"
             )
 
