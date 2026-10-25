@@ -1,0 +1,617 @@
+{
+  "schema_version": 1,
+  "license": "MIT OR Apache-2.0",
+  "recorded_date": "2026-10-25",
+  "distribution_status": "blocked",
+  "scope": "M0 OL-001 through OL-004, OL-005 evidence-linked profiles/history/themes, OL-006 bounded reviewed local PDF/text imports, and OL-007 manual postings with a reviewed configured-board Greenhouse read mechanism. The owner-approved macOS/arm64 private M0 checkpoint is complete; native amd64 qualification is separately deferred as DFR-001, not passed. Independent human contribution/rights review remains a pending public-distribution gate. Real-board collection requires separate specific terms review and authorization; local fixtures do not grant it. M1 and public distribution are not complete.",
+  "research_evidence_boundary": "The original OL-001 research records retain their inherited design-stage access basis. Later entries identify official documentation retrieval observed by the integration owner on 2026-10-24 and vendor lifecycle/security/format and Greenhouse Job Board API research on 2026-10-25. Documentation reference is not incorporation, board collection permission or exact package-artifact/license evidence. URLs elsewhere in components.json without evidence dates remain research candidates only.",
+  "authorized_input_basis": "Approved neutral M0, OL-005, OL-006 and OL-007 requirements and independently authored project design contracts; canonical public licensing ADR and compliance policies remain authoritative. Promoted SQL and synthetic fixtures are authorized project-design material, not an external implementation.",
+  "contributor_attestations": {
+    "authorship_basis": "Implementation contributors report independently authored original work with OpenAI coding assistant assistance and no copied external implementation code; this is a process disclosure, not independent certification.",
+    "author": null,
+    "reviewer": null,
+    "signoff": null,
+    "human_review": "Pending for all entries; no human legal review, DCO signature, dual-license grant, employer authorization or publication approval inferred.",
+    "rights_status": "blocking"
+  },
+  "third_party_boundary": "Original project work is intended MIT OR Apache-2.0 subject to rights review. Dependencies and generated locks do not change upstream terms; package, native, dictionary, font and image artifacts require separate exact inventory and obligations review. OWASP ASVS requirement text and register documentation adaptation retain CC-BY-SA-4.0 independently of the original-code license.",
+  "entries": [
+    {
+      "id": "ol001-inventory",
+      "requirement_ids": [
+        "OL-001"
+      ],
+      "paths": [
+        "compliance/components.json",
+        "compliance/provenance.json",
+        "docs/compliance/M0-evidence.md"
+      ],
+      "author": null,
+      "author_role": "AI-assisted implementation contributor; human rights holder not attested",
+      "reviewer": null,
+      "review_date": null,
+      "created_date": "2026-10-24",
+      "status": "pending",
+      "approach": "Explicit pending component families with null exact identities; distinct detected/concluded/selected terms and artifact-specific future obligations. Preserve canonical policies and use portable public records.",
+      "alternatives": [
+        "Pretend architecture version families are exact releases (rejected)",
+        "Treat permissive wrapper terms as native/dictionary clearance (rejected)",
+        "Defer inventory until public release (rejected)"
+      ],
+      "research": [
+        {
+          "url": "https://www.psycopg.org/psycopg/psycopg3/docs/basic/install.html",
+          "date": "2026-10-24",
+          "access_basis": "Inherited dated official-source desk research; not fetched in this implementation task; no exact artifact evidence"
+        },
+        {
+          "url": "https://raw.githubusercontent.com/psycopg/psycopg/master/LICENSE.txt",
+          "date": "2026-10-24",
+          "access_basis": "Inherited dated official-source desk research; moving upstream text, not artifact-bound"
+        },
+        {
+          "url": "https://doc.courtbouillon.org/weasyprint/stable/first_steps.html",
+          "date": "2026-10-24",
+          "access_basis": "Inherited dated official-source desk research; moving documentation, not resolved dependency graph"
+        },
+        {
+          "url": "https://gitlab.gnome.org/GNOME/pango/-/raw/main/COPYING",
+          "date": "2026-10-24",
+          "access_basis": "Inherited dated official-source desk research; per-file released terms remain unreviewed"
+        },
+        {
+          "url": "https://pyphen.org/",
+          "date": "2026-10-24",
+          "access_basis": "Inherited dated official-source desk research; dictionary-specific licenses unresolved"
+        },
+        {
+          "url": "https://openfontlicense.org/open-font-license-official-text/",
+          "date": "2026-10-24",
+          "access_basis": "Inherited dated official-source desk research; no particular font selected"
+        },
+        {
+          "url": "https://spdx.github.io/spdx-spec/v2.3/SPDX-license-expressions/",
+          "date": "2026-10-24",
+          "access_basis": "Inherited dated official-source desk research; syntax reference, not license clearance"
+        },
+        {
+          "url": "https://www.apache.org/licenses/LICENSE-2.0.txt",
+          "date": "2026-10-24",
+          "access_basis": "Inherited dated official-source desk research; canonical policy reference"
+        },
+        {
+          "url": "https://developercertificate.org/",
+          "date": "2026-10-24",
+          "access_basis": "Inherited dated official-source desk research; no contributor signature inferred"
+        }
+      ],
+      "incorporated_material": [],
+      "incorporated_material_scope": "No third-party code or assets incorporated by these records; research citations and existing project policy are inputs, not relicensed third-party implementation",
+      "ai_assistance": {
+        "used": true,
+        "tool": "OpenAI coding assistant",
+        "scope": "AI authored inventory schema instances, provenance ledger and evidence summary from authorized requirements and policy; no dependency artifacts inspected"
+      },
+      "human_review": "Pending; no human authorship, DCO, dual-grant or legal approval inferred",
+      "commit": null,
+      "artifact_sha256": null,
+      "rights_disposition": "Original project material intended MIT OR Apache-2.0, subject to actual contributor authority and independent provenance review; public distribution blocked",
+      "independent_design": {
+        "basis": "Approved source-neutral requirements, canonical public licensing ADR and policies, and official technical research references",
+        "restricted_implementation_access": "Not consulted for this contribution; no restricted code, identities or private origin paths recorded",
+        "limitations": "This is an AI-assistance disclosure and process record, not an independent human or legal certification"
+      }
+    },
+    {
+      "id": "ol001-checker",
+      "requirement_ids": [
+        "OL-001"
+      ],
+      "paths": [
+        "tools/compliance.py",
+        "tests/test_compliance.py",
+        "compliance/policy.json"
+      ],
+      "author": null,
+      "author_role": "AI-assisted implementation contributor; human rights holder not attested",
+      "reviewer": null,
+      "review_date": null,
+      "created_date": "2026-10-24",
+      "status": "pending",
+      "approach": "Stdlib declaration/policy checker with strict recursive-descent SPDX expression parsing; unknown identifiers/exceptions require review; recorded pending inventory is not release clearance.",
+      "alternatives": [
+        "Substring license matching (rejected)",
+        "Treat scanner syntax acceptance as legal approval (rejected)"
+      ],
+      "research": [],
+      "incorporated_material": [],
+      "incorporated_material_scope": "No third-party code or assets incorporated by these records; research citations and existing project policy are inputs, not relicensed third-party implementation",
+      "ai_assistance": {
+        "used": true,
+        "tool": "OpenAI coding assistant",
+        "scope": "Implementation owner reports original AI-assisted checker, tests and policy work; this ledger author did not execute or independently review that code"
+      },
+      "human_review": "Pending; no human authorship, DCO, dual-grant or legal approval inferred",
+      "commit": null,
+      "artifact_sha256": null,
+      "rights_disposition": "Original project material intended MIT OR Apache-2.0, subject to actual contributor authority and independent provenance review; public distribution blocked",
+      "independent_design": {
+        "basis": "Approved source-neutral requirements, canonical public licensing ADR and policies, and official technical research references",
+        "restricted_implementation_access": "Not consulted for this contribution; no restricted code, identities or private origin paths recorded",
+        "limitations": "This is an AI-assistance disclosure and process record, not an independent human or legal certification"
+      }
+    },
+    {
+      "id": "ol002-foundation",
+      "requirement_ids": ["OL-002"],
+      "paths": [
+        ".gitignore",
+        ".python-version",
+        "pyproject.toml",
+        "uv.lock",
+        "ruff.toml",
+        "README.md",
+        "src/offerloom/__init__.py",
+        "src/offerloom/__main__.py",
+        "src/offerloom/cli.py",
+        "src/offerloom/config.py",
+        "src/offerloom/api.py",
+        "src/offerloom/problems.py",
+        "tests/test_config.py",
+        "docs/development/README.md",
+        "docs/architecture/README.md"
+      ],
+      "author": null,
+      "author_role": "AI-assisted implementation contributor; human rights holder not attested",
+      "reviewer": null,
+      "review_date": null,
+      "signoff": null,
+      "created_date": "2026-10-24",
+      "status": "pending",
+      "approach": "Independently authored Python application foundation, explicit configuration/secret validation, API problem boundary, reproducible workspace inputs and operational documentation from approved neutral M0 requirements.",
+      "alternatives": ["Implicit global runtime or secret defaults (rejected)", "Depend on private design files at runtime (rejected)"],
+      "research": [
+        {
+          "url": "https://nodejs.org/en/about/previous-releases",
+          "date": "2026-10-24",
+          "access_basis": "Official technical documentation retrieval observed by integration owner; documentation reference only, not incorporated package-artifact evidence"
+        },
+        {
+          "url": "https://www.python.org/downloads/release/python-31215/",
+          "date": "2026-10-24",
+          "access_basis": "Official technical documentation retrieval observed by integration owner; documentation reference only, not downloaded interpreter-artifact review"
+        }
+      ],
+      "incorporated_material": [],
+      "incorporated_material_scope": "No external implementation code copied according to contributor reports. Generated uv lock metadata describes third-party packages whose artifacts and obligations remain separately pending; no upstream terms are changed.",
+      "ai_assistance": {"used": true, "tool": "OpenAI coding assistant", "scope": "Independent implementation, manifest/lock selection and documentation assistance from approved neutral M0 requirements"},
+      "human_review": "Pending; no human authorship, DCO, dual-grant or legal approval inferred",
+      "commit": null,
+      "artifact_sha256": null,
+      "rights_disposition": "Original project source intended MIT OR Apache-2.0 subject to actual contributor authority and independent review; dependency artifacts retain separate terms; public distribution blocked",
+      "independent_design": {
+        "basis": "Approved neutral M0 requirements and canonical public policies",
+        "restricted_implementation_access": "Not consulted for this contribution; no private origin paths or reference identities recorded",
+        "limitations": "Contributor disclosure, not independent human or legal certification; native arm64 application proof observed, native amd64 and security qualification remain blocked; see docs/compliance/M0-evidence.md"
+      }
+    },
+    {
+      "id": "ol003-identity",
+      "requirement_ids": ["OL-003"],
+      "paths": ["src/offerloom/auth.py", "src/offerloom/crypto.py", "tests/test_identity.py"],
+      "author": null,
+      "author_role": "AI-assisted implementation contributor; human rights holder not attested",
+      "reviewer": null,
+      "review_date": null,
+      "signoff": null,
+      "created_date": "2026-10-24",
+      "status": "pending",
+      "approach": "Independently authored one-owner bootstrap, password/session/recovery boundary and encryption context using standard cryptographic libraries and approved neutral M0 requirements.",
+      "alternatives": ["Public registration or public recovery bypass (rejected)", "Self-contained irrevocable browser credentials (rejected)"],
+      "research": [
+        {
+          "url": "https://argon2-cffi.readthedocs.io/en/stable/howto.html",
+          "date": "2026-10-24",
+          "access_basis": "Official technical documentation retrieval observed by integration owner; documentation reference only, not incorporated implementation or package-license clearance"
+        }
+      ],
+      "incorporated_material": [],
+      "incorporated_material_scope": "No external implementation code copied according to contributor reports; imported cryptographic/password package artifacts require separate exact inventory and obligations review.",
+      "ai_assistance": {"used": true, "tool": "OpenAI coding assistant", "scope": "Independent identity, cryptographic-boundary and negative-test implementation from approved neutral M0 requirements"},
+      "human_review": "Pending; no human authorship, DCO, dual-grant or legal approval inferred",
+      "commit": null,
+      "artifact_sha256": null,
+      "rights_disposition": "Original project work intended MIT OR Apache-2.0 subject to actual contributor authority and independent provenance review; public distribution blocked",
+      "independent_design": {
+        "basis": "Approved neutral M0 requirements and standard documented library interfaces",
+        "restricted_implementation_access": "Not consulted for this contribution; no private origin paths or reference identities recorded",
+        "limitations": "Actual browser, bootstrap concurrency, session/recovery and native arm64 deployment proof observed; security implementation is not certification, ASVS conformance or human approval"
+      }
+    },
+    {
+      "id": "ol004-sql-worker",
+      "requirement_ids": ["OL-004"],
+      "paths": [
+        "alembic.ini",
+        "migrations/env.py",
+        "migrations/versions/0001_m0.py",
+        "migrations/sql/001_initial.up.sql",
+        "migrations/sql/002_hosted_consent.up.sql",
+        "migrations/sql/003_base_resume.up.sql",
+        "migrations/sql/004_runtime.up.sql",
+        "src/offerloom/db.py",
+        "src/offerloom/commands.py",
+        "src/offerloom/workflows.py",
+        "src/offerloom/worker.py",
+        "tests/test_database.py",
+        "tests/test_workflows.py"
+      ],
+      "author": null,
+      "author_role": "AI-assisted implementation contributor; human rights holder not attested",
+      "reviewer": null,
+      "review_date": null,
+      "signoff": null,
+      "created_date": "2026-10-24",
+      "status": "pending",
+      "approach": "Promote authorized independently authored project SQL contracts; add the runtime migration, Alembic integration, owner-scoped command adapters and PostgreSQL lease/fence/outbox worker without an external queue.",
+      "alternatives": ["Separate Redis queue or exactly-once execution claim (rejected)", "Let stale workers publish without a transaction fence (rejected)"],
+      "research": [
+        {
+          "url": "https://alembic.sqlalchemy.org/en/latest/tutorial.html",
+          "date": "2026-10-24",
+          "access_basis": "Official technical documentation retrieval observed by integration owner; documentation reference only, not incorporated implementation"
+        },
+        {
+          "url": "https://hub.docker.com/_/postgres",
+          "date": "2026-10-24",
+          "access_basis": "Official image documentation retrieval observed by integration owner; documentation reference only, not image-layer or OS-license review"
+        }
+      ],
+      "project_design_material": [
+        {"paths": ["migrations/sql/001_initial.up.sql", "migrations/sql/002_hosted_consent.up.sql", "migrations/sql/003_base_resume.up.sql"], "basis": "Authorized independently authored project design contracts promoted to public application inputs; not external implementation material"}
+      ],
+      "incorporated_material": [],
+      "incorporated_material_scope": "No external implementation code copied according to contributor reports. Promoted project SQL is separately disclosed as authorized design material, not third-party implementation; PostgreSQL, drivers and migration packages retain their own obligations.",
+      "ai_assistance": {"used": true, "tool": "OpenAI coding assistant", "scope": "Project-contract promotion and independent migration/transaction/worker/test implementation from approved neutral M0 requirements"},
+      "human_review": "Pending; no human authorship, DCO, dual-grant or legal approval inferred",
+      "commit": null,
+      "artifact_sha256": null,
+      "rights_disposition": "Original project work and authorized project contracts intended MIT OR Apache-2.0 subject to actual rights review; public distribution blocked",
+      "independent_design": {
+        "basis": "Approved neutral M0 requirements and authorized independently authored project SQL contracts",
+        "restricted_implementation_access": "Not consulted for this contribution; no private origin paths or reference identities recorded",
+        "limitations": "Native arm64 migration, least-privilege, real process crash/reclaim and stale-publication acceptance observed; further concurrent-worker evidence is reported separately, not inferred from unit tests"
+      }
+    },
+    {
+      "id": "m0-typed-pdf-minimal-vertical",
+      "requirement_ids": ["OL-002", "OL-004", "SYN-CORE", "SYN-PDF", "SYN-UNSUPPORTED"],
+      "paths": [
+        "src/offerloom/profiles.py",
+        "src/offerloom/documents.py",
+        "src/offerloom/storage.py",
+        "src/offerloom/render_service.py",
+        "src/offerloom/templates/base-v1.html",
+        "tests/test_documents.py",
+        "tests/fixtures/syn-core.json"
+      ],
+      "author": null,
+      "author_role": "AI-assisted implementation contributor; human rights holder not attested",
+      "reviewer": null,
+      "review_date": null,
+      "signoff": null,
+      "created_date": "2026-10-24",
+      "status": "pending",
+      "approach": "Independently authored minimal synthetic profile-to-typed-document-to-private-PDF proof with fixed templates, escaped text, evidence guards and renderer isolation boundaries; deterministic synthetic model execution is benchmark-only, not a production provider fallback or M1 completion.",
+      "alternatives": ["Arbitrary user HTML/templates or URL/file fetches (rejected)", "Silently substitute deterministic output for a production model (rejected)"],
+      "research": [
+        {
+          "url": "https://doc.courtbouillon.org/weasyprint/stable/first_steps.html",
+          "date": "2026-10-24",
+          "access_basis": "Fresh official technical documentation retrieval observed by integration owner, separate from inherited OL-001 desk research; documentation reference only, not exact renderer/native/font/dictionary artifact evidence"
+        }
+      ],
+      "project_design_material": [
+        {"paths": ["tests/fixtures/syn-core.json"], "basis": "Authorized original synthetic project-design fixture promoted for acceptance inputs; not real personal data, external implementation or passed-test evidence"}
+      ],
+      "incorporated_material": [],
+      "incorporated_material_scope": "No external implementation code, template or visual asset copied according to contributor reports. Renderer packages, native libraries, font files and dictionary bytes require separate artifact-level obligations review.",
+      "ai_assistance": {"used": true, "tool": "OpenAI coding assistant", "scope": "Independent typed document, minimal profile, private storage, renderer and synthetic-test implementation from approved neutral M0 requirements and authorized project fixture"},
+      "human_review": "Pending; no human authorship, DCO, dual-grant or legal approval inferred",
+      "commit": null,
+      "artifact_sha256": null,
+      "rights_disposition": "Original project code/templates and authorized synthetic fixture intended MIT OR Apache-2.0 subject to rights review; renderer/native/font/dictionary clearance remains separate and blocking",
+      "independent_design": {
+        "basis": "Approved neutral M0 requirements, authorized original project synthetic fixture and official technical documentation",
+        "restricted_implementation_access": "Not consulted for this contribution; no private origin paths or reference identities recorded",
+        "limitations": "Real PDF text extraction/page inspection, native Linux containment and matched fixture recovery observed; no M1, production/model quality or independent security/legal qualification"
+      }
+    },
+    {
+      "id": "m0-frontend",
+      "requirement_ids": ["OL-002", "OL-003", "OL-004"],
+      "paths": [
+        "web/package.json",
+        "web/pnpm-lock.yaml",
+        "web/pnpm-workspace.yaml",
+        "web/index.html",
+        "web/tsconfig.json",
+        "web/eslint.config.js",
+        "web/vite.config.ts",
+        "web/src/main.tsx",
+        "web/src/App.tsx",
+        "web/src/api.ts",
+        "web/src/styles.css",
+        "web/src/test-setup.ts",
+        "web/src/App.test.tsx",
+        "web/src/api.test.ts"
+      ],
+      "author": null,
+      "author_role": "AI-assisted implementation contributor; human rights holder not attested",
+      "reviewer": null,
+      "review_date": null,
+      "signoff": null,
+      "created_date": "2026-10-24",
+      "status": "pending",
+      "approach": "Independently authored React/TypeScript M0 interface and API client for owner setup/session, synthetic profile, durable task status and document proof; frontend checks do not prove live authenticated browser or production security behavior.",
+      "alternatives": ["Reproduce a reference interface or import distinctive assets (rejected)", "Store authentication secrets in browser storage (rejected)"],
+      "research": [],
+      "incorporated_material": [],
+      "incorporated_material_scope": "No external implementation code or UI asset copied according to contributor reports. Generated pnpm lock metadata is not original source for SPDX-header checks, but remains secret-scanned and inventoried; locked packages and built bundles retain separate artifact and license review obligations.",
+      "ai_assistance": {"used": true, "tool": "OpenAI coding assistant", "scope": "Independent frontend implementation, original styling, client tests and generated dependency metadata from approved neutral M0 requirements"},
+      "human_review": "Pending; no human authorship, DCO, dual-grant or legal approval inferred",
+      "commit": null,
+      "artifact_sha256": null,
+      "rights_disposition": "Original project source/styling intended MIT OR Apache-2.0 subject to contributor authority and review; third-party packages and bundle obligations remain separate; public distribution blocked",
+      "independent_design": {
+        "basis": "Approved neutral M0 requirements and independently authored interaction decisions",
+        "restricted_implementation_access": "Not consulted for this contribution; no private origin paths or reference identities recorded",
+        "limitations": "Passing local type/lint/unit/build checks is not integrated API/browser or production qualification"
+      }
+    },
+    {
+      "id": "m0-exact-artifact-collector",
+      "requirement_ids": ["OL-001", "OL-002"],
+      "paths": ["tools/__init__.py", "tools/inventory.py", "tests/test_inventory.py", "docs/compliance/artifact-inventory.md", "compliance/locked-components.json"],
+      "author": null,
+      "author_role": "AI-assisted implementation contributor; human rights holder not attested",
+      "reviewer": null,
+      "review_date": null,
+      "signoff": null,
+      "created_date": "2026-10-24",
+      "status": "pending",
+      "approach": "Independently authored exact-input collector separating lock declarations from installed-file, built-bundle and local-image observations, with explicit missing-coverage errors and unresolved rights dispositions.",
+      "alternatives": ["Treat locks alone as observed installed artifacts (rejected)", "Infer upstream license clearance from package metadata or collection success (rejected)"],
+      "research": [],
+      "incorporated_material": [],
+      "incorporated_material_scope": "No external implementation code copied according to contributor reports. Collected package/license/notice metadata and copied artifact evidence retain their upstream terms; no generated complete inventory or legal clearance is asserted by this entry.",
+      "ai_assistance": {"used": true, "tool": "OpenAI coding assistant", "scope": "Independent artifact collector, synthetic tests and public usage documentation from approved neutral M0 requirements"},
+      "human_review": "Pending; collector and tools/compliance.py require independent review; no machine-generated certification or release approval inferred",
+      "commit": null,
+      "artifact_sha256": null,
+      "rights_disposition": "Original collector source intended MIT OR Apache-2.0 subject to rights review; actual collected artifacts and obligations require separate review; public distribution blocked",
+      "independent_design": {
+        "basis": "Approved neutral M0 requirements and canonical dependency/attribution policies",
+        "restricted_implementation_access": "Not consulted for this contribution; no private origin paths or reference identities recorded",
+        "limitations": "Collector implementation and test presence do not establish complete target-image collection, SBOM coverage or rights clearance"
+      }
+    },
+    {
+      "id": "m0-asvs-documentation-adaptation",
+      "requirement_ids": ["OL-001", "OL-002", "OL-003", "OL-004"],
+      "paths": ["compliance/asvs-source.json", "compliance/asvs-5.0.0.csv", "docs/compliance/asvs-register.md"],
+      "author": null,
+      "author_role": "AI-assisted register-adaptation contributor; human rights holder for original additions not attested; upstream authors separately attributed",
+      "reviewer": null,
+      "review_date": null,
+      "signoff": null,
+      "created_date": "2026-10-24",
+      "status": "pending",
+      "approach": "Keep official released ASVS requirement text and source columns; add M0 applicability, responsibility and pending-evidence fields in an isolated third-party documentation adaptation without inventing conformance.",
+      "alternatives": ["Relicense requirement text as original application code (rejected)", "Treat intended test references or scope labels as verified security compliance (rejected)"],
+      "research": [
+        {
+          "url": "https://github.com/OWASP/ASVS/releases/tag/v5.0.0_release",
+          "date": "2026-10-24",
+          "access_basis": "Released source provenance recorded by the ASVS contributor in compliance/asvs-source.json; not refetched by this ledger contributor"
+        }
+      ],
+      "incorporated_material": [
+        {
+          "name": "OWASP Application Security Verification Standard official English CSV requirement text and source structure",
+          "version": "5.0.0",
+          "license": "CC-BY-SA-4.0",
+          "source_url": "https://github.com/OWASP/ASVS/releases/download/v5.0.0_release/OWASP_Application_Security_Verification_Standard_5.0.0_en.csv",
+          "source_sha256": "6124dba176dc563f66363a11ae0c47f9b86b8a4a84c66a793670bd196ed86cd5",
+          "digest_scope": "Downloaded upstream source bytes, not the augmented register",
+          "attribution": "OWASP Foundation and OWASP ASVS contributors, Application Security Verification Standard 5.0.0",
+          "license_url": "https://creativecommons.org/licenses/by-sa/4.0/",
+          "provenance_record": "compliance/asvs-source.json",
+          "adaptation": "Offerloom applicability, responsibility and pending-evidence fields; register adaptation and accompanying register documentation retain CC-BY-SA-4.0. No endorsement implied."
+        }
+      ],
+      "incorporated_material_scope": "Third-party documentation and its adaptation are explicitly incorporated and isolated; not copied implementation code and not original dual-licensed application material.",
+      "ai_assistance": {"used": true, "tool": "OpenAI coding assistant", "scope": "ASVS source/provenance handling and independent M0 applicability/evidence-field and register-documentation adaptation"},
+      "human_review": "Pending; no requirement pass, approved exclusion, reviewer signature, legal approval or ASVS certification inferred",
+      "commit": null,
+      "artifact_sha256": null,
+      "rights_disposition": "ASVS requirement text/register adaptation and accompanying documentation retain CC-BY-SA-4.0 attribution and share-alike obligations; not relicensed under MIT OR Apache-2.0. Compliance and contributor-rights review remain blocking.",
+      "independent_design": {
+        "basis": "Approved neutral M0 requirements and explicitly attributed official ASVS 5.0.0 released documentation",
+        "restricted_implementation_access": "Not consulted for this contribution; no private origin paths or reference identities recorded",
+        "limitations": "This register records pending assessments, not independently verified security or legal certification"
+      }
+    },
+    {
+      "id": "m0-deployment-setup-ci-tools",
+      "requirement_ids": ["OL-002", "OL-003", "OL-004"],
+      "paths": [
+        "Dockerfile",
+        ".dockerignore",
+        "compose.yaml",
+        "deploy/images.json",
+        "deploy/prepare.py",
+        "deploy/init-db.sh",
+        "src/offerloom/relay.py",
+        "tools/dev_setup.py",
+        "tools/m0_probe.py",
+        ".github/backend_gate.py",
+        ".github/compose.ci.yaml",
+        ".github/check_contribution.py",
+        ".github/workflows/ci.yaml"
+      ],
+      "author": null,
+      "author_role": "AI-assisted implementation contributor; human rights holder not attested",
+      "reviewer": null,
+      "review_date": null,
+      "signoff": null,
+      "created_date": "2026-10-24",
+      "status": "pending",
+      "approach": "Independently authored local setup, bounded Compose services, database-role initialization, renderer isolation configuration, CI orchestration and disposable synthetic runtime/recovery probes from approved neutral M0 requirements.",
+      "alternatives": ["Internet-exposed defaults, embedded production secrets or provider calls in M0 (rejected)", "Treat configured CI or probe source as observed runtime success (rejected)"],
+      "research": [],
+      "incorporated_material": [],
+      "incorporated_material_scope": "No external implementation code copied according to contributor reports. Referenced base images, OS/native/font/dictionary packages and CI actions/tools retain upstream terms and require exact artifact inventory and obligations review; configuration is not artifact clearance.",
+      "ai_assistance": {"used": true, "tool": "OpenAI coding assistant", "scope": "Independent deployment, setup, CI and synthetic acceptance/recovery tooling from approved neutral M0 requirements"},
+      "human_review": "Pending; no human authorship, DCO, dual-grant, successful CI run, legal approval or publication authority inferred",
+      "commit": null,
+      "artifact_sha256": null,
+      "rights_disposition": "Original project configuration/scripts intended MIT OR Apache-2.0 subject to actual contributor authority and review; image/action/package obligations remain separate; public distribution blocked",
+      "independent_design": {
+        "basis": "Approved neutral M0 requirements and canonical public security/compliance policies",
+        "restricted_implementation_access": "Not consulted for this contribution; no private origin paths or reference identities recorded",
+        "limitations": "Native arm64 Compose/auth/browser/worker/PDF/crash/cancel/recovery proof observed; native amd64 remains unavailable and configured remote CI is unrun. Historical Debian image findings and Rosetta diagnostics are preserved; replacement-image security/native-arm64 observations are recorded separately without inferring human rights approval."
+      }
+    },
+    {
+      "id": "m0-image-security-remediation",
+      "requirement_ids": ["OL-001", "OL-002", "OL-004"],
+      "paths": ["Dockerfile", "deploy/images.json", "tools/inventory.py", "tests/test_inventory.py", "README.md", "docs/architecture/README.md", "docs/compliance/M0-evidence.md", "docs/compliance/artifact-inventory.md", "docs/compliance/asvs-register.md", "compliance/locked-components.json"],
+      "author": null,
+      "author_role": "AI-assisted implementation contributor; human rights holder not attested",
+      "reviewer": null,
+      "review_date": null,
+      "signoff": null,
+      "created_date": "2026-10-25",
+      "status": "pending",
+      "approach": "Use a supported coherent Alpine runtime after supported Debian stable candidates retained unfixed findings. Preserve Python/Node locks, normal system-libpq discovery and containment; explicitly collect APK metadata, dependency/provider candidates, file ownership and native/font/dictionary bytes without inferring legal clearance.",
+      "alternatives": [
+        "Suppress findings, use ignore-unfixed or strip the package database (rejected)",
+        "Mix Debian unstable packages or hand-patch a new native ABI (rejected)",
+        "Add a Psycopg discovery shim, vendored binary client or incompatible Python build backend solely for this migration (rejected)",
+        "Declare a scanner pass without proving Alpine advisory lookups are active (rejected; separate explicitly synthetic vulnerable-version control exercised)"
+      ],
+      "research": [
+        {"url": "https://alpinelinux.org/releases/", "date": "2026-10-25", "access_basis": "Official supported-branch lifecycle page retrieved by the integration owner; not license clearance"},
+        {"url": "https://secdb.alpinelinux.org/v3.24/main.json", "date": "2026-10-25", "access_basis": "Official Alpine security feed retrieved and hashed by the integration owner; secfix declarations are security evidence, not source/notice/relink compliance"},
+        {"url": "https://security-tracker.debian.org/tracker/CVE-2026-54369", "date": "2026-10-25", "access_basis": "Official Debian tracker retrieved by the integration owner; stable affected status and ABI/backport limitation inspected"},
+        {"url": "https://security-tracker.debian.org/tracker/CVE-2026-78408", "date": "2026-10-25", "access_basis": "Official Debian tracker retrieved by the integration owner; supported stable affected status inspected"},
+        {"url": "https://www.psycopg.org/psycopg3/docs/basic/install.html#local-installation", "date": "2026-10-25", "access_basis": "Official installation options retrieved by the integration owner; no C/binary distribution selected or incorporated"},
+        {"url": "https://wiki.alpinelinux.org/wiki/Apk_spec", "date": "2026-10-25", "access_basis": "Format overview retrieved by the integration owner; work-in-progress warning retained and actual installed database separately inspected"}
+      ],
+      "incorporated_material": [],
+      "incorporated_material_scope": "No copied external implementation code reported for the original collector/configuration changes. Official Python/Alpine images, binutils, libpq development files and every other native/font/dictionary artifact retain their own terms and require separate exact inventory and obligations review.",
+      "ai_assistance": {"used": true, "tool": "OpenAI coding assistant", "scope": "Vendor research, disposable runtime/security probes, independent APK collector/regression implementation, configuration migration and evidence/provenance updates"},
+      "human_review": "Pending; no legal review, DCO, dual grant, employment authority, signature, security certification or publication approval inferred",
+      "commit": null,
+      "artifact_sha256": null,
+      "rights_disposition": "Original changes intended MIT OR Apache-2.0 subject to contributor authority and independent review. Actual image/native/font/dictionary/source/notice/relink obligations remain separately blocking; vulnerability remediation cannot confer distribution rights.",
+      "independent_design": {
+        "basis": "Explicit user authorization to resolve the existing M0 image-security gate, approved neutral requirements and canonical public policies",
+        "restricted_implementation_access": "Not consulted for this contribution; no private origin paths or reference identities recorded",
+        "limitations": "Both exact architecture image-security gates and fresh full native arm64 proof passed; this is not native amd64 qualification, independent ASVS/security review, contribution/rights clearance or publication authority. The ASVS documentation adaptation retains its separately attributed CC-BY-SA-4.0 terms."
+      }
+    },
+    {
+      "id": "ol005-profile-history-theme",
+      "requirement_ids": ["OL-005"],
+      "paths": ["src/offerloom/profiles.py", "src/offerloom/profile_entries.py", "src/offerloom/documents.py", "src/offerloom/api.py", "src/offerloom/problems.py", "src/offerloom/db.py", "src/offerloom/workflows.py", "migrations/sql/005_profiles.up.sql", "migrations/versions/0002_profiles.py", "web/src/ProfileEntries.tsx", "web/src/ThemePreference.tsx", "web/src/ThemePreference.test.tsx", "web/src/App.tsx", "web/src/App.test.tsx", "web/src/api.ts", "web/src/api.test.ts", "web/src/styles.css", "tests/test_profiles.py", "tests/test_database.py", "tests/test_identity.py", "README.md", "docs/development/README.md"],
+      "author": null,
+      "author_role": "AI-assisted implementation contributor; human rights holder not attested",
+      "reviewer": null,
+      "review_date": null,
+      "signoff": null,
+      "created_date": "2026-10-25",
+      "status": "pending",
+      "approach": "Extend existing normalized immutable records under one profile-wide optimistic/idempotent command boundary. Append a forward migration for language and standalone evidence pins; explicit restore preserves history. Use manual editors, safe validation paths, keyboard reorder and an expiring theme preference isolated from document styling.",
+      "alternatives": ["Silent concurrent overwrite or reactivation through delayed saves (rejected)", "Rewrite historical payloads, duplicate serialized current claims or add aliases for an unimplemented future API (rejected)", "Store profile/session data with theme or let workspace colors alter paper/PDF appearance (rejected)"],
+      "research": [],
+      "incorporated_material": [],
+      "incorporated_material_scope": "No external implementation code, fonts, assets or new dependencies incorporated according to contributor reports. Existing dependency/base-image/native/font/dictionary terms and exact-artifact review remain separate.",
+      "ai_assistance": {"used": true, "tool": "OpenAI coding assistant", "scope": "Independent profile/evidence/history/restore and theme implementation, integration, synthetic verification, behavioral tests and contract/provenance documentation"},
+      "human_review": "Pending; no human authorship, DCO, dual grant, employer authority, independent security review or legal/publication approval inferred",
+      "commit": null,
+      "artifact_sha256": null,
+      "rights_disposition": "Original changes intended MIT OR Apache-2.0 subject to actual contributor authority and independent review. Public distribution remains blocked; private progress is not rights clearance.",
+      "independent_design": {
+        "basis": "Explicit owner approval for the recommended OL-005 increment, approved neutral story/UX requirements and existing project patterns",
+        "restricted_implementation_access": "Not consulted for this contribution; no private origin paths or reference identities recorded",
+        "limitations": "Exercised results/artifacts are recorded separately; old M0 image/inventory receipts remain historical. Native amd64 remains deferred."
+      }
+    },
+    {
+      "id": "ol006-reviewed-local-import",
+      "requirement_ids": ["OL-006"],
+      "paths": ["src/offerloom/imports.py", "src/offerloom/import_parser.py", "src/offerloom/storage.py", "src/offerloom/api.py", "src/offerloom/config.py", "src/offerloom/cli.py", "src/offerloom/db.py", "src/offerloom/workflows.py", "src/offerloom/worker.py", "migrations/sql/006_imports.up.sql", "migrations/versions/0003_imports.py", "web/src/ResumeImport.tsx", "web/src/ResumeImport.test.tsx", "web/src/api.ts", "web/src/App.tsx", "web/src/styles.css", "tests/test_imports.py", "tests/test_import_parser.py", "tests/test_config.py", "tests/test_identity.py", ".github/backend_gate.py", "Dockerfile", "compose.yaml", "deploy/prepare.py", "tools/m0_probe.py", "README.md", "docs/development/README.md", "docs/compliance/M0-evidence.md"],
+      "author": null,
+      "author_role": "AI-assisted implementation contributor; human rights holder not attested",
+      "reviewer": null,
+      "review_date": null,
+      "signoff": null,
+      "created_date": "2026-10-25",
+      "status": "pending",
+      "approach": "Independently author bounded local PDF/plaintext parsing in a dedicated no-network/no-secret container and supervised child. Preserve exact normalized source spans and stage literal proposals without model calls; explicit complete field review resumes a fixed-budget fenced workflow that atomically appends profile/evidence/claim revisions. Reject stale/cancelled/expired/unsafe input and separately confirm replace-all while retaining history.",
+      "alternatives": ["Parse hostile files beside API/worker credentials or trust filenames (rejected)", "Automatically overwrite live facts on extraction completion, silently deduplicate roles or infer missing facts (rejected)", "Use an unconfigured model, implicit hosted fallback or ambient egress consent (rejected)", "Reset attempt budgets after human review or use cross-container per-UID process limits as isolation (rejected)"],
+      "research": [],
+      "incorporated_material": [],
+      "incorporated_material_scope": "No external implementation code, assets or new dependencies incorporated according to contributor reports. Existing locked pypdf and all other package/base-image/native/font/dictionary artifacts retain their upstream terms and require independent exact-artifact obligations review.",
+      "ai_assistance": {"used": true, "tool": "OpenAI coding assistant", "scope": "Independent import parser/transport, durable staging/review/atomic merge, frontend integration, synthetic behavioral verification and contract/provenance documentation"},
+      "human_review": "Pending; no human authorship, DCO, dual grant, employer authority, independent security review or legal/publication approval inferred",
+      "commit": null,
+      "artifact_sha256": null,
+      "rights_disposition": "Original changes intended MIT OR Apache-2.0 subject to actual contributor authority and independent review. Public distribution remains blocked; private progress, scanner results and AI-assisted review are not rights clearance.",
+      "independent_design": {
+        "basis": "Explicit owner approval to proceed with the recommended OL-006 increment, approved neutral import/security/UX requirements and existing project contracts/patterns",
+        "restricted_implementation_access": "Not consulted for this contribution; no private origin paths or reference identities recorded",
+        "limitations": "Actual exercised outcomes and image identities are recorded separately. No OCR, model-mediated extraction, hosted egress, complete M1, native amd64 pass or public-distribution approval is claimed; older M0/OL-005 image and inventory evidence remains historical."
+      }
+    },
+    {
+      "id": "ol007-reviewed-job-source",
+      "requirement_ids": ["OL-007"],
+      "paths": ["src/offerloom/sources.py", "src/offerloom/greenhouse.py", "src/offerloom/source_gateway.py", "src/offerloom/commands.py", "src/offerloom/api.py", "src/offerloom/cli.py", "src/offerloom/db.py", "src/offerloom/workflows.py", "src/offerloom/worker.py", "migrations/sql/007_sources.up.sql", "migrations/versions/0004_sources.py", "web/src/JobSources.tsx", "web/src/JobSources.test.tsx", "web/src/api.ts", "web/src/App.tsx", "web/src/styles.css", "tests/test_sources.py", "tests/test_greenhouse.py", "tests/greenhouse_fixture.py", "tests/test_identity.py", "compose.yaml", "tools/m0_probe.py", "README.md", "docs/development/README.md", "docs/architecture/README.md", "docs/compliance/M0-evidence.md"],
+      "author": null,
+      "author_role": "AI-assisted implementation contributor; human rights holder not attested",
+      "reviewer": null,
+      "review_date": null,
+      "signoff": null,
+      "created_date": "2026-10-25",
+      "status": "pending",
+      "approach": "Independently author owner-scoped manual posting/provenance and reviewed configured-board collection with fixed-budget durable source workflows, immutable policy pins, database-time rate reservations and atomic fenced publication. Isolate fixed-route verified TLS transport in a no-secret/no-DB egress relay; retain complete inert text and attributable observations without cross-source destructive deduplication. Qualify with fictional real TLS/HTTP fixtures and actual app flows; keep live collection separately gated.",
+      "alternatives": ["Grant general outbound networking to the DB/keyring-bearing worker or API (rejected)", "Treat a public API, robots rules or synthetic success as board-specific permission (rejected)", "Invent pagination, ETag, numerical provider quota, search or submission capabilities (rejected)", "Clamp Retry-After downward, erase earlier results on failure or publish under a stale/cancelled review (rejected)"],
+      "research": [{"url": "https://docs.greenhouse.io/job-board.html", "date": "2026-10-25", "access_basis": "Official Job Board API documentation fetched by the integration owner via its developers.greenhouse.io redirect; technical endpoint/payload reference only, not a live board read, incorporated implementation or content-rights grant"}],
+      "incorporated_material": [],
+      "incorporated_material_scope": "No external implementation, board content, assets or new dependencies incorporated according to contributor reports. Test postings are independently authored fictional fixtures. Existing locked package/base-image/native/font/dictionary artifacts retain upstream terms and require separate exact-artifact obligations review.",
+      "ai_assistance": {"used": true, "tool": "OpenAI coding assistant", "scope": "Independent posting/source domain, fixed TLS/relay transport, durable policy/rate/fencing, frontend integration, synthetic adversarial and actual local acceptance, operational contracts and provenance"},
+      "human_review": "Pending; no human authorship, DCO, dual grant, employer authority, board-specific terms approval, independent security review or legal/publication approval inferred",
+      "commit": null,
+      "artifact_sha256": null,
+      "rights_disposition": "Original changes intended MIT OR Apache-2.0 subject to actual contributor authority and independent review. Public distribution remains blocked. Owner review is required per real board; private progress, scans, fixture results and AI-assisted review are not rights clearance.",
+      "independent_design": {
+        "basis": "Explicit owner approval to proceed with the recommended OL-007 increment, approved neutral collection/security/UX requirements and existing project contracts/patterns",
+        "restricted_implementation_access": "Not consulted for this contribution; no private origin paths or reference identities recorded",
+        "limitations": "Actual exercised outcomes and exact image identities are recorded separately. No real board/account/model/provider/paid call, search/ranking/save-dismiss, complete M1, native amd64 pass or public-distribution approval is claimed. Earlier M0/OL-005/OL-006 image and inventory evidence remains historical."
+      }
+    }
+  ],
+  "blockers": [
+    {
+      "responsible_role": "Independent provenance reviewer",
+      "description": "Review actual contributions, independent design and material origins; bind commits/artifacts and human decisions."
+    },
+    {
+      "responsible_role": "Maintainers and qualified legal reviewer",
+      "description": "Confirm contributor authority and dual-license grants/DCO; resolve legal public-distribution eligibility."
+    }
+  ]
+}
