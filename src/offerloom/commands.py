@@ -114,7 +114,10 @@ def command(
 ) -> tuple[int, dict[str, object]]:
     expected: int | None
     if creation_kind is not None:
-        if creation_kind not in {"source", "posting"} or resource_kind != creation_kind:
+        if (
+            creation_kind not in {"source", "posting", "application"}
+            or resource_kind != creation_kind
+        ):
             raise ValueError("unsupported creation aggregate")
         if if_match is not None:
             raise Problem(400, "creation_if_match_forbidden")
@@ -129,6 +132,7 @@ def command(
         "workflow": "workflow_runs",
         "source": "source_configs",
         "posting": "job_postings",
+        "application": "applications",
     }
     if resource_kind not in tables:
         raise ValueError("unsupported command aggregate")

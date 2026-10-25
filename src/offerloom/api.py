@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import re
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from urllib.parse import urlsplit
@@ -101,6 +102,23 @@ _VALIDATION_FIELDS = frozenset(
         "current_password",
         "new_password",
         "bootstrap_token",
+        "to_stage",
+        "effective_at",
+        "reason",
+        "correction_of",
+        "retain_follow_up_ids",
+        "archived",
+        "stage",
+        "period_start",
+        "period_end",
+        "email",
+        "role_label",
+        "local_start",
+        "local_end",
+        "timezone",
+        "utc_offset_minutes",
+        "end_utc_offset_minutes",
+        "status",
     }
 )
 _VALIDATION_MESSAGES = {
@@ -170,8 +188,18 @@ class BrowserBoundary:
             await problem_response(request, problem)(scope, receive, secured_send)
 
         expected_host = urlsplit(self.settings.origin).netloc
-        is_upload = request.method == "POST" and scope["path"] == "/api/v1/imports"
-        body_limit = MAX_UPLOAD_BYTES if is_upload else self.settings.max_body_bytes
+        is_import = request.method == "POST" and scope["path"] == "/api/v1/imports"
+        is_attachment = (
+            request.method == "POST"
+            and re.fullmatch(
+                r"/api/v1/applications/[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}/attachments",
+                scope["path"],
+            )
+            is not None
+        )
+        body_limit = (
+            MAX_UPLOAD_BYTES if is_import or is_attachment else self.settings.max_body_bytes
+        )
         if request.headers.get("host", "").lower() != expected_host.lower():
             await reject(Problem(400, "host_rejected"))
             return
@@ -181,10 +209,23 @@ class BrowserBoundary:
                 return
             content_type = request.headers.get("content-type", "").split(";", 1)[0].strip().lower()
             if request.method in {"POST", "PUT", "PATCH"}:
-                allowed = {"application/pdf", "text/plain"} if is_upload else {"application/json"}
+                allowed = (
+                    {"application/pdf", "text/plain"}
+                    if is_import
+                    else {"application/octet-stream"}
+                    if is_attachment
+                    else {"application/json"}
+                )
                 if content_type not in allowed:
                     await reject(
-                        Problem(415, "unsupported_import_media" if is_upload else "json_required")
+                        Problem(
+                            415,
+                            "unsupported_import_media"
+                            if is_import
+                            else "unsupported_attachment_media"
+                            if is_attachment
+                            else "json_required",
+                        )
                     )
                     return
         content_length = request.headers.get("content-length")
@@ -303,7 +344,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return JSONResponse(
             {
                 "status": "ready" if available else "unavailable",
-                "schema_version": 9,
+                "schema_version": 10,
                 "version": __version__,
             },
             status_code=200 if available else 503,
@@ -311,13 +352,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     app.include_router(auth.build_router(db, resolved))
     app.include_router(profiles.build_router(db, resolved))
-    from offerloom import documents, imports, sources, suitability, workflows
+    from offerloom import documents, imports, sources, suitability, tracking, workflows
 
     app.include_router(workflows.build_router(db, resolved))
     app.include_router(documents.build_router(db, resolved))
     app.include_router(imports.build_router(db, resolved))
     app.include_router(sources.build_router(db, resolved))
     app.include_router(suitability.build_router(db, resolved))
+    app.include_router(tracking.build_router(db, resolved))
     if (resolved.web_dist / "index.html").is_file():
         app.mount("/", StaticFiles(directory=resolved.web_dist, html=True), name="ui")
     return app

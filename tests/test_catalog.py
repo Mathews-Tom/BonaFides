@@ -529,7 +529,7 @@ def test_source_retirement_preserves_history_and_fences_delayed_worker(
         )
         conn.execute(
             text(
-                "INSERT INTO offerloom.application_stage_events(owner_id,application_id,to_stage,effective_at) VALUES(:owner,:id,'applied',clock_timestamp())"
+                "INSERT INTO offerloom.application_stage_events(owner_id,application_id,to_stage,effective_at,sequence) VALUES(:owner,:id,'applied',clock_timestamp(),1)"
             ),
             {"owner": catalog.owner_id, "id": application_id},
         )

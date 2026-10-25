@@ -78,6 +78,7 @@ def migrate(settings: MigrationConfig) -> None:
                 "007_sources.up.sql",
                 "008_catalog.up.sql",
                 "009_suitability.up.sql",
+                "010_tracking.up.sql",
             )
             if len(rows) != len(names):
                 raise RuntimeError("unsupported migration ledger")
