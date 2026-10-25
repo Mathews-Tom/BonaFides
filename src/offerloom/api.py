@@ -119,6 +119,9 @@ _VALIDATION_FIELDS = frozenset(
         "utc_offset_minutes",
         "end_utc_offset_minutes",
         "status",
+        "payload_sha256",
+        "destination_sha256",
+        "target_version",
     }
 )
 _VALIDATION_MESSAGES = {
@@ -344,7 +347,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return JSONResponse(
             {
                 "status": "ready" if available else "unavailable",
-                "schema_version": 12,
+                "schema_version": 13,
                 "version": __version__,
             },
             status_code=200 if available else 503,
@@ -352,9 +355,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     app.include_router(auth.build_router(db, resolved))
     app.include_router(profiles.build_router(db, resolved))
-    from offerloom import documents, imports, sources, suitability, tracking, workflows
+    from offerloom import approvals, documents, imports, sources, suitability, tracking, workflows
 
     app.include_router(workflows.build_router(db, resolved))
+    app.include_router(approvals.build_router(db))
     app.include_router(documents.build_router(db, resolved))
     app.include_router(imports.build_router(db, resolved))
     app.include_router(sources.build_router(db, resolved))

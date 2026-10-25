@@ -156,36 +156,32 @@ def test_real_worker_shutdown_keeps_model_execution_under_database_recovery_auth
             )
         with catalog.runtime.transaction() as conn:
             resumed = claim(conn, uuid4())
-        if recovery in {"cancel", "deadline"}:
+        if recovery in {"cancel", "deadline", "exhausted"}:
             assert resumed is None
             terminal = catalog.workflow(workflow_id)
             assert terminal["state"] == (
                 "cancelled" if recovery == "cancel" else "permanent_failure"
             )
-            assert terminal["last_error_code"] == (
-                "cancelled" if recovery == "cancel" else "deadline_exceeded"
-            )
+            expected_error = {
+                "cancel": "cancelled",
+                "deadline": "deadline_exceeded",
+                "exhausted": "model_attempts_exhausted",
+            }[recovery]
+            assert terminal["last_error_code"] == expected_error
+            assert terminal["attempt"] == 1 and terminal["finished_at"] is not None
             assert len(requests) == 1
         else:
             assert resumed is not None and resumed.id == workflow_id and resumed.attempt == 2
             Worker(catalog.runtime, catalog.identity.settings)._execute(resumed, Event())
             final = catalog.workflow(workflow_id)
-            if recovery == "resume":
-                assert final["state"] == "succeeded"
-                assert len(requests) == 2
-            else:
-                assert final["state"] == "permanent_failure"
-                assert final["last_error_code"] == "model_attempt_or_deadline_exhausted"
-                assert len(requests) == 1
-            with catalog.runtime.transaction() as conn:
-                assert (
-                    conn.execute(
-                        text("""SELECT model_network_attempts FROM offerloom.workflow_runs
-                    WHERE owner_id=:owner AND id=:id"""),
-                        {"owner": catalog.owner_id, "id": workflow_id},
-                    ).scalar_one()
-                    == 2
-                )
+            assert final["state"] == "succeeded"
+            assert len(requests) == 2
+        with catalog.runtime.transaction() as conn:
+            assert conn.execute(
+                text("""SELECT model_network_attempts FROM offerloom.workflow_runs
+                WHERE owner_id=:owner AND id=:id"""),
+                {"owner": catalog.owner_id, "id": workflow_id},
+            ).scalar_one() == (1 if recovery in {"cancel", "deadline"} else 2)
 
 
 @pytest.mark.postgres

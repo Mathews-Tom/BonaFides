@@ -33,7 +33,7 @@ from offerloom.problems import Problem
 from offerloom.profile_entries import ClaimKind, ClaimPayload, _snapshot
 from offerloom.profiles import _save, content_hash
 from offerloom.storage import BlobStore
-from offerloom.workflows import Claim, assert_fence, enqueue, publish
+from offerloom.workflows import Claim, append_attempt_event, assert_fence, enqueue, publish
 
 MAX_BATCHES = 100
 MAX_IMPORT_BYTES = 64 * 1024 * 1024
@@ -343,6 +343,7 @@ def stage_parsed(
         updated_at=clock_timestamp(),last_error_code=NULL WHERE owner_id=:owner AND id=:id RETURNING version"""),
         {"owner": task.owner_id, "id": task.id, "expiry": expiry},
     ).scalar_one()
+    append_attempt_event(conn, task.owner_id, task.id, "waiting_for_approval")
     append_outbox(
         conn,
         task.owner_id,
@@ -771,6 +772,7 @@ def build_router(db: Database, settings: Settings) -> APIRouter:
                     WHERE owner_id=:owner AND id=:workflow RETURNING version"""),
                     {"owner": owner.id, "workflow": batch["workflow_run_id"]},
                 ).scalar_one()
+                append_attempt_event(active, owner.id, batch["workflow_run_id"], "approved")
                 append_outbox(
                     active,
                     owner.id,

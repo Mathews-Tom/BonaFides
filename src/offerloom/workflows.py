@@ -1,9 +1,14 @@
 # SPDX-License-Identifier: MIT OR Apache-2.0
 """PostgreSQL durable queue and independently fenced local outbox delivery."""
 
+import base64
+import binascii
 import hashlib
+import hmac
+import json
 import random
-from collections.abc import Callable
+import re
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -12,19 +17,83 @@ from uuid import UUID, uuid4
 
 from alembic import command as alembic_command
 from alembic.config import Config
-from fastapi import APIRouter, Depends, Header
+from fastapi import APIRouter, Depends, Header, Query
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import Connection, create_engine, text
-from sqlalchemy.engine import make_url
+from sqlalchemy.engine import RowMapping, make_url
 
 from offerloom.auth import Owner, require_owner
 from offerloom.commands import append_outbox, canonical_json, command, lock_installation
 from offerloom.config import Settings
+from offerloom.crypto import Keyring
 from offerloom.db import Database
 from offerloom.problems import Problem
 
 LEASE_SECONDS = 60
+WorkflowState = Literal[
+    "pending",
+    "running",
+    "waiting_for_approval",
+    "retryable_failure",
+    "permanent_failure",
+    "succeeded",
+    "cancelled",
+]
+_CURSOR_PURPOSE = b"offerloom/workflows/keyset/v1"
+_REPLAY_SAFE_KINDS = frozenset(
+    {
+        "document_generate",
+        "pdf_render",
+        "profile_import",
+        "source_refresh",
+        "posting_extract",
+        "matching",
+    }
+)
+_ATTEMPT_EVENTS = frozenset(
+    {
+        "claimed",
+        "retry_requested",
+        "retryable_failure",
+        "permanent_failure",
+        "cancelled",
+        "succeeded",
+        "interrupted",
+        "waiting_for_approval",
+        "approved",
+        "approval_expired",
+    }
+)
+
+
+def _safe_code(value: object) -> str | None:
+    if value is None:
+        return None
+    return (
+        value
+        if isinstance(value, str) and re.fullmatch(r"[a-z][a-z0-9_]{0,99}", value)
+        else "workflow_error"
+    )
+
+
+def append_attempt_event(
+    conn: Connection,
+    owner_id: UUID,
+    workflow_id: UUID,
+    event: str,
+    error_code: str | None = None,
+) -> None:
+    """Record an actual checkpoint in the caller's fenced transaction."""
+    if event not in _ATTEMPT_EVENTS:
+        raise ValueError("unsupported workflow attempt event")
+    conn.execute(
+        text("""INSERT INTO offerloom.workflow_attempt_events
+        (owner_id,workflow_run_id,attempt,fence,event,error_code)
+        SELECT owner_id,id,attempt,fence,:event,:code FROM offerloom.workflow_runs
+        WHERE owner_id=:owner AND id=:id"""),
+        {"owner": owner_id, "id": workflow_id, "event": event, "code": _safe_code(error_code)},
+    )
 
 
 class MigrationConfig(Protocol):
@@ -81,6 +150,7 @@ def migrate(settings: MigrationConfig) -> None:
                 "010_tracking.up.sql",
                 "011_documents.up.sql",
                 "012_section_regeneration.up.sql",
+                "013_task_controls.up.sql",
             )
             if len(rows) != len(names):
                 raise RuntimeError("unsupported migration ledger")
@@ -161,11 +231,194 @@ def enqueue(conn: Connection, owner_id: UUID, kind: str, input_snapshot: dict[st
     return workflow_id
 
 
+def source_block_reason(conn: Connection, row: Mapping[str, object]) -> str | None:
+    snapshot = cast(dict[str, object], row["input"])
+    owner_id = row["owner_id"]
+    if row["kind"] == "source_refresh":
+        source = (
+            conn.execute(
+                text("""SELECT s.enabled,s.removed_at,s.policy_version,s.current_policy_review_id,r.policy_sha256,
+            s.rate_limit_blocked,s.next_allowed_at>clock_timestamp() AS paused FROM offerloom.source_configs s
+            LEFT JOIN offerloom.source_policy_reviews r ON r.owner_id=s.owner_id AND r.id=s.current_policy_review_id
+            WHERE s.owner_id=:owner AND s.id=:id"""),
+                {"owner": owner_id, "id": row["source_config_id"]},
+            )
+            .mappings()
+            .first()
+        )
+        if source is None or source["removed_at"] is not None or not source["enabled"]:
+            return "source_unavailable"
+        if (
+            source["policy_version"] != row["source_policy_version"]
+            or source["current_policy_review_id"] != row["source_policy_review_id"]
+            or source["policy_sha256"] != row["source_policy_sha256"]
+        ):
+            return "source_policy_changed"
+        if source["rate_limit_blocked"] or source["paused"]:
+            return "source_retry_after"
+    checks = {
+        "posting_id": """SELECT id FROM offerloom.job_postings
+            WHERE owner_id=:owner AND id=:id AND status<>'closed'""",
+        "profile_revision_id": """SELECT r.id FROM offerloom.profile_revisions r
+            JOIN offerloom.profiles p ON p.owner_id=r.owner_id AND p.id=r.profile_id
+            WHERE r.owner_id=:owner AND r.id=:id""",
+        "current_profile_revision_id": """SELECT id FROM offerloom.profiles
+            WHERE owner_id=:owner AND current_revision_id=:id""",
+        "application_id": """SELECT id FROM offerloom.applications
+            WHERE owner_id=:owner AND id=:id AND archived_at IS NULL AND current_stage<>'withdrawn'""",
+        "document_id": """SELECT id FROM offerloom.document_drafts
+            WHERE owner_id=:owner AND id=:id AND deleted_at IS NULL""",
+        "import_id": """SELECT id FROM offerloom.import_batches
+            WHERE owner_id=:owner AND id=:id AND merged_profile_revision_id IS NULL
+            AND (review_expires_at IS NULL OR review_expires_at>clock_timestamp())""",
+    }
+    if "current_profile_revision_id" not in snapshot:
+        checks["profile_revision_id"] += " AND p.current_revision_id=r.id"
+    for key, sql in checks.items():
+        if key not in snapshot:
+            continue
+        try:
+            identifier = UUID(str(snapshot[key]))
+        except ValueError:
+            return "source_unavailable"
+        if conn.execute(text(sql), {"owner": owner_id, "id": identifier}).first() is None:
+            return "source_unavailable"
+    if row["kind"] == "profile_import" and "import_id" in snapshot:
+        batch = (
+            conn.execute(
+                text("""SELECT review FROM offerloom.import_batches
+            WHERE owner_id=:owner AND id=:id AND workflow_run_id=:workflow"""),
+                {"owner": owner_id, "id": UUID(str(snapshot["import_id"])), "workflow": row["id"]},
+            )
+            .mappings()
+            .first()
+        )
+        if batch is None:
+            return "source_unavailable"
+        if batch["review"] is None and cast(int, row["attempt"]) >= 3:
+            return "import_parse_attempts_exhausted"
+    # An archived/edited evidence item cannot be resurrected by queue controls.
+    if "profile_revision_id" in snapshot:
+        withdrawn = conn.execute(
+            text("""SELECT EXISTS(
+            SELECT 1 FROM offerloom.profile_revision_claims l
+            JOIN offerloom.claim_revisions r ON r.owner_id=l.owner_id AND r.id=l.claim_revision_id
+            JOIN offerloom.professional_claims c ON c.owner_id=r.owner_id AND c.id=r.claim_id
+            WHERE l.owner_id=:owner AND l.profile_revision_id=:revision
+            AND (c.archived_at IS NOT NULL OR c.current_revision_id<>r.id))
+            OR EXISTS(
+            SELECT 1 FROM offerloom.profile_revision_claims l
+            JOIN offerloom.claim_evidence_links x ON x.owner_id=l.owner_id AND x.claim_revision_id=l.claim_revision_id
+            JOIN offerloom.evidence_revisions r ON r.owner_id=x.owner_id AND r.id=x.evidence_revision_id
+            JOIN offerloom.evidence_records e ON e.owner_id=r.owner_id AND e.id=r.evidence_id
+            WHERE l.owner_id=:owner AND l.profile_revision_id=:revision
+            AND (e.archived_at IS NOT NULL OR e.current_revision_id<>r.id))"""),
+            {"owner": owner_id, "revision": UUID(str(snapshot["profile_revision_id"]))},
+        ).scalar_one()
+        if withdrawn:
+            return "source_withdrawn"
+    if row["kind"] == "document_generate" and "profile_revision_id" in snapshot:
+        from offerloom.document_generation import _fact_data
+
+        try:
+            _fact_data(conn, cast(UUID, owner_id), UUID(str(snapshot["profile_revision_id"])))
+        except Problem:
+            return "source_withdrawn"
+    if row["kind"] == "pdf_render":
+        from offerloom.documents import prepare_render
+
+        try:
+            prepared = prepare_render(
+                conn,
+                cast(UUID, owner_id),
+                UUID(str(snapshot["document_id"])),
+                UUID(str(snapshot["revision_id"])),
+            )
+            if prepared.content_sha256 != snapshot.get("content_sha256"):
+                return "source_changed"
+        except (Problem, KeyError, ValueError):
+            return "source_unavailable"
+    return None
+
+
+def _retry_block_reason(conn: Connection, row: RowMapping) -> str | None:
+    if row["unknown_delivery"]:
+        return "delivery_reconciliation_required"
+    if row["state"] != "retryable_failure" or row["finished_at"] is not None:
+        return "workflow_not_retryable"
+    if row["kind"] not in _REPLAY_SAFE_KINDS:
+        return "workflow_not_replay_safe"
+    if row["cancel_requested_at"] is not None:
+        return "workflow_cancelled"
+    if row["maintenance_epoch"] != row["current_epoch"]:
+        return "workflow_namespace_changed"
+    if row["attempt"] >= row["max_attempts"]:
+        return "attempts_exhausted"
+    if row["deadline_passed"]:
+        return "deadline_exceeded"
+    if not row["retry_due"]:
+        return "retry_not_due"
+    snapshot = cast(dict[str, object], row["input"])
+    model_task = row["kind"] in {"posting_extract", "matching"} or snapshot.get("mode") in {
+        "tailored_ai",
+        "section_regeneration",
+    }
+    if model_task and row["model_network_attempts"] >= 2:
+        return "model_attempts_exhausted"
+    if (row["token_budget"] > 0 and row["tokens_used"] >= row["token_budget"]) or (
+        row["cost_budget_microunits"] > 0
+        and row["cost_used_microunits"] >= row["cost_budget_microunits"]
+    ):
+        return "workflow_budget_exhausted"
+    return source_block_reason(conn, cast(Mapping[str, object], row))
+
+
+def _require_safe_numbers(value: object) -> None:
+    if (type(value) is int and abs(value) > 9007199254740991) or isinstance(value, float):
+        raise Problem(409, "workflow_number_not_exact")
+    if isinstance(value, dict):
+        for item in value.values():
+            _require_safe_numbers(item)
+    elif isinstance(value, list):
+        for item in value:
+            _require_safe_numbers(item)
+
+
+def _wire(values: Mapping[str, object]) -> dict[str, object]:
+    result = {
+        key: str(value)
+        if isinstance(value, UUID)
+        else value.isoformat()
+        if isinstance(value, datetime)
+        else value
+        for key, value in values.items()
+    }
+    _require_safe_numbers(result)
+    return result
+
+
 def get_workflow(conn: Connection, owner_id: UUID, workflow_id: UUID) -> dict[str, object]:
+    # Retry eligibility can lock profile facts or prepare a PDF; serialize with writers first.
+    lock_installation(conn)
+    conn.execute(
+        text("SELECT owner_id FROM offerloom.owner_settings WHERE owner_id=:owner FOR UPDATE"),
+        {"owner": owner_id},
+    )
     row = (
         conn.execute(
-            text("""SELECT id,kind,version,state,attempt,max_attempts,next_attempt_at,last_error_code,result,input,created_at,updated_at,finished_at
-        FROM offerloom.workflow_runs WHERE owner_id=:owner AND id=:id"""),
+            text("""SELECT w.*,i.maintenance_epoch AS current_epoch,
+        w.deadline_at<=clock_timestamp() AS deadline_passed,
+        w.next_attempt_at<=clock_timestamp() AS retry_due,
+        CASE WHEN w.state IN ('pending','retryable_failure')
+        THEN greatest(0,floor(extract(epoch FROM clock_timestamp()-w.created_at)))::bigint
+        ELSE NULL END AS queue_age_seconds,
+        EXISTS(SELECT 1 FROM offerloom.workflow_steps s WHERE s.owner_id=w.owner_id
+        AND s.workflow_run_id=w.id AND s.delivery_state='unknown') AS unknown_delivery,
+        (SELECT s.delivery_state FROM offerloom.workflow_steps s WHERE s.owner_id=w.owner_id
+        AND s.workflow_run_id=w.id AND s.delivery_state<>'not_attempted'
+        ORDER BY s.created_at DESC,s.id DESC LIMIT 1) AS latest_delivery
+        FROM offerloom.workflow_runs w CROSS JOIN offerloom.installation_state i
+        WHERE w.owner_id=:owner AND w.id=:id AND i.singleton"""),
             {"owner": owner_id, "id": workflow_id},
         )
         .mappings()
@@ -173,14 +426,85 @@ def get_workflow(conn: Connection, owner_id: UUID, workflow_id: UUID) -> dict[st
     )
     if row is None:
         raise Problem(404, "workflow_not_found")
-    result = {
-        key: str(value)
-        if isinstance(value, UUID)
-        else value.isoformat()
-        if isinstance(value, datetime)
-        else value
-        for key, value in row.items()
-        if key != "input"
+    result = _wire(
+        {
+            key: row[key]
+            for key in (
+                "id",
+                "kind",
+                "version",
+                "state",
+                "attempt",
+                "max_attempts",
+                "next_attempt_at",
+                "result",
+                "created_at",
+                "updated_at",
+                "finished_at",
+                "deadline_at",
+                "cancel_requested_at",
+                "lease_expires_at",
+                "last_heartbeat_at",
+                "queue_age_seconds",
+            )
+        }
+    )
+    result["last_error_code"] = _safe_code(row["last_error_code"])
+    result["remaining_attempts"] = max(0, row["max_attempts"] - row["attempt"])
+    result["cancelable"] = row["state"] not in {"succeeded", "permanent_failure", "cancelled"}
+    reason = _retry_block_reason(conn, row)
+    result["retryable"] = reason is None
+    result["retry_block_reason"] = reason
+    result["delivery_state"] = (
+        "unknown" if row["unknown_delivery"] else row["latest_delivery"] or "not_attempted"
+    )
+    usage = (
+        conn.execute(
+            text("""SELECT count(*) AS model_runs,
+        count(*) FILTER(WHERE usage_status<>'known' OR input_tokens IS NULL OR output_tokens IS NULL
+            OR status IN ('reserved','running','unknown_usage')) AS unknown_usage,
+        count(*) FILTER(WHERE actual_cost_microunits IS NULL) AS unknown_cost,
+        sum(input_tokens) AS input_tokens,sum(output_tokens) AS output_tokens,
+        sum(actual_cost_microunits) AS actual_cost
+        FROM offerloom.model_runs WHERE owner_id=:owner AND workflow_run_id=:id"""),
+            {"owner": owner_id, "id": workflow_id},
+        )
+        .mappings()
+        .one()
+    )
+    count = int(usage["model_runs"])
+    known = count > 0 and usage["unknown_usage"] == 0
+    snapshot = row["input"]
+    model_task = row["kind"] in {"posting_extract", "matching"} or snapshot.get("mode") in {
+        "tailored_ai",
+        "section_regeneration",
+    }
+    result["usage"] = {
+        "status": "not_applicable"
+        if count == 0 and row["model_network_attempts"] == 0
+        else "known"
+        if known
+        else "unknown",
+        "model_runs": count,
+        "inference_post_attempts": row["model_network_attempts"],
+        "inference_post_limit": 2 if model_task else None,
+        "input_tokens": int(usage["input_tokens"]) if known else None,
+        "output_tokens": int(usage["output_tokens"]) if known else None,
+        "token_budget": row["token_budget"],
+        "tokens_used": row["tokens_used"],
+        "cost_budget_microunits": row["cost_budget_microunits"],
+        "cost_used_microunits": int(usage["actual_cost"])
+        if count and usage["unknown_cost"] == 0
+        else None,
+        "currency": row["budget_currency"],
+    }
+    settled = row["state"] == "cancelled"
+    result["cancellation"] = {
+        "requested": row["cancel_requested_at"] is not None,
+        "local_fence_settled": settled,
+        "provider_stopped": None,
+        "completed_effects_preserved": True,
+        "reason": "local_publication_revoked_provider_may_continue" if settled else None,
     }
     if row["kind"] == "document_generate" and row["input"].get("mode") in {
         "deterministic_base",
@@ -200,7 +524,225 @@ def get_workflow(conn: Connection, owner_id: UUID, workflow_id: UUID) -> dict[st
             )
         }
         result["result"] = {**pins, **(row["result"] or {})}
+    _require_safe_numbers(result)
     return result
+
+
+def _b64(value: bytes) -> str:
+    return base64.urlsafe_b64encode(value).decode("ascii").rstrip("=")
+
+
+def _unb64(value: str) -> bytes:
+    decoded = base64.b64decode(value + "=" * (-len(value) % 4), altchars=b"-_", validate=True)
+    if _b64(decoded) != value:
+        raise ValueError("noncanonical cursor")
+    return decoded
+
+
+def _workflow_window(
+    conn: Connection,
+    owner_id: UUID,
+    keyring: Keyring,
+    state: str | None,
+    cursor: str | None,
+) -> tuple[datetime, datetime | None, UUID | None]:
+    if cursor is None:
+        return conn.execute(text("SELECT clock_timestamp()")).scalar_one(), None, None
+    try:
+        encoded, signature = cursor.split(".")
+        payload = _unb64(encoded)
+        data = json.loads(payload)
+        if not isinstance(data, dict) or set(data) != {
+            "v",
+            "kid",
+            "scope",
+            "owner",
+            "filters",
+            "as_of",
+            "created_at",
+            "id",
+        }:
+            raise ValueError("cursor shape")
+        if (
+            type(data["v"]) is not int
+            or data["v"] != 1
+            or not all(isinstance(data[key], str) for key in data if key != "v")
+        ):
+            raise ValueError("cursor types")
+        key = hmac.digest(keyring.keys[data["kid"]], _CURSOR_PURPOSE, "sha256")
+        if not hmac.compare_digest(hmac.digest(key, payload, "sha256"), _unb64(signature)):
+            raise ValueError("cursor signature")
+        if (
+            data["scope"] != "workflows"
+            or data["owner"] != str(owner_id)
+            or data["filters"]
+            != hashlib.sha256(canonical_json({"state": state}).encode()).hexdigest()
+        ):
+            raise ValueError("cursor context")
+        as_of = datetime.fromisoformat(data["as_of"])
+        timestamp = datetime.fromisoformat(data["created_at"])
+        if as_of.tzinfo is None or timestamp.tzinfo is None or timestamp > as_of:
+            raise ValueError("cursor timestamp")
+        return as_of, timestamp, UUID(data["id"])
+    except (ValueError, TypeError, KeyError, binascii.Error, UnicodeError, RecursionError) as exc:
+        raise Problem(400, "invalid_cursor") from exc
+
+
+def list_workflows(
+    conn: Connection,
+    owner_id: UUID,
+    keyring: Keyring,
+    *,
+    limit: int = 30,
+    state: WorkflowState | None = None,
+    cursor: str | None = None,
+) -> dict[str, object]:
+    if not 1 <= limit <= 100 or (cursor is not None and len(cursor) > 2048):
+        raise Problem(422, "invalid_workflow_page")
+    as_of, timestamp, identifier = _workflow_window(conn, owner_id, keyring, state, cursor)
+    predicates = ["owner_id=:owner", "created_at<=:as_of"]
+    params: dict[str, object] = {"owner": owner_id, "as_of": as_of, "limit": limit + 1}
+    if state is not None:
+        predicates.append("state=CAST(:state AS offerloom.workflow_state)")
+        params["state"] = state
+    if timestamp is not None:
+        predicates.append("(created_at,id)<(:timestamp,:id)")
+        params.update(timestamp=timestamp, id=identifier)
+    rows = (
+        conn.execute(
+            text(f"""SELECT id,created_at FROM offerloom.workflow_runs
+        WHERE {" AND ".join(predicates)} ORDER BY created_at DESC,id DESC LIMIT :limit"""),
+            params,
+        )
+        .mappings()
+        .all()
+    )
+    selected = rows[:limit]
+    next_cursor = None
+    if len(rows) > limit:
+        last = selected[-1]
+        payload = canonical_json(
+            {
+                "v": 1,
+                "kid": keyring.active_key_id,
+                "scope": "workflows",
+                "owner": str(owner_id),
+                "filters": hashlib.sha256(canonical_json({"state": state}).encode()).hexdigest(),
+                "as_of": as_of.isoformat(),
+                "created_at": last["created_at"].isoformat(),
+                "id": str(last["id"]),
+            }
+        ).encode()
+        key = hmac.digest(keyring.keys[keyring.active_key_id], _CURSOR_PURPOSE, "sha256")
+        next_cursor = _b64(payload) + "." + _b64(hmac.digest(key, payload, "sha256"))
+    return {
+        "items": [get_workflow(conn, owner_id, row["id"]) for row in selected],
+        "next_cursor": next_cursor,
+    }
+
+
+def workflow_history(
+    conn: Connection,
+    owner_id: UUID,
+    workflow_id: UUID,
+    *,
+    events: bool = False,
+    limit: int = 30,
+    before: UUID | None = None,
+) -> dict[str, object]:
+    if not 1 <= limit <= 100:
+        raise Problem(422, "invalid_workflow_page")
+    if (
+        conn.execute(
+            text("SELECT id FROM offerloom.workflow_runs WHERE owner_id=:owner AND id=:id"),
+            {"owner": owner_id, "id": workflow_id},
+        ).first()
+        is None
+    ):
+        raise Problem(404, "workflow_not_found")
+    table = "workflow_attempt_events" if events else "workflow_steps"
+    columns = (
+        "id,attempt,fence,event,error_code,created_at"
+        if events
+        else ("id,step_key,attempt,fence,state,delivery_state,error_code,created_at,completed_at")
+    )
+    predicate = ""
+    params: dict[str, object] = {"owner": owner_id, "workflow": workflow_id, "limit": limit + 1}
+    if before is not None:
+        anchor = (
+            conn.execute(
+                text(f"""SELECT created_at,id FROM offerloom.{table}
+            WHERE owner_id=:owner AND workflow_run_id=:workflow AND id=:before"""),
+                {**params, "before": before},
+            )
+            .mappings()
+            .first()
+        )
+        if anchor is None:
+            raise Problem(400, "invalid_cursor")
+        predicate = "AND (created_at,id)<(:timestamp,:before)"
+        params.update(timestamp=anchor["created_at"], before=before)
+    rows = (
+        conn.execute(
+            text(f"""SELECT {columns} FROM offerloom.{table} WHERE owner_id=:owner
+        AND workflow_run_id=:workflow {predicate} ORDER BY created_at DESC,id DESC LIMIT :limit"""),
+            params,
+        )
+        .mappings()
+        .all()
+    )
+    items = []
+    for row in rows[:limit]:
+        item = _wire(cast(Mapping[str, object], row))
+        item["error_code"] = _safe_code(row["error_code"])
+        items.append(item)
+    return {
+        "items": items,
+        "next_cursor": str(rows[limit - 1]["id"]) if len(rows) > limit else None,
+    }
+
+
+def retry_workflow(conn: Connection, owner_id: UUID, workflow_id: UUID) -> dict[str, object]:
+    lock_installation(conn)
+    conn.execute(
+        text("SELECT owner_id FROM offerloom.owner_settings WHERE owner_id=:owner FOR UPDATE"),
+        {"owner": owner_id},
+    )
+    row = (
+        conn.execute(
+            text("""SELECT w.*,i.maintenance_epoch AS current_epoch,
+        w.deadline_at<=clock_timestamp() AS deadline_passed,w.next_attempt_at<=clock_timestamp() AS retry_due,
+        EXISTS(SELECT 1 FROM offerloom.workflow_steps s WHERE s.owner_id=w.owner_id
+        AND s.workflow_run_id=w.id AND s.delivery_state='unknown') AS unknown_delivery
+        FROM offerloom.workflow_runs w CROSS JOIN offerloom.installation_state i
+        WHERE w.owner_id=:owner AND w.id=:id AND i.singleton FOR UPDATE OF w"""),
+            {"owner": owner_id, "id": workflow_id},
+        )
+        .mappings()
+        .first()
+    )
+    if row is None:
+        raise Problem(404, "workflow_not_found")
+    reason = _retry_block_reason(conn, row)
+    if reason is not None:
+        raise Problem(409, reason)
+    # This is only a queue-control checkpoint. The real next claim owns the attempt.
+    version = conn.execute(
+        text("""UPDATE offerloom.workflow_runs SET state='pending',version=version+1,
+        updated_at=clock_timestamp() WHERE owner_id=:owner AND id=:id RETURNING version"""),
+        {"owner": owner_id, "id": workflow_id},
+    ).scalar_one()
+    append_attempt_event(conn, owner_id, workflow_id, "retry_requested")
+    append_outbox(
+        conn,
+        owner_id,
+        "workflow.retry_requested",
+        "workflow",
+        workflow_id,
+        {"workflow_id": str(workflow_id)},
+        int(version),
+    )
+    return get_workflow(conn, owner_id, workflow_id)
 
 
 def claim(conn: Connection, holder: UUID) -> Claim | None:
@@ -212,11 +754,15 @@ def claim(conn: Connection, holder: UUID) -> Claim | None:
         WHERE w.maintenance_epoch=:epoch AND w.state IN ('pending','retryable_failure')
         AND w.next_attempt_at<=clock_timestamp() AND w.deadline_at>clock_timestamp()
         AND w.cancel_requested_at IS NULL AND w.attempt<w.max_attempts
+        AND (w.token_budget=0 OR w.tokens_used<w.token_budget)
+        AND (w.cost_budget_microunits=0 OR w.cost_used_microunits<w.cost_budget_microunits)
+        AND (NOT(w.kind IN ('posting_extract','matching') OR coalesce(w.input->>'mode','') IN ('tailored_ai','section_regeneration'))
+             OR w.model_network_attempts<2)
         AND NOT EXISTS(SELECT 1 FROM offerloom.workflow_steps s WHERE s.owner_id=w.owner_id AND s.workflow_run_id=w.id AND s.delivery_state='unknown')
         ORDER BY w.next_attempt_at,w.created_at,w.id FOR UPDATE OF w SKIP LOCKED LIMIT 1)
         UPDATE offerloom.workflow_runs w SET state='running',lease_holder=:holder,
         lease_expires_at=clock_timestamp()+make_interval(secs=>:lease),fence=w.fence+1,
-        attempt=w.attempt+1,version=w.version+1,updated_at=clock_timestamp()
+        attempt=w.attempt+1,version=w.version+1,updated_at=clock_timestamp(),last_heartbeat_at=NULL
         FROM candidate c WHERE w.owner_id=c.owner_id AND w.id=c.id RETURNING w.*"""),
             {"epoch": epoch, "holder": holder, "lease": LEASE_SECONDS},
         )
@@ -225,6 +771,7 @@ def claim(conn: Connection, holder: UUID) -> Claim | None:
     )
     if row is None:
         return None
+    append_attempt_event(conn, row["owner_id"], row["id"], "claimed")
     return Claim(
         row["owner_id"], row["id"], holder, row["fence"], row["attempt"], row["kind"], row["input"]
     )
@@ -235,7 +782,8 @@ def heartbeat(conn: Connection, task: Claim) -> bool:
     return (
         conn.execute(
             text("""UPDATE offerloom.workflow_runs SET
-        lease_expires_at=clock_timestamp()+make_interval(secs=>:lease),updated_at=clock_timestamp()
+        lease_expires_at=clock_timestamp()+make_interval(secs=>:lease),
+        last_heartbeat_at=clock_timestamp(),updated_at=clock_timestamp()
         WHERE owner_id=:owner AND id=:id AND state='running' AND lease_holder=:holder AND fence=:fence
         AND lease_expires_at>clock_timestamp() AND cancel_requested_at IS NULL
         AND deadline_at>clock_timestamp() AND maintenance_epoch=:epoch RETURNING id"""),
@@ -268,6 +816,12 @@ def publish(
         {"owner": task.owner_id},
     )
     assert_fence(conn, task)
+    if conn.execute(
+        text("""SELECT EXISTS(SELECT 1 FROM offerloom.workflow_steps
+        WHERE owner_id=:owner AND workflow_run_id=:id AND delivery_state='unknown')"""),
+        {"owner": task.owner_id, "id": task.id},
+    ).scalar_one():
+        raise Problem(409, "delivery_reconciliation_required")
     result = effect(conn)
     if task.kind in {"source_refresh", "posting_extract", "matching"}:
         # Recheck independently after bounded domain persistence and validation.
@@ -289,6 +843,7 @@ def publish(
             "result": canonical_json(result),
         },
     ).scalar_one()
+    append_attempt_event(conn, task.owner_id, task.id, "succeeded")
     conn.execute(
         text(
             "UPDATE offerloom.owner_settings SET workspace_version=workspace_version+1 WHERE owner_id=:owner"
@@ -316,13 +871,25 @@ def fail(
 ) -> None:
     if minimum_retry_delay_seconds is not None and minimum_retry_delay_seconds < 0:
         raise ValueError("negative minimum retry delay")
+    lock_installation(conn)
+    conn.execute(
+        text("SELECT owner_id FROM offerloom.owner_settings WHERE owner_id=:owner FOR UPDATE"),
+        {"owner": task.owner_id},
+    )
+    code = _safe_code(code) or "workflow_error"
     assert_fence(conn, task)
     row = (
         conn.execute(
             text(
                 """SELECT error_fingerprint,repeated_error_count,max_attempts,
-                extract(epoch FROM deadline_at-clock_timestamp()) AS remaining_seconds
-                FROM offerloom.workflow_runs WHERE owner_id=:owner AND id=:id"""
+                extract(epoch FROM deadline_at-clock_timestamp()) AS remaining_seconds,
+                (token_budget>0 AND tokens_used>=token_budget)
+                OR (cost_budget_microunits>0 AND cost_used_microunits>=cost_budget_microunits)
+                OR ((kind IN ('posting_extract','matching') OR coalesce(input->>'mode','') IN ('tailored_ai','section_regeneration'))
+                    AND model_network_attempts>=2) AS budgets_exhausted,
+                EXISTS(SELECT 1 FROM offerloom.workflow_steps s WHERE s.owner_id=w.owner_id
+                AND s.workflow_run_id=w.id AND s.delivery_state='unknown') AS unknown_delivery
+                FROM offerloom.workflow_runs w WHERE owner_id=:owner AND id=:id"""
             ),
             {"owner": task.owner_id, "id": task.id},
         )
@@ -331,17 +898,26 @@ def fail(
     )
     repeated = int(row["repeated_error_count"]) + 1 if row["error_fingerprint"] == code else 1
     poison = code == "benchmark_poison" and repeated >= 2
-    retry = transient and not poison and task.attempt < int(row["max_attempts"])
+    retry = (
+        transient
+        and not poison
+        and task.kind in _REPLAY_SAFE_KINDS
+        and task.attempt < int(row["max_attempts"])
+        and not row["budgets_exhausted"]
+    )
     delay = max(
         random.uniform(0, min(300, 2**task.attempt)),
         minimum_retry_delay_seconds or 0,
     )
-    if minimum_retry_delay_seconds is not None and delay >= float(row["remaining_seconds"]):
+    if delay >= float(row["remaining_seconds"]):
         retry = False
     if minimum_retry_delay_seconds is not None and not retry:
         # A terminal run has no resend time; the source retains its full provider pause.
         delay = 0.0
     state = "retryable_failure" if retry else "permanent_failure"
+    if row["unknown_delivery"]:
+        state, code = "waiting_for_approval", "delivery_reconciliation_required"
+        retry = True
     version = conn.execute(
         text("""UPDATE offerloom.workflow_runs SET state=CAST(:state AS offerloom.workflow_state),last_error_code=:code,
         error_fingerprint=:code,repeated_error_count=:count,next_attempt_at=clock_timestamp()+make_interval(secs=>:delay),
@@ -357,6 +933,7 @@ def fail(
             "id": task.id,
         },
     ).scalar_one()
+    append_attempt_event(conn, task.owner_id, task.id, state, code)
     append_outbox(
         conn,
         task.owner_id,
@@ -380,27 +957,65 @@ def fail(
 
 
 def reap(conn: Connection) -> int:
+    from offerloom.approvals import expire_action_approvals
+
     epoch = lock_installation(conn)
+    # Match control/domain lock ordering; skip owners whose command is in flight.
+    owners = (
+        conn.execute(
+            text("""SELECT owner_id FROM offerloom.owner_settings ORDER BY owner_id
+        FOR UPDATE SKIP LOCKED LIMIT 100"""),
+        )
+        .scalars()
+        .all()
+    )
+    if not owners:
+        return 0
     rows = (
         conn.execute(
             text("""SELECT w.*,EXISTS(SELECT 1 FROM offerloom.workflow_steps s
         WHERE s.owner_id=w.owner_id AND s.workflow_run_id=w.id AND s.delivery_state='unknown') AS unknown_delivery,
-        (w.deadline_at<=clock_timestamp()) AS deadline_passed
+        w.deadline_at<=clock_timestamp() AS deadline_passed,
+        ((w.kind IN ('posting_extract','matching') OR coalesce(w.input->>'mode','') IN ('tailored_ai','section_regeneration'))
+            AND w.model_network_attempts>=2) AS model_exhausted,
+        ((w.token_budget>0 AND w.tokens_used>=w.token_budget)
+            OR (w.cost_budget_microunits>0 AND w.cost_used_microunits>=w.cost_budget_microunits)) AS budget_exhausted
         FROM offerloom.workflow_runs w WHERE w.maintenance_epoch=:epoch
+        AND w.owner_id=ANY(CAST(:owners AS uuid[]))
         AND w.state IN ('pending','retryable_failure','running','waiting_for_approval')
-        AND (w.cancel_requested_at IS NOT NULL OR ((w.state<>'waiting_for_approval' OR w.kind='profile_import') AND w.deadline_at<=clock_timestamp())
-        OR (w.state='running' AND w.lease_expires_at<=clock_timestamp()))
+        AND (w.cancel_requested_at IS NOT NULL
+        OR ((w.state<>'waiting_for_approval' OR w.kind='profile_import') AND w.deadline_at<=clock_timestamp()
+            AND (w.state<>'waiting_for_approval' OR w.last_error_code IS DISTINCT FROM 'delivery_reconciliation_required'))
+        OR (w.state='running' AND w.lease_expires_at<=clock_timestamp())
+        OR (w.state IN ('pending','retryable_failure') AND (
+            w.attempt>=w.max_attempts OR (w.token_budget>0 AND w.tokens_used>=w.token_budget)
+            OR (w.cost_budget_microunits>0 AND w.cost_used_microunits>=w.cost_budget_microunits)
+            OR ((w.kind IN ('posting_extract','matching') OR coalesce(w.input->>'mode','') IN ('tailored_ai','section_regeneration'))
+                AND w.model_network_attempts>=2)))
+        OR ((w.state<>'waiting_for_approval' OR w.last_error_code IS DISTINCT FROM 'delivery_reconciliation_required')
+            AND EXISTS(SELECT 1 FROM offerloom.workflow_steps s
+            WHERE s.owner_id=w.owner_id AND s.workflow_run_id=w.id AND s.delivery_state='unknown'))
+        OR (EXISTS(SELECT 1 FROM offerloom.action_approvals a WHERE a.owner_id=w.owner_id
+            AND a.workflow_run_id=w.id AND a.intent IS NOT NULL AND a.revoked_at IS NULL
+            AND a.consumed_at IS NULL AND a.expires_at<=clock_timestamp())
+            AND NOT EXISTS(SELECT 1 FROM offerloom.workflow_steps s WHERE s.owner_id=w.owner_id
+                AND s.workflow_run_id=w.id AND s.delivery_state='unknown')))
         ORDER BY w.created_at,w.id FOR UPDATE OF w SKIP LOCKED LIMIT 100"""),
-            {"epoch": epoch},
+            {"epoch": epoch, "owners": list(owners)},
         )
         .mappings()
         .all()
     )
     for row in rows:
+        expired = False
+        if not row["unknown_delivery"]:
+            expired = expire_action_approvals(conn, row["owner_id"], row["id"])
         if row["cancel_requested_at"] is not None:
             state, code = "cancelled", "cancelled"
         elif row["unknown_delivery"]:
             state, code = "waiting_for_approval", "delivery_reconciliation_required"
+        elif expired:
+            state, code = "permanent_failure", "approval_expired"
         elif row["deadline_passed"] or row["attempt"] >= row["max_attempts"]:
             state, code = (
                 "permanent_failure",
@@ -410,13 +1025,23 @@ def reap(conn: Connection) -> int:
                 if row["deadline_passed"]
                 else "attempts_exhausted",
             )
+        elif row["model_exhausted"] or row["budget_exhausted"]:
+            state, code = (
+                "permanent_failure",
+                (
+                    "model_attempts_exhausted"
+                    if row["model_exhausted"]
+                    else "workflow_budget_exhausted"
+                ),
+            )
         else:
             state, code = "retryable_failure", "worker_interrupted"
         terminal = state in {"cancelled", "permanent_failure"}
         version = conn.execute(
             text("""UPDATE offerloom.workflow_runs SET state=CAST(:state AS offerloom.workflow_state),
             lease_holder=NULL,lease_expires_at=NULL,fence=fence+1,last_error_code=:code,version=version+1,
-            next_attempt_at=clock_timestamp()+interval '2 seconds',finished_at=CASE WHEN :terminal THEN clock_timestamp() ELSE NULL END,
+            next_attempt_at=greatest(next_attempt_at,clock_timestamp()+interval '2 seconds'),
+            finished_at=CASE WHEN :terminal THEN clock_timestamp() ELSE NULL END,
             updated_at=clock_timestamp() WHERE owner_id=:owner AND id=:id RETURNING version"""),
             {
                 "state": state,
@@ -426,6 +1051,9 @@ def reap(conn: Connection) -> int:
                 "id": row["id"],
             },
         ).scalar_one()
+        if row["state"] == "running":
+            append_attempt_event(conn, row["owner_id"], row["id"], "interrupted", code)
+        append_attempt_event(conn, row["owner_id"], row["id"], state, code)
         append_outbox(
             conn,
             row["owner_id"],
@@ -506,6 +1134,10 @@ def deliver_outbox(conn: Connection, event: OutboxClaim) -> bool:
 def cancel_workflow(conn: Connection, owner_id: UUID, workflow_id: UUID) -> dict[str, object]:
     lock_installation(conn)
     conn.execute(
+        text("SELECT owner_id FROM offerloom.owner_settings WHERE owner_id=:owner FOR UPDATE"),
+        {"owner": owner_id},
+    )
+    conn.execute(
         text("SELECT id FROM offerloom.workflow_runs WHERE owner_id=:owner AND id=:id FOR UPDATE"),
         {"owner": owner_id, "id": workflow_id},
     )
@@ -517,6 +1149,7 @@ def cancel_workflow(conn: Connection, owner_id: UUID, workflow_id: UUID) -> dict
             last_error_code='cancelled',updated_at=clock_timestamp() WHERE owner_id=:owner AND id=:id RETURNING version"""),
             {"owner": owner_id, "id": workflow_id},
         ).scalar_one()
+        append_attempt_event(conn, owner_id, workflow_id, "cancelled", "cancelled")
         append_outbox(
             conn,
             owner_id,
@@ -537,6 +1170,10 @@ class BenchmarkTask(BaseModel):
 
 
 class CancelRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+
+class RetryRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
@@ -585,19 +1222,16 @@ def build_router(db: Database, settings: Settings) -> APIRouter:
         )
 
     @router.get("/workflows")
-    def list_workflows(owner: Annotated[Owner, Depends(require_owner)]) -> dict[str, object]:
+    def workflow_list(
+        owner: Annotated[Owner, Depends(require_owner)],
+        limit: Annotated[int, Query(ge=1, le=100)] = 30,
+        state: WorkflowState | None = None,
+        cursor: Annotated[str | None, Query(max_length=2048)] = None,
+    ) -> dict[str, object]:
         with db.transaction() as conn:
-            ids = (
-                conn.execute(
-                    text(
-                        "SELECT id FROM offerloom.workflow_runs WHERE owner_id=:owner ORDER BY created_at DESC,id LIMIT 100"
-                    ),
-                    {"owner": owner.id},
-                )
-                .scalars()
-                .all()
+            return list_workflows(
+                conn, owner.id, settings.keyring, limit=limit, state=state, cursor=cursor
             )
-            return {"items": [get_workflow(conn, owner.id, identifier) for identifier in ids]}
 
     @router.get("/workflows/{workflow_id}")
     def workflow(
@@ -605,7 +1239,62 @@ def build_router(db: Database, settings: Settings) -> APIRouter:
     ) -> JSONResponse:
         with db.transaction() as conn:
             result = get_workflow(conn, owner.id, workflow_id)
+            from offerloom.approvals import get_action_approval
+
+            result["steps"] = workflow_history(conn, owner.id, workflow_id)
+            result["attempt_events"] = workflow_history(conn, owner.id, workflow_id, events=True)
+            result["approval"] = get_action_approval(conn, owner.id, workflow_id, optional=True)
         return JSONResponse(result, headers={"ETag": f'"{result["version"]}"'})
+
+    @router.get("/workflows/{workflow_id}/steps")
+    def steps(
+        workflow_id: UUID,
+        owner: Annotated[Owner, Depends(require_owner)],
+        limit: Annotated[int, Query(ge=1, le=100)] = 30,
+        before: UUID | None = None,
+    ) -> dict[str, object]:
+        with db.transaction() as conn:
+            return workflow_history(conn, owner.id, workflow_id, limit=limit, before=before)
+
+    @router.get("/workflows/{workflow_id}/attempt-events")
+    def attempt_events(
+        workflow_id: UUID,
+        owner: Annotated[Owner, Depends(require_owner)],
+        limit: Annotated[int, Query(ge=1, le=100)] = 30,
+        before: UUID | None = None,
+    ) -> dict[str, object]:
+        with db.transaction() as conn:
+            return workflow_history(
+                conn, owner.id, workflow_id, events=True, limit=limit, before=before
+            )
+
+    @router.post("/workflows/{workflow_id}/retry")
+    def retry(
+        workflow_id: UUID,
+        body: RetryRequest,
+        owner: Annotated[Owner, Depends(require_owner)],
+        if_match: Annotated[str | None, Header()] = None,
+        idempotency_key: Annotated[str | None, Header()] = None,
+    ) -> JSONResponse:
+        def effect(conn: Connection) -> tuple[int, dict[str, object]]:
+            return 200, retry_workflow(conn, owner.id, workflow_id)
+
+        with db.transaction() as conn:
+            status, result = command(
+                conn,
+                owner.id,
+                "POST",
+                "/workflows/{workflow_id}/retry",
+                {"workflow_id": str(workflow_id)},
+                body.model_dump(mode="json"),
+                if_match,
+                idempotency_key,
+                "workflow",
+                workflow_id,
+                effect,
+                workspace_change=False,
+            )
+        return JSONResponse(result, status_code=status, headers={"ETag": f'"{result["version"]}"'})
 
     @router.post("/workflows/{workflow_id}/cancel")
     def cancel(
@@ -631,6 +1320,7 @@ def build_router(db: Database, settings: Settings) -> APIRouter:
                 "workflow",
                 workflow_id,
                 effect,
+                workspace_change=False,
             )
         return JSONResponse(result, status_code=status, headers={"ETag": f'"{result["version"]}"'})
 

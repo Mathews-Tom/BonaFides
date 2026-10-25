@@ -116,6 +116,8 @@ def identity(tmp_path: Path) -> Iterator[IdentityContext]:
         yield context
     finally:
         with admin.transaction() as conn:
+            # Defer only the new lifecycle edge in the document/model/consent cycle.
+            conn.execute(text("SET CONSTRAINTS offerloom.hosted_consent_approval_binding DEFERRED"))
             # RESTRICT preserves evidence pins; remove this fixture's links before its owner.
             conn.execute(
                 text("""UPDATE offerloom.local_model_reservations SET owner_id=NULL,
@@ -125,11 +127,13 @@ def identity(tmp_path: Path) -> Iterator[IdentityContext]:
             )
             for table in (
                 "idempotency_records",
+                "action_approvals",
                 "document_regeneration_proposals",
                 "document_drafts",
                 "match_assessments",
                 "posting_requirement_revisions",
                 "model_runs",
+                "hosted_egress_consents",
                 "posting_duplicate_decisions",
                 "applications",
                 "saved_opportunities",

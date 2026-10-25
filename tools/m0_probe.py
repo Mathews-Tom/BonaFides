@@ -44,6 +44,22 @@ SELECT json_object_agg(name,n) FROM (
  UNION ALL SELECT 'posting_duplicate_decisions',count(*) FROM offerloom.posting_duplicate_decisions
 ) q
 """
+_RESTORE_AUTHORIZATION_ROWS = """
+SELECT json_build_object(
+ 'approvals', (SELECT coalesce(json_object_agg(
+   owner_id::text || ':' || id::text,
+   encode(sha256(convert_to((to_jsonb(a)-'revoked_at'-'version')::text,'UTF8')),'hex')
+ ),'{}'::json) FROM offerloom.action_approvals a),
+ 'consents', (SELECT coalesce(json_object_agg(
+   owner_id::text || ':' || id::text,
+   encode(sha256(convert_to((to_jsonb(c)-'revoked_at')::text,'UTF8')),'hex')
+ ),'{}'::json) FROM offerloom.hosted_egress_consents c),
+ 'audit', (SELECT coalesce(json_object_agg(
+   owner_id::text || ':' || id::text,
+   encode(sha256(convert_to(to_jsonb(e)::text,'UTF8')),'hex')
+ ),'{}'::json) FROM offerloom.approval_audit_events e)
+)
+"""
 
 
 class ProbeFailure(RuntimeError):
@@ -1009,6 +1025,7 @@ class Proof:
     def restore(self) -> None:
         self.compose("stop", "ingress", "api", "worker", "renderer", "parser")
         before = self.sql(_SNAPSHOT_COUNTS)
+        authorization_before = json.loads(self.sql(_RESTORE_AUTHORIZATION_ROWS))
         dump = self.compose(
             "exec",
             "-T",
@@ -1118,7 +1135,44 @@ class Proof:
             data=dump,
         )
         target.sql(
-            "UPDATE offerloom.owners SET auth_epoch=auth_epoch+1; UPDATE offerloom.sessions SET revoked_at=clock_timestamp() WHERE revoked_at IS NULL; DELETE FROM offerloom.auth_challenges; UPDATE offerloom.action_approvals SET consumed_at=clock_timestamp() WHERE approved_at IS NOT NULL AND consumed_at IS NULL; DELETE FROM offerloom.action_approvals WHERE approved_at IS NULL; DELETE FROM offerloom.oauth_transactions; UPDATE offerloom.workflow_runs SET state='cancelled',lease_holder=NULL,lease_expires_at=NULL,fence=fence+1,finished_at=clock_timestamp() WHERE state NOT IN ('succeeded','cancelled','permanent_failure');"
+            """BEGIN;
+            UPDATE offerloom.owners SET auth_epoch=auth_epoch+1;
+            UPDATE offerloom.sessions SET revoked_at=clock_timestamp() WHERE revoked_at IS NULL;
+            DELETE FROM offerloom.auth_challenges;
+            WITH revoked AS (
+              UPDATE offerloom.action_approvals
+              SET revoked_at=clock_timestamp(),version=version+1 WHERE revoked_at IS NULL
+              RETURNING owner_id,id,workflow_run_id,intent
+            )
+            INSERT INTO offerloom.approval_audit_events
+              (owner_id,approval_id,workflow_run_id,event,error_code)
+            SELECT owner_id,id,workflow_run_id,'revoked','installation_restored'
+            FROM revoked WHERE intent IS NOT NULL;
+            UPDATE offerloom.hosted_egress_consents
+              SET revoked_at=clock_timestamp() WHERE revoked_at IS NULL;
+            DELETE FROM offerloom.oauth_transactions;
+            UPDATE offerloom.workflow_runs SET state='cancelled',lease_holder=NULL,
+              lease_expires_at=NULL,fence=fence+1,finished_at=clock_timestamp()
+              WHERE state NOT IN ('succeeded','cancelled','permanent_failure');
+            COMMIT;"""
+        )
+        authorization_after = json.loads(target.sql(_RESTORE_AUTHORIZATION_ROWS))
+        for name in ("approvals", "consents"):
+            require(
+                authorization_before[name] == authorization_after[name],
+                f"restore_{name}_history_changed",
+            )
+        require(
+            authorization_before["audit"].items() <= authorization_after["audit"].items(),
+            "restore_approval_audit_history_changed",
+        )
+        require(
+            target.sql(
+                "SELECT (SELECT count(*) FROM offerloom.action_approvals WHERE revoked_at IS NULL)"
+                "+(SELECT count(*) FROM offerloom.hosted_egress_consents WHERE revoked_at IS NULL)"
+            ).strip()
+            == "0",
+            "restored_approval_or_consent_not_revoked",
         )
         extract_code = "import sys,tarfile,pathlib\nroot=pathlib.Path('/data/blobs')\nwith tarfile.open(fileobj=sys.stdin.buffer,mode='r|') as t:\n for m in t:\n  p=pathlib.PurePosixPath(m.name); assert m.isfile() and not p.is_absolute() and '..' not in p.parts\n  dest=root.joinpath(*p.parts); dest.parent.mkdir(parents=True,exist_ok=True,mode=0o700)\n  incoming=t.extractfile(m); assert incoming is not None\n  with dest.open('xb') as out: out.write(incoming.read())\n  dest.chmod(0o600)\n"
         target.compose(
@@ -1176,6 +1230,11 @@ class Proof:
         self.evidence["restore"] = {
             "project": target.project,
             "manifest": manifest,
+            "authorization_counts": {
+                name: len(rows) for name, rows in authorization_before.items()
+            },
+            "approval_and_consent_history_preserved": True,
+            "approval_and_consent_revoked": True,
             "sessions_revoked": True,
             "workers_stopped": True,
             "private_network": True,

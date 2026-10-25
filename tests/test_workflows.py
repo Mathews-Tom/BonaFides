@@ -179,6 +179,18 @@ def test_cancellation_revokes_publication_and_preserves_prior_result(pg_context:
         cancelled = cancel_workflow(conn, task.owner_id, workflow_id)
         assert cancelled["state"] == "cancelled"
         assert cancelled["result"] == {"checkpoint": "preserved"}
+        assert cancelled["cancellation"] == {
+            "requested": True,
+            "local_fence_settled": True,
+            "provider_stopped": None,
+            "completed_effects_preserved": True,
+            "reason": "local_publication_revoked_provider_may_continue",
+        }
+        assert conn.execute(
+            text("""SELECT event,error_code FROM offerloom.workflow_attempt_events
+            WHERE owner_id=:owner AND workflow_run_id=:id ORDER BY created_at,id"""),
+            {"owner": task.owner_id, "id": workflow_id},
+        ).tuples().all() == [("claimed", None), ("cancelled", "cancelled")]
     with pytest.raises(DBAPIError), pg_context.runtime.begin() as conn:
         publish(conn, task, lambda active: {"forbidden": True})
     with pg_context.runtime.begin() as conn:
@@ -312,5 +324,14 @@ def test_deadline_reaper_revokes_claim(pg_context: PGContext) -> None:
         result = get_workflow(conn, current.owner_id, current.id)
         assert result["state"] == "permanent_failure"
         assert result["last_error_code"] == "deadline_exceeded"
+        assert conn.execute(
+            text("""SELECT event,error_code FROM offerloom.workflow_attempt_events
+            WHERE owner_id=:owner AND workflow_run_id=:id ORDER BY created_at,id"""),
+            {"owner": current.owner_id, "id": current.id},
+        ).tuples().all() == [
+            ("claimed", None),
+            ("interrupted", "deadline_exceeded"),
+            ("permanent_failure", "deadline_exceeded"),
+        ]
     with pytest.raises(DBAPIError), pg_context.runtime.begin() as conn:
         publish(conn, current, lambda active: {"forbidden": True})

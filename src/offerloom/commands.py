@@ -111,6 +111,7 @@ def command(
     effect: Callable[[Connection], tuple[int, dict[str, object]]],
     *,
     creation_kind: str | None = None,
+    workspace_change: bool = True,
 ) -> tuple[int, dict[str, object]]:
     expected: int | None
     if creation_kind is not None:
@@ -192,12 +193,13 @@ def command(
         if int(current) != expected:
             raise Problem(412, "version_conflict")
     status, response = effect(conn)
-    conn.execute(
-        text(
-            "UPDATE offerloom.owner_settings SET workspace_version=workspace_version+1,updated_at=clock_timestamp() WHERE owner_id=:owner"
-        ),
-        {"owner": owner_id},
-    )
+    if workspace_change:
+        conn.execute(
+            text(
+                "UPDATE offerloom.owner_settings SET workspace_version=workspace_version+1,updated_at=clock_timestamp() WHERE owner_id=:owner"
+            ),
+            {"owner": owner_id},
+        )
     conn.execute(
         text("""INSERT INTO offerloom.idempotency_records(owner_id,route_key,key,request_sha256,response_status,response_body,expires_at)
         VALUES(:owner,:route,:key,:sha,:status,CAST(:response AS jsonb),clock_timestamp()+interval '31 days')"""),

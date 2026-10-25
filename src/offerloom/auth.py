@@ -384,13 +384,20 @@ def _revoke(conn: Connection, owner_id: UUID) -> None:
     )
     conn.execute(
         text(
-            "UPDATE offerloom.action_approvals SET consumed_at=now() WHERE owner_id=:owner AND consumed_at IS NULL AND approved_at IS NOT NULL"
+            """WITH revoked AS (
+            UPDATE offerloom.action_approvals
+            SET revoked_at=clock_timestamp(),version=version+1
+            WHERE owner_id=:owner AND consumed_at IS NULL AND revoked_at IS NULL
+            RETURNING owner_id,id,workflow_run_id)
+            INSERT INTO offerloom.approval_audit_events
+            (owner_id,approval_id,workflow_run_id,event,error_code)
+            SELECT owner_id,id,workflow_run_id,'revoked','authentication_revoked' FROM revoked"""
         ),
         {"owner": owner_id},
     )
     conn.execute(
         text(
-            "DELETE FROM offerloom.action_approvals WHERE owner_id=:owner AND approved_at IS NULL"
+            "UPDATE offerloom.hosted_egress_consents SET revoked_at=clock_timestamp() WHERE owner_id=:owner AND revoked_at IS NULL"
         ),
         {"owner": owner_id},
     )
