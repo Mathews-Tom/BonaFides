@@ -40,6 +40,8 @@ SELECT json_object_agg(name,n) FROM (
  UNION ALL SELECT 'source_policy_reviews',count(*) FROM offerloom.source_policy_reviews
  UNION ALL SELECT 'job_postings',count(*) FROM offerloom.job_postings
  UNION ALL SELECT 'job_source_observations',count(*) FROM offerloom.job_source_observations
+ UNION ALL SELECT 'saved_opportunities',count(*) FROM offerloom.saved_opportunities
+ UNION ALL SELECT 'posting_duplicate_decisions',count(*) FROM offerloom.posting_duplicate_decisions
 ) q
 """
 
@@ -136,6 +138,8 @@ class Proof:
     manual_posting_fixture: dict[str, Any]
     reviewed_source_fixture: dict[str, Any]
     observation_fixture: dict[str, Any]
+    board_posting_fixture: dict[str, Any]
+    duplicate_fixture: dict[str, Any]
 
     def __init__(self, project: str, port: int, target: str, image: str, directory: Path) -> None:
         self.project, self.port, self.target, self.image = project, port, target, image
@@ -889,7 +893,7 @@ class Proof:
 
     def source_backup_fixture(self) -> None:
         profile, _, _ = self.api.request("GET", "/api/v1/profile")
-        self.manual_posting_fixture, _, _ = self.api.request(
+        self.manual_posting_fixture, posting_headers, _ = self.api.request(
             "POST",
             "/api/v1/postings",
             {
@@ -902,7 +906,16 @@ class Proof:
             expected=(201,),
             headers={"Idempotency-Key": secrets.token_hex(16)},
         )
-        self.reviewed_source_fixture, _, _ = self.api.request(
+        self.manual_posting_fixture, _, _ = self.api.request(
+            "PUT",
+            f"/api/v1/postings/{self.manual_posting_fixture['id']}/disposition",
+            {"disposition": "saved"},
+            headers={
+                "If-Match": posting_headers["etag"],
+                "Idempotency-Key": secrets.token_hex(16),
+            },
+        )
+        self.reviewed_source_fixture, source_headers, _ = self.api.request(
             "POST",
             "/api/v1/sources",
             {
@@ -918,18 +931,72 @@ class Proof:
             expected=(201,),
             headers={"Idempotency-Key": secrets.token_hex(16)},
         )
+        # Synthetic materialization only: no board is enabled or contacted by this
+        # nonempty recovery fixture. Adapter transport qualification is separate.
+        self.board_posting_fixture = json.loads(
+            self.app_python(
+                "import hashlib,json,sys\n"
+                "from uuid import UUID,uuid4\n"
+                "from offerloom.config import Settings\n"
+                "from offerloom.db import Database\n"
+                "from offerloom.catalog import get_posting\n"
+                "from offerloom.sources import _source_row,_save_job\n"
+                "db=Database(Settings.load())\n"
+                "with db.transaction() as c:\n"
+                " from sqlalchemy import text\n"
+                " owner=c.execute(text('SELECT owner_id FROM offerloom.source_configs WHERE id=:id'),{'id':UUID(sys.argv[1])}).scalar_one()\n"
+                " source=_source_row(c,owner,UUID(sys.argv[1]))\n"
+                " anchor=get_posting(c,owner,UUID(sys.argv[2]))\n"
+                " identifier=uuid4(); description='Retained synthetic cross-source recovery posting.'\n"
+                " _save_job(c,owner,source['id'],'42',identifier,anchor['title'],anchor['company'],anchor['location_text'],description,None,hashlib.sha256(description.encode()).hexdigest(),{'title':anchor['title'],'content':description},'synthetic:recovery-fixture',source['policy_version'],source['current_policy_review_id'])\n"
+                " print(json.dumps(get_posting(c,owner,identifier)))\n"
+                "db.close()\n",
+                self.reviewed_source_fixture["id"],
+                self.manual_posting_fixture["id"],
+            )
+        )
+        self.manual_posting_fixture, _, _ = self.api.request(
+            "POST",
+            f"/api/v1/postings/{self.manual_posting_fixture['id']}/duplicates/{self.board_posting_fixture['id']}/decision",
+            {"decision": "distinct"},
+            headers={
+                "If-Match": f'"{self.manual_posting_fixture["version"]}"',
+                "Idempotency-Key": secrets.token_hex(16),
+            },
+        )
+        self.board_posting_fixture, _, _ = self.api.request(
+            "GET", f"/api/v1/postings/{self.board_posting_fixture['id']}"
+        )
+        self.duplicate_fixture, _, _ = self.api.request(
+            "GET", f"/api/v1/postings/{self.manual_posting_fixture['id']}/duplicates"
+        )
+        require(
+            len(self.duplicate_fixture["items"]) == 1
+            and self.duplicate_fixture["items"][0]["decision"] == "distinct",
+            "duplicate_recovery_fixture_not_reviewed",
+        )
+        self.reviewed_source_fixture, _, _ = self.api.request(
+            "DELETE",
+            f"/api/v1/sources/{self.reviewed_source_fixture['id']}",
+            headers={
+                "If-Match": source_headers["etag"],
+                "Idempotency-Key": secrets.token_hex(16),
+            },
+        )
         self.observation_fixture, _, _ = self.api.request(
             "GET", f"/api/v1/postings/{self.manual_posting_fixture['id']}/observations"
         )
         require(
             self.reviewed_source_fixture["terms_reviewed_at"]
             and not self.reviewed_source_fixture["enabled"]
+            and self.reviewed_source_fixture["removed_at"]
+            and self.manual_posting_fixture["disposition"] == "saved"
             and len(self.observation_fixture["items"]) == 1,
             "source_restore_fixture_not_populated",
         )
         unchanged, _, _ = self.api.request("GET", "/api/v1/profile")
         require(unchanged == profile, "source_fixture_mutated_profile")
-        self.checked("manual_posting_reviewed_disabled_policy_and_profile_isolation")
+        self.checked("saved_posting_retired_reviewed_source_and_profile_isolation")
 
     def restore(self) -> None:
         self.compose("stop", "ingress", "api", "worker", "renderer", "parser")
@@ -1071,6 +1138,11 @@ class Proof:
         target.api.request("GET", "/api/v1/profile")
         for path, expected in (
             (f"/api/v1/postings/{self.manual_posting_fixture['id']}", self.manual_posting_fixture),
+            (f"/api/v1/postings/{self.board_posting_fixture['id']}", self.board_posting_fixture),
+            (
+                f"/api/v1/postings/{self.manual_posting_fixture['id']}/duplicates",
+                self.duplicate_fixture,
+            ),
             (f"/api/v1/sources/{self.reviewed_source_fixture['id']}", self.reviewed_source_fixture),
             (
                 f"/api/v1/postings/{self.manual_posting_fixture['id']}/observations",

@@ -19,6 +19,7 @@ from sqlalchemy.exc import DBAPIError
 from test_identity import IdentityContext, _bootstrap
 from test_identity import identity as identity
 
+from offerloom import catalog as catalog_api
 from offerloom import sources
 from offerloom.commands import canonical_json
 from offerloom.db import Database
@@ -251,6 +252,11 @@ def test_posting_cursor_is_stable_and_summaries_never_contain_source_bodies(
             "status",
             "created_at",
             "updated_at",
+            "source_config_id",
+            "source_kind",
+            "external_id",
+            "last_observed_at",
+            "disposition",
         }
         for item in first["items"]
     )
@@ -335,7 +341,6 @@ def test_sources_default_disabled_require_exact_review_and_source_version(
         ).status_code
         == 409
     )
-    assert catalog.client.delete(url, headers=catalog.headers(2)).status_code == 405
     with catalog.runtime.transaction() as conn:
         reviews = (
             conn.execute(
@@ -801,7 +806,7 @@ def test_owner_scope_csrf_and_content_free_events(catalog: SourceContext) -> Non
     with catalog.runtime.transaction() as conn:
         for getter, identifier in (
             (sources.get_source, UUID(source["id"])),
-            (sources.get_posting, UUID(posting["id"])),
+            (catalog_api.get_posting, UUID(posting["id"])),
         ):
             with pytest.raises(Problem) as error:
                 getter(conn, uuid4(), identifier)

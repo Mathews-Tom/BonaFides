@@ -19,6 +19,7 @@ from pydantic import Field, field_validator, model_validator
 from sqlalchemy import Connection, text
 from sqlalchemy.engine import RowMapping
 
+from offerloom import catalog
 from offerloom.auth import Owner, StrictModel, require_owner
 from offerloom.commands import append_outbox, canonical_json, command, lock_installation
 from offerloom.config import Settings
@@ -210,10 +211,13 @@ def get_source(conn: Connection, owner_id: UUID, source_id: UUID) -> dict[str, o
         "next_allowed_at",
         "created_at",
         "rate_limit_blocked",
+        "removed_at",
     )
     result = _wire({key: row[key] for key in fields})
     result["health"] = (
-        "disabled"
+        "retired"
+        if row["removed_at"] is not None
+        else "disabled"
         if not row["enabled"]
         else "rate_limited"
         if row["rate_limit_blocked"]
@@ -304,6 +308,8 @@ def save_source(
         version = 1
     else:
         previous = _source_row(conn, owner_id, source_id, lock=True)
+        if previous["removed_at"] is not None:
+            raise Problem(409, "source_removed")
         if previous["source_kind"] != "greenhouse":
             raise Problem(409, "manual_source_not_configurable")
         if body.board_token != previous["board_token"]:
@@ -385,21 +391,39 @@ def save_source(
     return get_source(conn, owner_id, source_id)
 
 
-def get_posting(conn: Connection, owner_id: UUID, posting_id: UUID) -> dict[str, object]:
-    row = (
+def retire_source(conn: Connection, owner_id: UUID, source_id: UUID) -> dict[str, object]:
+    row = _source_row(conn, owner_id, source_id, lock=True)
+    if row["source_kind"] != "greenhouse":
+        raise Problem(409, "manual_source_not_removable")
+    if row["removed_at"] is not None:
+        raise Problem(409, "source_removed")
+    # command() locked active workflows before this source, matching worker publication.
+    workflow_ids = (
         conn.execute(
-            text("""SELECT p.id,p.version,p.title,p.company,p.location_text,p.status,p.created_at,p.updated_at,
-    p.description_text,p.canonical_url,p.content_sha256,p.source_config_id,s.source_kind,p.external_id,p.last_observed_at
-    FROM offerloom.job_postings p JOIN offerloom.source_configs s ON s.owner_id=p.owner_id AND s.id=p.source_config_id
-    WHERE p.owner_id=:owner AND p.id=:id"""),
-            {"owner": owner_id, "id": posting_id},
+            text("""SELECT id FROM offerloom.workflow_runs WHERE owner_id=:owner AND source_config_id=:id
+        AND state IN ('pending','running','retryable_failure','waiting_for_approval') ORDER BY id"""),
+            {"owner": owner_id, "id": source_id},
         )
-        .mappings()
-        .one_or_none()
+        .scalars()
+        .all()
     )
-    if row is None:
-        raise Problem(404, "posting_not_found")
-    return _wire(row)
+    for workflow_id in workflow_ids:
+        cancel_workflow(conn, owner_id, workflow_id)
+    version = conn.execute(
+        text("""UPDATE offerloom.source_configs SET enabled=false,removed_at=clock_timestamp(),
+        version=version+1 WHERE owner_id=:owner AND id=:id RETURNING version"""),
+        {"owner": owner_id, "id": source_id},
+    ).scalar_one()
+    _metadata(
+        conn,
+        owner_id,
+        source_id,
+        "source",
+        "source.retired",
+        int(version),
+        {"source_id": str(source_id)},
+    )
+    return get_source(conn, owner_id, source_id)
 
 
 def _manual_source(conn: Connection, owner_id: UUID) -> UUID:
@@ -457,7 +481,7 @@ def create_manual(
         1,
         {"posting_id": str(posting_id), "source_id": str(source_id)},
     )
-    return get_posting(conn, owner_id, posting_id)
+    return catalog.get_posting(conn, owner_id, posting_id)
 
 
 def _save_job(
@@ -590,27 +614,6 @@ def _decode_cursor(value: str | None) -> tuple[datetime | None, UUID | None]:
         raise Problem(400, "invalid_cursor") from exc
 
 
-def list_postings(
-    conn: Connection, owner_id: UUID, cursor: str | None, limit: int
-) -> dict[str, object]:
-    timestamp, identifier = _decode_cursor(cursor)
-    rows = (
-        conn.execute(
-            text("""SELECT id,version,title,company,location_text,status,created_at,updated_at
-    FROM offerloom.job_postings WHERE owner_id=:owner
-    AND (CAST(:time AS timestamptz) IS NULL OR (created_at,id)<(CAST(:time AS timestamptz),CAST(:id AS uuid)))
-    ORDER BY created_at DESC,id DESC LIMIT :limit"""),
-            {"owner": owner_id, "time": timestamp, "id": identifier, "limit": limit + 1},
-        )
-        .mappings()
-        .all()
-    )
-    return {
-        "items": [_wire(row) for row in rows[:limit]],
-        "next_cursor": _encode_cursor(rows[limit - 1]) if len(rows) > limit else None,
-    }
-
-
 def observations(
     conn: Connection,
     owner_id: UUID,
@@ -619,7 +622,7 @@ def observations(
     limit: int = 20,
     observation_id: UUID | None = None,
 ) -> dict[str, object]:
-    get_posting(conn, owner_id, posting_id)
+    catalog.get_posting(conn, owner_id, posting_id)
     timestamp, identifier = _decode_cursor(cursor)
     rows = (
         conn.execute(
@@ -658,6 +661,8 @@ def observations(
 
 def request_refresh(conn: Connection, owner_id: UUID, source_id: UUID) -> dict[str, object]:
     row = _source_row(conn, owner_id, source_id, lock=True)
+    if row["removed_at"] is not None:
+        raise Problem(409, "source_removed")
     if (
         row["source_kind"] != "greenhouse"
         or not row["enabled"]
@@ -698,7 +703,8 @@ def _lock_task_source(conn: Connection, task: Claim) -> RowMapping:
     assert_fence(conn, task)
     row = _source_row(conn, task.owner_id, UUID(str(task.input["source_id"])), lock=True)
     if (
-        not row["enabled"]
+        row["removed_at"] is not None
+        or not row["enabled"]
         or row["source_kind"] != "greenhouse"
         or row["current_policy_review_id"] is None
         or row["policy_version"] != task.input["policy_version"]
@@ -801,6 +807,8 @@ def _record_source_failure(
                 {"owner": task.owner_id},
             ).scalar_one()
             row = _source_row(conn, task.owner_id, UUID(str(task.input["source_id"])), lock=True)
+            if row["removed_at"] is not None:
+                raise Problem(409, "source_removed")
             blocked = bool(row["rate_limit_blocked"]) or (
                 seconds >= int(row["maximum_pause_seconds"])
             )
@@ -884,7 +892,6 @@ def execute_refresh(
 
 
 def build_router(db: Database, settings: Settings) -> APIRouter:
-    del settings  # No provider settings, credentials or configurable upstream URLs.
     router = APIRouter(prefix="/api/v1")
 
     @router.post("/postings")
@@ -915,17 +922,109 @@ def build_router(db: Database, settings: Settings) -> APIRouter:
     @router.get("/postings")
     def posting_list(
         owner: Annotated[Owner, Depends(require_owner)],
-        cursor: str | None = None,
-        limit: Annotated[int, Query(ge=1, le=100)] = 20,
+        query: Annotated[catalog.CatalogQuery, Query()],
     ) -> dict[str, object]:
         with db.transaction() as conn:
-            return list_postings(conn, owner.id, cursor, limit)
+            return catalog.list_postings(conn, owner.id, settings.keyring, query)
 
     @router.get("/postings/{posting_id}")
     def posting(posting_id: UUID, owner: Annotated[Owner, Depends(require_owner)]) -> JSONResponse:
         with db.transaction() as conn:
-            result = get_posting(conn, owner.id, posting_id)
+            result = catalog.get_posting(conn, owner.id, posting_id)
         return JSONResponse(result, headers={"ETag": f'"{result["version"]}"'})
+
+    @router.put("/postings/{posting_id}/disposition")
+    def posting_disposition(
+        posting_id: UUID,
+        body: catalog.DispositionWrite,
+        owner: Annotated[Owner, Depends(require_owner)],
+        if_match: Annotated[str | None, Header()] = None,
+        idempotency_key: Annotated[str | None, Header()] = None,
+    ) -> JSONResponse:
+        def effect(conn: Connection) -> tuple[int, dict[str, object]]:
+            result = catalog.set_disposition(conn, owner.id, posting_id, body.disposition)
+            _metadata(
+                conn,
+                owner.id,
+                posting_id,
+                "posting",
+                "opportunity.disposition_changed",
+                int(cast(int, result["version"])),
+                {"posting_id": str(posting_id), "disposition": body.disposition},
+            )
+            return 200, result
+
+        with db.transaction() as conn:
+            status, result = command(
+                conn,
+                owner.id,
+                "PUT",
+                "/postings/{posting_id}/disposition",
+                {"posting_id": str(posting_id)},
+                body.model_dump(mode="json"),
+                if_match,
+                idempotency_key,
+                "posting",
+                posting_id,
+                effect,
+            )
+        return JSONResponse(result, status_code=status, headers={"ETag": f'"{result["version"]}"'})
+
+    @router.get("/postings/{posting_id}/duplicates")
+    def duplicate_list(
+        posting_id: UUID,
+        owner: Annotated[Owner, Depends(require_owner)],
+        cursor: str | None = None,
+        limit: Annotated[int, Query(ge=1, le=100)] = 20,
+    ) -> dict[str, object]:
+        with db.transaction() as conn:
+            return catalog.list_duplicates(
+                conn, owner.id, posting_id, settings.keyring, cursor, limit
+            )
+
+    @router.post("/postings/{posting_id}/duplicates/{candidate_id}/decision")
+    def duplicate_decision(
+        posting_id: UUID,
+        candidate_id: UUID,
+        body: catalog.DuplicateWrite,
+        owner: Annotated[Owner, Depends(require_owner)],
+        if_match: Annotated[str | None, Header()] = None,
+        idempotency_key: Annotated[str | None, Header()] = None,
+    ) -> JSONResponse:
+        def effect(conn: Connection) -> tuple[int, dict[str, object]]:
+            result = catalog.decide_duplicate(
+                conn, owner.id, posting_id, candidate_id, body.decision
+            )
+            _metadata(
+                conn,
+                owner.id,
+                posting_id,
+                "posting",
+                "posting.duplicate_reviewed",
+                int(cast(int, result["version"])),
+                {
+                    "posting_id": str(posting_id),
+                    "candidate_id": str(candidate_id),
+                    "decision": body.decision,
+                },
+            )
+            return 200, result
+
+        with db.transaction() as conn:
+            status, result = command(
+                conn,
+                owner.id,
+                "POST",
+                "/postings/{posting_id}/duplicates/{candidate_id}/decision",
+                {"posting_id": str(posting_id), "candidate_id": str(candidate_id)},
+                body.model_dump(mode="json"),
+                if_match,
+                idempotency_key,
+                "posting",
+                posting_id,
+                effect,
+            )
+        return JSONResponse(result, status_code=status, headers={"ETag": f'"{result["version"]}"'})
 
     @router.get("/postings/{posting_id}/observations")
     def observation_list(
@@ -1014,6 +1113,29 @@ def build_router(db: Database, settings: Settings) -> APIRouter:
                     200,
                     save_source(active, owner.id, source_id, body, creating=False),
                 ),
+            )
+        return JSONResponse(result, status_code=status, headers={"ETag": f'"{result["version"]}"'})
+
+    @router.delete("/sources/{source_id}")
+    def remove_source(
+        source_id: UUID,
+        owner: Annotated[Owner, Depends(require_owner)],
+        if_match: Annotated[str | None, Header()] = None,
+        idempotency_key: Annotated[str | None, Header()] = None,
+    ) -> JSONResponse:
+        with db.transaction() as conn:
+            status, result = command(
+                conn,
+                owner.id,
+                "DELETE",
+                "/sources/{source_id}",
+                {"source_id": str(source_id)},
+                {},
+                if_match,
+                idempotency_key,
+                "source",
+                source_id,
+                lambda active: (200, retire_source(active, owner.id, source_id)),
             )
         return JSONResponse(result, status_code=status, headers={"ETag": f'"{result["version"]}"'})
 

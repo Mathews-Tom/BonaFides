@@ -119,6 +119,9 @@ def identity(tmp_path: Path) -> Iterator[IdentityContext]:
             # RESTRICT preserves evidence pins; remove this fixture's links before its owner.
             for table in (
                 "idempotency_records",
+                "posting_duplicate_decisions",
+                "applications",
+                "saved_opportunities",
                 "job_source_observations",
                 "job_postings",
                 "import_batches",
@@ -147,7 +150,7 @@ def identity(tmp_path: Path) -> Iterator[IdentityContext]:
                 text(
                     "UPDATE offerloom.source_configs SET current_policy_review_id=NULL,"
                     "terms_reviewed_at=NULL,enabled=false,version=version+1,"
-                    "policy_version=policy_version+1 WHERE owner_id="
+                    "policy_version=policy_version+1 WHERE removed_at IS NULL AND owner_id="
                     "(SELECT id FROM offerloom.owners WHERE login_name=:login)"
                 ),
                 {"login": context.login_name},
