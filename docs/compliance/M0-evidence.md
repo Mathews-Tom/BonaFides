@@ -3,6 +3,16 @@
 
 Updated: 2026-10-25. **M0 technical checkpoint accepted for macOS-first private development; public distribution BLOCKED.** The owner deferred native Linux amd64 qualification as DFR-001; it is not passed and does not hold private M1 or later implementation. Independent rights review remains separately pending at the public-distribution boundary, not coupled to amd64 and not waived. This record is not legal clearance, a completed dependency-rights audit or a representation of human approval. Public beta is public distribution. The canonical [ADR-0001](../decisions/ADR-0001-dual-licensing.md), [dependency policy](dependency-license-policy.md), [provenance policy](clean-room-provenance-policy.md), [attribution policy](third-party-attribution-policy.md) and [release checklist](release-compliance-checklist.md) retain authority; canonical license texts and contributor grants are unchanged.
 
+## OL-012 implemented / live-unqualified checkpoint — 2026-10-25
+
+The [current public OL-012 checkpoint](../development/README.md#observed-ol-012-local-checkpoint--2026-10-25) records exact image/schema identities, configured gates, nonempty migration, selected-section protocol/browser evidence, sampled PDF fidelity and remaining limitations. Schema 12 adds immutable target-bound section proposals, a separately qualified model stage and required exact revision/hash/PDF export. Existing edits/restoration/history and unsupported-claim review/export blockers remain shared. The main model route is disabled; synthetic conformance is not real-model or genuine human acceptance.
+
+Fresh current-image verification passed 678 real-PostgreSQL tests (299 retained warnings; 83 subtests), 153 frontend tests/static/build/audit, 30 grouped synthetic checks/20 fixture POSTs, 17 new HTTP-boundary cases, built-browser offline/conflict/keyboard/reflow checks, 21 production SYN-BASE and 20 generic M0/catalog recovery checks. Current deep PDFs contain 14/12 pages; all 26 pages received extracted-text bounds checks and six raster samples were inspected. Unsupported glyphs fail visibly without publishing an artifact. General-purpose local reviews completed; unavailable specialist reviewers are not counted as reviews.
+
+Current exact-image collection retains 2,014 components, zero collection errors, 1,186 unresolved inventory review blockers and 22,568 rights blockers. Selected HIGH/CRITICAL+secret gate passed without suppressing five MEDIUM/one LOW bundled-pip findings; source/image SBOM and independent saved-OCI checks retain their exact scopes. No fonts, dependency locks or fixed templates changed. Final source/manifest/commit-prefix results belong to separately executed private receipts, not a prediction in this document. No public-distribution clearance is inferred.
+
+All following OL-011 and earlier sections are immutable historical checkpoint descriptions: “current” in those sections refers to their named image/snapshot, not schema 12. OL-013–015, exact-board permission, actual authorized local-model qualification and genuine human factual/walkthrough gates remain outstanding. Native amd64 DFR-001 remains deferred independently of public rights review.
+
 ## OL-011 implemented / live-unqualified checkpoint — 2026-10-25
 
 ### Current post-review R1 evidence

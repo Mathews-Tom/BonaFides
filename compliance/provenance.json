@@ -710,6 +710,33 @@
         "restricted_implementation_access": "Not consulted for this contribution; no restricted implementation, copied prompts or private reverse-engineering material used",
         "limitations": "Deterministic evidence matching is deliberately conservative, not semantic model qualification. Synthetic local HTTP conformance does not exercise real weights/runtime or provide human factual acceptance. Deep PDF stress and targeted regeneration remain separately scoped to OL-012. No real model/board, sending, full M1 completion or release readiness is claimed."
       }
+    },
+    {
+      "id": "ol012-defensible-section-proposals-and-pdf",
+      "requirement_ids": ["OL-012"],
+      "paths": ["src/offerloom/section_regeneration.py", "src/offerloom/document_generation.py", "src/offerloom/documents.py", "src/offerloom/local_model.py", "src/offerloom/suitability.py", "src/offerloom/worker.py", "src/offerloom/workflows.py", "src/offerloom/db.py", "src/offerloom/api.py", "src/offerloom/render_service.py", "migrations/sql/012_section_regeneration.up.sql", "migrations/versions/0009_section_regeneration.py", "tests/test_section_regeneration.py", "tests/test_document_generation.py", "tests/test_documents.py", "tests/test_local_model.py", "tests/test_render_safety.py", "tests/test_identity.py", "tools/m0_probe.py", "web/src/Documents.tsx", "web/src/SectionProposals.tsx", "web/src/Documents.test.tsx", "web/src/api.ts", "web/src/styles.css", "README.md", "docs/development/README.md", "docs/compliance/M0-evidence.md", "compliance/provenance.json"],
+      "author": null,
+      "author_role": "OpenAI coding-assistant implementation under the owner's authorized local contribution identity; not a claim of human-authored code",
+      "reviewer": null,
+      "review_date": null,
+      "signoff": null,
+      "created_date": "2026-10-25",
+      "status": "pending",
+      "approach": "Independently implement saved-target-only model proposals through existing bounded durable workflows, immutable owner-bound proposal publication and explicit unchanged-target application. Preserve original-parent evidence, printable frame, template and all unrelated sections/history/artifacts. Cut over every PDF caller to exact revision/content digest/format and reject actual painted missing glyphs or degraded selectable text in the existing sealed renderer.",
+      "alternatives": ["Regenerate the whole pair and extract a section, or automatically replace saved words on task completion (rejected)", "Expand historical evidence pins with newer profile facts or silently rebase a stale posting (rejected)", "Promote pair-generation capability receipts to section-stage qualification (rejected)", "Treat whitespace-stripped extraction equality or zero replacement characters as proof of correct visible text (rejected)", "Rewrite historical templates or substitute unqualified host fonts to obtain a green glyph test (rejected)"],
+      "research": [],
+      "incorporated_material": [],
+      "incorporated_material_scope": "No third-party implementation, external prompts, real employer/contact content, model weights, new dependencies, fonts or template assets incorporated. Existing frozen WeasyPrint, pypdf, native libraries and DejaVu artifacts retain their separate upstream terms and exact-artifact rights-review obligations. Historical applied SQL and built-in template bytes remain unchanged.",
+      "ai_assistance": {"used": true, "tool": "OpenAI coding assistant", "scope": "Independent proposal/schema/API/worker/UI and PDF-safety implementation, synthetic behavioral regressions, local AI-assisted review and operational/provenance documentation"},
+      "human_review": "Owner authorized configured Mathews-Tom identity, DCO 1.1 and CONTRIBUTING.md MIT OR Apache-2.0 grant for qualifying original work on 2026-10-25. Genuine human factual/model-output review, assistive-technology walkthrough and independent provenance/security/rights review remain pending; no human authorship, acceptance or approval inferred.",
+      "commit": null,
+      "artifact_sha256": null,
+      "rights_disposition": "Original work follows the owner's explicit MIT OR Apache-2.0 contribution grant and authorized Signed-off-by workflow, subject to truthful origin and authority. This does not approve dependency/native/font/model rights or public distribution. Native amd64 qualification remains independently deferred.",
+      "independent_design": {
+        "basis": "Owner-authorized complete M1 execution prompt, neutral OL-012 document/evidence/privacy/workflow/UX contracts and existing deployed project conventions",
+        "restricted_implementation_access": "Not consulted for this contribution; no restricted implementation, copied prompts or private reverse-engineering material used",
+        "limitations": "Synthetic local protocol conformance does not qualify real model weights/runtime or establish human factual acceptance. Sampled installed glyph/layout cases do not qualify all Unicode, RTL, multilingual layout or PDF-UA. No sending, real board/model call, complete M1 or release readiness is claimed."
+      }
     }
   ],
   "blockers": [
