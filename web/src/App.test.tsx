@@ -4,11 +4,21 @@ import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { App } from './App';
 import { Api, ApiError, type Profile, type RequirementsView, type Session, type Workflow } from './api';
+import { stages } from './tracking-api';
 const session: Session = { owner_id: 'owner', login_name: 'mira', csrf_token: 'session-csrf', expires_at: '2030-01-01' };
 const profile: Profile = { id: 'profile', version: 1, current_revision: { id: 'revision-1', revision_no: 1, content_sha256: 'a'.repeat(64), created_at: '2026-01-01T00:00:00Z', author_owner_id: 'owner', reason: 'Initial profile', claims: [], snapshot: { display_name: 'Mira', headline: 'Engineer', claim_revision_ids: [] } }, evidence: [], quality_warnings: [] };
 afterEach(() => { window.history.replaceState(null, '', '/'); });
 function mockRequest(api: Api, handler: (path: string, method: string) => Promise<unknown>) {
-  return vi.spyOn(api, 'request').mockImplementation(async <T,>(path: string, method = 'GET') => await handler(path, method) as T);
+  return vi.spyOn(api, 'request').mockImplementation(async <T,>(path: string, method = 'GET') => {
+    if (method === 'GET' && path === '/applications') return { items: [], next_cursor: null, query_elapsed_ms: 1, as_of: '2026-10-25T12:00:00Z' } as T;
+    if (method === 'GET' && path.startsWith('/applications/counts?')) {
+      const query = new URLSearchParams(path.split('?')[1]);
+      const zero = Object.fromEntries(stages.map(stage => [stage, 0]));
+      return { period_start: query.get('period_start'), period_end: query.get('period_end'), current_by_stage: zero, archived_by_stage: zero, created_in_period: 0, stage_reached_in_period: zero, query_elapsed_ms: 1 } as T;
+    }
+    if (method === 'GET' && path === '/applications/attention') return { items: [], query_elapsed_ms: 1, as_of: '2026-10-25T12:00:00Z' } as T;
+    return await handler(path, method) as T;
+  });
 }
 function connectedApi(saveFailure?: Error) {
   const api = new Api();

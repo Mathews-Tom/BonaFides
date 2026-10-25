@@ -41,3 +41,13 @@ button{overflow-wrap:anywhere}
 .suitability{margin:1.5rem 0;padding-top:1rem;border-top:1px solid var(--line);min-width:0;overflow-wrap:anywhere}
 .suitability details{margin:.75rem 0}.suitability summary{cursor:pointer;min-height:44px;padding:.4rem 0}.suitability blockquote{margin:.75rem 0;padding:.75rem;border-left:3px solid var(--line);background:var(--soft);white-space:pre-wrap;overflow-wrap:anywhere}
 .suitability code,.suitability pre{overflow-wrap:anywhere}.suitability input,.suitability select{max-width:100%}
+.tracking{min-width:0}.tracking>section,.tracking>details{margin-top:1.5rem;padding-top:1rem;border-top:1px solid var(--line)}
+.tracking ul,.tracking ol{padding-left:1.25rem}.tracking li{margin:1rem 0;min-width:0}.tracking li>button{max-width:100%;text-align:left}
+.tracking input,.tracking select,.tracking textarea{max-width:100%;min-height:44px}.tracking input[type=checkbox]{min-width:24px;min-height:24px;flex-shrink:0}.tracking .check{display:flex;align-items:center;min-height:44px;gap:.5rem}
+.tracking h3,.tracking h4,.tracking h5,.tracking p,.tracking time,.tracking small{overflow-wrap:anywhere}.tracking small{display:block}.tracking-dossier{border-left:4px solid var(--action);padding-left:1.25rem}
+.tracking-dossier>section{margin:1.5rem 0;padding-top:1rem;border-top:1px solid var(--line)}.tracking-history{border-left:2px solid var(--line);margin-left:.5rem}
+.tracking-history li{padding-left:.25rem}.tracking-editor{background:var(--soft);padding:1rem;border:1px solid var(--line)}.tracking-editor fieldset{background:var(--surface)}
+.tracking-counts{margin:1rem 0}.tracking-counts>div{display:grid;grid-template-columns:minmax(6rem,.25fr) minmax(0,1fr);gap:1rem;padding:.65rem 0;border-top:1px solid var(--line)}.tracking-counts dt{font-weight:650}.tracking-counts dd{margin:0}
+.tracking-board{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,17rem),1fr));gap:1rem}.tracking-board>section{border-top:3px solid var(--action);padding-top:.5rem;min-width:0}.tracking-download{display:inline-block;min-height:44px;padding:.65rem 0;max-width:100%;overflow-wrap:anywhere}
+@media(max-width:760px){.tracking-board{display:block}.tracking-counts>div{display:block}.tracking-dossier{padding-left:.65rem}.tracking-editor{padding:.65rem}.tracking input[type=datetime-local],.tracking input[type=date]{width:100%;min-width:0}.tracking .actions{align-items:stretch}}
+@media(forced-colors:active){.tracking-dossier,.tracking-history,.tracking-editor,.tracking-counts>div,.tracking-board>section{border-color:CanvasText}.tracking-download:focus-visible{outline:3px solid Highlight}.tracking .check input{forced-color-adjust:auto}}
