@@ -173,7 +173,9 @@ def test_http_review_payload_requires_exact_hash_and_uuid() -> None:
 def test_workflow_output_is_not_export_permission(
     reviewed: bool, unsupported: list[str], expected: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from offerloom import documents
+    from offerloom import document_generation, documents
+
+    monkeypatch.setattr(document_generation, "lock_workspace", lambda *args: None)
 
     body, _ = example()
     revision_id = uuid4()
@@ -194,7 +196,10 @@ def test_workflow_output_is_not_export_permission(
 
 
 def test_review_does_not_authorize_a_different_revision(monkeypatch: pytest.MonkeyPatch) -> None:
-    from offerloom import documents
+    from offerloom import document_generation, documents
+
+    monkeypatch.setattr(document_generation, "lock_workspace", lambda *args: None)
+    monkeypatch.setattr(document_generation, "export_eligibility", lambda *args: None)
 
     body, _ = example()
     revision_id = uuid4()
@@ -203,6 +208,8 @@ def test_review_does_not_authorize_a_different_revision(monkeypatch: pytest.Monk
             "id": str(revision_id),
             "body": body.model_dump(mode="json"),
             "content_sha256": body_digest(body),
+            "template_version": "offerloom-base-v1",
+            "provenance_snapshot": {"schema_version": 1},
         },
         "reviewed": True,
         "unsupported_claims": [],

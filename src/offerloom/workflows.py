@@ -79,6 +79,7 @@ def migrate(settings: MigrationConfig) -> None:
                 "008_catalog.up.sql",
                 "009_suitability.up.sql",
                 "010_tracking.up.sql",
+                "011_documents.up.sql",
             )
             if len(rows) != len(names):
                 raise RuntimeError("unsupported migration ledger")
@@ -133,11 +134,13 @@ def enqueue(conn: Connection, owner_id: UUID, kind: str, input_snapshot: dict[st
             "sha": sha,
             "epoch": epoch,
             "attempts": 2
-            if kind in {"posting_extract", "matching"}
+            if kind in {"posting_extract", "matching"} or pinned.get("mode") == "tailored_ai"
             else 4
             if kind == "profile_import"
             else 3,
-            "deadline": 480 if kind in {"posting_extract", "matching"} else 180,
+            "deadline": 480
+            if kind in {"posting_extract", "matching"} or pinned.get("mode") == "tailored_ai"
+            else 180,
             "source": pinned.get("source_id") if kind == "source_refresh" else None,
             "policy_version": pinned.get("policy_version") if kind == "source_refresh" else None,
             "policy_review": pinned.get("policy_review_id") if kind == "source_refresh" else None,
@@ -176,6 +179,11 @@ def get_workflow(conn: Connection, owner_id: UUID, workflow_id: UUID) -> dict[st
         for key, value in row.items()
         if key != "input"
     }
+    if row["kind"] == "document_generate" and row["input"].get("mode") in {
+        "deterministic_base",
+        "tailored_ai",
+    }:
+        result["mode"] = row["input"]["mode"]
     if row["kind"] in {"posting_extract", "matching"}:
         snapshot = row["input"]
         pins = {

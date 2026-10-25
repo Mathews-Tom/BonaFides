@@ -125,6 +125,7 @@ def identity(tmp_path: Path) -> Iterator[IdentityContext]:
             )
             for table in (
                 "idempotency_records",
+                "document_drafts",
                 "match_assessments",
                 "posting_requirement_revisions",
                 "model_runs",

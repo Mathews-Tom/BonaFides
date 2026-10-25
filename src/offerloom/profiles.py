@@ -16,6 +16,7 @@ from offerloom.auth import Owner, StrictModel, audit, require_owner
 from offerloom.commands import append_outbox, command
 from offerloom.config import Settings
 from offerloom.db import Database
+from offerloom.document_frame import ProfileContact
 from offerloom.problems import Problem
 
 
@@ -24,6 +25,7 @@ class ProfileSnapshot(StrictModel):
     headline: str = Field(default="", max_length=300)
     claim_revision_ids: list[UUID] = Field(default_factory=list, max_length=100)
     evidence_revision_ids: list[UUID] = Field(default_factory=list, max_length=200)
+    contact: ProfileContact | None = None
 
 
 class BenchmarkProfile(StrictModel):

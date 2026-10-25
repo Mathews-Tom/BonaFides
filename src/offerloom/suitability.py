@@ -376,11 +376,13 @@ def _route_status(conn: Connection, owner_id: UUID, settings: Settings) -> dict[
         return {"status": "unqualified", "reason": "model_route_invalid", "identity": None}
     if route is None:
         return {"status": "disabled", "reason": "model_route_not_configured", "identity": None}
-    qualified = all(route.qualified_for(stage) for stage in local_model.PROMPT_VERSIONS)
+    qualified = all(
+        route.qualified_for(stage) for stage in ("extract_posting", "match_requirements")
+    )
     blocked = (
         conn.execute(
             text(
-                "SELECT stage FROM offerloom.local_model_route_blocks WHERE owner_id=:owner AND route_sha256=:sha"
+                "SELECT stage FROM offerloom.local_model_route_blocks WHERE owner_id=:owner AND route_sha256=:sha AND stage IN ('extract_posting','match_requirements')"
             ),
             {"owner": owner_id, "sha": _sha(route.identity())},
         ).first()
@@ -1092,6 +1094,11 @@ def _prepare_workflow(
 def _check_workflow_context(
     conn: Connection, task: Claim, settings: Settings
 ) -> ProfileProjection | None:
+    if task.kind == "document_generate":
+        from offerloom.document_generation import check_context
+
+        check_context(conn, task, settings)
+        return None
     assert_fence(conn, task)
     posting = _posting(conn, task.owner_id, UUID(str(task.input["posting_id"])))
     if task.input.get("posting_content_sha256") != _posting_digest(posting):
@@ -1244,6 +1251,11 @@ def _execute_reserved_model(
                 validate_requirements(requirements, str(task.input["source_text"]))
                 proposal = extracted.model_dump(mode="json")
                 proposal["requirements"] = [item.model_dump(mode="json") for item in requirements]
+            elif stage == "generate_documents":
+                from offerloom.document_generation import validate_pair
+
+                pair = validate_pair(result.output, task.input)
+                proposal = pair.model_dump(mode="json")
             else:
                 matching = MatchingOutput.model_validate_json(canonical_json(result.output))
                 proposal = matching.model_dump(mode="json")
@@ -1254,6 +1266,10 @@ def _execute_reserved_model(
                 raise Problem(422, "invalid_model_output") from exc
             raise
         with db.transaction() as conn:
+            if stage == "generate_documents":
+                from offerloom.document_generation import lock_workspace
+
+                lock_workspace(conn, task.owner_id)
 
             def effect(active: Connection) -> dict[str, object]:
                 profile = _check_workflow_context(active, task, settings)
@@ -1287,6 +1303,11 @@ def _execute_reserved_model(
                     WHERE singleton AND owner_id=:owner AND workflow_run_id=:id AND fence=:fence"""),
                     {"owner": task.owner_id, "id": task.id, "fence": task.fence},
                 )
+                if stage == "generate_documents":
+                    from offerloom.document_generation import publish_pair
+
+                    assert run_id is not None
+                    return publish_pair(active, task, settings, pair, run_id, result.metadata)
                 return {
                     **proposal,
                     "posting_id": task.input["posting_id"],
@@ -1333,6 +1354,9 @@ def _execute_reserved_model(
                 "unsupported_coverage_novelty",
                 "unsupported_explanation_novelty",
                 "model_identity_changed",
+                "reference_outside_pinned_context",
+                "foreign_document_gap",
+                "duplicate_document_gap",
                 "model_metadata_invalid",
                 "model_route_changed",
                 "model_usage_limit",

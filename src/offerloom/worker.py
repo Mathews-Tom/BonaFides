@@ -11,7 +11,7 @@ from uuid import UUID, uuid4
 from sqlalchemy import text
 from sqlalchemy.exc import DBAPIError, OperationalError
 
-from offerloom import documents, imports, local_model, sources, suitability
+from offerloom import document_generation, documents, imports, local_model, sources, suitability
 from offerloom.commands import canonical_json, lock_installation
 from offerloom.config import Settings
 from offerloom.db import Database
@@ -99,33 +99,51 @@ class Worker:
             elif task.kind in {"posting_extract", "matching"}:
                 suitability.execute_model(self.db, self.settings, task, interrupted)
             elif task.kind == "document_generate":
-                if self.settings.mode != "benchmark":
-                    raise Problem(422, "no_production_generation_provider")
-                profile_revision_id = UUID(str(task.input["profile_revision_id"]))
-                with self.db.transaction() as conn:
-                    prepared = documents.prepare_synthetic(conn, task.owner_id, profile_revision_id)
-                if scenario == "stage_pause":
-                    self._stage(
-                        task, {"phase": "prepared", "profile_revision_id": str(profile_revision_id)}
-                    )
-                    self._wait(delay, interrupted)
-                if interrupted.is_set():
-                    raise LeaseLost("lease lost")
-                with self.db.transaction() as conn:
-                    publish(
-                        conn,
-                        task,
-                        lambda active: documents.publish_document(
-                            active, task.owner_id, task.id, prepared
-                        ),
-                    )
+                mode = task.input.get("mode")
+                if mode == "deterministic_base":
+                    from offerloom.document_generation import publish_base
+
+                    with self.db.transaction() as conn:
+                        document_generation.lock_workspace(conn, task.owner_id)
+                        publish(
+                            conn, task, lambda active: publish_base(active, task, self.settings)
+                        )
+                elif mode == "tailored_ai":
+                    suitability.execute_model(self.db, self.settings, task, interrupted)
+                else:
+                    # Explicitly retained M0 protocol, never a production fallback.
+                    if self.settings.mode != "benchmark":
+                        raise Problem(422, "unsupported_document_generation_mode")
+                    profile_revision_id = UUID(str(task.input["profile_revision_id"]))
+                    with self.db.transaction() as conn:
+                        prepared = documents.prepare_synthetic(
+                            conn, task.owner_id, profile_revision_id
+                        )
+                    if scenario == "stage_pause":
+                        self._stage(
+                            task,
+                            {"phase": "prepared", "profile_revision_id": str(profile_revision_id)},
+                        )
+                        self._wait(delay, interrupted)
+                    if interrupted.is_set():
+                        raise LeaseLost("lease lost")
+                    with self.db.transaction() as conn:
+                        publish(
+                            conn,
+                            task,
+                            lambda active: documents.publish_document(
+                                active, task.owner_id, task.id, prepared
+                            ),
+                        )
             elif task.kind == "pdf_render":
                 document_id = UUID(str(task.input["document_id"]))
                 revision_id = UUID(str(task.input["revision_id"]))
                 with self.db.transaction() as conn:
                     render = documents.prepare_render(conn, task.owner_id, document_id, revision_id)
                 # Spool processing and private content-addressed blob I/O never hold DB locks.
-                pdf = RenderClient(self.settings.renderer_spool).render(render.body)
+                pdf = RenderClient(self.settings.renderer_spool).render(
+                    render.body, render.template_version, render.frame, render.template_sha256
+                )
                 blob = BlobStore(self.settings.blob_root).put(task.owner_id, pdf)
                 if scenario == "stage_pause":
                     self._stage(task, {"phase": "blob_staged", "revision_id": str(revision_id)})
@@ -133,6 +151,7 @@ class Worker:
                 if interrupted.is_set():
                     raise LeaseLost("lease lost")
                 with self.db.transaction() as conn:
+                    document_generation.lock_workspace(conn, task.owner_id)
                     publish(
                         conn,
                         task,

@@ -476,8 +476,8 @@ def test_rebinding_rejected_and_connection_uses_pinned_resolution(
         ("model", "model:latest"),
         ("model", "https://host/model"),
         ("model_sha256", "not-a-digest"),
-        ("max_output_tokens", 4000),
-        ("deadline_seconds", 181),
+        ("max_output_tokens", 6001),
+        ("deadline_seconds", 301),
         ("framing_token_overhead", 0),
     ],
 )

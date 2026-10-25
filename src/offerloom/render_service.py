@@ -22,8 +22,9 @@ from pathlib import Path
 from typing import Annotated, Literal
 from uuid import uuid4
 
-from pydantic import Field
+from pydantic import Field, model_validator
 
+from offerloom.document_frame import TEMPLATES, PrintableFrame, TemplateVersion, template_digest
 from offerloom.documents import TEMPLATE_VERSION, DocumentBody, StrictModel, canonical
 from offerloom.storage import MAX_PDF_BYTES, atomic_file, directory, read_file
 
@@ -40,8 +41,21 @@ class RenderFailure(RuntimeError):
 
 class RenderRequest(StrictModel):
     schema_version: Literal[1]
-    template_version: Literal["offerloom-base-v1"]
+    template_version: TemplateVersion
     body: DocumentBody
+    frame: PrintableFrame | None = None
+    template_sha256: Annotated[str, Field(pattern=r"^[0-9a-f]{64}$")] | None = None
+
+    @model_validator(mode="after")
+    def pinned_frame(self) -> RenderRequest:
+        if (self.template_version == TEMPLATE_VERSION) != (self.frame is None):
+            raise ValueError("render_frame_template_mismatch")
+        if self.template_version == TEMPLATE_VERSION:
+            if self.template_sha256 is not None:
+                raise ValueError("render_frame_template_mismatch")
+        elif self.template_sha256 != template_digest(self.template_version):
+            raise ValueError("render_template_digest_mismatch")
+        return self
 
 
 class RenderReceipt(StrictModel):
@@ -61,7 +75,11 @@ def deny_url_fetcher(url: str, *args: object, **kwargs: object) -> object:
     raise ValueError("renderer_url_denied")
 
 
-def render_html(body: DocumentBody) -> str:
+def render_html(
+    body: DocumentBody,
+    template_version: str = TEMPLATE_VERSION,
+    frame: PrintableFrame | None = None,
+) -> str:
     from jinja2 import Environment, PackageLoader, StrictUndefined, select_autoescape
 
     environment = Environment(
@@ -69,19 +87,31 @@ def render_html(body: DocumentBody) -> str:
         autoescape=select_autoescape(default=True),
         undefined=StrictUndefined,
     )
-    return environment.get_template("base-v1.html").render(document=body)
+    if template_version == TEMPLATE_VERSION:
+        if frame is not None:
+            raise RenderFailure("render_invalid_input")
+        return environment.get_template("base-v1.html").render(document=body)
+    if template_version not in TEMPLATES or frame is None:
+        raise RenderFailure("render_invalid_input")
+    return environment.get_template(TEMPLATES[template_version][1]).render(
+        document=body, frame=frame
+    )
 
 
-def render_pdf(body: DocumentBody) -> bytes:
+def render_pdf(
+    body: DocumentBody,
+    template_version: str = TEMPLATE_VERSION,
+    frame: PrintableFrame | None = None,
+) -> bytes:
     """Only called by the bounded child in the sealed renderer container."""
     from weasyprint import HTML  # type: ignore[import-untyped]
 
     logger = logging.getLogger("weasyprint")
     logger.handlers = [logging.NullHandler()]
     logger.propagate = False
-    data = HTML(string=render_html(body), url_fetcher=deny_url_fetcher).write_pdf(
-        pdf_forms=False, attachments=[], custom_metadata=False
-    )
+    data = HTML(
+        string=render_html(body, template_version, frame), url_fetcher=deny_url_fetcher
+    ).write_pdf(pdf_forms=False, attachments=[], custom_metadata=False)
     if (
         not isinstance(data, bytes)
         or not data.startswith(b"%PDF-")
@@ -98,9 +128,23 @@ class RenderClient:
         self.spool = spool
         self.timeout = timeout
 
-    def render(self, body: DocumentBody) -> bytes:
-        request = RenderRequest(schema_version=1, template_version=TEMPLATE_VERSION, body=body)
-        payload = canonical(request.model_dump(mode="json")).encode()
+    def render(
+        self,
+        body: DocumentBody,
+        template_version: str = TEMPLATE_VERSION,
+        frame: PrintableFrame | None = None,
+        template_sha256: str | None = None,
+    ) -> bytes:
+        request = RenderRequest.model_validate(
+            {
+                "schema_version": 1,
+                "template_version": template_version,
+                "template_sha256": template_sha256,
+                "body": body,
+                "frame": frame,
+            }
+        )
+        payload = canonical(request.model_dump(mode="json", exclude_none=True)).encode()
         if len(payload) > MAX_REQUEST_BYTES:
             raise RenderFailure("render_invalid_input")
         digest = hashlib.sha256(payload).hexdigest()
@@ -160,7 +204,7 @@ def _render_child(spool: Path, job_id: str) -> None:
     with directory(spool) as fd:
         raw = read_file(fd, f"{job_id}.request.json", MAX_REQUEST_BYTES)
         request = RenderRequest.model_validate_json(raw, strict=True)
-        output = render_pdf(request.body)
+        output = render_pdf(request.body, request.template_version, request.frame)
         atomic_file(fd, f"{job_id}.pdf", output)
 
 

@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: MIT OR Apache-2.0
-"""Evidence-pinned deterministic M0 documents; workflow success is not review."""
+"""Evidence-pinned immutable documents, exact review and private PDF artifacts."""
 
 from __future__ import annotations
 
@@ -16,6 +16,7 @@ from sqlalchemy import Connection, text
 from offerloom.auth import Owner, require_owner
 from offerloom.config import Settings
 from offerloom.db import Database
+from offerloom.document_frame import PrintableFrame, template_digest
 from offerloom.problems import Problem
 from offerloom.storage import BlobStore, StoredBlob
 
@@ -103,6 +104,9 @@ class PreparedRender:
     revision_id: UUID
     content_sha256: str
     body: DocumentBody
+    template_version: str = TEMPLATE_VERSION
+    frame: PrintableFrame | None = None
+    template_sha256: str | None = None
 
 
 def _facts(conn: Connection, owner_id: UUID, profile_revision_id: UUID) -> tuple[Fact, ...]:
@@ -366,37 +370,42 @@ def publish_document(
     return {"document_id": str(document_id), "revision_id": str(revision_id)}
 
 
-def _document(conn: Connection, owner_id: UUID, document_id: UUID) -> dict[str, object]:
+def _document(
+    conn: Connection, owner_id: UUID, document_id: UUID, settings: Settings | None = None
+) -> dict[str, object]:
+    from offerloom.document_generation import POLICY, revision_view
+
     row = (
         conn.execute(
-            text("""SELECT d.id,d.version,r.id AS revision_id,r.revision_no,r.profile_revision_id,r.body,r.content_sha256,
-        EXISTS(SELECT 1 FROM offerloom.document_reviews v WHERE v.owner_id=r.owner_id AND v.document_revision_id=r.id AND v.decision='accepted' AND v.reviewed_content_sha256=r.content_sha256) AS reviewed,
-        r.profile_revision_id<>(SELECT current_revision_id FROM offerloom.profiles WHERE owner_id=d.owner_id) AS stale
-        FROM offerloom.document_drafts d JOIN offerloom.document_revisions r ON r.owner_id=d.owner_id AND r.id=d.current_revision_id
-        WHERE d.owner_id=:owner AND d.id=:id"""),
+            text("""SELECT d.*,
+        d.profile_revision_id<>(SELECT current_revision_id FROM offerloom.profiles WHERE owner_id=d.owner_id) AS profile_stale
+        FROM offerloom.document_drafts d WHERE d.owner_id=:owner AND d.id=:id AND d.deleted_at IS NULL"""),
             {"owner": owner_id, "id": document_id},
         )
         .mappings()
-        .first()
+        .one_or_none()
     )
-    if row is None:
+    if row is None or row["current_revision_id"] is None:
         raise Problem(404, "not_found")
-    body = parse_body(row["body"])
-    if body_digest(body) != row["content_sha256"]:
-        raise Problem(409, "document_integrity_failed")
-    unsupported = unsupported_paths(body, _facts(conn, owner_id, row["profile_revision_id"]))
+    revision = revision_view(conn, owner_id, document_id, row["current_revision_id"])
+    body = parse_body(revision["body"])
+    issues = revision["validation_issues"]
+    assert isinstance(issues, list)
+    unsupported = list(dict.fromkeys(issue["path"] for issue in issues))
     links = (
         conn.execute(
             text(
                 "SELECT claim_path,claim_revision_id,evidence_revision_id,excerpt,status FROM offerloom.document_claim_links WHERE owner_id=:owner AND document_revision_id=:id"
             ),
-            {"owner": owner_id, "id": row["revision_id"]},
+            {"owner": owner_id, "id": row["current_revision_id"]},
         )
         .mappings()
         .all()
     )
     for si, section in enumerate(body.sections):
         for bi, block in enumerate(section.blocks):
+            if block.claim_kind != "factual":
+                continue
             path = f"/sections/{si}/blocks/{bi}"
             matching = [
                 link
@@ -410,25 +419,116 @@ def _document(conn: Connection, owner_id: UUID, document_id: UUID) -> dict[str, 
                 block.evidence_revision_ids
             ) and path not in unsupported:
                 unsupported.append(path)
+                issues.append({"path": path, "code": "document_claim_link_missing"})
+    reviewed = conn.execute(
+        text(
+            "SELECT EXISTS(SELECT 1 FROM offerloom.document_reviews WHERE owner_id=:owner AND document_revision_id=:id AND decision='accepted' AND reviewed_content_sha256=:sha)"
+        ),
+        {"owner": owner_id, "id": row["current_revision_id"], "sha": revision["content_sha256"]},
+    ).scalar_one()
+    artifacts = (
+        conn.execute(
+            text(
+                "SELECT id,document_revision_id,format FROM offerloom.document_artifacts WHERE owner_id=:owner AND document_revision_id=:id AND format='pdf' ORDER BY created_at,id"
+            ),
+            {"owner": owner_id, "id": row["current_revision_id"]},
+        )
+        .mappings()
+        .all()
+    )
+    stale_reason = "upstream_profile_revision_changed" if row["profile_stale"] else None
+    provenance = revision["provenance_snapshot"]
+    assert isinstance(provenance, dict)
+    if reviewed and provenance.get("schema_version") == 2:
+        keys = conn.execute(
+            text(
+                "SELECT reviewed_block_keys FROM offerloom.document_reviews WHERE owner_id=:owner AND document_revision_id=:id"
+            ),
+            {"owner": owner_id, "id": row["current_revision_id"]},
+        ).scalar_one()
+        required = {
+            block.block_key
+            for section in body.sections
+            for block in section.blocks
+            if block.claim_kind == "factual"
+        }
+        reviewed = isinstance(keys, list) and len(keys) == len(set(keys)) and set(keys) == required
+    if provenance.get("schema_version") == 2:
+        try:
+            if template_digest(str(revision["template_version"])) != provenance.get(
+                "template_sha256"
+            ):
+                stale_reason = stale_reason or "pinned_document_template_changed"
+        except (ValueError, OSError):
+            stale_reason = stale_reason or "pinned_document_template_unavailable"
+        if provenance.get("policy_version") != POLICY:
+            stale_reason = stale_reason or "document_validation_policy_changed"
+    if row["scope"] == "tailored" and provenance.get("schema_version") == 2:
+        from offerloom import suitability
+
+        application = (
+            conn.execute(
+                text(
+                    "SELECT o.posting_id FROM offerloom.applications a JOIN offerloom.saved_opportunities o ON o.owner_id=a.owner_id AND o.id=a.opportunity_id WHERE a.owner_id=:owner AND a.id=:id"
+                ),
+                {"owner": owner_id, "id": row["application_id"]},
+            )
+            .mappings()
+            .one_or_none()
+        )
+        if application is not None:
+            posting = suitability._posting(conn, owner_id, application["posting_id"])
+            requirements = suitability._current_requirements(conn, owner_id, posting["id"])
+            if requirements is None or str(requirements["id"]) != provenance.get(
+                "requirements_revision_id"
+            ):
+                stale_reason = stale_reason or "upstream_requirements_revision_changed"
+            elif suitability._posting_digest(posting) != provenance.get("posting_content_sha256"):
+                stale_reason = stale_reason or "upstream_posting_content_changed"
+        if settings is not None:
+            from offerloom import local_model
+
+            try:
+                route = local_model.load_route(settings.local_model_route_file)
+            except local_model.ModelFailure:
+                route = None
+            model_run = provenance.get("model_run")
+            if (
+                not isinstance(model_run, dict)
+                or route is None
+                or route.identity() != model_run.get("route")
+            ):
+                stale_reason = stale_reason or "generation_model_route_changed"
+            if provenance.get("settings_version") != suitability._settings_version(conn, owner_id):
+                stale_reason = stale_reason or "generation_privacy_settings_changed"
     return {
         "id": str(row["id"]),
         "version": row["version"],
-        "current_revision": {
-            "id": str(row["revision_id"]),
-            "revision_no": row["revision_no"],
-            "body": body.model_dump(mode="json"),
-            "content_sha256": row["content_sha256"],
-        },
-        "reviewed": row["reviewed"],
+        "kind": row["kind"],
+        "scope": row["scope"],
+        "application_id": str(row["application_id"]) if row["application_id"] else None,
+        "current_revision": revision,
+        "reviewed": bool(reviewed),
         "unsupported_claims": unsupported,
-        "stale": bool(row["stale"]),
-        "stale_reason": "upstream_profile_revision_changed" if row["stale"] else None,
+        "stale": stale_reason is not None,
+        "stale_reason": stale_reason,
+        "artifacts": [
+            {
+                "id": str(item["id"]),
+                "revision_id": str(item["document_revision_id"]),
+                "format": item["format"],
+            }
+            for item in artifacts
+        ],
     }
 
 
 def prepare_render(
     conn: Connection, owner_id: UUID, document_id: UUID, revision_id: UUID
 ) -> PreparedRender:
+    from offerloom.document_generation import lock_workspace
+
+    lock_workspace(conn, owner_id)
     document = _document(conn, owner_id, document_id)
     revision = document["current_revision"]
     assert isinstance(revision, dict)
@@ -440,7 +540,32 @@ def prepare_render(
         raise Problem(409, "review_required")
     digest = revision["content_sha256"]
     assert isinstance(digest, str)
-    return PreparedRender(document_id, revision_id, digest, parse_body(revision["body"]))
+    from offerloom.document_generation import export_eligibility
+
+    export_eligibility(conn, owner_id, revision)
+    template = revision["template_version"]
+    provenance = revision["provenance_snapshot"]
+    assert isinstance(template, str) and isinstance(provenance, dict)
+    frame = (
+        PrintableFrame.model_validate(provenance["frame"])
+        if provenance.get("schema_version") == 2
+        else None
+    )
+    template_sha = (
+        provenance.get("template_sha256") if provenance.get("schema_version") == 2 else None
+    )
+    if frame is not None and template_sha != template_digest(template):
+        raise Problem(409, "document_template_unavailable")
+    assert template_sha is None or isinstance(template_sha, str)
+    return PreparedRender(
+        document_id,
+        revision_id,
+        digest,
+        parse_body(revision["body"]),
+        template,
+        frame,
+        template_sha,
+    )
 
 
 def publish_artifact(
@@ -454,11 +579,13 @@ def publish_artifact(
         {"owner": owner_id, "id": prepared.document_id},
     )
     current = prepare_render(conn, owner_id, prepared.document_id, prepared.revision_id)
-    if (
-        current.content_sha256 != prepared.content_sha256
-        or body_digest(prepared.body) != current.content_sha256
-    ):
+    if current != prepared:
         raise Problem(409, "document_integrity_failed")
+    renderer_version = (
+        RENDERER_VERSION
+        if prepared.template_version == TEMPLATE_VERSION
+        else f"weasyprint-70-{prepared.template_version}"
+    )
     conn.execute(
         text(
             """INSERT INTO offerloom.blobs(owner_id,sha256,byte_length,media_type,storage_key,state) VALUES(:owner,:digest,:size,'application/pdf',:key,'ready') ON CONFLICT(owner_id,sha256) DO NOTHING"""
@@ -495,7 +622,7 @@ def publish_artifact(
             "owner": owner_id,
             "revision": prepared.revision_id,
             "blob": blob_id,
-            "renderer": RENDERER_VERSION,
+            "renderer": renderer_version,
         },
     ).scalar_one_or_none()
     if artifact_id is None:
@@ -503,7 +630,7 @@ def publish_artifact(
             text(
                 "SELECT id FROM offerloom.document_artifacts WHERE owner_id=:owner AND document_revision_id=:revision AND renderer_version=:renderer AND format='pdf'"
             ),
-            {"owner": owner_id, "revision": prepared.revision_id, "renderer": RENDERER_VERSION},
+            {"owner": owner_id, "revision": prepared.revision_id, "renderer": renderer_version},
         ).scalar_one()
     from offerloom.commands import append_outbox
 
@@ -522,6 +649,7 @@ class ReviewRequest(StrictModel):
     revision_id: Annotated[UUID, Field(strict=False)]
     decision: Literal["accepted"]
     content_sha256: Annotated[str, Field(pattern=r"^[0-9a-f]{64}$")]
+    reviewed_block_keys: list[Key] | None = Field(default=None, max_length=128)
 
 
 class RenderRequest(StrictModel):
@@ -539,7 +667,7 @@ def build_router(db: Database, settings: Settings) -> APIRouter:
         document_id: UUID, response: Response, owner: Annotated[Owner, Depends(require_owner)]
     ) -> dict[str, object]:
         with db.transaction() as conn:
-            result = _document(conn, owner.id, document_id)
+            result = _document(conn, owner.id, document_id, settings)
         response.headers["ETag"] = f'"{result["version"]}"'
         response.headers["Cache-Control"] = "private, no-store"
         return result
@@ -552,7 +680,7 @@ def build_router(db: Database, settings: Settings) -> APIRouter:
         owner: Annotated[Owner, Depends(require_owner)],
     ) -> Response:
         def effect(conn: Connection) -> tuple[int, dict[str, object]]:
-            document = _document(conn, owner.id, document_id)
+            document = _document(conn, owner.id, document_id, settings)
             revision = document["current_revision"]
             assert isinstance(revision, dict)
             if (
@@ -562,11 +690,34 @@ def build_router(db: Database, settings: Settings) -> APIRouter:
                 raise Problem(409, "revision_mismatch")
             if document["unsupported_claims"]:
                 raise Problem(409, "unsupported_claims")
+            provenance = revision["provenance_snapshot"]
+            assert isinstance(provenance, dict)
+            if provenance.get("schema_version") == 2:
+                content = parse_body(revision["body"])
+                required = {
+                    block.block_key
+                    for section in content.sections
+                    for block in section.blocks
+                    if block.claim_kind == "factual"
+                }
+                keys = body.reviewed_block_keys
+                if keys is None or len(keys) != len(set(keys)) or set(keys) != required:
+                    raise Problem(422, "reviewed_block_keys_mismatch")
+            from offerloom.document_generation import export_eligibility
+
+            export_eligibility(conn, owner.id, revision)
             conn.execute(
                 text(
-                    "INSERT INTO offerloom.document_reviews(owner_id,document_revision_id,decision,reviewed_content_sha256) VALUES(:owner,:revision,'accepted',:digest) ON CONFLICT(owner_id,document_revision_id) DO NOTHING"
+                    "INSERT INTO offerloom.document_reviews(owner_id,document_revision_id,decision,reviewed_content_sha256,reviewed_block_keys) VALUES(:owner,:revision,'accepted',:digest,CAST(:keys AS jsonb)) ON CONFLICT(owner_id,document_revision_id) DO NOTHING"
                 ),
-                {"owner": owner.id, "revision": body.revision_id, "digest": body.content_sha256},
+                {
+                    "owner": owner.id,
+                    "revision": body.revision_id,
+                    "digest": body.content_sha256,
+                    "keys": canonical(body.reviewed_block_keys)
+                    if body.reviewed_block_keys is not None
+                    else None,
+                },
             )
             conn.execute(
                 text(
@@ -591,7 +742,7 @@ def build_router(db: Database, settings: Settings) -> APIRouter:
                     ),
                 },
             )
-            return 200, _document(conn, owner.id, document_id)
+            return 200, _document(conn, owner.id, document_id, settings)
 
         with db.transaction() as conn:
             status, result = command(
@@ -692,4 +843,7 @@ def build_router(db: Database, settings: Settings) -> APIRouter:
             },
         )
 
+    from offerloom.document_generation import install_routes
+
+    install_routes(router, db, settings)
     return router

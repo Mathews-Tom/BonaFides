@@ -28,7 +28,7 @@ from threading import Event, Thread
 from typing import IO, cast
 from urllib.parse import urlsplit
 
-ADAPTER_VERSION = "ol-ollama-v2"
+ADAPTER_VERSION = "ol-ollama-v3"
 _REQUEST_FRAMING_BYTES = 1024
 _TRANSPORT_POLICY = {
     "version": "ol-local-pre-post-manifest-v1",
@@ -40,10 +40,11 @@ _TRANSPORT_POLICY = {
     "inference_identity": "unknown_mutable_tag",
     "interruption_code": "model_interrupted",
 }
-PROJECTION_VERSION = "ol-suitability-wire-v1"
+PROJECTION_VERSION = "ol-professional-wire-v2"
 PROMPT_VERSIONS = {
     "extract_posting": "ol-extract-posting-v1",
     "match_requirements": "ol-match-requirements-v1",
+    "generate_documents": "ol-generate-documents-v1",
 }
 _SYSTEM = (
     "You transform Offerloom task data into the supplied JSON response shape. "
@@ -70,6 +71,20 @@ _SUFFIXES = {
         "does not establish. With no relevant evidence use not_evidenced and empty links. "
         "Missing evidence does not mean a person lacks a skill. Never output a score "
         "or eligibility verdict. Job requirements are not applicant experience."
+    ),
+    "generate_documents": (
+        "Create exactly one resume and one cover_letter, with globally unique b-N block keys. "
+        "Use fixed headings Experience, Education, Skills, Projects, Certifications, Languages, "
+        "Profile evidence, Application, Letter, Interest or Summary. Copy accepted professional claim text verbatim; "
+        "non-exact paraphrases will remain unestablished. Structured claim fields may be copied "
+        "verbatim after claim text in supplied field order, one value per line. Never invent "
+        "metrics, dates, qualifications, scope or work authorization. Cite permitted claim and "
+        "evidence identifiers. Do not put applicant identity/contact or a signature in prose. "
+        "Only these exact nonfactual phrases are reviewed safe language: Dear Hiring team,; "
+        "Thank you for your consideration.; Thank you for considering my application.; Sincerely,; "
+        "I would welcome the opportunity to discuss this role.; I would welcome a discussion of the role. "
+        "A factual statement hidden as intent or greeting remains unsupported. "
+        "Use gaps for missing requirement evidence, never fabricate it. Return typed JSON only."
     ),
 }
 
@@ -145,6 +160,70 @@ _SCHEMAS = {
         }
     ),
 }
+
+# The provider receives one bounded branch, not executable document markup.
+_DOCUMENT_BLOCK = _object(
+    {
+        "block_key": {"type": "string", "pattern": "^b-[0-9]{1,3}$"},
+        "text": _string(2000),
+        "claim_kind": {"type": "string", "enum": ["factual", "intent", "greeting"]},
+        "claim_revision_ids": {
+            "type": "array",
+            "maxItems": 16,
+            "uniqueItems": True,
+            "items": {"type": "string", "format": "uuid"},
+        },
+        "evidence_revision_ids": {
+            "type": "array",
+            "maxItems": 16,
+            "uniqueItems": True,
+            "items": {"type": "string", "format": "uuid"},
+        },
+    }
+)
+_SCHEMAS["generate_documents"] = _object(
+    {
+        "schema_version": {"const": "1"},
+        "stage": {"const": "generate_documents"},
+        "documents": {
+            "type": "array",
+            "minItems": 2,
+            "maxItems": 2,
+            "items": _object(
+                {
+                    "kind": {"type": "string", "enum": ["resume", "cover_letter"]},
+                    "sections": {
+                        "type": "array",
+                        "minItems": 1,
+                        "maxItems": 12,
+                        "items": _object(
+                            {
+                                "heading": _string(100),
+                                "blocks": {
+                                    "type": "array",
+                                    "minItems": 1,
+                                    "maxItems": 30,
+                                    "items": _DOCUMENT_BLOCK,
+                                },
+                            }
+                        ),
+                    },
+                }
+            ),
+        },
+        "gaps": {
+            "type": "array",
+            "maxItems": 30,
+            "items": _object(
+                {
+                    "requirement_key": {"type": "string", "pattern": "^req-[0-9]{1,3}$"},
+                    "question": _string(500),
+                }
+            ),
+        },
+        "warnings": {"type": "array", "maxItems": 20, "items": _string(500)},
+    }
+)
 
 
 class ModelFailure(ValueError):
@@ -378,11 +457,11 @@ def load_route(path: Path | None) -> LocalRoute | None:
         _text(data, "runtime_version")
         _text(data, "model_license")
         window = _integer(data, "context_window", 1024, 131072)
-        input_tokens = _integer(data, "max_input_tokens", 1, 8000)
-        output_tokens = _integer(data, "max_output_tokens", 1, 3000)
+        input_tokens = _integer(data, "max_input_tokens", 1, 12000)
+        output_tokens = _integer(data, "max_output_tokens", 1, 6000)
         request_bytes = _integer(data, "max_request_bytes", 1024, 131072)
         response_bytes = _integer(data, "max_response_bytes", 1024, 262144)
-        deadline = _integer(data, "deadline_seconds", 1, 180)
+        deadline = _integer(data, "deadline_seconds", 1, 300)
         ca = data.get("ca_file")
         ca_path: Path | None = None
         framing_overhead = _integer(data, "framing_token_overhead", 512, 8192)
@@ -415,6 +494,14 @@ def load_route(path: Path | None) -> LocalRoute | None:
                         "requirements": ["requirement_key", "text", "importance", "span"],
                         "claims": ["id", "text", "evidence_revision_ids"],
                         "evidence": ["id", "text"],
+                        "max_items": 100,
+                    },
+                    "generate_documents": {
+                        "posting": ["title", "organization", "source_text"],
+                        "requirements": ["requirement_key", "text", "importance", "span"],
+                        "claims": ["id", "text", "structured_fields", "evidence_revision_ids"],
+                        "evidence": ["id", "text"],
+                        "preferences": ["tone", "language"],
                         "max_items": 100,
                     },
                 },
@@ -663,6 +750,8 @@ class OllamaClient:
                 "evidence",
             }
         )
+        if stage == "generate_documents":
+            roots |= {"posting", "tone", "language"}
         if set(context) != roots:
             raise ModelFailure("model_context_invalid")
         if stage == "extract_posting":
@@ -687,6 +776,19 @@ class OllamaClient:
                 "claims": {"id", "text", "evidence_revision_ids"},
                 "evidence": {"id", "text"},
             }
+            if stage == "generate_documents":
+                fields["requirements"].remove("hard_constraint")
+                fields["claims"].add("structured_fields")
+                posting = context.get("posting")
+                if (
+                    not isinstance(posting, dict)
+                    or set(posting) != {"title", "organization", "source_text"}
+                    or not all(isinstance(value, str) for value in posting.values())
+                    or context.get("tone") not in {"professional", "concise"}
+                    or context.get("language") != "en"
+                ):
+                    raise ModelFailure("model_context_invalid")
+                projected.update({"posting": posting, "tone": context["tone"], "language": "en"})
             for name, allowed in fields.items():
                 values = context.get(name)
                 if not isinstance(values, list) or len(values) > 100:
@@ -696,6 +798,15 @@ class OllamaClient:
                     if not isinstance(value, dict) or set(value) != allowed:
                         raise ModelFailure("model_context_invalid")
                     item = cast(dict[str, object], value)
+                    if stage == "generate_documents" and name == "claims":
+                        structured = item.get("structured_fields")
+                        if (
+                            not isinstance(structured, dict)
+                            or set(structured)
+                            - {"role", "organization", "start_date", "end_date", "proficiency"}
+                            or not all(isinstance(value, str) for value in structured.values())
+                        ):
+                            raise ModelFailure("model_context_invalid")
                     # Hard eligibility is deterministic; never transmit owner legal,
                     # salary or authorization assertions to the semantic stage.
                     items.append(
@@ -721,7 +832,12 @@ class OllamaClient:
                         "temperature": 0,
                         "num_ctx": route.context_window,
                         "num_predict": min(
-                            route.max_output_tokens, 2000 if stage == "extract_posting" else 3000
+                            route.max_output_tokens,
+                            6000
+                            if stage == "generate_documents"
+                            else 2000
+                            if stage == "extract_posting"
+                            else 3000,
                         ),
                     },
                 }
@@ -731,12 +847,22 @@ class OllamaClient:
         # Entire encoded wire payload + framing allowance is a conservative token
         # upper bound, including schema/instructions rather than chars/4 guessing.
         input_bound = len(payload) + route.framing_token_overhead
-        output_cap = min(route.max_output_tokens, 2000 if stage == "extract_posting" else 3000)
+        output_cap = min(
+            route.max_output_tokens,
+            6000 if stage == "generate_documents" else 2000 if stage == "extract_posting" else 3000,
+        )
         margin = max(512, math.ceil(route.context_window * 0.05))
         if (
             len(payload) > route.max_request_bytes
             or input_bound
-            > min(route.max_input_tokens, 6000 if stage == "extract_posting" else 8000)
+            > min(
+                route.max_input_tokens,
+                12000
+                if stage == "generate_documents"
+                else 6000
+                if stage == "extract_posting"
+                else 8000,
+            )
             or input_bound + output_cap + margin > route.context_window
         ):
             raise ModelFailure("model_context_limit")
@@ -756,7 +882,10 @@ class OllamaClient:
         )
         if request_byte_upper_bound > route.max_request_bytes:
             raise ModelFailure("model_request_limit")
-        deadline_seconds = min(route.deadline_seconds, 120 if stage == "extract_posting" else 180)
+        deadline_seconds = min(
+            route.deadline_seconds,
+            300 if stage == "generate_documents" else 120 if stage == "extract_posting" else 180,
+        )
         started = time.monotonic()
         expired = Event()
         connection = _PinnedConnection(route, float(deadline_seconds), expired)
