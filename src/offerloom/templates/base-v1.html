@@ -1,0 +1,28 @@
+{# SPDX-License-Identifier: MIT OR Apache-2.0 #}
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>{{ document.title }}</title>
+<style>
+@page { size: A4; margin: 22mm 20mm; }
+body { font-family: "DejaVu Sans", sans-serif; color: #152c35; font-size: 10.5pt; line-height: 1.55; }
+h1 { font-size: 25pt; font-weight: 500; line-height: 1.2; margin: 0 0 12mm; }
+h2 { font-size: 12pt; color: #245b65; border-bottom: 0.5pt solid #a7bdc1; padding-bottom: 3mm; margin: 7mm 0 4mm; }
+p { margin: 0 0 4mm; white-space: pre-wrap; overflow-wrap: anywhere; }
+section { break-inside: auto; }
+h2 { break-after: avoid; }
+</style>
+</head>
+<body>
+<h1>{{ document.title }}</h1>
+{% for section in document.sections %}
+<section>
+<h2>{{ section.heading }}</h2>
+{% for block in section.blocks %}
+<p>{{ block.text }}</p>
+{% endfor %}
+</section>
+{% endfor %}
+</body>
+</html>
