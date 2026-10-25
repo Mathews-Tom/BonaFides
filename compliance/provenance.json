@@ -3,15 +3,15 @@
   "license": "MIT OR Apache-2.0",
   "recorded_date": "2026-10-25",
   "distribution_status": "blocked",
-  "scope": "M0 OL-001 through OL-004, OL-005 evidence-linked profiles/history/themes, OL-006 bounded reviewed local PDF/text imports, and OL-007 manual postings with a reviewed configured-board Greenhouse read mechanism. The owner-approved macOS/arm64 private M0 checkpoint is complete; native amd64 qualification is separately deferred as DFR-001, not passed. Independent human contribution/rights review remains a pending public-distribution gate. Real-board collection requires separate specific terms review and authorization; local fixtures do not grant it. M1 and public distribution are not complete.",
+  "scope": "M0 OL-001 through OL-004, OL-005 evidence-linked profiles/history/themes, OL-006 bounded reviewed local PDF/text imports, OL-007 manual postings and reviewed configured-board collection, OL-008 durable catalog, and OL-009 reviewed requirements/evidence-linked suitability with an opt-in bounded local-provider adapter. The private macOS/arm64 technical checkpoint does not qualify a real board or model. Native amd64 qualification remains separately deferred as DFR-001, not passed. Independent human contribution/rights review remains a public-distribution gate. M1 and public distribution are not complete.",
   "research_evidence_boundary": "The original OL-001 research records retain their inherited design-stage access basis. Later entries identify official documentation retrieval observed by the integration owner on 2026-10-24 and vendor lifecycle/security/format and Greenhouse Job Board API research on 2026-10-25. Documentation reference is not incorporation, board collection permission or exact package-artifact/license evidence. URLs elsewhere in components.json without evidence dates remain research candidates only.",
-  "authorized_input_basis": "Approved neutral M0, OL-005, OL-006 and OL-007 requirements and independently authored project design contracts; canonical public licensing ADR and compliance policies remain authoritative. Promoted SQL and synthetic fixtures are authorized project-design material, not an external implementation.",
+  "authorized_input_basis": "Approved neutral project requirements and independently authored design contracts, including the owner's complete M1 local-execution prompt; canonical public licensing ADR and compliance policies remain authoritative. Promoted SQL and synthetic fixtures are authorized project-design material, not an external implementation.",
   "contributor_attestations": {
     "authorship_basis": "Implementation contributors report independently authored original work with OpenAI coding assistant assistance and no copied external implementation code; this is a process disclosure, not independent certification.",
     "author": null,
     "reviewer": null,
     "signoff": null,
-    "human_review": "Pending for all entries; no human legal review, DCO signature, dual-license grant, employer authorization or publication approval inferred.",
+    "human_review": "Independent human provenance/legal review remains pending. Historical entries retain their original unconfirmed contribution basis. The owner explicitly authorized the configured contribution identity, Signed-off-by workflow, DCO 1.1 and CONTRIBUTING.md original-work grant for qualifying current M1 work on 2026-10-25; this does not establish human authorship, independent review, employer rights or publication approval.",
     "rights_status": "blocking"
   },
   "third_party_boundary": "Original project work is intended MIT OR Apache-2.0 subject to rights review. Dependencies and generated locks do not change upstream terms; package, native, dictionary, font and image artifacts require separate exact inventory and obligations review. OWASP ASVS requirement text and register documentation adaptation retain CC-BY-SA-4.0 independently of the original-code license.",
@@ -628,6 +628,33 @@
         "basis": "Owner-authorized complete M1 execution prompt, neutral OL-008 domain/UX/security requirements and existing deployed project conventions",
         "restricted_implementation_access": "Not consulted for this contribution; no restricted source, copied prompts or private reverse-engineering material used",
         "limitations": "Exact observed checks and artifacts are separately recorded. No real board, actual model route, paid call, semantic suitability, automatic merge/rejection/submission, human walkthrough, complete M1, amd64 pass or public-distribution approval is claimed."
+      }
+    },
+    {
+      "id": "ol009-reviewed-suitability",
+      "requirement_ids": ["OL-009"],
+      "paths": ["src/offerloom/suitability.py", "src/offerloom/local_model.py", "src/offerloom/config.py", "src/offerloom/api.py", "src/offerloom/db.py", "src/offerloom/commands.py", "src/offerloom/workflows.py", "src/offerloom/worker.py", "migrations/sql/009_suitability.up.sql", "migrations/versions/0006_suitability.py", "tests/test_suitability.py", "tests/test_local_model.py", "tests/test_worker.py", "tests/test_config.py", "tests/test_identity.py", "web/src/Suitability.tsx", "web/src/Suitability.test.tsx", "web/src/JobSources.tsx", "web/src/JobSources.test.tsx", "web/src/App.tsx", "web/src/App.test.tsx", "web/src/api.ts", "web/src/styles.css", "deploy/prepare.py", "compose.yaml", "README.md", "docs/development/README.md", "docs/compliance/M0-evidence.md"],
+      "author": null,
+      "author_role": "OpenAI coding-assistant implementation under the owner's authorized local contribution identity; not a claim of human-authored code",
+      "reviewer": null,
+      "review_date": null,
+      "signoff": null,
+      "created_date": "2026-10-25",
+      "status": "pending",
+      "approach": "Independently implement immutable source-span requirement review, explicit unknown-safe hard constraints, pinned claim/evidence coverage, freshness and proposal-only durable model tasks using existing owner/CAS/fence boundaries. Implement the operator-controlled local adapter with strict typed projections, bounded local HTTP/TLS, manifest/runtime checks and private-file authorization; retain disabled/unqualified defaults and distinguish conformance from real-model or human qualification.",
+      "alternatives": ["Infer work permission or hard eligibility from semantic similarity, location or a model score (rejected)", "Adopt model proposals or change profile facts without explicit review (rejected)", "Treat any negative coverage label as permission for unsupported factual explanations (rejected)", "Treat mutable model-tag metadata as cryptographic proof of the inference weights (rejected)", "Use ambient credentials, installed models, a cloud fallback or fabricated qualification receipts as consent (rejected)"],
+      "research": [],
+      "incorporated_material": [],
+      "incorporated_material_scope": "No third-party implementation, real employer content, model weights, new application dependencies or external prompt templates incorporated. Local adversarial HTTP/TLS fixtures and project task instructions are independently authored. Existing locked dependencies/base images/native packages/fonts/dictionaries retain their separate terms; model licensing and selected artifact review remain prerequisites for a real route.",
+      "ai_assistance": {"used": true, "tool": "OpenAI coding assistant", "scope": "Independent suitability/provider/worker implementation, frontend integration, AI-assisted local review and corrective work, deterministic synthetic regressions and operational/provenance documentation"},
+      "human_review": "Owner explicitly authorized the configured Mathews-Tom identity, DCO 1.1 and CONTRIBUTING.md MIT OR Apache-2.0 grant for qualifying original work on 2026-10-25. Genuine human model-output review, product walkthrough and independent provenance/security/rights review remain pending. AI-assisted review is not human acceptance.",
+      "commit": null,
+      "artifact_sha256": null,
+      "rights_disposition": "Original current work follows the owner's explicit MIT OR Apache-2.0 contribution grant and authorized Signed-off-by workflow, subject to truthful origin/authority. No real model/board use or public distribution is authorized by this record. Native amd64 qualification remains independently deferred.",
+      "independent_design": {
+        "basis": "Owner-authorized complete M1 execution prompt, neutral OL-009 domain/AI/UX/security contracts and existing deployed project conventions",
+        "restricted_implementation_access": "Not consulted for this contribution; no restricted source, copied external prompts or private reverse-engineering material used",
+        "limitations": "Conservative lexical/citation checks cannot establish semantic truth. Runtime manifest checks do not establish an immutable per-inference model identity. Exact observed tests, synthetic runtime evidence and unresolved human-only qualification are recorded separately; no complete M1 or release readiness is claimed."
       }
     }
   ],
