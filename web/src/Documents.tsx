@@ -297,7 +297,7 @@ export function Documents({ api, profile, disabled = false, externalDocumentId, 
     if (!doc || locked || dirty || preview || issues.length || !doc.reviewed) return;
     const epoch = selection.current;
     void run(async signal => {
-      const path = `${docPath(doc.id)}/renders`; const body: DocumentRenderRequest = { revision_id: doc.current_revision.id };
+      const path = `${docPath(doc.id)}/renders`; const body: DocumentRenderRequest = { revision_id: doc.current_revision.id, content_sha256: doc.current_revision.content_sha256, format: 'pdf' };
       const value = await request<Workflow>(signal, path, 'POST', body, doc.version, keyFor(path, body, doc.version));
       mutation.current = null; workflowSelection.current = epoch; setWorkflow(value); setMonitorError(''); setNotice(`PDF task accepted for saved revision ${doc.current_revision.revision_no}. Nothing was sent.`);
     });

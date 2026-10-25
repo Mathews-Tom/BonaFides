@@ -174,6 +174,9 @@ describe('review, export and generation boundaries', () => {
     expect(review?.[2]).toEqual({ revision_id: 'doc-rev-2', content_sha256: 'b'.repeat(64), decision: 'accepted', reviewed_block_keys: ['b-1', 'b-2'] });
     await user.click(screen.getByRole('button', { name: 'Render reviewed PDF' }));
     expect(screen.queryByRole('link', { name: /Download rendered PDF/ })).not.toBeInTheDocument();
+    const renderRequest = request.mock.calls.find(call => call[0] === '/documents/base-doc/renders');
+    expect(renderRequest?.[2]).toEqual({ revision_id: document.current_revision.id, content_sha256: document.current_revision.content_sha256, format: 'pdf' });
+    expect(renderRequest?.[3]).toBe(document.version);
     expect(await screen.findByRole('link', { name: 'Download rendered PDF for revision 2' }, { timeout: 4000 })).toHaveAttribute('href', '/api/v1/artifacts/real-pdf');
     expect(request.mock.calls.some(call => /stage|send|generation/.test(call[0]))).toBe(false);
   });

@@ -57,14 +57,17 @@ def test_real_worker_shutdown_keeps_model_execution_under_database_recovery_auth
         finally:
             worker.stop()
             # Hold the HTTP response until run() has interrupted its running task.
-            release_response.wait(5)
+            release_response.wait()
 
     def bounded_stop() -> None:
-        if not worker_finished.wait(5):
+        if not inference_started.wait(30) or not worker_finished.wait(10):
             worker.stop()
 
     with fixture_server(on_inference=during_inference) as (endpoint, requests):
-        route = qualified_route(tmp_path, route_data(endpoint))
+        # This case tests shutdown, not the generic fixture's two-second timeout.
+        data = route_data(endpoint)
+        data["deadline_seconds"] = 30
+        route = qualified_route(tmp_path, data)
         monkeypatch.setattr(local_model, "load_route", lambda _path: route)
         posting = _posting(catalog)
         view = _view(catalog, posting["id"])

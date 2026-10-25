@@ -14,6 +14,12 @@ from uuid import uuid4
 
 import pytest
 from pydantic import ValidationError
+from sqlalchemy import text
+from test_document_generation import _base, _document, _review
+from test_identity import identity as identity
+from test_sources import SourceContext
+from test_sources import catalog as catalog
+from test_suitability import _profile
 
 from offerloom.documents import (
     DocumentBlock,
@@ -156,11 +162,125 @@ def test_http_review_payload_requires_exact_hash_and_uuid() -> None:
         ).revision_id
         == identifier
     )
-    assert RenderRequest.model_validate({"revision_id": str(identifier)}).revision_id == identifier
+    assert (
+        RenderRequest.model_validate(
+            {"revision_id": str(identifier), "content_sha256": "a" * 64, "format": "pdf"}
+        ).revision_id
+        == identifier
+    )
     with pytest.raises(ValidationError):
         ReviewRequest.model_validate(
             {"revision_id": str(identifier), "decision": "accepted", "content_sha256": "invalid"}
         )
+
+
+@pytest.mark.parametrize(
+    "changes",
+    [
+        {"format": "docx"},
+        {"format": "html"},
+        {"format": None},
+        {"content_sha256": "A" * 64},
+        {"content_sha256": "invalid"},
+        {"document_revision_id": str(uuid4())},
+    ],
+)
+def test_public_render_request_rejects_wrong_format_hash_and_aliases(
+    changes: dict[str, object],
+) -> None:
+    wire: dict[str, object] = {
+        "revision_id": str(uuid4()),
+        "content_sha256": "a" * 64,
+        "format": "pdf",
+    }
+    with pytest.raises(ValidationError):
+        RenderRequest.model_validate(wire | changes)
+
+
+@pytest.mark.parametrize("missing", ["format", "content_sha256", "both"])
+def test_public_render_request_rejects_old_incomplete_payloads(missing: str) -> None:
+    wire: dict[str, object] = {
+        "revision_id": str(uuid4()),
+        "content_sha256": "a" * 64,
+        "format": "pdf",
+    }
+    for field in ("format", "content_sha256") if missing == "both" else (missing,):
+        del wire[field]
+    with pytest.raises(ValidationError):
+        RenderRequest.model_validate(wire)
+
+
+@pytest.mark.postgres
+def test_typed_pdf_export_fences_hash_format_version_and_idempotency(
+    catalog: SourceContext,
+) -> None:
+    document = _base(catalog, _profile(catalog))
+    reviewed = _review(catalog, document)
+    assert reviewed.status_code == 200, reviewed.text
+    document = _document(catalog, document["id"])
+    revision = document["current_revision"]
+    path = f"/api/v1/documents/{document['id']}/renders"
+    wire = {
+        "revision_id": revision["id"],
+        "content_sha256": revision["content_sha256"],
+        "format": "pdf",
+    }
+    for invalid in (
+        {"revision_id": revision["id"]},
+        {"revision_id": revision["id"], "content_sha256": revision["content_sha256"]},
+        wire | {"format": "docx"},
+    ):
+        response = catalog.client.post(
+            path, json=invalid, headers=catalog.headers(document["version"])
+        )
+        assert response.status_code == 422, response.text
+    wrong = catalog.client.post(
+        path,
+        json=wire | {"content_sha256": "0" * 64},
+        headers=catalog.headers(document["version"]),
+    )
+    assert wrong.status_code == 409 and wrong.json()["code"] == "document_content_changed"
+    stale = catalog.client.post(path, json=wire, headers=catalog.headers(document["version"] - 1))
+    assert stale.status_code == 412 and stale.json()["code"] == "version_conflict"
+    foreign = catalog.client.post(
+        f"/api/v1/documents/{uuid4()}/renders",
+        json=wire,
+        headers=catalog.headers(document["version"]),
+    )
+    assert foreign.status_code == 404
+    with catalog.runtime.transaction() as conn:
+        assert (
+            conn.execute(
+                text(
+                    "SELECT count(*) FROM offerloom.workflow_runs "
+                    "WHERE owner_id=:owner AND kind='pdf_render'"
+                ),
+                {"owner": catalog.owner_id},
+            ).scalar_one()
+            == 0
+        )
+    headers = catalog.headers(document["version"])
+    queued = catalog.client.post(path, json=wire, headers=headers)
+    assert queued.status_code == 202, queued.text
+    replay = catalog.client.post(path, json=wire, headers=headers)
+    assert replay.status_code == 202 and replay.json() == queued.json()
+    changed = catalog.client.post(path, json=wire | {"content_sha256": "0" * 64}, headers=headers)
+    assert changed.status_code == 409 and changed.json()["code"] == "idempotency_payload_mismatch"
+    with catalog.runtime.transaction() as conn:
+        rows = (
+            conn.execute(
+                text(
+                    "SELECT input FROM offerloom.workflow_runs "
+                    "WHERE owner_id=:owner AND kind='pdf_render'"
+                ),
+                {"owner": catalog.owner_id},
+            )
+            .scalars()
+            .all()
+        )
+    assert len(rows) == 1
+    assert rows[0]["revision_id"] == revision["id"]
+    assert rows[0]["content_sha256"] == revision["content_sha256"]
 
 
 @pytest.mark.parametrize(

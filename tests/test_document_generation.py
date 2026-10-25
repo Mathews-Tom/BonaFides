@@ -334,7 +334,11 @@ def test_manual_unsupported_text_cannot_escape_review_and_render(
     assert _review(catalog, blocked).status_code == 409
     rendered = catalog.client.post(
         f"/api/v1/documents/{document['id']}/renders",
-        json={"revision_id": blocked["current_revision"]["id"]},
+        json={
+            "revision_id": blocked["current_revision"]["id"],
+            "content_sha256": blocked["current_revision"]["content_sha256"],
+            "format": "pdf",
+        },
         headers=catalog.headers(blocked["version"]),
     )
     assert rendered.status_code == 409 and rendered.json()["code"] == "unsupported_claims"
@@ -966,7 +970,11 @@ def test_same_owner_independent_render_publications_both_preserve_reviewed_artif
         document.update(reviewed.json())
         queued = catalog.client.post(
             f"/api/v1/documents/{document['id']}/renders",
-            json={"revision_id": document["current_revision"]["id"]},
+            json={
+                "revision_id": document["current_revision"]["id"],
+                "content_sha256": document["current_revision"]["content_sha256"],
+                "format": "pdf",
+            },
             headers=catalog.headers(document["version"]),
         )
         assert queued.status_code == 202, queued.text
@@ -1146,7 +1154,11 @@ def test_withdrawn_evidence_keeps_history_but_blocks_new_export(catalog: SourceC
     assert current["stale"] and current["current_revision"] == revision
     response = catalog.client.post(
         f"/api/v1/documents/{document['id']}/renders",
-        json={"revision_id": revision["id"]},
+        json={
+            "revision_id": revision["id"],
+            "content_sha256": revision["content_sha256"],
+            "format": "pdf",
+        },
         headers=catalog.headers(current["version"]),
     )
     assert response.status_code == 409 and response.json()["code"] == "document_source_withdrawn"

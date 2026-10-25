@@ -654,6 +654,8 @@ class ReviewRequest(StrictModel):
 
 class RenderRequest(StrictModel):
     revision_id: Annotated[UUID, Field(strict=False)]
+    content_sha256: Annotated[str, Field(pattern=r"^[0-9a-f]{64}$")]
+    format: Literal["pdf"]
 
 
 def build_router(db: Database, settings: Settings) -> APIRouter:
@@ -774,6 +776,8 @@ def build_router(db: Database, settings: Settings) -> APIRouter:
     ) -> Response:
         def effect(conn: Connection) -> tuple[int, dict[str, object]]:
             prepared = prepare_render(conn, owner.id, document_id, body.revision_id)
+            if prepared.content_sha256 != body.content_sha256:
+                raise Problem(409, "document_content_changed")
             workflow_id = enqueue(
                 conn,
                 owner.id,

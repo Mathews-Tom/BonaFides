@@ -71,7 +71,7 @@ export interface GenerationRequest extends BaseResumeRequest {
 export interface DocumentSaveRequest { base_revision_id: string; body: DocumentBody; reason: string }
 export interface DocumentRestoreRequest { revision_id: string; reason: string }
 export interface DocumentReviewRequest { revision_id: string; decision: 'accepted'; content_sha256: string; reviewed_block_keys: string[] }
-export interface DocumentRenderRequest { revision_id: string }
+export interface DocumentRenderRequest { revision_id: string; content_sha256: string; format: 'pdf' }
 export const MAX_IMPORT_BYTES = 10 * 1024 * 1024;
 export type ImportMediaType = 'application/pdf' | 'text/plain';
 export interface ImportProposal { proposal_id: string; kind: ClaimKind; payload: ClaimPayload; source_start: number; source_end: number; quote: string }

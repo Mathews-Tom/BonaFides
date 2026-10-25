@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import contextlib
 import hashlib
+import io
 import json
 import logging
 import os
@@ -18,6 +19,8 @@ import socket
 import subprocess
 import sys
 import time
+import unicodedata
+from html.parser import HTMLParser
 from pathlib import Path
 from typing import Annotated, Literal
 from uuid import uuid4
@@ -31,6 +34,18 @@ from offerloom.storage import MAX_PDF_BYTES, atomic_file, directory, read_file
 MAX_REQUEST_BYTES = 1024 * 1024
 RENDER_TIMEOUT = 30
 _JOB = re.compile(r"[0-9a-f]{64}\Z")
+# Child exit codes carry only allowlisted errors across the process boundary.
+RenderError = Literal[
+    "render_timeout",
+    "render_failed",
+    "render_invalid_input",
+    "render_output_invalid",
+    "render_text_unsupported",
+]
+_CHILD_ERRORS: dict[int, RenderError] = {
+    65: "render_text_unsupported",
+    66: "render_output_invalid",
+}
 
 
 class RenderFailure(RuntimeError):
@@ -64,10 +79,7 @@ class RenderReceipt(StrictModel):
     request_sha256: Annotated[str, Field(pattern=r"^[0-9a-f]{64}$")]
     output_sha256: Annotated[str, Field(pattern=r"^[0-9a-f]{64}$")] | None
     output_bytes: Annotated[int, Field(ge=0, le=MAX_PDF_BYTES)]
-    error_code: (
-        Literal["render_timeout", "render_failed", "render_invalid_input", "render_output_invalid"]
-        | None
-    )
+    error_code: RenderError | None
 
 
 def deny_url_fetcher(url: str, *args: object, **kwargs: object) -> object:
@@ -98,6 +110,72 @@ def render_html(
     )
 
 
+class _VisibleText(HTMLParser):
+    """Read escaped literal text in template order, excluding head/CSS/metadata."""
+
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self.in_body = False
+        self.parts: list[str] = []
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        del attrs
+        if tag == "body":
+            self.in_body = True
+        elif self.in_body and tag in ("h1", "h2", "p", "section", "header", "div", "br"):
+            self.parts.append("\n")
+
+    def handle_endtag(self, tag: str) -> None:
+        if tag == "body":
+            self.in_body = False
+        elif self.in_body and tag in ("h1", "h2", "p", "section", "header", "div"):
+            self.parts.append("\n")
+
+    def handle_data(self, data: str) -> None:
+        if self.in_body:
+            self.parts.append(data)
+
+
+def _preserves_text(expected: str, extracted: str) -> bool:
+    # Require original word/block boundaries. Layout may add whitespace within a
+    # long word, but may not remove the space separating two original words.
+    expected = " ".join(unicodedata.normalize("NFC", expected).split())
+    extracted = unicodedata.normalize("NFC", extracted)
+    cursor = 0
+    for character in expected:
+        if character == " " and (cursor == len(extracted) or not extracted[cursor].isspace()):
+            return False
+        while cursor < len(extracted) and extracted[cursor].isspace():
+            cursor += 1
+        if character == " ":
+            continue
+        if cursor == len(extracted) or extracted[cursor] != character:
+            return False
+        cursor += 1
+    return not extracted[cursor:].strip()
+
+
+def _validate_pdf_text(data: bytes, html: str) -> None:
+    from pypdf import PdfReader
+    from pypdf.errors import PyPdfError
+
+    logger = logging.getLogger("pypdf")
+    logger.handlers = [logging.NullHandler()]
+    logger.propagate = False
+
+    visible = _VisibleText()
+    visible.feed(html)
+    try:
+        with PdfReader(io.BytesIO(data), strict=True) as reader:
+            if reader.is_encrypted or not reader.pages:
+                raise RenderFailure("render_output_invalid")
+            extracted = "\n".join(page.extract_text() for page in reader.pages)
+    except (PyPdfError, ValueError, KeyError, TypeError):
+        raise RenderFailure("render_output_invalid") from None
+    if "\ufffd" in extracted or not _preserves_text("".join(visible.parts), extracted):
+        raise RenderFailure("render_text_unsupported")
+
+
 def render_pdf(
     body: DocumentBody,
     template_version: str = TEMPLATE_VERSION,
@@ -109,15 +187,22 @@ def render_pdf(
     logger = logging.getLogger("weasyprint")
     logger.handlers = [logging.NullHandler()]
     logger.propagate = False
-    data = HTML(
-        string=render_html(body, template_version, frame), url_fetcher=deny_url_fetcher
-    ).write_pdf(pdf_forms=False, attachments=[], custom_metadata=False)
+    html = render_html(body, template_version, frame)
+    rendered = HTML(string=html, url_fetcher=deny_url_fetcher).render()
+    data = rendered.write_pdf(pdf_forms=False, attachments=[], custom_metadata=False)
+    # WeasyPrint 70 populates its documented Document.fonts table during painting.
+    # Font.missing records the actual Pango unknown-glyph mapping, including tofu
+    # that can still have a valid Unicode extraction mapping. Text equality alone
+    # therefore cannot prove visible glyph support.
+    if any(font.missing for font in rendered.fonts.values()):
+        raise RenderFailure("render_text_unsupported")
     if (
         not isinstance(data, bytes)
         or not data.startswith(b"%PDF-")
         or not 0 < len(data) <= MAX_PDF_BYTES
     ):
         raise RenderFailure("render_output_invalid")
+    _validate_pdf_text(data, html)
     return data
 
 
@@ -211,10 +296,7 @@ def _render_child(spool: Path, job_id: str) -> None:
 def _supervise(spool: Path, fd: int, job_id: str) -> None:
     raw = read_file(fd, f"{job_id}.request.json", MAX_REQUEST_BYTES)
     digest = hashlib.sha256(raw).hexdigest()
-    error: (
-        Literal["render_timeout", "render_failed", "render_invalid_input", "render_output_invalid"]
-        | None
-    ) = None
+    error: RenderError | None = None
     output_digest: str | None = None
     output_size = 0
     try:
@@ -246,7 +328,7 @@ def _supervise(spool: Path, fd: int, job_id: str) -> None:
             except subprocess.TimeoutExpired:
                 error = "render_timeout"
             if error is None and child.returncode != 0:
-                error = "render_failed"
+                error = _CHILD_ERRORS.get(child.returncode, "render_failed")
         finally:
             # Kill the group even if its leader exited: no descendant may survive.
             with contextlib.suppress(ProcessLookupError):
@@ -332,7 +414,13 @@ def isolation_canary(forbidden_file: Path, host: str, port: int) -> dict[str, bo
 
 def main() -> None:
     if len(sys.argv) == 4 and sys.argv[1] == "child":
-        _render_child(Path(sys.argv[2]), sys.argv[3])
+        try:
+            _render_child(Path(sys.argv[2]), sys.argv[3])
+        except RenderFailure as error:
+            for exit_code, code in _CHILD_ERRORS.items():
+                if error.code == code:
+                    raise SystemExit(exit_code) from None
+            raise SystemExit(1) from None
     elif len(sys.argv) == 5 and sys.argv[1] == "canary":
         print(
             json.dumps(

@@ -599,7 +599,11 @@ class Proof:
                 rejected, _, _ = self.api.request(
                     "POST",
                     f"/api/v1/documents/{document_id}/renders",
-                    {"revision_id": revision_id},
+                    {
+                        "revision_id": revision_id,
+                        "content_sha256": revision["content_sha256"],
+                        "format": "pdf",
+                    },
                     expected=(409,),
                     headers={
                         "If-Match": metadata["etag"],
@@ -629,7 +633,11 @@ class Proof:
         render, _, _ = self.api.request(
             "POST",
             f"/api/v1/documents/{document_id}/renders",
-            {"revision_id": revision["id"]},
+            {
+                "revision_id": revision["id"],
+                "content_sha256": revision["content_sha256"],
+                "format": "pdf",
+            },
             expected=(202,),
             headers={"If-Match": metadata["etag"], "Idempotency-Key": secrets.token_hex(16)},
         )
