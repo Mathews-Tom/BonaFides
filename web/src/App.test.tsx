@@ -3,13 +3,15 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { App } from './App';
-import { Api, ApiError, type Profile, type RequirementsView, type Session, type Workflow } from './api';
+import { Api, ApiError, type DocumentRecord, type Profile, type RequirementsView, type Session, type Snapshot, type Workflow } from './api';
 import { stages } from './tracking-api';
 const session: Session = { owner_id: 'owner', login_name: 'mira', csrf_token: 'session-csrf', expires_at: '2030-01-01' };
 const profile: Profile = { id: 'profile', version: 1, current_revision: { id: 'revision-1', revision_no: 1, content_sha256: 'a'.repeat(64), created_at: '2026-01-01T00:00:00Z', author_owner_id: 'owner', reason: 'Initial profile', claims: [], snapshot: { display_name: 'Mira', headline: 'Engineer', claim_revision_ids: [] } }, evidence: [], quality_warnings: [] };
 afterEach(() => { window.history.replaceState(null, '', '/'); });
-function mockRequest(api: Api, handler: (path: string, method: string) => Promise<unknown>) {
-  return vi.spyOn(api, 'request').mockImplementation(async <T,>(path: string, method = 'GET') => {
+function mockRequest(api: Api, handler: (path: string, method: string, body?: unknown) => Promise<unknown>, baseDocument: DocumentRecord | null = null) {
+  return vi.spyOn(api, 'request').mockImplementation(async <T,>(path: string, method = 'GET', body?: unknown) => {
+    if (method === 'GET' && path === '/document-templates') return { items: [{ version: 'offerloom-evidence-v1', label: 'Evidence', language: 'en', paper: 'A4' }, { version: 'offerloom-compact-v1', label: 'Compact', language: 'en', paper: 'A4' }] } as T;
+    if (method === 'GET' && path === '/profile/base-resume') { if (baseDocument) return baseDocument as T; throw new ApiError(404, 'base_resume_not_found'); }
     if (method === 'GET' && path === '/applications') return { items: [], next_cursor: null, query_elapsed_ms: 1, as_of: '2026-10-25T12:00:00Z' } as T;
     if (method === 'GET' && path.startsWith('/applications/counts?')) {
       const query = new URLSearchParams(path.split('?')[1]);
@@ -17,7 +19,7 @@ function mockRequest(api: Api, handler: (path: string, method: string) => Promis
       return { period_start: query.get('period_start'), period_end: query.get('period_end'), current_by_stage: zero, archived_by_stage: zero, created_in_period: 0, stage_reached_in_period: zero, query_elapsed_ms: 1 } as T;
     }
     if (method === 'GET' && path === '/applications/attention') return { items: [], query_elapsed_ms: 1, as_of: '2026-10-25T12:00:00Z' } as T;
-    return await handler(path, method) as T;
+    return await handler(path, method, body) as T;
   });
 }
 function connectedApi(saveFailure?: Error) {
@@ -81,6 +83,32 @@ describe('profile editing', () => {
     expect(screen.queryByRole('button', { name: 'Start synthetic proof task' })).not.toBeInTheDocument();
   });
 });
+describe('printable profile contact', () => {
+  it('saves optional contact with the ordinary immutable profile command and retains claim/evidence pins', async () => {
+    const user = userEvent.setup(); const api = new Api(); let current = profile;
+    const request = mockRequest(api, async (path, method, body) => {
+      if (path === '/session') return session;
+      if (path === '/profile' && method === 'GET') return current;
+      if (path === '/profile' && method === 'PUT') {
+        current = { ...current, version: 2, current_revision: { ...current.current_revision, id: 'revision-2', revision_no: 2, snapshot: body as Snapshot } };
+        return current;
+      }
+      throw new ApiError(404, 'not_found');
+    });
+    render(<App api={api} />);
+    await user.type(await screen.findByLabelText('Printable email (optional)'), 'mira@example.test');
+    await user.type(screen.getByLabelText('Printable phone (optional)'), '+1 555 0100');
+    await user.type(screen.getByLabelText('Printable location (optional)'), 'Fictional North');
+    await user.type(screen.getByLabelText('Printable postal address (optional)'), '12 Example Street');
+    expect(screen.getByRole('button', { name: 'Sign out' })).toBeDisabled();
+    await user.click(screen.getByRole('button', { name: 'Save profile' }));
+    await screen.findByText('Saved as revision 2.');
+    expect(screen.getByLabelText('Printable email (optional)')).toHaveValue('mira@example.test');
+    const command = request.mock.calls.find(call => call[0] === '/profile' && call[1] === 'PUT');
+    expect(command?.[2]).toEqual({ ...profile.current_revision.snapshot, contact: { email: 'mira@example.test', phone: '+1 555 0100', location: 'Fictional North', postal_address: '12 Example Street' } });
+    expect(command?.[3]).toBe(1); expect(command?.[4]).toBeTypeOf('string');
+  });
+});
 describe('owner authentication', () => {
   it('loads a challenge and retains credentials on failed sign in', async () => {
     const user = userEvent.setup(); const api = new Api();
@@ -98,29 +126,47 @@ describe('evidence and document lifecycle', () => {
   it('waits for completed work, reviews the exact hash and exposes only the rendered artifact', async () => {
     const user = userEvent.setup(); const api = new Api();
     const evidenceProfile = { ...profile, current_revision: { ...profile.current_revision, snapshot: { ...profile.current_revision.snapshot, claim_revision_ids: ['claim-1'] } } };
-    const document = { id: 'document-1', version: 4, current_revision: { id: 'document-revision', content_sha256: 'exact-hash', body: { title: 'Mira dossier', sections: [{ key: 'facts', heading: 'Supported facts', blocks: [{ block_key: 'linux', text: 'Maintained Linux service checks.', claim_kind: 'factual', claim_revision_ids: ['claim-1'], evidence_revision_ids: ['evidence-1'] }] }] } }, reviewed: false, unsupported_claims: [], stale: false, stale_reason: null };
+    let document: DocumentRecord = { id: 'document-1', version: 4, kind: 'resume', scope: 'base', application_id: null, artifacts: [], current_revision: { id: 'document-revision', revision_no: 1, profile_revision_id: 'revision-1', template_version: 'offerloom-base-v1', origin: 'deterministic', created_at: '2026-10-25T12:00:00Z', validation_issues: [], provenance_snapshot: { mode: 'deterministic_base', model_run: null, facts: [{ claim_revision_id: 'claim-1', evidence_revision_id: 'evidence-1', claim_text: 'Maintained Linux service checks.', evidence_text: 'Synthetic service notes', source: 'SYN-CORE', status: 'supported', claim_sha256: 'a'.repeat(64), evidence_sha256: 'b'.repeat(64) }] }, content_sha256: 'exact-hash', body: { title: 'Mira dossier', sections: [{ key: 'facts', heading: 'Supported facts', blocks: [{ block_key: 'linux', text: 'Maintained Linux service checks.', claim_kind: 'factual', claim_revision_ids: ['claim-1'], evidence_revision_ids: ['evidence-1'] }] }] } }, reviewed: false, unsupported_claims: [], stale: false, stale_reason: null };
     mockRequest(api, async (path, method) => {
       if (path === '/session') return session;
       if (path === '/profile') return evidenceProfile;
       if (path === '/benchmarks/tasks') return { id: 'task-1', version: 1, state: 'pending', attempt: 0, result: null, last_error_code: null };
       if (path === '/workflows/task-1') return { id: 'task-1', version: 2, state: 'succeeded', attempt: 1, result: { document_id: 'document-1' }, last_error_code: null };
       if (path === '/documents/document-1') return document;
-      if (path === '/documents/document-1/review' && method === 'POST') return { ...document, reviewed: true, version: 5 };
+      if (path === '/documents/document-1/review' && method === 'POST') { document = { ...document, reviewed: true, version: 5 }; return document; }
       if (path === '/documents/document-1/renders') return { id: 'render-1', version: 1, state: 'pending', attempt: 0, result: null, last_error_code: null };
-      if (path === '/workflows/render-1') return { id: 'render-1', version: 2, state: 'succeeded', attempt: 1, result: { artifact_id: 'pdf-1' }, last_error_code: null };
+      if (path === '/workflows/render-1') { document = { ...document, artifacts: [{ id: 'pdf-1', revision_id: 'document-revision', format: 'pdf' }] }; return { id: 'render-1', version: 2, state: 'succeeded', attempt: 1, result: { document_id: 'document-1', artifact_id: 'pdf-1' }, last_error_code: null }; }
       throw new ApiError(404, 'not_found');
     });
     render(<App api={api} />);
     await user.click(await screen.findByRole('button', { name: 'Start synthetic proof task' }));
-    expect(screen.queryByText('Mira dossier')).not.toBeInTheDocument();
-    expect(await screen.findByText('Mira dossier', {}, { timeout: 4000 })).toBeInTheDocument();
+    expect(screen.queryByDisplayValue('Mira dossier')).not.toBeInTheDocument();
+    expect(await screen.findByDisplayValue('Mira dossier', {}, { timeout: 4000 })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Render reviewed PDF' })).toBeDisabled();
     await user.click(screen.getByText('Statement sources (factual)'));
-    expect(screen.getByText('Evidence revisions: evidence-1')).toBeVisible();
+    expect(screen.getByText('Synthetic service notes')).toBeVisible();
+    await user.click(screen.getByRole('checkbox', { name: /I checked block linux/ }));
     await user.click(screen.getByRole('button', { name: 'Accept this exact revision' }));
     await user.click(screen.getByRole('button', { name: 'Render reviewed PDF' }));
-    expect(screen.queryByRole('link', { name: 'Download rendered PDF' })).not.toBeInTheDocument();
-    expect(await screen.findByRole('link', { name: 'Download rendered PDF' }, { timeout: 4000 })).toHaveAttribute('href', '/api/v1/artifacts/pdf-1');
+    expect(screen.queryByRole('link', { name: /Download rendered PDF/ })).not.toBeInTheDocument();
+    expect(await screen.findByRole('link', { name: /Download rendered PDF/ }, { timeout: 4000 })).toHaveAttribute('href', '/api/v1/artifacts/pdf-1');
+  });
+  it('protects dirty document text from sign-out, benchmark replacement and profile changes while allowing theme changes', async () => {
+    const user = userEvent.setup(); const api = new Api();
+    const document: DocumentRecord = { id: 'base', version: 1, scope: 'base', kind: 'resume', application_id: null, reviewed: false, unsupported_claims: [], stale: false, stale_reason: null, artifacts: [], current_revision: { id: 'saved-document-revision', revision_no: 1, profile_revision_id: profile.current_revision.id, template_version: 'offerloom-evidence-v1', origin: 'deterministic', created_at: '2026-10-25T12:00:00Z', content_sha256: 'a'.repeat(64), provenance_snapshot: { mode: 'deterministic_base', facts: [] }, validation_issues: [], body: { title: 'Base résumé', sections: [{ key: 'facts', heading: 'Experience', blocks: [{ block_key: 'b-1', text: 'Fictional accepted source text.', claim_kind: 'factual', claim_revision_ids: ['claim-1'], evidence_revision_ids: [] }] }] } } };
+    mockRequest(api, async path => { if (path === '/session') return session; if (path === '/profile') return profile; throw new ApiError(404, 'not_found'); }, document);
+    render(<App api={api} />); const input = await screen.findByLabelText('Block text: b-1');
+    await waitFor(() => expect(input).toBeEnabled());
+    fireEvent.change(input, { target: { value: 'Private unsaved document text.' } });
+    expect(screen.getByRole('button', { name: 'Sign out' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Load SYN-CORE benchmark evidence' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Save profile' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Tracked application documents' })).toBeDisabled();
+    await user.selectOptions(screen.getByLabelText('Theme'), 'dark');
+    expect(input).toHaveValue('Private unsaved document text.');
+    await user.click(screen.getByRole('button', { name: 'Discard document changes' }));
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Sign out' })).toBeEnabled());
+    expect(input).toHaveValue('Fictional accepted source text.');
   });
 });
 

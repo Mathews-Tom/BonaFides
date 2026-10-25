@@ -1,11 +1,13 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react';
-import { Api, ApiError, errorText, terminal, type Challenge, type DocumentRecord, type Profile, type Session, type Workflow } from './api';
+import { Api, ApiError, errorText, terminal, type Challenge, type Profile, type ProfileContact, type Session, type Workflow } from './api';
 import { ProfileEntries } from './ProfileEntries';
 import { ResumeImport } from './ResumeImport';
 import { JobSources } from './JobSources';
 import { ThemePreference } from './ThemePreference';
 import { Tracking } from './Tracking';
+import { Documents } from './Documents';
+const emptyContact: ProfileContact = { email: '', phone: '', location: '', postal_address: '' };
 
 export function App({ api = defaultApi }: { api?: Api }) {
   const [session, setSession] = useState<Session | null>(null);
@@ -14,6 +16,7 @@ export function App({ api = defaultApi }: { api?: Api }) {
   const [profile, setProfile] = useState<Profile | null>(null);
   const [name, setName] = useState('');
   const [headline, setHeadline] = useState('');
+  const [contact, setContact] = useState<ProfileContact>(emptyContact);
   const [comparison, setComparison] = useState<Profile | null>(null);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
@@ -26,23 +29,28 @@ export function App({ api = defaultApi }: { api?: Api }) {
   const [jobsBusy, setJobsBusy] = useState(false);
   const [trackingDirty, setTrackingDirty] = useState(false);
   const [trackingBusy, setTrackingBusy] = useState(false);
+  const [documentsDirty, setDocumentsDirty] = useState(false);
+  const [documentsBusy, setDocumentsBusy] = useState(false);
   const [benchmark, setBenchmark] = useState(true);
   const [workflow, setWorkflow] = useState<Workflow | null>(null);
   const [savedTasks, setSavedTasks] = useState<Workflow[] | null>(null);
-  const [doc, setDoc] = useState<DocumentRecord | null>(null);
-  const [artifact, setArtifact] = useState<string | null>(null);
+  const [documentRequest, setDocumentRequest] = useState<{ id: string; key: string } | null>(null);
   const [scenario, setScenario] = useState('normal');
   const errorRef = useRef<HTMLDivElement>(null);
   useEffect(() => { if (error) errorRef.current?.focus(); }, [error]);
-  const lastProfileRevision = useRef<string | null>(null);
+  const latestProfileVersion = useRef(0);
+  const identityEpoch = useRef(0);
   const acceptProfile = useCallback((value: Profile) => {
-    if (lastProfileRevision.current && lastProfileRevision.current !== value.current_revision.id) {
-      setDoc(current => current ? { ...current, stale: true, stale_reason: 'upstream_profile_revision_changed' } : current);
-    }
-    lastProfileRevision.current = value.current_revision.id;
-    setProfile(value); setName(value.current_revision.snapshot.display_name); setHeadline(value.current_revision.snapshot.headline); setComparison(null);
+    if (value.version < latestProfileVersion.current) return;
+    latestProfileVersion.current = value.version;
+    setProfile(value); setName(value.current_revision.snapshot.display_name); setHeadline(value.current_revision.snapshot.headline);
+    setContact(value.current_revision.snapshot.contact ?? emptyContact); setComparison(null); identityEpoch.current++;
   }, []);
-  const loadProfile = useCallback(async () => { acceptProfile(await api.request<Profile>('/profile')); }, [api, acceptProfile]);
+  const loadProfile = useCallback(async () => {
+    const epoch = identityEpoch.current; const value = await api.request<Profile>('/profile');
+    if (epoch !== identityEpoch.current) { if (value.version >= latestProfileVersion.current) setComparison(value); return; }
+    acceptProfile(value);
+  }, [api, acceptProfile]);
   useEffect(() => {
     let active = true;
     void (async () => {
@@ -72,8 +80,8 @@ export function App({ api = defaultApi }: { api?: Api }) {
     });
   }
   const profileMutation = useRef<{ fingerprint: string; key: string } | null>(null);
-  const identityDirty = !!profile && (name !== profile.current_revision.snapshot.display_name || headline !== profile.current_revision.snapshot.headline);
-  const profileLocked = busy || entriesBusy || entriesDirty || identityDirty || importBusy || importDirty;
+  const identityDirty = !!profile && (name !== profile.current_revision.snapshot.display_name || headline !== profile.current_revision.snapshot.headline || (['email', 'phone', 'location', 'postal_address'] as const).some(field => contact[field] !== (profile.current_revision.snapshot.contact ?? emptyContact)[field]));
+  const profileLocked = busy || entriesBusy || entriesDirty || identityDirty || importBusy || importDirty || documentsDirty || documentsBusy;
   const observeProfile = useCallback((value: Profile) => {
     if (profile && value.version <= profile.version) return;
     if (identityDirty) setComparison(value);
@@ -81,14 +89,14 @@ export function App({ api = defaultApi }: { api?: Api }) {
   }, [profile, identityDirty, acceptProfile]);
   useEffect(() => {
     if (!identityDirty) return;
-    const prevent = (event: BeforeUnloadEvent) => { event.preventDefault(); };
+    const prevent = (event: BeforeUnloadEvent) => { event.preventDefault(); event.returnValue = ''; };
     window.addEventListener('beforeunload', prevent);
     return () => window.removeEventListener('beforeunload', prevent);
   }, [identityDirty]);
   async function saveProfile(event: FormEvent) {
     event.preventDefault(); if (!profile) return;
     await act(async () => {
-      const body = { ...profile.current_revision.snapshot, display_name: name, headline };
+      const body = { ...profile.current_revision.snapshot, display_name: name, headline, ...(profile.current_revision.snapshot.contact || Object.values(contact).some(Boolean) ? { contact } : {}) };
       const fingerprint = JSON.stringify({ body, version: profile.version });
       if (profileMutation.current?.fingerprint !== fingerprint) profileMutation.current = { fingerprint, key: crypto.randomUUID() };
       const value = await api.request<Profile>('/profile', 'PUT', body, profile.version, profileMutation.current.key);
@@ -109,8 +117,10 @@ export function App({ api = defaultApi }: { api?: Api }) {
         if (stopped) return;
         setWorkflow(value);
         if (terminal(value.state)) {
-          if (value.result?.document_id) setDoc(await api.request<DocumentRecord>(`/documents/${value.result.document_id}`));
-          if (value.result?.artifact_id) setArtifact(value.result.artifact_id);
+          if (value.state === 'succeeded') {
+            const id = value.result?.document_id ?? value.result?.documents?.find(item => item.kind === 'resume')?.document_id;
+            if (id) setDocumentRequest({ id, key: value.id });
+          }
           return;
         }
       } catch (failure) { if (!stopped) setError(errorText(failure)); }
@@ -124,35 +134,38 @@ export function App({ api = defaultApi }: { api?: Api }) {
   }
   return <>
     <a className="skip" href="#main">Skip to workspace</a>
-    <header><div className="brand"><svg aria-hidden="true" viewBox="0 0 32 36"><path d="M6 2v32M16 2v32M26 2v32M2 10h28M2 26h28M6 10l20 16M26 10 6 26" /></svg><span>Offerloom</span></div><span className="edition">Private career workspace</span><ThemePreference />{session && <button className="secondary" disabled={profileLocked || jobsDirty || jobsBusy || trackingDirty || trackingBusy} onClick={() => { void act(async () => { await api.request('/session', 'DELETE'); setSession(null); setProfile(null); setName(''); setHeadline(''); setDoc(null); setWorkflow(null); setArtifact(null); lastProfileRevision.current = null; const value = await api.request<Challenge>('/auth/challenge'); api.csrf = value.csrf_token; setChallenge(value); }); }}>Sign out</button>}</header>
-    <main id="main"><aside className="disclosure"><strong>Private development workspace · OL-010.</strong> Evidence-linked profiles, reviewed local résumé import, durable catalog decisions, owner-reviewed requirements/evidence coverage and manual application/activity tracking are available. Hard constraints remain separate from evidence coverage; unknown work authorization is not eligibility. Greenhouse reads require board-specific terms review and authorization. Model proposals require an explicitly authorized, qualified operator-controlled local route; none is enabled by default. Imports and owner evidence are not independently verified credentials. Document tasks remain synthetic M0 mechanisms, not a complete M1 product. Tracking Applied is not proof of delivery. No hosted inference, automatic rejection, automatic submission or sending authority. Use fictional input until the relevant live-source/model gates are approved.</aside>
+    <header><div className="brand"><svg aria-hidden="true" viewBox="0 0 32 36"><path d="M6 2v32M16 2v32M26 2v32M2 10h28M2 26h28M6 10l20 16M26 10 6 26" /></svg><span>Offerloom</span></div><span className="edition">Private career workspace</span><ThemePreference />{session && <button className="secondary" disabled={profileLocked || jobsDirty || jobsBusy || trackingDirty || trackingBusy || !!(workflow && !terminal(workflow.state))} onClick={() => { void act(async () => { await api.request('/session', 'DELETE'); setSession(null); setProfile(null); setName(''); setHeadline(''); setContact(emptyContact); setDocumentRequest(null); setWorkflow(null); latestProfileVersion.current = 0; identityEpoch.current++; const value = await api.request<Challenge>('/auth/challenge'); api.csrf = value.csrf_token; setChallenge(value); }); }}>Sign out</button>}</header>
+    <main id="main"><aside className="disclosure"><strong>Private development workspace · OL-011.</strong> Evidence-linked profiles, reviewed local résumé import, catalog decisions, owner-reviewed requirements/evidence coverage and manual activity tracking remain available. A base résumé needs no model or application; tailored generation requires reviewed requirements and an explicitly authorized, qualified local route. None is enabled by default. Source/structural checks do not prove semantic meaning or independently verify credentials. Real-model and human factual qualification remain outstanding. Greenhouse reads require board-specific terms review and authorization. Tracking Applied is not proof of delivery. No hosted fallback, automatic rejection, submission or sending authority.</aside>
       <div ref={errorRef} className="error" role="alert" tabIndex={-1} hidden={!error}>{error}</div><p role="status" className="status">{notice}</p>
       {!ready ? <p role="status">Connecting to your installation…</p> : !session ? <section className="access"><div><h1>A dossier built on evidence.</h1><p>Keep the statement, its source and your review together. This proof starts with a secure owner session.</p></div><form onSubmit={event => { void authenticate(event); }}><h2>{challenge?.bootstrap_available ? 'Set up the installation owner' : 'Sign in'}</h2>{challenge?.bootstrap_available && <label>One-use bootstrap token<input name="bootstrap_token" type="password" autoComplete="off" required /></label>}<label>Login name<input name="login_name" autoComplete="username" required maxLength={128} /></label><label>Password<input name="password" type="password" autoComplete={challenge?.bootstrap_available ? 'new-password' : 'current-password'} minLength={15} maxLength={128} required /></label><p className="hint">15–128 characters. Credentials stay in this form until sent to your installation; no browser token storage.</p><button disabled={busy || !challenge}>{busy ? 'Connecting…' : challenge?.bootstrap_available ? 'Create owner account' : 'Sign in'}</button></form></section> : <>
       <div className="workspace-heading"><div><h1>Facts you can stand behind</h1><p>Signed in as {session.login_name}. Work from a saved, immutable profile revision.</p></div>{profile && <span className="revision">Profile revision {profile.current_revision.revision_no}</span>}</div>
-      <Tracking api={api} disabled={busy} onDirtyChange={setTrackingDirty} onBusyChange={setTrackingBusy} />
+      <Tracking api={api} disabled={busy || documentsDirty || documentsBusy} onDirtyChange={setTrackingDirty} onBusyChange={setTrackingBusy} />
       <div className="workspace"><div><section className="panel"><h2>Your profile</h2>{profile ? <form onSubmit={event => { void saveProfile(event); }}>
-        <fieldset disabled={busy || entriesBusy || entriesDirty || importBusy || importDirty}><legend>Profile identity</legend>
-          <label>Display name<input value={name} onChange={event => setName(event.target.value)} maxLength={120} required /></label>
-          <label>Professional headline<input value={headline} onChange={event => setHeadline(event.target.value)} maxLength={300} /></label>
+        <fieldset disabled={busy || entriesBusy || entriesDirty || importBusy || importDirty || documentsDirty || documentsBusy}><legend>Profile identity</legend>
+          <label>Display name<input value={name} onChange={event => { identityEpoch.current++; setName(event.target.value); }} maxLength={120} required /></label>
+          <label>Professional headline<input value={headline} onChange={event => { identityEpoch.current++; setHeadline(event.target.value); }} maxLength={300} /></label>
+          <p className="hint">Optional contact values are printable-only structured inputs, excluded from model projections. Existing documents retain their frozen details; saving does not rewrite them.</p>
+          <label>Printable email (optional)<input type="email" autoComplete="email" maxLength={254} value={contact.email} onChange={event => { identityEpoch.current++; setContact(value => ({ ...value, email: event.target.value })); }} /></label>
+          <label>Printable phone (optional)<input type="tel" autoComplete="tel" maxLength={120} value={contact.phone} onChange={event => { identityEpoch.current++; setContact(value => ({ ...value, phone: event.target.value })); }} /></label>
+          <label>Printable location (optional)<input autoComplete="address-level2" maxLength={300} value={contact.location} onChange={event => { identityEpoch.current++; setContact(value => ({ ...value, location: event.target.value })); }} /></label>
+          <label>Printable postal address (optional)<input autoComplete="street-address" maxLength={1000} value={contact.postal_address} onChange={event => { identityEpoch.current++; setContact(value => ({ ...value, postal_address: event.target.value })); }} /></label>
           <p className="hint">Save identity separately from entries and sources. Existing exact source links are retained. Unsaved changes prevent conflicting workspace actions.</p>
-          <div className="actions"><button>Save profile</button><button type="button" className="secondary" onClick={() => { void act(async () => { setComparison(await api.request<Profile>('/profile')); }); }}>Compare current revision</button>
+          <div className="actions"><button>Save profile</button><button type="button" className="secondary" onClick={() => { void act(async () => { const value = await api.request<Profile>('/profile'); if (value.version >= latestProfileVersion.current) setComparison(value); }); }}>Compare current revision</button>
             {identityDirty && <button type="button" className="secondary" onClick={() => acceptProfile(profile)}>Discard identity changes</button>}</div>
-          {comparison && <div className="comparison"><h3>Current server revision {comparison.current_revision.revision_no}</h3><p>{comparison.current_revision.snapshot.display_name}</p><p>{comparison.current_revision.snapshot.headline}</p><p>Your editor above is unchanged.</p>
-            <button type="button" className="secondary" onClick={() => { setProfile(comparison); setComparison(null); setNotice('Current version loaded as the save precondition. Your edited text is retained.'); }}>Keep my text against this version</button>
+          {comparison && <div className="comparison"><h3>Current server revision {comparison.current_revision.revision_no}</h3><p>{comparison.current_revision.snapshot.display_name}</p><p>{comparison.current_revision.snapshot.headline}</p><p>Printable contact: {Object.values(comparison.current_revision.snapshot.contact ?? emptyContact).filter(Boolean).join(' · ') || 'None'}</p><p>Your editor above is unchanged.</p>
+            <button type="button" className="secondary" onClick={() => { latestProfileVersion.current = comparison.version; identityEpoch.current++; setProfile(comparison); setComparison(null); setNotice('Current version loaded as the save precondition. Your edited text and printable contact are retained. Review and save explicitly.'); }}>Keep my text against this version</button>
             <button type="button" className="secondary" onClick={() => acceptProfile(comparison)}>Replace editor with current revision</button></div>}
           {profile.quality_warnings.length > 0 && <ul>{profile.quality_warnings.map((warning, index) => <li key={index}>{warning}</li>)}</ul>}
         </fieldset></form> : <><p>Profile has not loaded. No sample data is being shown.</p><button disabled={busy} onClick={() => { void act(loadProfile); }}>Load profile</button></>}</section>
-      {profile && <ProfileEntries api={api} profile={profile} disabled={busy || identityDirty || importBusy || importDirty} onProfile={acceptProfile} onDirtyChange={setEntriesDirty} onBusyChange={setEntriesBusy} />}
-      {profile && <ResumeImport api={api} profile={profile} disabled={busy || identityDirty || entriesBusy || entriesDirty} onProfile={acceptProfile} onDirtyChange={setImportDirty} onBusyChange={setImportBusy} />}
-      <JobSources api={api} currentProfile={profile} onProfileChange={observeProfile} disabled={busy} onDirtyChange={setJobsDirty} onBusyChange={setJobsBusy} />
-      <section className="panel"><h2>Evidence proof</h2><p>Explicitly load SYN-CORE: fictional Mira Vale, Linux and SQL evidence. This replaces the saved proof profile; it is not imported personal history.</p>{benchmark ? <><button className="secondary" disabled={profileLocked || !profile} onClick={() => { if (profile) void benchmarkAction(async () => { acceptProfile(await api.request<Profile>('/benchmarks/profile', 'POST', { fixture: 'SYN-CORE' }, profile.version, true)); setNotice('SYN-CORE saved by the server.'); }); }}>Load SYN-CORE benchmark evidence</button><label>Proof scenario<select value={scenario} onChange={event => setScenario(event.target.value)}><option value="normal">Normal task</option><option value="slow">Slow task (cancellation proof)</option><option value="poison">Poison task (bounded failure proof)</option><option value="stage_pause">Stage pause (restart proof)</option></select></label><button disabled={profileLocked || !profile || profile.current_revision.snapshot.claim_revision_ids.length === 0 || !!(workflow && !terminal(workflow.state))} onClick={() => { if (profile) void benchmarkAction(async () => { const value = await api.request<Workflow>('/benchmarks/tasks', 'POST', { profile_revision_id: profile.current_revision.id, scenario, delay_seconds: scenario === 'normal' ? 0 : 15 }, profile.version, true); setWorkflow(value); setDoc(null); setArtifact(null); }); }}>Start synthetic proof task</button></> : <p className="hint">Benchmark endpoints are disabled here. No production provider is configured by this proof UI.</p>}
-      <div className="saved-tasks"><button className="secondary" disabled={busy} onClick={() => { void act(async () => { setSavedTasks((await api.request<{ items: Workflow[] }>('/workflows')).items); }); }}>Load saved tasks</button>{savedTasks && (savedTasks.length ? <ul>{savedTasks.map(task => <li key={task.id}><button className="secondary" disabled={busy} onClick={() => { void act(async () => { const value = await api.request<Workflow>(`/workflows/${task.id}`); setWorkflow(value); setDoc(value.result?.document_id ? await api.request<DocumentRecord>(`/documents/${value.result.document_id}`) : null); setArtifact(value.result?.artifact_id ?? null); }); }}>{task.state.replaceAll('_', ' ')} · {task.id}</button></li>)}</ul> : <p>No saved tasks were returned.</p>)}</div>
+      {profile && <ProfileEntries api={api} profile={profile} disabled={busy || identityDirty || importBusy || importDirty || documentsDirty || documentsBusy} onProfile={acceptProfile} onDirtyChange={setEntriesDirty} onBusyChange={setEntriesBusy} />}
+      {profile && <ResumeImport api={api} profile={profile} disabled={busy || identityDirty || entriesBusy || entriesDirty || documentsDirty || documentsBusy} onProfile={acceptProfile} onDirtyChange={setImportDirty} onBusyChange={setImportBusy} />}
+      <JobSources api={api} currentProfile={profile} onProfileChange={observeProfile} disabled={busy || documentsDirty || documentsBusy} onDirtyChange={setJobsDirty} onBusyChange={setJobsBusy} />
+      <section className="panel"><h2>Evidence proof</h2><p>Explicitly load SYN-CORE: fictional Mira Vale, Linux and SQL evidence. This replaces the saved proof profile; it is not imported personal history. Benchmark tasks are synthetic mechanisms, separate from production composition.</p>{benchmark ? <><button className="secondary" disabled={profileLocked || !profile || !!(workflow && !terminal(workflow.state))} onClick={() => { if (profile) void benchmarkAction(async () => { acceptProfile(await api.request<Profile>('/benchmarks/profile', 'POST', { fixture: 'SYN-CORE' }, profile.version, true)); setNotice('SYN-CORE saved by the server.'); }); }}>Load SYN-CORE benchmark evidence</button><label>Proof scenario<select value={scenario} disabled={profileLocked} onChange={event => setScenario(event.target.value)}><option value="normal">Normal task</option><option value="slow">Slow task (cancellation proof)</option><option value="poison">Poison task (bounded failure proof)</option><option value="stage_pause">Stage pause (restart proof)</option></select></label><button disabled={profileLocked || !profile || profile.current_revision.snapshot.claim_revision_ids.length === 0 || !!(workflow && !terminal(workflow.state))} onClick={() => { if (profile) void benchmarkAction(async () => { const value = await api.request<Workflow>('/benchmarks/tasks', 'POST', { profile_revision_id: profile.current_revision.id, scenario, delay_seconds: scenario === 'normal' ? 0 : 15 }, profile.version, true); setWorkflow(value); }); }}>Start synthetic proof task</button></> : <p className="hint">Benchmark endpoints are disabled here. No synthetic task was started.</p>}
+      <div className="saved-tasks"><button className="secondary" disabled={busy || documentsDirty || documentsBusy} onClick={() => { void act(async () => { setSavedTasks((await api.request<{ items: Workflow[] }>('/workflows')).items); }); }}>Load saved tasks</button>{savedTasks && (savedTasks.length ? <ul>{savedTasks.map(task => <li key={task.id}><button className="secondary" disabled={busy || documentsDirty || documentsBusy} onClick={() => { void act(async () => { const value = await api.request<Workflow>(`/workflows/${task.id}`); setWorkflow(value); if (value.state === 'succeeded') { const id = value.result?.document_id ?? value.result?.documents?.find(item => item.kind === 'resume')?.document_id; if (id) setDocumentRequest({ id, key: `${value.id}-${crypto.randomUUID()}` }); } }); }}>{task.state.replaceAll('_', ' ')} · {task.id}</button></li>)}</ul> : <p>No saved tasks were returned.</p>)}</div>
       {workflow && <div className="task" aria-live="polite"><h3>Task state: {workflow.state.replaceAll('_', ' ')}</h3><p>Attempt {workflow.attempt}. No estimated progress percentage.</p><small>Task {workflow.id}</small>{workflow.last_error_code && <p>Failure code: {workflow.last_error_code}</p>}{!terminal(workflow.state) && <button className="secondary" disabled={busy} onClick={() => { void act(async () => { setWorkflow(await api.request<Workflow>(`/workflows/${workflow.id}/cancel`, 'POST', {}, workflow.version, true)); setNotice('Cancellation requested. The task may still be stopping.'); }); }}>Cancel task</button>}</div>}</section>
       <details className="panel"><summary>Change password</summary><form onSubmit={event => { event.preventDefault(); const form = event.currentTarget; const values = new FormData(form); void act(async () => { const value = await api.request<Session>('/session/password', 'POST', { current_password: String(values.get('current_password')), new_password: String(values.get('new_password')) }); api.csrf = value.csrf_token; setSession(value); form.reset(); setNotice('Password changed. This session has been rotated.'); }); }}><label>Current password<input type="password" name="current_password" autoComplete="current-password" required maxLength={128} /></label><label>New password<input type="password" name="new_password" autoComplete="new-password" minLength={15} maxLength={128} required /></label><button disabled={busy}>Change password</button></form></details></div>
-      <section className="document-panel" aria-labelledby="document-title"><h2 id="document-title">Read the words and their sources</h2>{doc ? <>
-        {doc.stale && <aside className="disclosure"><strong>Outdated profile inputs.</strong> This document uses an earlier saved profile. Its words, source links, exact-revision review and existing PDF are unchanged. Starting a new synthetic task is an explicit regeneration, not an automatic rewrite.</aside>}
-        <article className="paper"><h2>{doc.current_revision.body.title}</h2>{doc.current_revision.body.sections.map(section => <section key={section.key}><h3>{section.heading}</h3>{section.blocks.map(block => <div className="evidence-seam" key={block.block_key}><p>{block.text}</p><details><summary>Statement sources ({block.claim_kind})</summary><p>Claim revisions: {block.claim_revision_ids.join(', ') || 'None'}</p><p>Evidence revisions: {block.evidence_revision_ids.join(', ') || 'None'}</p><p>Source references are immutable IDs, not independent verification.</p></details></div>)}</section>)}</article><p className="hint">Revision {doc.current_revision.id}</p>{doc.unsupported_claims.length > 0 ? <div className="error"><strong>Export blocked: unsupported claims.</strong><ul>{doc.unsupported_claims.map(pointer => <li key={pointer}>{pointer}</li>)}</ul><p>Review cannot waive unsupported factual content.</p></div> : <div className="actions"><button disabled={busy || entriesBusy || entriesDirty || identityDirty || doc.reviewed} onClick={() => { void act(async () => { setDoc(await api.request<DocumentRecord>(`/documents/${doc.id}/review`, 'POST', { revision_id: doc.current_revision.id, decision: 'accepted', content_sha256: doc.current_revision.content_sha256 }, doc.version, true)); setNotice('Review saved for this exact revision and content hash.'); }); }}>{doc.reviewed ? 'Exact revision reviewed' : 'Accept this exact revision'}</button><button disabled={busy || entriesBusy || entriesDirty || identityDirty || !doc.reviewed || !!(workflow && !terminal(workflow.state))} onClick={() => { void act(async () => { setWorkflow(await api.request<Workflow>(`/documents/${doc.id}/renders`, 'POST', { revision_id: doc.current_revision.id }, doc.version, true)); setArtifact(null); }); }}>Render reviewed PDF</button></div>}{artifact && <p className="download"><a href={`/api/v1/artifacts/${encodeURIComponent(artifact)}`} download>Download rendered PDF</a><span>Actual renderer output. Nothing was sent.</span></p>}</> : <div className="empty"><p>A document will appear after a saved evidence profile completes a proof task.</p><p>No invented résumé, letter or fit score is shown while you wait.</p></div>}</section></div></>}
-    </main><footer>Offerloom · OL-010 private development · Manual tracking, not delivery · No sending authority</footer>
+      <Documents api={api} profile={profile} disabled={busy || identityDirty || entriesDirty || entriesBusy || importDirty || importBusy || jobsDirty || jobsBusy || trackingDirty || trackingBusy || !!(workflow && !terminal(workflow.state))} externalDocumentId={documentRequest?.id ?? null} externalRequestKey={documentRequest?.key ?? null} onDirtyChange={setDocumentsDirty} onBusyChange={setDocumentsBusy} /></div></>}
+    </main><footer>Offerloom · OL-011 private development · Manual tracking and PDF export, not delivery · No sending authority</footer>
   </>;
 }
 const defaultApi = new Api();

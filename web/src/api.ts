@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 export interface Session { owner_id: string; login_name: string; csrf_token: string; expires_at: string }
 export interface Challenge { csrf_token: string; bootstrap_available: boolean }
-export interface Snapshot { display_name: string; headline: string; claim_revision_ids: string[]; evidence_revision_ids?: string[] }
+export interface ProfileContact { email: string; phone: string; location: string; postal_address: string }
+export interface Snapshot { display_name: string; headline: string; claim_revision_ids: string[]; evidence_revision_ids?: string[]; contact?: ProfileContact | null }
 export type ClaimKind = 'identity' | 'experience' | 'education' | 'skill' | 'project' | 'certification' | 'preference' | 'other' | 'language';
 export interface ClaimPayload { text: string; organization?: string; role?: string; start_date?: string; end_date?: string; proficiency?: string }
 export interface RevisionMetadata { id: string; revision_no: number; content_sha256: string; created_at: string; author_owner_id: string }
@@ -18,8 +19,59 @@ export interface Profile { id: string; version: number; current_revision: Profil
 export interface RevisionPage { items: ProfileRevisionSummary[]; next_cursor: number | null }
 export interface FieldError { loc: (string | number)[]; code: string; message: string }
 export type WorkflowState = 'pending' | 'running' | 'waiting_for_approval' | 'retryable_failure' | 'permanent_failure' | 'cancelled' | 'succeeded';
-export interface Workflow { id: string; version: number; state: WorkflowState; attempt: number; kind?: string; max_attempts?: number; next_attempt_at?: string | null; last_error_code: string | null; result: { document_id?: string; artifact_id?: string; source_id?: string; posting_id?: string; profile_revision_id?: string; requirements_revision_id?: string; source_sha256?: string; requirements?: Requirement[]; assessments?: Coverage[]; policy_version?: number; fetch_elapsed_ms?: number; posting_count?: number; new_posting_count?: number; changed_posting_count?: number; unchanged_posting_count?: number; excluded_prospect_count?: number; fetched_at?: string; freshness?: 'current'; error_code?: string } | null }
-export interface DocumentRecord { id: string; version: number; current_revision: { id: string; body: { title: string; sections: { key: string; heading: string; blocks: { block_key: string; text: string; claim_kind: string; claim_revision_ids: string[]; evidence_revision_ids: string[] }[] }[] }; content_sha256: string }; reviewed: boolean; unsupported_claims: string[]; stale: boolean; stale_reason: 'upstream_profile_revision_changed' | null }
+export interface Workflow {
+  id: string; version: number; state: WorkflowState; attempt: number; kind?: string; mode?: 'deterministic_base' | 'tailored_ai';
+  max_attempts?: number; next_attempt_at?: string | null; last_error_code: string | null;
+  result: {
+    document_id?: string; revision_id?: string; artifact_id?: string; application_id?: string; model_run_id?: string;
+    documents?: { kind: DocumentKind; document_id: string; revision_id: string }[];
+    source_id?: string; posting_id?: string; profile_revision_id?: string; requirements_revision_id?: string; source_sha256?: string;
+    requirements?: Requirement[]; assessments?: Coverage[]; policy_version?: number; fetch_elapsed_ms?: number; posting_count?: number;
+    new_posting_count?: number; changed_posting_count?: number; unchanged_posting_count?: number; excluded_prospect_count?: number;
+    fetched_at?: string; freshness?: 'current'; error_code?: string;
+  } | null;
+}
+export type DocumentKind = 'resume' | 'cover_letter';
+export interface DocumentBlock { block_key: string; text: string; claim_kind: 'factual' | 'intent' | 'greeting'; claim_revision_ids: string[]; evidence_revision_ids: string[] }
+export interface DocumentBody { title: string; sections: { key: string; heading: string; blocks: DocumentBlock[] }[] }
+export interface DocumentFact {
+  claim_revision_id: string; evidence_revision_id: string | null; claim_text: string; evidence_text: string;
+  source: string; claim_sha256: string; evidence_sha256: string | null; status: 'supported' | 'user_asserted' | 'unsupported';
+}
+export interface DocumentProvenance {
+  facts?: DocumentFact[]; frame?: Record<string, unknown>; mode?: string; schema_version?: number | string;
+  model_run?: Record<string, unknown> | null; [key: string]: unknown;
+}
+export interface DocumentIssue { path: string; code: string }
+export interface DocumentRevision {
+  id: string; revision_no: number; body: DocumentBody; content_sha256: string; profile_revision_id: string;
+  template_version: string; origin: string; created_at: string; reason?: string;
+  provenance_snapshot: DocumentProvenance; validation_issues: DocumentIssue[];
+}
+export interface DocumentRecord {
+  id: string; version: number; kind: DocumentKind; scope: 'base' | 'tailored'; application_id: string | null;
+  current_revision: DocumentRevision; reviewed: boolean; unsupported_claims: string[]; stale: boolean; stale_reason: string | null;
+  artifacts: { id: string; revision_id: string; format: 'pdf' }[];
+}
+export interface DocumentRevisionPage { items: DocumentRevision[]; next_cursor: number | null }
+export interface DocumentTemplate { version: string; label: string; language: 'en'; paper: 'A4' }
+export interface GenerationRoute { status: 'disabled' | 'unqualified' | 'qualified'; reason: string; identity: Record<string, unknown> | null }
+export interface ApplicationDocuments {
+  application_id: string; version: number; items: DocumentRecord[]; generation_route: GenerationRoute; requirements_revision_id: string | null;
+}
+export interface GenerationContext {
+  application_id: string; application_version: number; profile_revision_id: string; profile_version: number;
+  requirements_revision_id: string; template_version: string; tone: 'professional' | 'concise'; language: 'en';
+  context_sha256: string; model_projection: Record<string, unknown>; frame: Record<string, unknown>; generation_route: GenerationRoute;
+}
+export interface BaseResumeRequest { profile_revision_id: string; template_version: string }
+export interface GenerationRequest extends BaseResumeRequest {
+  requirements_revision_id: string; tone: 'professional' | 'concise'; language: 'en'; context_sha256: string;
+}
+export interface DocumentSaveRequest { base_revision_id: string; body: DocumentBody; reason: string }
+export interface DocumentRestoreRequest { revision_id: string; reason: string }
+export interface DocumentReviewRequest { revision_id: string; decision: 'accepted'; content_sha256: string; reviewed_block_keys: string[] }
+export interface DocumentRenderRequest { revision_id: string }
 export const MAX_IMPORT_BYTES = 10 * 1024 * 1024;
 export type ImportMediaType = 'application/pdf' | 'text/plain';
 export interface ImportProposal { proposal_id: string; kind: ClaimKind; payload: ClaimPayload; source_start: number; source_end: number; quote: string }
@@ -107,7 +159,7 @@ export class Api {
     if (body !== undefined) headers['Content-Type'] = 'application/json';
     if (version !== undefined) headers['If-Match'] = `"${version}"`;
     if (idempotent) headers['Idempotency-Key'] = typeof idempotent === 'string' ? idempotent : crypto.randomUUID();
-    const response = await fetch(`/api/v1${path}`, { method, headers, credentials: 'same-origin', ...(signal ? { signal } : {}), ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
+    const response = await fetch(`/api/v1${path}`, { method, headers, credentials: 'same-origin', cache: 'no-store', ...(signal ? { signal } : {}), ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
     if (!response.ok) {
       let code = `http_${response.status}`;
       let fields: FieldError[] = [];
