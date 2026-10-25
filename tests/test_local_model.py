@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import copy
 import hashlib
 import ipaddress
 import json
@@ -897,3 +898,184 @@ def test_transport_protocol_change_invalidates_existing_qualification_receipts(
     assert old.qualified_for("extract_posting")
     assert not current.qualified_for("extract_posting")
     assert current.identity()["capability_sha256"] != old.identity()["capability_sha256"]
+
+
+def _section_context() -> dict[str, object]:
+    claim = "11111111-1111-4111-8111-111111111111"
+    evidence = "22222222-2222-4222-8222-222222222222"
+    return {
+        "posting": {
+            "title": "Analyst",
+            "organization": "Synthetic Company",
+            "source_text": "Linux required.",
+        },
+        "requirements": [
+            {
+                "requirement_key": "req-1",
+                "text": "Linux required.",
+                "importance": "required",
+                "span": {"start": 0, "end": 15, "quote": "Linux required."},
+            }
+        ],
+        "claims": [
+            {
+                "id": claim,
+                "text": "Maintained Linux systems.",
+                "structured_fields": {},
+                "evidence_revision_ids": [evidence],
+            }
+        ],
+        "evidence": [{"id": evidence, "text": "Maintained Linux systems."}],
+        "tone": "concise",
+        "language": "en",
+        "target": {
+            "kind": "resume",
+            "section_key": "section-0",
+            "heading": "Skills",
+            "blocks": [
+                {
+                    "text": "Maintained Linux systems.",
+                    "claim_kind": "factual",
+                    "claim_revision_ids": [claim],
+                    "evidence_revision_ids": [evidence],
+                }
+            ],
+        },
+    }
+
+
+def test_section_stage_sends_exact_minimized_projection_and_section_only_schema(
+    tmp_path: Path,
+) -> None:
+    from offerloom import local_model
+
+    context = _section_context()
+    output = {
+        "schema_version": "1",
+        "stage": "regenerate_section",
+        "blocks": cast(dict[str, object], context["target"])["blocks"],
+        "warnings": [],
+    }
+    with fixture_server(
+        response_body(message={"role": "assistant", "content": json.dumps(output)})
+    ) as (endpoint, requests):
+        route = qualified_route(tmp_path, route_data(endpoint))
+        result = OllamaClient(route).call(
+            "regenerate_section", context, PROMPT_VERSIONS["regenerate_section"]
+        )
+        assert result.output == output and len(requests) == 1
+        payload = json.loads(requests[0])
+        assert json.loads(payload["messages"][1]["content"]) == context
+        assert "tools" not in payload and payload["stream"] is False
+        schema = payload["format"]
+        assert set(schema["properties"]) == {"schema_version", "stage", "blocks", "warnings"}
+        assert set(schema["properties"]["blocks"]["items"]["properties"]) == {
+            "text",
+            "claim_kind",
+            "claim_revision_ids",
+            "evidence_revision_ids",
+        }
+        assert schema["properties"]["blocks"]["maxItems"] == 30
+        assert schema["properties"]["blocks"]["items"]["additionalProperties"] is False
+        assert result.metadata["projection_version"] == local_model.PROJECTION_VERSION
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        "private_root",
+        "target_key",
+        "other_sections",
+        "long_text",
+        "duplicate_claim",
+        "foreign_reference",
+        "bad_span",
+        "coercion",
+    ],
+)
+def test_section_projection_rejects_extra_unbounded_or_unpinned_input_before_http(
+    tmp_path: Path, mutation: str
+) -> None:
+    context = _section_context()
+    target = cast(dict[str, object], context["target"])
+    blocks = cast(list[dict[str, object]], target["blocks"])
+    if mutation == "private_root":
+        context["private_notes"] = "DO-NOT-SEND"
+    elif mutation == "target_key":
+        blocks[0]["block_key"] = "operational-key"
+    elif mutation == "other_sections":
+        target["sections"] = []
+    elif mutation == "long_text":
+        blocks[0]["text"] = "x" * 2001
+    elif mutation == "duplicate_claim":
+        claims = cast(list[dict[str, object]], context["claims"])
+        claims.append(copy.deepcopy(claims[0]))
+    elif mutation == "foreign_reference":
+        blocks[0]["claim_revision_ids"] = ["33333333-3333-4333-8333-333333333333"]
+    elif mutation == "bad_span":
+        requirement = cast(list[dict[str, object]], context["requirements"])[0]
+        cast(dict[str, object], requirement["span"])["end"] = 0
+    else:
+        blocks[0]["text"] = 123
+    with fixture_server() as (endpoint, requests):
+        route = qualified_route(tmp_path, route_data(endpoint))
+        with pytest.raises(ModelFailure, match="model_context_invalid"):
+            OllamaClient(route).call(
+                "regenerate_section", context, PROMPT_VERSIONS["regenerate_section"]
+            )
+        assert requests == []
+
+
+def test_section_qualification_is_separate_from_pair_and_prior_capability_receipts(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from offerloom import local_model
+
+    data = route_data("http://127.0.0.1:1")
+    qualified_route(tmp_path, data)
+    receipts = cast(dict[str, object], data["qualification_receipts"])
+    receipts.pop("regenerate_section")
+    generation_only = load_route(route_file(tmp_path, data))
+    assert generation_only is not None and generation_only.qualified_for("generate_documents")
+    assert not generation_only.qualified_for("regenerate_section")
+    with pytest.raises(ModelFailure, match="model_route_unavailable"):
+        OllamaClient(generation_only).call(
+            "regenerate_section", _section_context(), PROMPT_VERSIONS["regenerate_section"]
+        )
+    previous_data = route_data("http://127.0.0.1:1")
+    with monkeypatch.context() as old:
+        old.setattr(local_model, "PROJECTION_VERSION", "ol-professional-wire-v2")
+        old.setattr(local_model, "ADAPTER_VERSION", "ol-ollama-v3")
+        old.setattr(
+            local_model,
+            "PROMPT_VERSIONS",
+            {key: value for key, value in PROMPT_VERSIONS.items() if key != "regenerate_section"},
+        )
+        previous = load_route(route_file(tmp_path, previous_data))
+        assert previous is not None
+        previous_data["qualification_receipts"] = {
+            stage: {
+                "status": "passed",
+                "capability_sha256": previous.capability_sha256,
+                "receipt_sha256": "b" * 64,
+                "reviewed_by": "synthetic-prior-protocol",
+                "reviewed_at": "2026-10-25T00:00:00Z",
+            }
+            for stage in local_model.PROMPT_VERSIONS
+        }
+    current = load_route(route_file(tmp_path, previous_data))
+    assert current is not None and current.capability_sha256 != previous.capability_sha256
+    assert all(not current.qualified_for(stage) for stage in PROMPT_VERSIONS)
+
+
+def test_section_prompt_or_schema_change_invalidates_all_existing_receipts(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from offerloom import local_model
+
+    data = route_data("http://127.0.0.1:1")
+    original = qualified_route(tmp_path, data)
+    monkeypatch.setitem(local_model._SUFFIXES, "regenerate_section", "Changed section-only prompt.")
+    changed = load_route(route_file(tmp_path, data))
+    assert changed is not None and changed.capability_sha256 != original.capability_sha256
+    assert all(not changed.qualified_for(stage) for stage in PROMPT_VERSIONS)

@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
-import userEvent from '@testing-library/user-event';
+import userEvent, { type UserEvent } from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
 import { Documents } from './Documents';
-import { Api, ApiError, type ApplicationDocuments, type DocumentRecord, type DocumentSaveRequest, type GenerationContext, type Profile, type Workflow } from './api';
+import { Api, ApiError, type ApplicationDocuments, type DocumentRecord, type DocumentSaveRequest, type GenerationContext, type Profile, type SectionProposal, type SectionRegenerationContext, type Workflow } from './api';
 import type { ApplicationSummary } from './tracking-api';
 
 const profile: Profile = { id: 'profile', version: 3, current_revision: { id: 'profile-rev-3', revision_no: 3, content_sha256: 'a'.repeat(64), created_at: '2026-10-25T12:00:00Z', author_owner_id: 'owner', reason: 'Accepted facts', claims: [], snapshot: { display_name: 'Mira Vale', headline: '', claim_revision_ids: ['claim-1', 'claim-2'], contact: { email: 'mira@example.test', phone: '', location: '', postal_address: '' } } }, evidence: [], quality_warnings: [] };
@@ -326,5 +326,299 @@ describe('review, export and generation boundaries', () => {
     const command = request.mock.calls.find(call => call[0] === '/applications/application-1/generation');
     expect(command?.[2]).toEqual({ profile_revision_id: context.profile_revision_id, requirements_revision_id: context.requirements_revision_id, template_version: context.template_version, tone: 'professional', language: 'en', context_sha256: context.context_sha256 });
     expect(command?.[3]).toBe(7); expect(command?.[4]).toBeTypeOf('string');
+  });
+});
+
+const sectionWorkflow: Workflow = { ...workflow, id: 'section-task-1', mode: 'section_regeneration' };
+const sectionProposal: SectionProposal = {
+  id: 'proposal-1', document_id: tailored.id, target_revision_id: tailored.current_revision.id,
+  target_document_version: tailored.version, target_content_sha256: tailored.current_revision.content_sha256,
+  section_key: 'experience', original_section: tailored.current_revision.body.sections[0]!,
+  proposed_section: { ...tailored.current_revision.body.sections[0]!, blocks: [{ ...tailored.current_revision.body.sections[0]!.blocks[0]!, block_key: 'proposal-1-block-0', text: 'Led an unsupported global team.' }] },
+  validation_issues: [{ path: '/sections/0/blocks/0', code: 'unestablished_factual_text' }],
+  model_run: { id: 'section-run-1', stage: 'regenerate_section' }, created_at: '2026-10-25T14:00:00Z', applicable: true,
+};
+const completedSectionWorkflow: Workflow = {
+  ...sectionWorkflow, version: 2, state: 'succeeded',
+  result: { document_id: tailored.id, proposal_id: sectionProposal.id, target_revision_id: tailored.current_revision.id, section_key: 'experience', model_run_id: 'section-run-1' },
+};
+function sectionPreview(path: string, status: 'qualified' | 'unqualified' | 'disabled' = 'qualified'): SectionRegenerationContext {
+  const query = new URL(path, 'https://offerloom.test').searchParams;
+  const section = tailored.current_revision.body.sections.find(item => item.key === query.get('section_key'))!;
+  const tone = query.get('tone') === 'concise' ? 'concise' : 'professional';
+  return {
+    document_id: tailored.id, document_version: tailored.version, revision_id: tailored.current_revision.id,
+    content_sha256: tailored.current_revision.content_sha256, section_key: section.key, tone, context_sha256: '2'.repeat(64),
+    model_projection: { requirements: [{ text: 'Linux service care' }], tone, target: { kind: tailored.kind, section_key: section.key, heading: section.heading, blocks: section.blocks.map(({ text, claim_kind, claim_revision_ids, evidence_revision_ids }) => ({ text, claim_kind, claim_revision_ids, evidence_revision_ids })) } },
+    generation_route: { status, reason: `${status} regenerate_section stage`, identity: { model: 'synthetic-section-route' } },
+  };
+}
+function proposalFixture(handler: Handler, members: DocumentRecord[] = [tailored]) {
+  return fixture(saved, async (path, method, body, version, key) => {
+    if (path === '/applications') return { items: [application], next_cursor: null, query_elapsed_ms: 1, as_of: application.updated_at };
+    if (path === '/applications/application-1/documents') return { ...pair, items: members, generation_route: { ...route, status: 'qualified' } };
+    return handler(path, method, body, version, key);
+  });
+}
+async function openTailored(user: UserEvent) {
+  await ready();
+  await user.click(screen.getByRole('button', { name: 'Tracked application documents' }));
+  await user.click(screen.getByRole('button', { name: 'Reload tracked applications' }));
+  await user.selectOptions(await screen.findByLabelText('Tracked application'), application.id);
+  await waitFor(() => expect(screen.getByLabelText('Section to regenerate')).toBeEnabled());
+}
+async function inspectSection(user: UserEvent) {
+  await user.click(screen.getByRole('button', { name: 'Preview selected-section model projection' }));
+  await screen.findByRole('region', { name: 'Exact selected-section model projection' });
+}
+
+describe('saved tailored section proposals', () => {
+  it('exposes no model rewrite surface or model requests for a base document, including its dirty editor', async () => {
+    const user = userEvent.setup(); const { api, request } = fixture();
+    render(<Documents api={api} profile={profile} />); const input = await ready();
+    expect(screen.queryByRole('heading', { name: 'Selected-section proposals' })).not.toBeInTheDocument();
+    expect(screen.queryByLabelText('Section to regenerate')).not.toBeInTheDocument();
+    expect(screen.queryByLabelText(/writing tone/i)).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /projection|proposal|Generate résumé and cover letter/ })).not.toBeInTheDocument();
+    await user.type(input, ' More owner wording.');
+    expect(screen.queryByRole('button', { name: /projection|proposal|Generate résumé and cover letter/ })).not.toBeInTheDocument();
+    expect(request.mock.calls.some(call => call[0].includes('regeneration') || call[0].includes('generation-context') || call[1] === 'POST')).toBe(false);
+  });
+
+  it('binds an explicit projection confirmation to the selected saved section and tone, invalidating it on another selection', async () => {
+    const user = userEvent.setup(); const { api, request } = proposalFixture(async (path, method) => {
+      if (path.includes('/regeneration-context?')) return sectionPreview(path);
+      if (path === '/documents/tailored-resume/regeneration-proposals' && method === 'POST') return sectionWorkflow;
+      if (path === '/workflows/section-task-1') return sectionWorkflow;
+      throw new ApiError(404, 'not_found');
+    });
+    render(<Documents api={api} profile={profile} />); await openTailored(user);
+    await user.selectOptions(screen.getByLabelText('Section to regenerate'), 'skills');
+    await user.selectOptions(screen.getByLabelText('Section writing tone'), 'concise');
+    await inspectSection(user);
+    const projection = screen.getByRole('region', { name: 'Exact selected-section model projection' });
+    const previewCall = request.mock.calls.find(call => call[0].includes('/regeneration-context?'))!;
+    const expected = sectionPreview(previewCall[0]);
+    expect(JSON.parse(projection.querySelector('pre')!.textContent!)).toEqual(expected.model_projection);
+    expect(projection.querySelector('pre')).not.toHaveTextContent('mira@example.test');
+    expect(projection.querySelector('pre')).not.toHaveTextContent('Maintained Linux service checks.');
+    expect(screen.getByRole('button', { name: 'Request section proposal' })).toBeDisabled();
+    expect(request.mock.calls.filter(call => call[1] === 'POST')).toHaveLength(0);
+    await user.click(screen.getByRole('checkbox', { name: /I reviewed this exact selected-section projection/ }));
+    await user.selectOptions(screen.getByLabelText('Section to regenerate'), 'experience');
+    expect(screen.queryByRole('region', { name: 'Exact selected-section model projection' })).not.toBeInTheDocument();
+    await inspectSection(user);
+    expect(screen.getByRole('checkbox', { name: /I reviewed this exact selected-section projection/ })).not.toBeChecked();
+    await user.click(screen.getByRole('checkbox', { name: /I reviewed this exact selected-section projection/ }));
+    await user.click(screen.getByRole('button', { name: 'Request section proposal' }));
+    await screen.findByRole('heading', { name: 'Document task: pending' });
+    const command = request.mock.calls.find(call => call[1] === 'POST')!;
+    expect(command[0]).toBe('/documents/tailored-resume/regeneration-proposals');
+    expect(command[2]).toEqual({ revision_id: tailored.current_revision.id, content_sha256: tailored.current_revision.content_sha256, section_key: 'experience', tone: 'concise', context_sha256: '2'.repeat(64) });
+    expect(command[3]).toBe(tailored.version); expect(command[4]).toBeTypeOf('string');
+    expect(screen.getByLabelText('Block text: b-1')).toHaveValue('Maintained Linux service checks.');
+  });
+
+  it.each(['unqualified', 'disabled'] as const)('allows inspection but cannot inherit pair qualification for a %s section route', async status => {
+    const user = userEvent.setup(); const { api, request } = proposalFixture(async path => {
+      if (path.includes('/regeneration-context?')) return sectionPreview(path, status);
+      throw new ApiError(404, 'not_found');
+    });
+    render(<Documents api={api} profile={profile} />); await openTailored(user);
+    await inspectSection(user);
+    expect(screen.getByText(`Section regeneration route: ${status}.`)).toBeInTheDocument();
+    expect(screen.getByRole('checkbox', { name: /I reviewed this exact selected-section projection/ })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Request section proposal' })).toBeDisabled();
+    fireEvent.change(screen.getByLabelText('Block text: b-1'), { target: { value: 'Keep my local wording.' } });
+    expect(screen.getByRole('button', { name: 'Preview selected-section model projection' })).toBeDisabled();
+    expect(screen.queryByRole('button', { name: 'Request section proposal' })).not.toBeInTheDocument();
+    expect(request.mock.calls.filter(call => call[1] === 'POST')).toHaveLength(0);
+    expect(screen.getByLabelText('Block text: b-1')).toHaveValue('Keep my local wording.');
+  });
+
+  it('stores task output without mutating words, then explicitly applies just the compared section as a blocked editable draft', async () => {
+    const user = userEvent.setup();
+    const applied: DocumentRecord = { ...tailored, version: 5, reviewed: false, unsupported_claims: ['/sections/0/blocks/0'], current_revision: { ...tailored.current_revision, id: 'applied-section-revision', revision_no: 3, origin: 'manual', content_sha256: '3'.repeat(64), body: { ...tailored.current_revision.body, sections: [sectionProposal.proposed_section, tailored.current_revision.body.sections[1]!] }, validation_issues: sectionProposal.validation_issues } };
+    const { api, request } = proposalFixture(async (path, method) => {
+      if (path.includes('/regeneration-context?')) return sectionPreview(path);
+      if (path === '/documents/tailored-resume/regeneration-proposals' && method === 'POST') return sectionWorkflow;
+      if (path === '/workflows/section-task-1') return completedSectionWorkflow;
+      if (path === '/documents/tailored-resume/regeneration-proposals/proposal-1') return sectionProposal;
+      if (path === '/documents/tailored-resume/regeneration-proposals/proposal-1/apply') return applied;
+      throw new ApiError(404, 'not_found');
+    });
+    render(<Documents api={api} profile={profile} />); await openTailored(user); await inspectSection(user);
+    await user.click(screen.getByRole('checkbox', { name: /I reviewed this exact selected-section projection/ }));
+    vi.useFakeTimers();
+    try {
+      await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Request section proposal' })); });
+      await act(async () => { await vi.advanceTimersByTimeAsync(1000); });
+      expect(screen.getByRole('region', { name: 'Section proposal comparison' })).toBeInTheDocument();
+      expect(screen.getByLabelText('Block text: b-1')).toHaveValue('Maintained Linux service checks.');
+      expect(within(screen.getByRole('article', { name: 'Proposed section' })).getByText('Led an unsupported global team.')).toBeInTheDocument();
+      expect(screen.getByText('Proposed draft has review/export blockers.')).toBeVisible();
+      expect(request.mock.calls.filter(call => call[1] === 'POST')).toHaveLength(1);
+      expect(request.mock.calls.some(call => call[0] === '/documents/tailored-resume')).toBe(false);
+      expect(screen.getByRole('button', { name: 'Apply proposal as new draft revision' })).toBeDisabled();
+      await act(async () => { fireEvent.click(screen.getByRole('checkbox', { name: /I compared the original and proposal/ })); });
+      await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Apply proposal as new draft revision' })); });
+      expect(screen.getByLabelText('Block text: proposal-1-block-0')).toHaveValue('Led an unsupported global team.');
+      expect(screen.getByLabelText('Block text: b-2')).toHaveValue('Wrote SQL queries.');
+      expect(screen.getByRole('button', { name: 'Accept this exact revision' })).toBeDisabled();
+      expect(screen.getByRole('button', { name: 'Render reviewed PDF' })).toBeDisabled();
+      expect(screen.getByLabelText('Block text: proposal-1-block-0')).toBeEnabled();
+      const command = request.mock.calls.find(call => call[0].endsWith('/proposal-1/apply'))!;
+      expect(command[2]).toMatchObject({ revision_id: tailored.current_revision.id, content_sha256: tailored.current_revision.content_sha256 });
+      expect(command[3]).toBe(tailored.version); expect(command[4]).toBeTypeOf('string');
+      expect(screen.queryByRole('link', { name: /Download rendered PDF/ })).not.toBeInTheDocument();
+    } finally { vi.useRealTimers(); }
+  });
+
+  it('reloads immutable paginated proposals after remount and retains a dirty buffer through an offline list read and recovery', async () => {
+    const user = userEvent.setup(); const older = { ...sectionProposal, id: 'older-proposal', created_at: '2026-10-24T12:00:00Z' };
+    let offline = true;
+    const { api, request } = proposalFixture(async path => {
+      if (path === '/documents/tailored-resume/regeneration-proposals?limit=20') {
+        if (offline) { offline = false; throw new TypeError('offline'); }
+        return { items: [sectionProposal], next_cursor: sectionProposal.id };
+      }
+      if (path === '/documents/tailored-resume/regeneration-proposals?limit=20&before=proposal-1') return { items: [older], next_cursor: null };
+      if (path === '/documents/tailored-resume/regeneration-proposals/older-proposal') return older;
+      throw new ApiError(404, 'not_found');
+    });
+    const first = render(<Documents api={api} profile={profile} />); await openTailored(user); first.unmount();
+    render(<Documents api={api} profile={profile} />); await openTailored(user);
+    fireEvent.change(screen.getByLabelText('Block text: b-1'), { target: { value: 'Retained while recovering saved proposals.' } });
+    await user.click(screen.getByRole('button', { name: 'Reload saved section proposals' }));
+    expect(await screen.findByRole('alert')).toHaveTextContent('server could not be reached');
+    expect(screen.getByLabelText('Block text: b-1')).toHaveValue('Retained while recovering saved proposals.');
+    await user.click(screen.getByRole('button', { name: 'Reload saved section proposals' }));
+    await screen.findByRole('button', { name: /Compare proposal for Experience/ });
+    await user.click(screen.getByRole('button', { name: 'Load older section proposals' }));
+    await waitFor(() => expect(screen.getAllByRole('button', { name: /Compare proposal for Experience/ })).toHaveLength(2));
+    await user.click(screen.getByRole('button', { name: /Compare proposal for Experience · 2026-10-24/ }));
+    await screen.findByRole('region', { name: 'Section proposal comparison' });
+    expect(screen.getByLabelText('Block text: b-1')).toHaveValue('Retained while recovering saved proposals.');
+    expect(screen.getByRole('button', { name: 'Apply proposal as new draft revision' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Save document revision' })).toBeEnabled();
+    expect(request.mock.calls.some(call => call[1] === 'POST')).toBe(false);
+    expect(screen.queryByRole('heading', { name: /Document task:/ })).not.toBeInTheDocument();
+  });
+
+  it('retains recoverable edits after apply 412 and never retargets an old proposal onto a newer or restored revision', async () => {
+    const user = userEvent.setup(); const newer: DocumentRecord = { ...tailored, version: 5, current_revision: { ...tailored.current_revision, id: 'restored-same-words', revision_no: 3, body: { ...tailored.current_revision.body, sections: [tailored.current_revision.body.sections[0]!, { ...tailored.current_revision.body.sections[1]!, blocks: [{ ...tailored.current_revision.body.sections[1]!.blocks[0]!, text: 'Newer server skills wording.' }] }] } } };
+    const { api, request } = proposalFixture(async (path, method) => {
+      if (path === '/documents/tailored-resume/regeneration-proposals?limit=20') return { items: [sectionProposal], next_cursor: null };
+      if (path === '/documents/tailored-resume/regeneration-proposals/proposal-1') return sectionProposal;
+      if (path.endsWith('/proposal-1/apply')) throw new ApiError(412, 'version_conflict');
+      if (path === '/documents/tailored-resume' && method === 'GET') return newer;
+      throw new ApiError(404, 'not_found');
+    });
+    render(<Documents api={api} profile={profile} />); await openTailored(user);
+    await user.click(screen.getByRole('button', { name: 'Reload saved section proposals' }));
+    await user.click(await screen.findByRole('button', { name: /Compare proposal for Experience/ }));
+    await user.click(await screen.findByRole('checkbox', { name: /I compared the original and proposal/ }));
+    await user.click(screen.getByRole('button', { name: 'Apply proposal as new draft revision' }));
+    expect(await screen.findByRole('alert')).toHaveFocus();
+    expect(screen.getByLabelText('Block text: b-1')).toHaveValue('Maintained Linux service checks.');
+    fireEvent.change(screen.getByLabelText('Block text: b-1'), { target: { value: 'My recovered local wording.' } });
+    await user.click(screen.getByRole('button', { name: 'Compare current document revision' }));
+    await screen.findByText('Current server document revision 3');
+    expect(screen.getByLabelText('Block text: b-1')).toHaveValue('My recovered local wording.');
+    await user.click(screen.getByRole('checkbox', { name: /I compared both revisions/ }));
+    await user.click(screen.getByRole('button', { name: 'Rebase my edits onto compared revision' }));
+    expect(screen.getByLabelText('Block text: b-1')).toHaveValue('My recovered local wording.');
+    expect(screen.getByLabelText('Block text: b-2')).toHaveValue('Newer server skills wording.');
+    expect(screen.getByRole('button', { name: 'Save document revision' })).toBeEnabled();
+    expect(screen.getByRole('button', { name: 'Apply proposal as new draft revision' })).toBeDisabled();
+    await user.click(screen.getByRole('button', { name: 'Discard document changes' }));
+    expect(screen.getByRole('button', { name: 'Apply proposal as new draft revision' })).toBeDisabled();
+    const applications = request.mock.calls.filter(call => call[0].endsWith('/proposal-1/apply'));
+    expect(applications).toHaveLength(1); expect(applications[0]?.[3]).toBe(tailored.version);
+    expect(applications[0]?.[2]).toMatchObject({ revision_id: tailored.current_revision.id, content_sha256: tailored.current_revision.content_sha256 });
+    expect(screen.getByText(/This proposal cannot be applied to the displayed saved target/)).toBeInTheDocument();
+  });
+
+  it.each([{ other: false, dirty: true }, { other: true, dirty: false }, { other: true, dirty: true }])('keeps selection and local edits on proposal reconnect (%j)', async ({ other, dirty }) => {
+    const user = userEvent.setup(); const onDirtyChange = vi.fn();
+    const letter: DocumentRecord = { ...tailored, id: 'tailored-letter', kind: 'cover_letter', current_revision: { ...tailored.current_revision, id: 'letter-revision', body: { ...tailored.current_revision.body, title: 'Saved selected cover letter' } } };
+    let reads = 0;
+    const { api, request } = proposalFixture(async (path, method) => {
+      if (path.includes('/regeneration-context?')) return sectionPreview(path);
+      if (path === '/documents/tailored-resume/regeneration-proposals' && method === 'POST') return sectionWorkflow;
+      if (path === '/workflows/section-task-1') return completedSectionWorkflow;
+      if (path === '/documents/tailored-resume/regeneration-proposals/proposal-1') { if (++reads === 1) throw new TypeError('offline proposal read'); return sectionProposal; }
+      throw new ApiError(404, 'not_found');
+    }, [tailored, letter]);
+    render(<Documents api={api} profile={profile} onDirtyChange={onDirtyChange} />); await openTailored(user); await inspectSection(user);
+    await user.click(screen.getByRole('checkbox', { name: /I reviewed this exact selected-section projection/ }));
+    vi.useFakeTimers();
+    try {
+      await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Request section proposal' })); });
+      await act(async () => { await vi.advanceTimersByTimeAsync(1000); });
+      expect(screen.getByText(/Task status\/result could not be loaded/)).toBeVisible();
+      if (other) await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Cover letter' })); });
+      const expected = dirty ? 'Keep my current unsaved edits during reconnect.' : 'Maintained Linux service checks.';
+      if (dirty) await act(async () => { fireEvent.change(screen.getByLabelText('Block text: b-1'), { target: { value: expected } }); });
+      await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Reconnect document task' })); });
+      await act(async () => { await vi.advanceTimersByTimeAsync(1000); });
+      expect(reads).toBe(2);
+      expect(screen.getByLabelText('Document title')).toHaveValue(other ? 'Saved selected cover letter' : 'Base résumé');
+      expect(screen.getByLabelText('Block text: b-1')).toHaveValue(expected);
+      expect(screen.getByRole('button', { name: other ? 'Cover letter' : 'Résumé' })).toHaveAttribute('aria-pressed', 'true');
+      expect(screen.queryByRole('button', { name: 'Reconnect document task' })).not.toBeInTheDocument();
+      if (other) expect(screen.queryByRole('region', { name: 'Section proposal comparison' })).not.toBeInTheDocument();
+      else expect(screen.getByRole('region', { name: 'Section proposal comparison' })).toBeInTheDocument();
+      expect(onDirtyChange).toHaveBeenLastCalledWith(dirty);
+      expect(request.mock.calls.filter(call => call[1] === 'POST')).toHaveLength(1);
+      expect(request.mock.calls.some(call => call[0] === '/documents/tailored-resume')).toBe(false);
+      if (dirty) expect(screen.getByRole('button', { name: 'Save document revision' })).toBeEnabled();
+    } finally { vi.useRealTimers(); }
+  });
+
+  it('clears confirmation after a changed-context rejection instead of silently queueing a different professional projection', async () => {
+    const user = userEvent.setup(); const { api, request } = proposalFixture(async (path, method) => {
+      if (path.includes('/regeneration-context?')) return sectionPreview(path);
+      if (path === '/documents/tailored-resume/regeneration-proposals' && method === 'POST') throw new ApiError(409, 'regeneration_context_changed');
+      throw new ApiError(404, 'not_found');
+    });
+    render(<Documents api={api} profile={profile} />); await openTailored(user); await inspectSection(user);
+    await user.click(screen.getByRole('checkbox', { name: /I reviewed this exact selected-section projection/ }));
+    await user.click(screen.getByRole('button', { name: 'Request section proposal' }));
+    expect(await screen.findByRole('alert')).toHaveFocus();
+    expect(screen.queryByRole('region', { name: 'Exact selected-section model projection' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('heading', { name: /Document task:/ })).not.toBeInTheDocument();
+    expect(screen.getByLabelText('Block text: b-1')).toHaveValue('Maintained Linux service checks.');
+    expect(request.mock.calls.filter(call => call[1] === 'POST')).toHaveLength(1);
+    await inspectSection(user);
+    expect(screen.getByRole('checkbox', { name: /I reviewed this exact selected-section projection/ })).not.toBeChecked();
+  });
+  it('requires fresh explicit confirmation after an offline enqueue and reuses only its identical payload-bound command key', async () => {
+    const user = userEvent.setup(); let writes = 0;
+    const { api, request } = proposalFixture(async (path, method) => {
+      if (path.includes('/regeneration-context?')) return sectionPreview(path);
+      if (path === '/documents/tailored-resume/regeneration-proposals' && method === 'POST') {
+        if (++writes === 1) throw new TypeError('offline enqueue');
+        return sectionWorkflow;
+      }
+      if (path === '/workflows/section-task-1') return sectionWorkflow;
+      throw new ApiError(404, 'not_found');
+    });
+    render(<Documents api={api} profile={profile} />); await openTailored(user); await inspectSection(user);
+    await user.click(screen.getByRole('checkbox', { name: /I reviewed this exact selected-section projection/ }));
+    await user.click(screen.getByRole('button', { name: 'Request section proposal' }));
+    expect(await screen.findByRole('alert')).toHaveTextContent('server could not be reached');
+    expect(screen.getByRole('checkbox', { name: /I reviewed this exact selected-section projection/ })).not.toBeChecked();
+    expect(screen.getByRole('button', { name: 'Request section proposal' })).toBeDisabled();
+    expect(screen.queryByRole('heading', { name: /Document task:/ })).not.toBeInTheDocument();
+    expect(screen.getByLabelText('Block text: b-1')).toHaveValue('Maintained Linux service checks.');
+    expect(writes).toBe(1);
+    await user.click(screen.getByRole('checkbox', { name: /I reviewed this exact selected-section projection/ }));
+    await user.click(screen.getByRole('button', { name: 'Request section proposal' }));
+    await screen.findByRole('heading', { name: 'Document task: pending' });
+    const commands = request.mock.calls.filter(call => call[1] === 'POST');
+    expect(commands).toHaveLength(2);
+    expect(commands[1]?.[2]).toEqual(commands[0]?.[2]);
+    expect(commands[0]?.[4]).toBeTypeOf('string'); expect(commands[1]?.[4]).toBe(commands[0]?.[4]);
   });
 });

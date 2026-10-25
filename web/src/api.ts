@@ -20,10 +20,11 @@ export interface RevisionPage { items: ProfileRevisionSummary[]; next_cursor: nu
 export interface FieldError { loc: (string | number)[]; code: string; message: string }
 export type WorkflowState = 'pending' | 'running' | 'waiting_for_approval' | 'retryable_failure' | 'permanent_failure' | 'cancelled' | 'succeeded';
 export interface Workflow {
-  id: string; version: number; state: WorkflowState; attempt: number; kind?: string; mode?: 'deterministic_base' | 'tailored_ai';
+  id: string; version: number; state: WorkflowState; attempt: number; kind?: string; mode?: 'deterministic_base' | 'tailored_ai' | 'section_regeneration';
   max_attempts?: number; next_attempt_at?: string | null; last_error_code: string | null;
   result: {
     document_id?: string; revision_id?: string; artifact_id?: string; application_id?: string; model_run_id?: string;
+    proposal_id?: string; target_revision_id?: string; section_key?: string;
     documents?: { kind: DocumentKind; document_id: string; revision_id: string }[];
     source_id?: string; posting_id?: string; profile_revision_id?: string; requirements_revision_id?: string; source_sha256?: string;
     requirements?: Requirement[]; assessments?: Coverage[]; policy_version?: number; fetch_elapsed_ms?: number; posting_count?: number;
@@ -64,6 +65,22 @@ export interface GenerationContext {
   requirements_revision_id: string; template_version: string; tone: 'professional' | 'concise'; language: 'en';
   context_sha256: string; model_projection: Record<string, unknown>; frame: Record<string, unknown>; generation_route: GenerationRoute;
 }
+export interface SectionRegenerationContext {
+  document_id: string; document_version: number; revision_id: string; content_sha256: string;
+  section_key: string; tone: 'professional' | 'concise'; context_sha256: string;
+  model_projection: Record<string, unknown>; generation_route: GenerationRoute;
+}
+export interface SectionProposal {
+  id: string; document_id: string; target_revision_id: string; target_content_sha256: string;
+  target_document_version: number; section_key: string; original_section: DocumentBody['sections'][number];
+  proposed_section: DocumentBody['sections'][number]; validation_issues: DocumentIssue[];
+  model_run: Record<string, unknown>; created_at: string; applicable: boolean;
+}
+export interface SectionProposalPage { items: SectionProposal[]; next_cursor: string | null }
+export interface SectionRegenerationRequest {
+  revision_id: string; content_sha256: string; section_key: string; tone: 'professional' | 'concise'; context_sha256: string;
+}
+export interface SectionProposalApplyRequest { revision_id: string; content_sha256: string; reason: string }
 export interface BaseResumeRequest { profile_revision_id: string; template_version: string }
 export interface GenerationRequest extends BaseResumeRequest {
   requirements_revision_id: string; tone: 'professional' | 'concise'; language: 'en'; context_sha256: string;

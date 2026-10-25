@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Api, ApiError, errorText, terminal, type ApplicationDocuments, type BaseResumeRequest, type DocumentBody, type DocumentFact, type DocumentRecord, type DocumentRenderRequest, type DocumentRestoreRequest, type DocumentReviewRequest, type DocumentRevision, type DocumentRevisionPage, type DocumentSaveRequest, type DocumentTemplate, type GenerationContext, type GenerationRequest, type Profile, type ProfileRevisionSummary, type RevisionPage, type Workflow } from './api';
+import { Api, ApiError, errorText, terminal, type ApplicationDocuments, type BaseResumeRequest, type DocumentBody, type DocumentFact, type DocumentRecord, type DocumentRenderRequest, type DocumentRestoreRequest, type DocumentReviewRequest, type DocumentRevision, type DocumentRevisionPage, type DocumentSaveRequest, type DocumentTemplate, type GenerationContext, type GenerationRequest, type Profile, type ProfileRevisionSummary, type RevisionPage, type SectionProposal, type SectionProposalApplyRequest, type SectionProposalPage, type SectionRegenerationContext, type SectionRegenerationRequest, type Workflow } from './api';
 import type { ApplicationPage, ApplicationSummary } from './tracking-api';
 import { copyBody, issueAnchor, rebaseBody, sameBody } from './document-state';
+import { proposalMatches, SectionProposals } from './SectionProposals';
 
 export interface DocumentsProps {
   api: Api; profile: Profile | null; disabled?: boolean; externalDocumentId?: string | null; externalRequestKey?: string | null;
@@ -47,6 +48,13 @@ export function Documents({ api, profile, disabled = false, externalDocumentId, 
   const [preview, setPreview] = useState<DocumentRevision | null>(null);
   const [restoreConfirmed, setRestoreConfirmed] = useState(false);
   const [reviewedKeys, setReviewedKeys] = useState<string[]>([]);
+  const [sectionKey, setSectionKey] = useState('');
+  const [sectionTone, setSectionTone] = useState<'professional' | 'concise'>('professional');
+  const [sectionContext, setSectionContext] = useState<SectionRegenerationContext | null>(null);
+  const [sectionConfirmed, setSectionConfirmed] = useState(false);
+  const [proposals, setProposals] = useState<SectionProposalPage | null>(null);
+  const [proposal, setProposal] = useState<SectionProposal | null>(null);
+  const [applyConfirmed, setApplyConfirmed] = useState(false);
   const [workflow, setWorkflow] = useState<Workflow | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
@@ -91,6 +99,14 @@ export function Documents({ api, profile, disabled = false, externalDocumentId, 
     window.addEventListener('beforeunload', prevent); return () => window.removeEventListener('beforeunload', prevent);
   }, [dirty, busy, activeTask]);
   useEffect(() => { setContext(null); setContextConfirmed(false); }, [profileId, profile?.version, template, tone, applicationId]);
+  useEffect(() => {
+    setSectionContext(null); setSectionConfirmed(false); setApplyConfirmed(false);
+  }, [doc?.id, doc?.version, doc?.current_revision.id, profile?.version, profile?.current_revision.id, sectionKey, sectionTone, dirty]);
+  useEffect(() => { setProposals(null); setProposal(null); setSectionKey(''); }, [doc?.id]);
+  useEffect(() => {
+    const sections = current.current.doc?.current_revision.body.sections ?? [];
+    setSectionKey(previous => sections.some(section => section.key === previous) ? previous : sections[0]?.key ?? '');
+  }, [doc?.id, doc?.current_revision.id]);
 
   const request = useCallback(async <T,>(signal: AbortSignal, path: string, method = 'GET', body?: unknown, version?: number, key: boolean | string = false): Promise<T> => {
     const value = await api.request<T>(path, method, body, version, key, signal);
@@ -302,6 +318,86 @@ export function Documents({ api, profile, disabled = false, externalDocumentId, 
       mutation.current = null; workflowSelection.current = epoch; setWorkflow(value); setMonitorError(''); setNotice(`PDF task accepted for saved revision ${doc.current_revision.revision_no}. Nothing was sent.`);
     });
   }
+  function previewSection() {
+    if (!doc || doc.scope !== 'tailored' || !sectionKey || locked || dirty || preview || application?.archived_at) return;
+    const epoch = selection.current; const profileVersion = profile?.version;
+    void run(async signal => {
+      setSectionContext(null); setSectionConfirmed(false);
+      const query = new URLSearchParams({ section_key: sectionKey, tone: sectionTone });
+      const value = await request<SectionRegenerationContext>(signal, `${docPath(doc.id)}/regeneration-context?${query}`);
+      const live = current.current;
+      if (epoch !== selection.current || live.dirty || live.profile?.version !== profileVersion || live.doc?.id !== value.document_id ||
+        live.doc.version !== value.document_version || live.doc.current_revision.id !== value.revision_id || live.doc.current_revision.content_sha256 !== value.content_sha256 ||
+        value.section_key !== sectionKey || value.tone !== sectionTone) {
+        setNotice('The saved target or professional context changed. Preview this section again; no task was requested.'); return;
+      }
+      setSectionContext(value);
+    });
+  }
+  function requestSection() {
+    if (!doc || doc.scope !== 'tailored' || !sectionContext || !sectionConfirmed || sectionContext.generation_route.status !== 'qualified' ||
+      locked || dirty || preview || application?.archived_at || sectionContext.document_id !== doc.id || sectionContext.document_version !== doc.version ||
+      sectionContext.revision_id !== doc.current_revision.id || sectionContext.content_sha256 !== doc.current_revision.content_sha256 ||
+      sectionContext.section_key !== sectionKey || sectionContext.tone !== sectionTone) return;
+    const epoch = selection.current;
+    void run(async signal => {
+      const path = `${docPath(doc.id)}/regeneration-proposals`;
+      const body: SectionRegenerationRequest = { revision_id: sectionContext.revision_id, content_sha256: sectionContext.content_sha256, section_key: sectionContext.section_key, tone: sectionContext.tone, context_sha256: sectionContext.context_sha256 };
+      try {
+        const value = await request<Workflow>(signal, path, 'POST', body, sectionContext.document_version, keyFor(path, body, sectionContext.document_version));
+        mutation.current = null; workflowSelection.current = epoch; setWorkflow(value); setMonitorError(''); setSectionConfirmed(false); setApplyConfirmed(false);
+        setNotice('Section proposal task accepted. Completion will store a separate proposal, not change this document or approve its facts.');
+      } catch (failure) {
+        if (!aborted(failure)) {
+          setSectionConfirmed(false);
+          if (failure instanceof ApiError && failure.status === 412) { setReconcile(true); setRebaseConfirmed(false); }
+          if (failure instanceof ApiError && failure.code === 'regeneration_context_changed') setSectionContext(null);
+        }
+        throw failure;
+      }
+    });
+  }
+  function proposalPage(before?: string) {
+    if (!doc || doc.scope !== 'tailored' || locked) return;
+    const epoch = selection.current; const documentId = doc.id;
+    void run(async signal => {
+      const page = await request<SectionProposalPage>(signal, `${docPath(documentId)}/regeneration-proposals?limit=20${before ? `&before=${encodeURIComponent(before)}` : ''}`);
+      if (epoch !== selection.current || current.current.doc?.id !== documentId) return;
+      setProposals(previous => before && previous ? { items: [...previous.items.filter(item => !page.items.some(next => next.id === item.id)), ...page.items], next_cursor: page.next_cursor } : page);
+      setApplyConfirmed(false);
+      setProposal(previous => previous ? page.items.find(item => item.id === previous.id) ?? previous : null);
+    });
+  }
+  function openProposal(id: string) {
+    if (!doc || doc.scope !== 'tailored' || locked) return;
+    const epoch = selection.current; const documentId = doc.id;
+    void run(async signal => {
+      const value = await request<SectionProposal>(signal, `${docPath(documentId)}/regeneration-proposals/${encodeURIComponent(id)}`);
+      if (epoch !== selection.current || current.current.doc?.id !== documentId) return;
+      setProposal(value); setApplyConfirmed(false); setNotice('Stored proposal loaded for comparison. The saved document and any local edits are unchanged.');
+    });
+  }
+  function applyProposal() {
+    if (!doc || doc.scope !== 'tailored' || !proposal || !proposal.applicable || !proposalMatches(proposal, doc) || !applyConfirmed || locked || dirty || preview) return;
+    const epoch = selection.current; const documentId = doc.id;
+    void run(async signal => {
+      const path = `${docPath(documentId)}/regeneration-proposals/${encodeURIComponent(proposal.id)}/apply`;
+      const body: SectionProposalApplyRequest = { revision_id: proposal.target_revision_id, content_sha256: proposal.target_content_sha256, reason: 'Owner explicitly applied a compared model section proposal as an editable draft' };
+      try {
+        const value = await request<DocumentRecord>(signal, path, 'POST', body, proposal.target_document_version, keyFor(path, body, proposal.target_document_version));
+        mutation.current = null;
+        if (epoch !== selection.current || current.current.doc?.id !== documentId) return;
+        receive(value); setProposal(previous => previous ? { ...previous, applicable: false } : null); setApplyConfirmed(false);
+        setProposals(null); setNotice('Applied the selected section as a new draft revision. Other sections, frame and history are retained. Inspect blockers and review this exact revision before PDF. Nothing was sent.');
+      } catch (failure) {
+        if (!aborted(failure) && epoch === selection.current && current.current.doc?.id === documentId) {
+          setApplyConfirmed(false); setReconcile(true); setRebaseConfirmed(false);
+          setNotice('Proposal application was not confirmed. Your displayed text and local edits are retained. Compare the current server revision and explicitly reconfirm; no automatic overwrite or retry.');
+        }
+        throw failure;
+      }
+    });
+  }
 
   const workflowId = workflow?.id; const workflowState = workflow?.state;
   useEffect(() => {
@@ -318,7 +414,17 @@ export function Documents({ api, profile, disabled = false, externalDocumentId, 
         if (terminal(value.state)) {
           completedWorkflow = value;
           if (value.state === 'succeeded') {
-            if (value.result?.application_id) {
+            if (value.mode === 'section_regeneration' || value.result?.proposal_id) {
+              const result = value.result;
+              if (!result?.document_id || !result.proposal_id || !result.target_revision_id || !result.section_key || !result.model_run_id) throw new Error('missing_section_proposal_result');
+              const stored = await request<SectionProposal>(controller.signal, `${docPath(result.document_id)}/regeneration-proposals/${encodeURIComponent(result.proposal_id)}`);
+              if (stored.id !== result.proposal_id || stored.document_id !== result.document_id || stored.target_revision_id !== result.target_revision_id || stored.section_key !== result.section_key) throw new Error('invalid_section_proposal_result');
+              if (epoch === selection.current && current.current.doc?.id === stored.document_id) {
+                setProposal(stored); setApplyConfirmed(false);
+                setProposals(previous => previous ? { ...previous, items: [stored, ...previous.items.filter(item => item.id !== stored.id)] } : null);
+                setNotice('Section proposal stored for comparison. Saved wording and local edits are unchanged. Apply explicitly only after comparing the original target and proposed text.');
+              } else setNotice('A section proposal was stored for an earlier selection. Your current document and edits are unchanged. Open that document’s saved section proposals to compare it.');
+            } else if (value.result?.application_id) {
               const members = value.result.documents;
               if (!members || members.length !== 2 || new Set(members.map(item => item.kind)).size !== 2 || !members.some(item => item.kind === 'resume') || !members.some(item => item.kind === 'cover_letter')) throw new Error('incomplete_pair');
               await loadPair(controller.signal, value.result.application_id, epoch, current.current.doc?.id, members);
@@ -330,7 +436,7 @@ export function Documents({ api, profile, disabled = false, externalDocumentId, 
                 processedWorkflow.current = value.id; setWorkflow(value); setMonitorError(''); return;
               }
             } else throw new Error('missing_document_result');
-            if (!stopped) setNotice(value.result?.artifact_id ? 'PDF created for the saved revision. Download appears only if its artifact belongs to the displayed revision. Nothing was sent.' : 'Saved document result loaded. Review its sources and blockers; task success is not factual approval.');
+            if (!stopped && value.mode !== 'section_regeneration' && !value.result?.proposal_id) setNotice(value.result?.artifact_id ? 'PDF created for the saved revision. Download appears only if its artifact belongs to the displayed revision. Nothing was sent.' : 'Saved document result loaded. Review its sources and blockers; task success is not factual approval.');
           }
           if (!stopped) { processedWorkflow.current = value.id; setWorkflow(value); setMonitorError(''); }
           return;
@@ -371,7 +477,7 @@ export function Documents({ api, profile, disabled = false, externalDocumentId, 
         </>}
       </>}
     </fieldset>
-    {workflow && <section className="task" aria-live="polite"><h3>Document task: {workflow.state.replaceAll('_', ' ')}</h3><p>Attempt {workflow.attempt}{workflow.max_attempts === undefined ? '' : ` of ${workflow.max_attempts}`}. No estimated progress percentage.</p><small>Task {workflow.id}</small>{workflow.next_attempt_at && <p>Next scheduled attempt: {workflow.next_attempt_at}</p>}{workflow.last_error_code && <p>Failure code: {workflow.last_error_code}. Existing saved documents remain available.</p>}{workflow.state === 'waiting_for_approval' && <p>This task is waiting for a separate approval; opening or reviewing a document does not grant provider access.</p>}{activeTask && <button className="secondary" disabled={busy || disabled} onClick={() => { void run(async signal => { const path = `/workflows/${encodeURIComponent(workflow.id)}/cancel`; const value = await request<Workflow>(signal, path, 'POST', {}, workflow.version, keyFor(path, {}, workflow.version)); mutation.current = null; setWorkflow(value); setNotice('Cancellation requested. The task may still be stopping.'); }); }}>Cancel document task</button>}{monitorError && <><p className="error">{monitorError}</p><button className="secondary" disabled={busy} onClick={() => setPollToken(value => value + 1)}>Reconnect document task</button></>}</section>}
+    {workflow && <section className="task" aria-live="polite"><h3>Document task: {workflow.state.replaceAll('_', ' ')}</h3><p>Attempt {workflow.attempt}{workflow.max_attempts === undefined ? '' : ` of ${workflow.max_attempts}`}. No estimated progress percentage.</p><small>Task {workflow.id}</small>{workflow.next_attempt_at && <p>Next scheduled attempt: {workflow.next_attempt_at}</p>}{workflow.last_error_code && <p>{workflow.last_error_code === 'render_text_unsupported' ? 'The saved text contains glyphs or text this built-in PDF renderer cannot preserve. Edit to supported text, or keep your portable owner data and ask the operator about font qualification. Save and review any changed revision before retrying. No PDF was created.' : `Failure code: ${workflow.last_error_code}. Existing saved documents remain available.`}</p>}{workflow.state === 'waiting_for_approval' && <p>This task is waiting for a separate approval; opening or reviewing a document does not grant provider access.</p>}{activeTask && <button className="secondary" disabled={busy || disabled} onClick={() => { void run(async signal => { const path = `/workflows/${encodeURIComponent(workflow.id)}/cancel`; const value = await request<Workflow>(signal, path, 'POST', {}, workflow.version, keyFor(path, {}, workflow.version)); mutation.current = null; setWorkflow(value); setNotice('Cancellation requested. The task may still be stopping.'); }); }}>Cancel document task</button>}{monitorError && <><p className="error">{monitorError}</p><button className="secondary" disabled={busy} onClick={() => setPollToken(value => value + 1)}>Reconnect document task</button></>}</section>}
     {doc && displayed ? <section aria-label="Selected saved document"><h3>{doc.scope === 'base' ? 'Base résumé' : doc.kind === 'resume' ? 'Application résumé' : 'Application cover letter'} · saved revision {doc.current_revision.revision_no}</h3>
       {(doc.stale || upstreamChanged) && <aside className="disclosure"><strong>Outdated frozen inputs.</strong> {doc.stale_reason ?? 'upstream_profile_revision_changed'}. Profile/contact updates do not change this wording, printable frame, history or existing PDF. Rebuild is explicit.</aside>}
       <p>Origin: {doc.current_revision.origin}. Profile revision {doc.current_revision.profile_revision_id}. Template {doc.current_revision.template_version}. Saved {doc.current_revision.created_at}.</p>
@@ -397,6 +503,7 @@ export function Documents({ api, profile, disabled = false, externalDocumentId, 
         {comparison && <section className="comparison"><h4>Current server document revision {comparison.current_revision.revision_no}</h4><ReadonlyBody revision={comparison.current_revision} /><p>Your editor above is unchanged. Rebase preserves unrelated server fields and applies your changed fields only; inspect both versions before reconfirming. Any overlapping edits will use your displayed local wording.</p><label className="check"><input type="checkbox" checked={rebaseConfirmed} disabled={locked} onChange={event => setRebaseConfirmed(event.target.checked)} />I compared both revisions and reconfirm my changed fields against this server version</label><div className="actions"><button className="secondary" disabled={locked || !rebaseConfirmed} onClick={rebase}>Rebase my edits onto compared revision</button><button className="secondary" disabled={locked || !rebaseConfirmed} onClick={() => { receive(comparison, true); mutation.current = null; setNotice('Editor explicitly replaced with compared saved revision.'); }}>Replace editor with compared revision</button></div></section>}
         {reconcile && !comparison && <p className="disclosure">Your attempted text is retained. Compare the server revision, explicitly rebase/reconfirm, then save again. No automatic overwrite or retry.</p>}
         <div className="actions"><button disabled={locked || dirty || doc.reviewed || !!issues.length || !allReviewed} onClick={review}>{doc.reviewed ? 'Exact revision reviewed' : 'Accept this exact revision'}</button><button disabled={locked || dirty || !doc.reviewed || !!issues.length} onClick={renderPdf}>Render reviewed PDF</button></div>
+        {doc.scope === 'tailored' && <SectionProposals document={doc} dirty={dirty} locked={locked} archived={!!application?.archived_at} sectionKey={sectionKey} tone={sectionTone} context={sectionContext} confirmed={sectionConfirmed} proposals={proposals} proposal={proposal} applyConfirmed={applyConfirmed} onSection={setSectionKey} onTone={setSectionTone} onPreview={previewSection} onConfirm={setSectionConfirmed} onRequest={requestSection} onReload={proposalPage} onOpen={openProposal} onApplyConfirm={setApplyConfirmed} onApply={applyProposal} />}
         {doc.artifacts.filter(artifact => artifact.format === 'pdf' && artifact.revision_id === doc.current_revision.id).map(artifact => <p className="download" key={artifact.id}><a className="document-download" href={`/api/v1/artifacts/${encodeURIComponent(artifact.id)}`} download>Download rendered PDF for revision {doc.current_revision.revision_no}</a><span>Actual saved-revision artifact. Downloaded files contain personal data; store securely. Nothing was sent.</span></p>)}
       </>}
       <section><h3>Immutable document history</h3><button className="secondary" disabled={locked} onClick={() => historyPage()}>Load document history</button>{history && <><ol>{history.items.map(item => <li key={item.id}><button className="secondary" disabled={locked || dirty} onClick={() => historyPreview(item.id)}>Preview revision {item.revision_no} — {item.origin}</button><p>{item.created_at}{item.reason ? ` · ${item.reason}` : ''}</p></li>)}</ol>{history.next_cursor !== null && <button className="secondary" disabled={locked} onClick={() => historyPage(history.next_cursor!)}>Load older document revisions</button>}</>}</section>

@@ -1095,7 +1095,10 @@ def _check_workflow_context(
     conn: Connection, task: Claim, settings: Settings
 ) -> ProfileProjection | None:
     if task.kind == "document_generate":
-        from offerloom.document_generation import check_context
+        if task.input.get("mode") == "section_regeneration":
+            from offerloom.section_regeneration import check_context
+        else:
+            from offerloom.document_generation import check_context
 
         check_context(conn, task, settings)
         return None
@@ -1256,6 +1259,11 @@ def _execute_reserved_model(
 
                 pair = validate_pair(result.output, task.input)
                 proposal = pair.model_dump(mode="json")
+            elif stage == "regenerate_section":
+                from offerloom.section_regeneration import validate_candidate
+
+                section_candidate = validate_candidate(result.output, task.input)
+                proposal = section_candidate.model_dump(mode="json")
             else:
                 matching = MatchingOutput.model_validate_json(canonical_json(result.output))
                 proposal = matching.model_dump(mode="json")
@@ -1266,7 +1274,7 @@ def _execute_reserved_model(
                 raise Problem(422, "invalid_model_output") from exc
             raise
         with db.transaction() as conn:
-            if stage == "generate_documents":
+            if stage in {"generate_documents", "regenerate_section"}:
                 from offerloom.document_generation import lock_workspace
 
                 lock_workspace(conn, task.owner_id)
@@ -1308,6 +1316,13 @@ def _execute_reserved_model(
 
                     assert run_id is not None
                     return publish_pair(active, task, settings, pair, run_id, result.metadata)
+                if stage == "regenerate_section":
+                    from offerloom.section_regeneration import publish_proposal
+
+                    assert run_id is not None
+                    return publish_proposal(
+                        active, task, settings, section_candidate, run_id, result.metadata
+                    )
                 return {
                     **proposal,
                     "posting_id": task.input["posting_id"],

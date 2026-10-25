@@ -108,7 +108,7 @@ class Worker:
                         publish(
                             conn, task, lambda active: publish_base(active, task, self.settings)
                         )
-                elif mode == "tailored_ai":
+                elif mode in {"tailored_ai", "section_regeneration"}:
                     suitability.execute_model(self.db, self.settings, task, interrupted)
                 else:
                     # Explicitly retained M0 protocol, never a production fallback.

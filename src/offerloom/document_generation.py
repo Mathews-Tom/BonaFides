@@ -252,7 +252,9 @@ def _application(
     return row
 
 
-def route_status(conn: Connection, owner: UUID, settings: Settings) -> dict[str, object]:
+def route_status(
+    conn: Connection, owner: UUID, settings: Settings, *, stage: str = "generate_documents"
+) -> dict[str, object]:
     try:
         route = local_model.load_route(settings.local_model_route_file)
     except local_model.ModelFailure:
@@ -261,11 +263,11 @@ def route_status(conn: Connection, owner: UUID, settings: Settings) -> dict[str,
         return {"status": "disabled", "reason": "local_model_not_configured", "identity": None}
     blocked = conn.execute(
         text(
-            "SELECT 1 FROM offerloom.local_model_route_blocks WHERE owner_id=:owner AND route_sha256=:sha AND stage='generate_documents'"
+            "SELECT 1 FROM offerloom.local_model_route_blocks WHERE owner_id=:owner AND route_sha256=:sha AND stage=:stage"
         ),
-        {"owner": owner, "sha": sha(route.identity())},
+        {"owner": owner, "sha": sha(route.identity()), "stage": stage},
     ).first()
-    qualified = route.qualified_for("generate_documents") and blocked is None
+    qualified = route.qualified_for(stage) and blocked is None
     return {
         "status": "qualified" if qualified else "unqualified",
         "reason": "operator_qualified_local_route"
@@ -1273,3 +1275,7 @@ def install_routes(router: APIRouter, db: Database, settings: Settings) -> None:
         owner: Annotated[Owner, Depends(require_owner)],
     ) -> Response:
         return mutate(document_id, request, owner, body)
+
+    from offerloom import section_regeneration
+
+    section_regeneration.install_routes(router, db, settings)

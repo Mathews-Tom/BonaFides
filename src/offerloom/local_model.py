@@ -25,10 +25,13 @@ from dataclasses import dataclass, field
 from io import BufferedReader
 from pathlib import Path
 from threading import Event, Thread
-from typing import IO, cast
+from typing import IO, Annotated, Literal, cast
 from urllib.parse import urlsplit
+from uuid import UUID
 
-ADAPTER_VERSION = "ol-ollama-v3"
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
+
+ADAPTER_VERSION = "ol-ollama-v4"
 _REQUEST_FRAMING_BYTES = 1024
 _TRANSPORT_POLICY = {
     "version": "ol-local-pre-post-manifest-v1",
@@ -40,11 +43,12 @@ _TRANSPORT_POLICY = {
     "inference_identity": "unknown_mutable_tag",
     "interruption_code": "model_interrupted",
 }
-PROJECTION_VERSION = "ol-professional-wire-v2"
+PROJECTION_VERSION = "ol-professional-wire-v3"
 PROMPT_VERSIONS = {
     "extract_posting": "ol-extract-posting-v1",
     "match_requirements": "ol-match-requirements-v1",
     "generate_documents": "ol-generate-documents-v1",
+    "regenerate_section": "ol-regenerate-section-v1",
 }
 _SYSTEM = (
     "You transform Offerloom task data into the supplied JSON response shape. "
@@ -85,6 +89,18 @@ _SUFFIXES = {
         "I would welcome the opportunity to discuss this role.; I would welcome a discussion of the role. "
         "A factual statement hidden as intent or greeting remains unsupported. "
         "Use gaps for missing requirement evidence, never fabricate it. Return typed JSON only."
+    ),
+    "regenerate_section": (
+        "Rewrite only target.blocks in the requested tone. Preserve accepted professional "
+        "claim text verbatim; non-exact paraphrases remain unestablished. Use only supplied "
+        "claim/evidence revision IDs. Never infer experience from the posting or invent "
+        "metrics, dates, qualifications or permissions. Do not output headings, titles, "
+        "keys, identity/contact, other sections, markup or tools. Safe nonfactual language "
+        "is limited to the exact greeting/intent phrases in the document-generation policy: "
+        "Dear Hiring team,; Thank you for your consideration.; "
+        "Thank you for considering my application.; Sincerely,; "
+        "I would welcome the opportunity to discuss this role.; "
+        "I would welcome a discussion of the role. Return typed JSON only."
     ),
 }
 
@@ -224,6 +240,142 @@ _SCHEMAS["generate_documents"] = _object(
         "warnings": {"type": "array", "maxItems": 20, "items": _string(500)},
     }
 )
+_SCHEMAS["regenerate_section"] = _object(
+    {
+        "schema_version": {"const": "1"},
+        "stage": {"const": "regenerate_section"},
+        "blocks": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 30,
+            "items": _object(
+                {
+                    key: value
+                    for key, value in cast(dict[str, object], _DOCUMENT_BLOCK["properties"]).items()
+                    if key != "block_key"
+                }
+            ),
+        },
+        "warnings": {"type": "array", "maxItems": 20, "items": _string(500)},
+    }
+)
+
+
+class _WireModel(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True, frozen=True)
+
+
+class SectionBlock(_WireModel):
+    text: str = Field(min_length=1, max_length=2000)
+    claim_kind: Literal["factual", "intent", "greeting"]
+    claim_revision_ids: list[UUID] = Field(max_length=16)
+    evidence_revision_ids: list[UUID] = Field(max_length=16)
+
+    @model_validator(mode="after")
+    def unique_references(self) -> SectionBlock:
+        if any(
+            len(values) != len(set(values))
+            for values in (self.claim_revision_ids, self.evidence_revision_ids)
+        ):
+            raise ValueError("duplicate_document_reference")
+        if self.claim_kind == "factual" and not self.claim_revision_ids:
+            raise ValueError("factual_reference_required")
+        return self
+
+
+class _WireSpan(_WireModel):
+    start: int = Field(ge=0, le=199999)
+    end: int = Field(ge=1, le=200000)
+    quote: str = Field(min_length=1, max_length=2000)
+
+    @model_validator(mode="after")
+    def ordered_span(self) -> _WireSpan:
+        if self.end <= self.start:
+            raise ValueError("invalid_source_span")
+        return self
+
+
+class _WireRequirement(_WireModel):
+    requirement_key: str = Field(pattern=r"^req-[0-9]{1,3}$")
+    text: str = Field(min_length=1, max_length=1000)
+    importance: Literal["required", "preferred", "unclear"]
+    span: _WireSpan
+
+
+class _WireClaim(_WireModel):
+    id: UUID
+    text: str = Field(min_length=1, max_length=4000)
+    structured_fields: dict[str, Annotated[str, Field(min_length=1, max_length=4000)]]
+    evidence_revision_ids: list[UUID] = Field(min_length=1, max_length=100)
+
+    @model_validator(mode="after")
+    def bounded_fields(self) -> _WireClaim:
+        if set(self.structured_fields) - {
+            "role",
+            "organization",
+            "start_date",
+            "end_date",
+            "proficiency",
+        } or len(self.evidence_revision_ids) != len(set(self.evidence_revision_ids)):
+            raise ValueError("invalid_professional_projection")
+        return self
+
+
+class _WireEvidence(_WireModel):
+    id: UUID
+    text: str = Field(min_length=1, max_length=100000)
+
+
+class _WirePosting(_WireModel):
+    title: str = Field(min_length=1, max_length=500)
+    organization: str = Field(min_length=1, max_length=500)
+    source_text: str = Field(min_length=1, max_length=200000)
+
+
+class _WireTarget(_WireModel):
+    kind: Literal["resume", "cover_letter"]
+    section_key: str = Field(min_length=1, max_length=80, pattern=r"^[a-zA-Z0-9_-]+$")
+    heading: str = Field(min_length=1, max_length=120)
+    blocks: list[SectionBlock] = Field(min_length=1, max_length=30)
+
+
+class _SectionProjection(_WireModel):
+    posting: _WirePosting
+    requirements: list[_WireRequirement] = Field(max_length=100)
+    claims: list[_WireClaim] = Field(max_length=100)
+    evidence: list[_WireEvidence] = Field(max_length=100)
+    tone: Literal["professional", "concise"]
+    language: Literal["en"]
+    target: _WireTarget
+
+    @model_validator(mode="after")
+    def pinned_references(self) -> _SectionProjection:
+        claims = {item.id for item in self.claims}
+        evidence = {item.id for item in self.evidence}
+        if any(set(item.evidence_revision_ids) - evidence for item in self.claims):
+            raise ValueError("invalid_professional_projection")
+        if any(
+            set(block.claim_revision_ids) - claims or set(block.evidence_revision_ids) - evidence
+            for block in self.target.blocks
+        ):
+            raise ValueError("invalid_professional_projection")
+        return self
+
+
+def section_projection(context: dict[str, object]) -> dict[str, object]:
+    """Validate the exact minimized wire without coercion or silent truncation."""
+    try:
+        result = _SectionProjection.model_validate_json(_json(context), strict=True)
+        for values in (result.claims, result.evidence):
+            identifiers = [item.id for item in values]
+            if len(identifiers) != len(set(identifiers)):
+                raise ModelFailure("model_context_invalid")
+        keys = [item.requirement_key for item in result.requirements]
+        if len(keys) != len(set(keys)):
+            raise ModelFailure("model_context_invalid")
+        return result.model_dump(mode="json")
+    except (ValidationError, ValueError, TypeError, UnicodeError) as exc:
+        raise ModelFailure("model_context_invalid") from exc
 
 
 class ModelFailure(ValueError):
@@ -504,6 +656,12 @@ def load_route(path: Path | None) -> LocalRoute | None:
                         "preferences": ["tone", "language"],
                         "max_items": 100,
                     },
+                    "regenerate_section": {
+                        "schema": _SectionProjection.model_json_schema(),
+                        "target_only": True,
+                        "original_parent_facts_only": True,
+                        "assigned_block_keys": "proposal-full-uuid-index",
+                    },
                 },
             }
         )
@@ -750,10 +908,14 @@ class OllamaClient:
                 "evidence",
             }
         )
-        if stage == "generate_documents":
+        if stage in {"generate_documents", "regenerate_section"}:
             roots |= {"posting", "tone", "language"}
+        if stage == "regenerate_section":
+            roots.add("target")
         if set(context) != roots:
             raise ModelFailure("model_context_invalid")
+        if stage == "regenerate_section":
+            context = section_projection(context)
         if stage == "extract_posting":
             source = context.get("source_text")
             if (
@@ -763,7 +925,7 @@ class OllamaClient:
                 or hashlib.sha256(source.encode()).hexdigest() != context.get("source_sha256")
             ):
                 raise ModelFailure("model_context_invalid")
-        else:
+        elif stage != "regenerate_section":
             projected: dict[str, object] = {}
             fields = {
                 "requirements": {
@@ -834,7 +996,7 @@ class OllamaClient:
                         "num_predict": min(
                             route.max_output_tokens,
                             6000
-                            if stage == "generate_documents"
+                            if stage in {"generate_documents", "regenerate_section"}
                             else 2000
                             if stage == "extract_posting"
                             else 3000,
@@ -849,7 +1011,11 @@ class OllamaClient:
         input_bound = len(payload) + route.framing_token_overhead
         output_cap = min(
             route.max_output_tokens,
-            6000 if stage == "generate_documents" else 2000 if stage == "extract_posting" else 3000,
+            6000
+            if stage in {"generate_documents", "regenerate_section"}
+            else 2000
+            if stage == "extract_posting"
+            else 3000,
         )
         margin = max(512, math.ceil(route.context_window * 0.05))
         if (
@@ -858,7 +1024,7 @@ class OllamaClient:
             > min(
                 route.max_input_tokens,
                 12000
-                if stage == "generate_documents"
+                if stage in {"generate_documents", "regenerate_section"}
                 else 6000
                 if stage == "extract_posting"
                 else 8000,
@@ -884,7 +1050,11 @@ class OllamaClient:
             raise ModelFailure("model_request_limit")
         deadline_seconds = min(
             route.deadline_seconds,
-            300 if stage == "generate_documents" else 120 if stage == "extract_posting" else 180,
+            300
+            if stage in {"generate_documents", "regenerate_section"}
+            else 120
+            if stage == "extract_posting"
+            else 180,
         )
         started = time.monotonic()
         expired = Event()

@@ -344,7 +344,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return JSONResponse(
             {
                 "status": "ready" if available else "unavailable",
-                "schema_version": 11,
+                "schema_version": 12,
                 "version": __version__,
             },
             status_code=200 if available else 503,
