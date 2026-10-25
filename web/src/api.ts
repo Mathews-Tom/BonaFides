@@ -18,7 +18,7 @@ export interface Profile { id: string; version: number; current_revision: Profil
 export interface RevisionPage { items: ProfileRevisionSummary[]; next_cursor: number | null }
 export interface FieldError { loc: (string | number)[]; code: string; message: string }
 export type WorkflowState = 'pending' | 'running' | 'waiting_for_approval' | 'retryable_failure' | 'permanent_failure' | 'cancelled' | 'succeeded';
-export interface Workflow { id: string; version: number; state: WorkflowState; attempt: number; kind?: string; max_attempts?: number; next_attempt_at?: string | null; last_error_code: string | null; result: { document_id?: string; artifact_id?: string; source_id?: string; policy_version?: number; fetch_elapsed_ms?: number; posting_count?: number; new_posting_count?: number; changed_posting_count?: number; unchanged_posting_count?: number; excluded_prospect_count?: number; fetched_at?: string; freshness?: 'current'; error_code?: string } | null }
+export interface Workflow { id: string; version: number; state: WorkflowState; attempt: number; kind?: string; max_attempts?: number; next_attempt_at?: string | null; last_error_code: string | null; result: { document_id?: string; artifact_id?: string; source_id?: string; posting_id?: string; profile_revision_id?: string; requirements_revision_id?: string; source_sha256?: string; requirements?: Requirement[]; assessments?: Coverage[]; policy_version?: number; fetch_elapsed_ms?: number; posting_count?: number; new_posting_count?: number; changed_posting_count?: number; unchanged_posting_count?: number; excluded_prospect_count?: number; fetched_at?: string; freshness?: 'current'; error_code?: string } | null }
 export interface DocumentRecord { id: string; version: number; current_revision: { id: string; body: { title: string; sections: { key: string; heading: string; blocks: { block_key: string; text: string; claim_kind: string; claim_revision_ids: string[]; evidence_revision_ids: string[] }[] }[] }; content_sha256: string }; reviewed: boolean; unsupported_claims: string[]; stale: boolean; stale_reason: 'upstream_profile_revision_changed' | null }
 export const MAX_IMPORT_BYTES = 10 * 1024 * 1024;
 export type ImportMediaType = 'application/pdf' | 'text/plain';
@@ -65,6 +65,37 @@ export interface ObservationSummary {
 export interface ObservationDetail extends ObservationSummary { source_url: string; snapshot: Record<string, unknown> }
 export interface ObservationPage { items: ObservationSummary[]; next_cursor: string | null }
 export interface SourceRefreshAccepted { workflow_id: string; source_id: string }
+export interface HardConstraint {
+  kind: 'work_authorization' | 'location' | 'salary' | 'other'; operator: 'manual' | 'equals' | 'contains' | 'minimum' | 'maximum';
+  required_value: string | null; owner_value: string | null; jurisdiction: string | null; owner_jurisdiction: string | null;
+  currency: string | null; owner_currency: string | null; period: string | null; owner_period: string | null;
+  owner_confirmed: boolean; contradictory: boolean;
+}
+export interface Requirement {
+  requirement_key: string; text: string; importance: 'required' | 'preferred' | 'unclear';
+  span: { start: number; end: number; quote: string }; hard_constraint: HardConstraint | null;
+}
+export interface RequirementRevision {
+  id: string; revision_no: number; source_sha256: string; requirements: Requirement[]; confirmed: boolean;
+  created_at: string; provenance: Record<string, unknown>; stale: boolean;
+}
+export interface Coverage {
+  requirement_key: string; coverage: 'supported' | 'partial' | 'not_evidenced' | 'conflicting';
+  claim_revision_ids: string[]; evidence_revision_ids: string[]; explanation: string;
+}
+export interface Assessment {
+  id: string; profile_revision_id: string; requirements_revision_id: string; created_at: string; stale: boolean; stale_reasons: string[];
+  hard_eligibility: 'met' | 'not_met' | 'unknown';
+  hard_constraints: { requirement_key: string | null; state: 'met' | 'not_met' | 'unknown'; reason: string }[];
+  assessments: Coverage[]; evidence_coverage: { supported: number; partial: number; not_evidenced: number; conflicting: number; total: number };
+  provenance: Record<string, unknown>;
+}
+export interface RequirementsView {
+  posting_id: string; version: number; source_text: string; source_sha256: string; current_revision: RequirementRevision | null;
+  model_route: { status: 'disabled' | 'unqualified' | 'qualified'; reason: string; identity: Record<string, unknown> | null };
+  latest_assessment: Assessment | null;
+}
+export interface SuitabilityAccepted { workflow_id: string; posting_id: string }
 export class ApiError extends Error {
   constructor(readonly status: number, readonly code: string, readonly fields: FieldError[] = [], readonly retryAfterSeconds?: number) { super(code); }
 }

@@ -1,9 +1,10 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react';
-import { Api, ApiError, errorText, terminal, type DuplicateCandidate, type DuplicateDecision, type DuplicatePage, type ObservationDetail, type ObservationPage, type ObservationSummary, type PostingDetail, type PostingDisposition, type PostingFilters, type PostingPage, type PostingSummary, type PostingWrite, type Source, type SourcePage, type SourceRefreshAccepted, type SourceWrite, type Workflow } from './api';
+import { Api, ApiError, errorText, terminal, type DuplicateCandidate, type DuplicateDecision, type DuplicatePage, type ObservationDetail, type ObservationPage, type ObservationSummary, type PostingDetail, type PostingDisposition, type PostingFilters, type PostingPage, type PostingSummary, type PostingWrite, type Profile, type Source, type SourcePage, type SourceRefreshAccepted, type SourceWrite, type Workflow } from './api';
+import { Suitability } from './Suitability';
 
 export interface JobSourcesProps {
-  api: Api; disabled?: boolean; onDirtyChange?: (dirty: boolean) => void; onBusyChange?: (busy: boolean) => void;
+  api: Api; currentProfile?: Profile | null; onProfileChange?: (value: Profile) => void; disabled?: boolean; onDirtyChange?: (dirty: boolean) => void; onBusyChange?: (busy: boolean) => void;
 }
 interface SourceEditor { id?: string; version?: number; draft: SourceWrite; baseline: string }
 interface RefreshRun { id: string; sourceId: string | null; workflow: Workflow | null }
@@ -85,7 +86,7 @@ function SourceFacts({ source }: { source: Source }) {
     <Reference value={source.terms_url} label="Reviewed board terms" /></>;
 }
 
-export function JobSources({ api, disabled = false, onDirtyChange, onBusyChange }: JobSourcesProps) {
+export function JobSources({ api, currentProfile, onProfileChange, disabled = false, onDirtyChange, onBusyChange }: JobSourcesProps) {
   const [posting, setPosting] = useState<PostingWrite>(emptyPosting);
   const [postings, setPostings] = useState<PostingSummary[] | null>(null);
   const [postingCursor, setPostingCursor] = useState<string | null>(null);
@@ -119,6 +120,8 @@ export function JobSources({ api, disabled = false, onDirtyChange, onBusyChange 
   const [pollGeneration, setPollGeneration] = useState(0);
   const [completionPending, setCompletionPending] = useState(false);
   const [operation, setOperation] = useState(false);
+  const [suitabilityDirty, setSuitabilityDirty] = useState(false);
+  const [suitabilityBusy, setSuitabilityBusy] = useState(false);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
   const [now, setNow] = useState(() => Date.now());
@@ -139,10 +142,10 @@ export function JobSources({ api, disabled = false, onDirtyChange, onBusyChange 
   const manualDirty = Object.values(posting).some(value => typeof value === 'string' && value.length > 0);
   const observedSince = observedSinceInput(filters.observed_after);
   const sourceDirty = !!editor && JSON.stringify(editor.draft) !== editor.baseline;
-  const dirty = manualDirty || sourceDirty || !!postingCommand || !!sourceCommand;
+  const dirty = manualDirty || sourceDirty || !!postingCommand || !!sourceCommand || suitabilityDirty;
   const activeRun = !!run && (!run.workflow || !terminal(run.workflow.state));
-  const busy = operation || activeRun || completionPending;
-  const locked = disabled || operation;
+  const busy = operation || activeRun || completionPending || suitabilityBusy;
+  const locked = disabled || operation || suitabilityBusy;
   const runId = run?.id;
   const runState = run?.workflow?.state;
   function canRefresh(value: Source): boolean {
@@ -239,7 +242,7 @@ export function JobSources({ api, disabled = false, onDirtyChange, onBusyChange 
     const key = crypto.randomUUID(); mutationKeys.current.set(slot, { fingerprint, key }); return key;
   }
   async function createPosting(event: FormEvent) {
-    event.preventDefault(); if (locked || sourceDirty || postingCommand || sourceCommand) return;
+    event.preventDefault(); if (locked || sourceDirty || postingCommand || sourceCommand || suitabilityDirty) return;
     const body = { ...posting, canonical_url: posting.canonical_url || null };
     await perform(async signal => {
       detailRead.current += 1;
@@ -251,7 +254,7 @@ export function JobSources({ api, disabled = false, onDirtyChange, onBusyChange 
     });
   }
   async function openPosting(id: string) {
-    if (postingCommand) return;
+    if (postingCommand || suitabilityDirty || suitabilityBusy) return;
     await perform(async signal => {
       const generation = ++detailRead.current;
       const value = await request<PostingDetail>(signal, `/postings/${encodeURIComponent(id)}`);
@@ -471,13 +474,13 @@ export function JobSources({ api, disabled = false, onDirtyChange, onBusyChange 
     {urlContextPending && <p className="disclosure">The address bar has a different catalog context. <button className="secondary" disabled={locked || dirty} onClick={() => { void restoreUrlContext(); }}>Load current URL context</button></p>}
     {operation && <p role="status">Waiting for the server. Your existing catalog and buffers stay visible.</p>}
     {completionPending && <p role="status">Reconciling the retained catalog and source health after the task ended…</p>}
-    <form onSubmit={event => { void createPosting(event); }}><fieldset disabled={locked || sourceDirty || !!postingCommand || !!sourceCommand}><legend>Add a manual posting</legend>
+    <form onSubmit={event => { void createPosting(event); }}><fieldset disabled={locked || sourceDirty || !!postingCommand || !!sourceCommand || suitabilityDirty}><legend>Add a manual posting</legend>
       <label>Job title<input required maxLength={500} value={posting.title} onChange={event => { const value = event.target.value; setPosting(existing => ({ ...existing, title: value })); }} /></label>
       <label>Employer<input required maxLength={500} value={posting.company} onChange={event => { const value = event.target.value; setPosting(existing => ({ ...existing, company: value })); }} /></label>
       <label>Location<input maxLength={2000} value={posting.location_text} onChange={event => { const value = event.target.value; setPosting(existing => ({ ...existing, location_text: value })); }} /></label>
       <label>Complete original posting text<textarea required maxLength={200000} value={posting.description_text} onChange={event => { const value = event.target.value; setPosting(existing => ({ ...existing, description_text: value })); }} /></label>
       <label>Optional HTTPS reference URL<input type="url" maxLength={2048} value={posting.canonical_url ?? ''} onChange={event => { const value = event.target.value; setPosting(existing => ({ ...existing, canonical_url: value })); }} /></label>
-      <p className="hint">Plain text only. No requirements extraction, ranking or application is performed.</p>
+      <p className="hint">Plain text only. Saving starts no model request or application action. Review requirements manually or explicitly request a separate extraction proposal from the saved posting detail.</p>
       <div className="actions"><button>Save manual posting</button><button type="button" className="secondary" disabled={!manualDirty} onClick={() => { setPosting(emptyPosting()); mutationKeys.current.delete('posting'); }}>Discard manual buffer</button></div>
     </fieldset></form>
     <section aria-labelledby="catalog-title"><h3 id="catalog-title">Retained posting catalog</h3>
@@ -497,7 +500,7 @@ export function JobSources({ api, disabled = false, onDirtyChange, onBusyChange 
       {resultFilters && <p role="status" aria-label="Loaded catalog filters"><strong>Loaded results:</strong> {filterSummary(resultFilters)}</p>}
       {catalogMetadata && <p className="hint">Newest retained entries first · {postings?.length} loaded (total unavailable) · query {catalogMetadata.elapsed.toFixed(2)} ms · cutoff {catalogMetadata.asOf}. New entries appear on a fresh query; edits or removals can change membership between pages.</p>}
       {catalogError && <p className="error" role="status">{catalogError} {postings !== null ? 'Earlier loaded postings remain visible; this list may be stale. The loaded-filter summary describes those earlier results, not the failed request.' : 'Catalog is unavailable, not known to be empty.'}</p>}
-      {postings === null ? <p role="status">{catalogError ? 'Load the catalog again when the server is available.' : 'Loading posting catalog…'}</p> : postings.length === 0 ? <p>{catalogError ? 'The earlier successful result contained no rows; the latest request is unavailable, not confirmed empty.' : resultFilters && filterKeys.some(key => resultFilters[key]) ? 'No postings match these filters. Clear catalog filters to return to all retained postings.' : 'No retained postings. Paste a manual posting above or explicitly refresh a reviewed source below.'}</p> : <ul>{postings.map(item => <li key={item.id}><button className="secondary" disabled={locked || !!postingCommand} onClick={() => { void openPosting(item.id); }}>Read {item.title} at {item.company}</button><PostingFacts posting={item} /></li>)}</ul>}
+      {postings === null ? <p role="status">{catalogError ? 'Load the catalog again when the server is available.' : 'Loading posting catalog…'}</p> : postings.length === 0 ? <p>{catalogError ? 'The earlier successful result contained no rows; the latest request is unavailable, not confirmed empty.' : resultFilters && filterKeys.some(key => resultFilters[key]) ? 'No postings match these filters. Clear catalog filters to return to all retained postings.' : 'No retained postings. Paste a manual posting above or explicitly refresh a reviewed source below.'}</p> : <ul>{postings.map(item => <li key={item.id}><button className="secondary" disabled={locked || !!postingCommand || suitabilityDirty} onClick={() => { void openPosting(item.id); }}>Read {item.title} at {item.company}</button><PostingFacts posting={item} /></li>)}</ul>}
       {postingCursor && <button className="secondary" disabled={locked} onClick={() => { void nextPostings(); }}>Load more postings</button>}
       {detail && <article className="comparison" aria-labelledby="posting-detail-title"><h3 id="posting-detail-title">{detail.title}</h3><p>{detail.company}</p><PostingFacts posting={detail} />
         <p><strong>Your disposition: {detail.disposition ?? 'unmarked'}</strong>. Saving, dismissing or archiving does not create an application, change its stage, delete text or merge records.</p>
@@ -516,6 +519,7 @@ export function JobSources({ api, disabled = false, onDirtyChange, onBusyChange 
         </section>}
         <h4>Complete original posting text</h4><pre className="import-source">{detail.description_text}</pre><Reference value={detail.canonical_url} label="Original posting reference" />
         <p>Posting {detail.id} · version {detail.version} · SHA-256 <code>{detail.content_sha256}</code></p>
+        <Suitability key={detail.id} api={api} postingId={detail.id} postingVersion={detail.version} postingContentSha256={detail.content_sha256} currentProfile={currentProfile} onProfileChange={onProfileChange} disabled={disabled || operation || manualDirty || sourceDirty || !!postingCommand || !!sourceCommand || activeRun || completionPending} onDirtyChange={setSuitabilityDirty} onBusyChange={setSuitabilityBusy} onVersionChange={version => { setDetail(existing => existing?.id === detail.id ? { ...existing, version: Math.max(existing.version, version) } : existing); }} />
         <section aria-labelledby="duplicate-review-title"><h4 id="duplicate-review-title">Cross-source duplicate review</h4>
           <p>These are conservative review candidates, not verified duplicates. Different external IDs and locations retain separate identities. A distinct or suspected decision never merges, deletes or rewrites either posting.</p>
           <button className="secondary" disabled={locked} onClick={() => { void loadDuplicates(); }}>Load duplicate review candidates</button>

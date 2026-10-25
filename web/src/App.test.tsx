@@ -1,11 +1,12 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
-import { render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { App } from './App';
-import { Api, ApiError, type Profile, type Session } from './api';
+import { Api, ApiError, type Profile, type RequirementsView, type Session, type Workflow } from './api';
 const session: Session = { owner_id: 'owner', login_name: 'mira', csrf_token: 'session-csrf', expires_at: '2030-01-01' };
 const profile: Profile = { id: 'profile', version: 1, current_revision: { id: 'revision-1', revision_no: 1, content_sha256: 'a'.repeat(64), created_at: '2026-01-01T00:00:00Z', author_owner_id: 'owner', reason: 'Initial profile', claims: [], snapshot: { display_name: 'Mira', headline: 'Engineer', claim_revision_ids: [] } }, evidence: [], quality_warnings: [] };
+afterEach(() => { window.history.replaceState(null, '', '/'); });
 function mockRequest(api: Api, handler: (path: string, method: string) => Promise<unknown>) {
   return vi.spyOn(api, 'request').mockImplementation(async <T,>(path: string, method = 'GET') => await handler(path, method) as T);
 }
@@ -110,5 +111,85 @@ describe('evidence and document lifecycle', () => {
     await user.click(screen.getByRole('button', { name: 'Render reviewed PDF' }));
     expect(screen.queryByRole('link', { name: 'Download rendered PDF' })).not.toBeInTheDocument();
     expect(await screen.findByRole('link', { name: 'Download rendered PDF' }, { timeout: 4000 })).toHaveAttribute('href', '/api/v1/artifacts/pdf-1');
+  });
+});
+
+function connectedSuitabilityApi() {
+  const api = new Api();
+  const state = {
+    profile,
+    reviewReads: 0,
+    review: {
+      posting_id: 'posting-one', version: 1, source_text: 'SQL', source_sha256: 'a'.repeat(64), model_route: { status: 'qualified', reason: 'Explicit synthetic test route', identity: null },
+      current_revision: { id: 'requirements-one', revision_no: 1, source_sha256: 'a'.repeat(64), requirements: [{ requirement_key: 'req-1', text: 'SQL', importance: 'required', span: { start: 0, end: 3, quote: 'SQL' }, hard_constraint: null }], confirmed: true, created_at: profile.current_revision.created_at, provenance: { origin: 'manual' }, stale: false },
+      latest_assessment: { id: 'assessment-one', profile_revision_id: 'revision-1', requirements_revision_id: 'requirements-one', created_at: profile.current_revision.created_at, stale: false, stale_reasons: [], hard_eligibility: 'unknown', hard_constraints: [{ requirement_key: null, state: 'unknown', reason: 'no_reviewed_constraints' }], assessments: [{ requirement_key: 'req-1', coverage: 'not_evidenced', claim_revision_ids: [], evidence_revision_ids: [], explanation: 'No selected source.' }], evidence_coverage: { supported: 0, partial: 0, not_evidenced: 1, conflicting: 0, total: 1 }, provenance: { origin: 'owner_reviewed' } },
+    } as RequirementsView,
+    workflow: { id: 'task-one', version: 1, state: 'running', attempt: 1, max_attempts: 2, kind: 'posting_extract', result: { posting_id: 'posting-one', source_sha256: 'a'.repeat(64) }, last_error_code: null } as Workflow,
+  };
+  mockRequest(api, async (path, method) => {
+    if (path === '/session') return session;
+    if (path === '/profile' && method === 'GET') return state.profile;
+    if (path === '/profile' && method === 'PUT') {
+      state.profile = { ...state.profile, version: 2, current_revision: { ...state.profile.current_revision, id: 'revision-2', revision_no: 2, snapshot: { ...state.profile.current_revision.snapshot, headline: 'Updated identity' } } };
+      return state.profile;
+    }
+    const posting = { id: 'posting-one', version: state.review.version, title: 'Engineer', company: 'Synthetic North', location_text: '', status: 'open', created_at: profile.current_revision.created_at, updated_at: profile.current_revision.created_at, description_text: 'SQL', canonical_url: null, content_sha256: 'c'.repeat(64), source_config_id: 'manual-source', source_kind: 'manual', external_id: 'one', last_observed_at: profile.current_revision.created_at, disposition: null };
+    if (path === '/postings') return { items: [posting], next_cursor: null, as_of: profile.current_revision.created_at, query_elapsed_ms: 1 };
+    if (path === '/postings/posting-one') return posting;
+    if (path === '/postings/posting-one/requirements') { state.reviewReads += 1; return state.review; }
+    if (path === '/postings/posting-one/extract') { state.review = { ...state.review, version: state.review.version + 1 }; return { posting_id: 'posting-one', workflow_id: 'task-one' }; }
+    if (path === '/workflows/task-one') return state.workflow;
+    if (path === '/sources') return { items: [] };
+    throw new ApiError(404, 'not_found');
+  });
+  return { api, state };
+}
+describe('workspace suitability freshness propagation', () => {
+  it('marks a saved assessment stale immediately after a workspace profile save and retains the local coverage buffer', async () => {
+    const { api, state } = connectedSuitabilityApi();
+    render(<App api={api} />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Read Engineer at Synthetic North' }));
+    await screen.findByText('Current snapshot');
+    fireEvent.click(screen.getByRole('button', { name: 'Review evidence coverage manually' }));
+    fireEvent.change(screen.getByLabelText('Explanation of evidence and gaps'), { target: { value: 'Do not lose my ongoing coverage review.' } });
+    fireEvent.change(screen.getByLabelText('Professional headline'), { target: { value: 'Updated identity' } });
+    expect(screen.getByRole('button', { name: 'Save profile' })).toBeEnabled();
+    fireEvent.click(screen.getByRole('button', { name: 'Save profile' }));
+    expect(await screen.findByText('Stale historical snapshot — not a current eligibility assertion')).toBeVisible();
+    expect(screen.getByLabelText('Explanation of evidence and gaps')).toHaveValue('Do not lose my ongoing coverage review.');
+    expect(screen.getByRole('button', { name: 'Save owner-reviewed assessment' })).toBeDisabled();
+    expect(await screen.findByRole('region', { name: 'Current profile comparison' })).toHaveTextContent('revision-2');
+    expect(screen.getByLabelText('Professional headline')).toBeEnabled();
+    expect(state.reviewReads).toBe(1);
+    expect(state.review.latest_assessment?.stale).toBe(false);
+  });
+
+  it('keeps manual profile editing available during durable model work while updating visible assessment freshness', async () => {
+    const { api, state } = connectedSuitabilityApi();
+    render(<App api={api} />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Read Engineer at Synthetic North' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Request extraction proposal' }));
+    await waitFor(() => expect(screen.getByRole('status', { name: 'Suitability task status' })).toHaveTextContent('Task running.'));
+    expect(screen.getByRole('button', { name: 'Sign out' })).toBeDisabled();
+    expect(screen.getByLabelText('Professional headline')).toBeEnabled();
+    fireEvent.change(screen.getByLabelText('Professional headline'), { target: { value: 'Updated identity' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save profile' }));
+    expect(await screen.findByText('Stale historical snapshot — not a current eligibility assertion')).toBeVisible();
+    expect(screen.getByRole('region', { name: 'Current suitability task' })).toHaveTextContent('task-one');
+    expect(state.workflow.state).toBe('running');
+    expect(screen.getByLabelText('Professional headline')).toBeEnabled();
+  });
+
+  it('preserves unsaved identity text when an explicit citation reload observes a newer profile', async () => {
+    const { api, state } = connectedSuitabilityApi();
+    render(<App api={api} />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Read Engineer at Synthetic North' }));
+    await screen.findByText('Current snapshot');
+    fireEvent.change(screen.getByLabelText('Professional headline'), { target: { value: 'My unsaved identity wording.' } });
+    state.profile = { ...state.profile, version: 2, current_revision: { ...state.profile.current_revision, id: 'revision-2', revision_no: 2 } };
+    fireEvent.click(screen.getByRole('button', { name: 'Reload profile citations' }));
+    expect(await screen.findByText('Current server revision 2')).toBeVisible();
+    expect(screen.getByLabelText('Professional headline')).toHaveValue('My unsaved identity wording.');
+    expect(screen.getByText('Stale historical snapshot — not a current eligibility assertion')).toBeVisible();
   });
 });
