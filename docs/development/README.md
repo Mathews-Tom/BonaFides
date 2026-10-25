@@ -1,21 +1,327 @@
-# Development documentation
+# Development, reviewed imports and job-source collection
 
-The repository currently provides public project, contribution, security and licensing documentation. Application source, package manifests, dependency locks and CI are not implemented; no install, test, build or startup command is claimed operational.
+The repository contains an M0 architecture proof, OL-005 evidence-linked profiles/history/themes, OL-006 reviewed PDF/plaintext résumé import, and OL-007 manual postings plus a reviewed configured-board Greenhouse read mechanism on schema 7. The commands and contracts below are the operational interface, not qualification of untested targets. Preserve the distinction between local fixtures, actual container/browser proof and real-board collection permission. M1 is incomplete; OL-008 search/ranking/save-dismiss, model providers and the production document-generation loop are not implemented. Native amd64 remains deferred and independent public-distribution rights review remains pending.
 
-## Implementation baseline
+## Requirements and frozen installs
 
-The provisional layout is a uv-managed Python backend under `src/offerloom` and a pnpm-managed React/TypeScript/Vite frontend under `web`, with PostgreSQL and Docker Compose. Confirm the approved scope and [architecture](../architecture/README.md) before introducing application code.
+Use Python **3.12.15**, uv **0.13.0**, Node **22.23.4**, pnpm **10.33.3**, Docker Engine/Desktop with Compose v2, and a current Chromium-capable Linux/macOS development host. The application images pin official multi-platform digests. Docker must be able to build/pull images and create ordinary private named volumes. No privileged container or Docker socket mount is needed by application services.
 
-Foundation work must preserve the root [ignore rules](../../.gitignore), add real manifests and locked dependencies, establish lint/type/test/build gates, implement validated configuration and a reviewed migration path, and prove least-privilege API/worker/database startup and failure recovery. Commit lockfiles, migrations and synthetic fixtures; exclude secrets, dependency/build caches, local data and backups. Environment examples must contain placeholders only.
+Run the following from the repository root in one shell. It requires `curl`, `tar` and `shasum` and supports macOS and glibc Linux on x64/arm64; it is not a Windows or musl Linux bootstrap. Tool binaries stay under ignored `.local/toolchain/`; no system-wide npm installation, shell-profile edit or Python package-installer bootstrap is needed. The uv installer is the official version-specific HTTPS installer, while Node archive hashes below are fixed from the official [22.23.4 checksums](https://nodejs.org/dist/v22.23.4/SHASUMS256.txt).
 
-Once the application and its tooling exist, configure backend Ruff, strict mypy and pytest gates; frontend TypeScript, ESLint, Vitest and production-build gates; and PostgreSQL/browser/recovery integration checks. These are required future gates, not checks that the current public documentation repository can run.
+```sh
+set -eu
+toolchain="$PWD/.local/toolchain"
+mkdir -p "$toolchain/node"
+curl --fail --location https://astral.sh/uv/0.13.0/install.sh \
+  --output "$toolchain/install-uv.sh"
+UV_UNMANAGED_INSTALL="$toolchain/uv" sh "$toolchain/install-uv.sh"
+case "$(uname -s)-$(uname -m)" in
+  Darwin-arm64) node_target=darwin-arm64; node_sha=c9e1dbc748b33ed2d14f42445191ecaf14c56259c7a9a26d0042c49ec2b66428 ;;
+  Darwin-x86_64) node_target=darwin-x64; node_sha=efcc2b0db6f94bf53eddb038fe2b370277a042bd29e4f19b8f8e23598795b819 ;;
+  Linux-aarch64|Linux-arm64) node_target=linux-arm64; node_sha=f7a1e486dbc8b286847815b477d4fb5e9fb963ed4489c3e1588853d685f589f9 ;;
+  Linux-x86_64) node_target=linux-x64; node_sha=b8492284c76a54baf58d61668dd0e41ee0fc98adabf9503d30f05d08f55b4406 ;;
+  *) echo 'Unsupported host for these bootstrap commands' >&2; exit 1 ;;
+esac
+node_archive="$toolchain/node-v22.23.4-$node_target.tar.gz"
+curl --fail --location "https://nodejs.org/dist/v22.23.4/node-v22.23.4-$node_target.tar.gz" \
+  --output "$node_archive"
+printf '%s  %s\n' "$node_sha" "$node_archive" | shasum -a 256 --check -
+tar -xzf "$node_archive" --strip-components=1 -C "$toolchain/node"
+export PATH="$toolchain/uv:$toolchain/node/bin:$toolchain/pnpm/bin:$PATH"
+npm install --global --prefix "$toolchain/pnpm" --registry https://registry.npmjs.org \
+  --ignore-scripts pnpm@10.33.3
+test "$(uv --version | cut -d ' ' -f 2)" = '0.13.0'
+test "$(node --version)" = 'v22.23.4'
+test "$(pnpm --version)" = '10.33.3'
+uv python install 3.12.15
+uv sync --frozen --python 3.12.15 --only-group build --no-build
+uv sync --frozen --python 3.12.15 --group build --no-build-isolation
+# Keep this host toolchain on PATH for frontend gates and inventory collection.
+pnpm --dir web install --frozen-lockfile
+```
 
-## Current documentation checks
+In a new shell, restore `toolchain="$PWD/.local/toolchain"` and the `export PATH=...` above from the repository root. If deliberately using an existing uv installation instead, invoke the exact version with `uv tool run --from uv==0.13.0 uv ...`; do not let an older system uv silently stand in for the pinned tool. Do not regenerate locks as an install workaround.
 
-Hosted CI is deferred until application scaffolding. The current documentation-only baseline instead requires clean-checkout validation of public local links, Git ignore/keep rules and an outgoing-commit secret scan before merging. Ignored local specifications must not be required for those checks. Passing these documentation checks does not qualify an application build, runtime, security boundary or release.
+The first sync installs only the explicitly pinned `build` group from `uv.lock` wheel hashes, without building/installing Offerloom. The second installs the project using those existing backend tools with build isolation disabled: it must not resolve a separate, unlocked PEP 517 environment. The Python 3.12 backend closure is Hatchling 1.27.0, packaging 26.3, pathspec 1.1.1, pluggy 1.7.0 and trove-classifiers 2026.9.21.13, plus editables 0.6 for Hatchling's editable-build requirement; Hatchling's conditional `tomli` dependency applies only below Python 3.11. Keep both steps when recreating the environment. Project uv configuration retains the build group for subsequent development commands and disables isolated backend resolution, so a missing prerequisite fails rather than downloading an unlocked tool. These are version/hash-locked inputs, not a claim of bit-identical generated wheels or rights approval. See the official [uv sync options](https://docs.astral.sh/uv/reference/cli/#uv-sync).
 
-## Private planning boundary
+Docker uses the same two-phase install with a non-editable project, then a final frozen runtime sync removes the build group while retaining the installed project. That final sync sets `UV_NO_BUILD_ISOLATION=false` to restore exact pruning (uv preserves extraneous tools when isolation is disabled), but also passes `--no-build`: it cannot invoke an isolated backend or resolve new build tools. `uv cache clean` removes downloaded/build cache contents before the layer is committed; `UV_LINK_MODE=copy` keeps the environment independent of that cache. Native libraries, license files and installed distribution metadata remain intact.
 
-Detailed design documents, coding-agent handoffs, prototypes and benchmark evidence are maintained locally under `.docs/design/`. The project `.gitignore` excludes the entire `.docs/` tree, so these files are not supplied by a repository clone. Public documentation must remain self-contained and must not link to ignored files. Move reviewed contracts, migrations and fixtures into tracked application directories before application code or CI depends on them; do not force-add private planning artifacts.
+CI extracts the native Linux uv binary from `ghcr.io/astral-sh/uv:0.13.0@sha256:cdc6093146eb3ff6a40107b38f008b789e050e77ad87865e381d9917da55a168`, with no Python package-installer bootstrap. It installs host Node 22.23.4 through the official `actions/setup-node` v4.4.0 commit `49933ea5288caeca8642d1e84afbd3f7d6820020` and pnpm 10.33.3 into a runner-temporary prefix. Frontend frozen install, type/lint/test/build/audit gates and the Python inventory collector all inherit that same host PATH; CI checks Node/pnpm versions and executable-path identity before collection. Application Docker builds separately retain the pinned official Node image; a container-only pnpm installation does not supply the host collector.
 
-All contributions follow [CONTRIBUTING.md](../../CONTRIBUTING.md), the [security policy](../../SECURITY.md) and [release compliance requirements](../compliance/release-compliance-checklist.md). Public documentation does not establish application readiness or clear third-party/native/font/model distribution rights.
+## Local setup and lifecycle
+
+```sh
+uv run --frozen python -m tools.dev_setup --benchmark
+docker compose up --build --detach --wait
+docker compose exec api python -m offerloom init-bootstrap
+uv run --frozen python -m tools.dev_setup --show-bootstrap-token
+```
+
+The last command is an **intentional local secret reveal**: do not capture it in CI/logs, paste it into a command argument, or include it in support evidence. Open **http://localhost:8000** and create the sole owner. Choose a strong 15–128-character password. Secure `__Host-` cookies are never downgraded; Chromium treats localhost as a trustworthy context, which the real browser probe must exercise. This is not remote-HTTP support. Ordinary Compose publishes the API on 127.0.0.1 only and never publishes PostgreSQL. Use localhost in the browser to match the configured exact Origin.
+
+Setup creates `.secrets/` mode 0700 and files mode 0600 using exclusive creation. `.env` contains only project/origin/mode/port/secret-directory configuration. A sealed one-shot helper copies secret material into separate named volumes with restrictive UID-owned 0400 files; steady-state services remain nonroot. Setup refuses to rotate or overwrite existing credentials. Preserve/escrow the keyring separately; deleting/recreating secrets does not recover encrypted data. Startup does not silently manufacture missing keys. The initial host-local bootstrap verifier expires in 15 minutes and can be renewed with `init-bootstrap` only before an owner exists. If local owner access is lost, `docker compose exec api python -m offerloom recover-password` prompts privately and invalidates sessions/approvals; do not put the password in argv or environment.
+
+```sh
+# Readiness checks actual application DB/schema state, not just process existence.
+docker compose exec api python -m offerloom healthcheck
+# Normal lifecycle preserves all named data volumes.
+docker compose stop
+docker compose start
+docker compose restart api worker db
+docker compose up --detach --wait
+# Effective configuration validation prints no secret values.
+docker compose exec api python -m offerloom config-check
+```
+
+`migrate` uses a separate DDL secret and applies tracked checksum-verified migrations before API/worker startup. It must run from the repository root (or `/app` in the image), where `alembic.ini` and `migrations/sql` are present. No runtime or CI path consumes `.docs/`. A failed migration/readiness check is not bypassed by running the API manually. Do not add `down --volumes` to ordinary restart/upgrade instructions.
+
+Benchmark mode is explicit and local. The UI can load SYN-CORE, save profile revisions, start normal/slow/poison/staging-pause tasks, inspect durable state, accept an exact document revision and render/download a PDF. These operations use real HTTP/SQL/filesystem/renderer paths with deterministic synthetic input, not a fake production provider. Default `tools.dev_setup` without `--benchmark` sets production mode and benchmark routes return 404. No external integrations are shipped in M0.
+
+## OL-005 profile contract
+
+Sign in, save identity, then add manual source text or an explicitly labelled owner attestation. Add skills, work experience, projects, education or languages independently; every entry requires exact evidence-revision links and source excerpts. Other existing claim kinds remain editable. Keyboard-accessible move buttons reorder entries within a section. Editing a source never silently updates existing claim pins. Owner identity and source links are provenance, not independent credential verification.
+
+Editors use explicit save, not autosave. An open entry/source buffer blocks identity saves, benchmark replacement and sign-out; unsaved identity blocks entry/source mutation. Save or explicitly discard before switching write contexts. Network failure retains the buffer and retry key. On a 412 conflict, compare the latest saved profile and explicitly select its version before retrying retained text. Ordinary edits cannot reactivate archived records, including delayed edits carrying a current profile version.
+
+History previews exact statements and captured standalone source state, not live pointers. Explicit restore appends a new profile revision, restores selected active/archive state and exact source/claim pointers, and retains displaced history. Legacy M0 snapshots retain original bytes; where standalone source state was not captured, only claim-linked historical source pins can be inferred. Archive is not erasure. Profile changes mark derived drafts outdated without changing words, provenance, exact-revision reviews or existing PDF bytes. Starting another synthetic M0 task is explicit regeneration, not a production M1 document-generation product.
+
+All paths below are relative to `/api/v1` and use the existing owner session and same-origin/CSRF boundary. Every profile/claim/evidence write uses the **profile aggregate's** quoted integer `If-Match` plus `Idempotency-Key`, not a claim/evidence row version. Successful writes return HTTP 200 and the full updated profile, with changed record ID metadata for entry/source writes.
+
+| Operation | Implemented request/result |
+|---|---|
+| `GET /profile` | Current revision, `current_revision.claims`, root active `evidence`, version and quality warnings; no duplicate root claims. |
+| `PUT /profile` | Raw `{display_name, headline, claim_revision_ids, evidence_revision_ids?}` snapshot, not a `ProfileWrite` envelope. Source-state IDs are captured automatically; sending them cannot archive/reactivate sources. |
+| `POST /claims`, `PUT /claims/{id}` | `{kind, payload: {text, organization?, role?, start_date?, end_date?, proficiency?}, evidence_links: [{evidence_revision_id, support_kind, excerpt}]}`. Kind is immutable; 1–16 links; support is `direct`, `user_asserted` or `context`. |
+| `POST /evidence`, `PUT /evidence/{id}` | `{payload: {text, source}}`; manual text only, no file import. |
+| `DELETE /claims/{id}`, `DELETE /evidence/{id}` | No body; archive while preserving immutable history and links. |
+| `GET /claims`, `GET /evidence` | Active records, bounded by 100 claims and 200 sources; writes refuse capacity overflow rather than silently truncate. |
+| `GET /profile/revisions?before=<revision_no>` | `{items: [summary], next_cursor: number|null}`; descending pages of at most 100, exclusive numeric `before`; summary contains snapshot/hash/time/reason/owner author, not hydrated bodies. |
+| `GET /profile/revisions/{revision_id}` | Exact historical `claims: [{id,kind,revision}]` and `evidence: [{id,revision}]`, without mutable live/archive/version fields. |
+| `GET /claims/{id}/revisions/{revision_id}`, `GET /evidence/{id}/revisions/{revision_id}` | Immutable owner-scoped revision content and authorship; archived history remains readable. |
+| `POST /profile/restore` | `{revision_id}`; explicit append-only restoration under the same profile-wide concurrency/idempotency boundary. |
+
+Dates preserve supplied precision (`YYYY`, `YYYY-MM`, `YYYY-MM-DD`), reject impossible dates and definitely reversed intervals, and never invent unknown months/days. Claim text is 1–4,000 characters; source text 1–8,000; source reference 1–500; identity limits are 120/300. Optional structured strings are omitted when unset. Validation problems include `fields: [{loc, code, message}]` with allowlisted field paths and fixed safe messages; raw values, validator context/messages and unknown input keys are never echoed.
+
+Theme defaults to System and follows device changes. Explicit Light/Dark stores only `offerloom.theme = {version: 1, theme, expiresAt}`, expiring exactly 365 days after selection; reload never extends it. System removes the override. Unknown, malformed, expired or cleared storage returns to System. Denied storage visibly limits the choice to the current visit. Theme does not alter document text, fixed light paper palette/typography or PDF rendering; no profile/session data is stored with it.
+
+The ignored design-stage full-M1 OpenAPI remains a **future proposal**, not the deployed profile/import contract. Its `ProfileWrite`, `ClaimPayload.statement`, full-date-only fields, proposed upload-evidence shapes and entity-level preconditions are not implemented compatibility aliases. Upload itself is implemented through the distinct raw `/imports` contract below; manual `/evidence` writes remain text-only. This guide and application source are authoritative; a future contract promotion must explicitly reconcile affected consumers.
+
+### Observed OL-005 verification — 2026-10-25
+
+These are historical OL-005 private-development results, not M1 completion, production qualification or rights approval. That checkpoint used schema version 5; OL-006 used schema 6 and OL-007 adds schema 7. Previously applied migration bytes and legacy immutable profile snapshots were retained.
+
+| Check | Observed result and scope |
+|---|---|
+| Backend | Ruff check and format check, strict mypy and all 135 tests passed against a disposable real PostgreSQL instance. Existing Alembic/Starlette deprecation warnings remain visible. |
+| Frontend | TypeScript, ESLint, all 33 Vitest tests and production build passed, including the final responsive CSS repair; pnpm audit reported no known vulnerabilities. |
+| Integrated M0 regression | All 19 checks passed in the isolated native-arm64 `offerloom-proof-ol005-01` run, including actual worker crash/reclaim, review/PDF and matched backup/restore. |
+| Actual browser | Authenticated edits in all five required sections, reload, date rejection, source pin stability, keyboard reorder, two-client 412/rebase, archive/late-save refusal, immutable preview/restore, offline-buffer retry and unchanged reviewed document/PDF passed. |
+| Actual theme/mobile surface | System/media changes, override/reload, 365-day expiry without renewal, cross-tab clearing and denied storage/session-only warning passed. Workspace palettes changed while paper styling and PDF bytes stayed fixed. A reproduced provenance-hash overflow was repaired; actual 320/390 CSS-pixel viewports and expanded 320-pixel metadata stayed within viewport width. Desktop light/dark and mobile screenshots were inspected. |
+| Final image/source security | Pinned Trivy 0.69.3 reported zero HIGH/CRITICAL vulnerabilities and zero image/source secret findings in its declared scan scope; an image SBOM was collected. Its Alpine lifecycle-table warning remains recorded, not waived or interpreted as an EOL verdict. Lower severities and independent licensing obligations are not cleared by this result. |
+
+Final local image `offerloom:ol005-final` has image/index identity `sha256:0f5ac634b45bc81dc8f7e78c33b7f4c532d5fe72ee3dd5d9dd69bb65740e355d`. The M0 regression used the earlier OL-005 image with config identity `sha256:81d54229567e88ac9febf3b84679a4df2bf47657c4f241dee80681d846b1219f`. Measured installed Python, application/migration files and emitted browser JavaScript bytes match between those images; responsive CSS/index bytes differ, and Vite renamed the byte-identical JavaScript asset. The final image was separately rebuilt, scanned and exercised in the actual browser, preserving the existing owner session, profile revision 17 and reviewed document/PDF. This is not a claim that the complete final image ran the earlier M0 drill unchanged.
+
+Private raw evidence is retained under `.local/ol-005/`: `backend/receipt.json`, `backend/pytest.log`, `offerloom-proof-ol005-01/receipt.json`, `ui/browser-receipt.json` and `security-responsive/receipt.json`. The browser receipt deliberately retains the pre-repair mobile failure alongside passing post-repair checks. These ignored local artifacts are not a public reproducibility bundle or a runtime/CI dependency.
+
+OL-005 evidence above remains historical and unchanged. OL-006's verified private checkpoint is described below; OL-007's deployed source contract follows it. No real model run, controlled real-board approval or complete M1 product is claimed. Native amd64 qualification remains deferred as DFR-001; independent rights review and regeneration/review of the earlier M0 exact-artifact inventory remain separate public-distribution work.
+
+## OL-006 reviewed import contract
+
+The saved-import UI accepts a PDF/plaintext file or pasted text, lists prior batches and displays inert extracted source text, exact quotes, source hashes and editable proposals. Extraction is deterministic literal section/line extraction, not AI or credential verification. Ambiguous categories remain `other` with a warning; wording and duplicate lines/roles are preserved, recognizable contact/reference details excluded, and dates/metrics are not invented. No OCR, model/provider call, hosted extraction or fallback extraction is available.
+
+All paths below are relative to `/api/v1`, owner-scoped and protected by the existing same-origin session/CSRF boundary:
+
+| Operation | Deployed request/result |
+|---|---|
+| `POST /imports` | Raw bytes, `Content-Type: application/pdf` or `text/plain` (optional UTF-8 charset), `X-CSRF-Token`, quoted **profile** `If-Match` and `Idempotency-Key`; returns 202 `{import_id, workflow_id}`. No multipart/filename/path input. |
+| `GET /imports`, `GET /imports/{id}` | Bounded saved-batch list `{items: [...]}` or batch detail with workflow state/version, media/byte size/time, source digest/text, proposals/warnings, captured profile version and safe error code. |
+| `POST /imports/{id}/merge` | Quoted current **profile** `If-Match`, `Idempotency-Key` and `{mode: "merge" \| "replace_all", replace_all_confirmed, decisions: [{proposal_id, action: "skip" \| "add" \| "replace", claim_id?, kind, payload}]}`; returns 202 `{import_id, workflow_id}` and resumes the same workflow. |
+| `POST /workflows/{workflow_id}/cancel` | Existing workflow cancellation with the **workflow** version precondition, not the profile version; cancellation prevents a later fenced publish. |
+
+The durable `profile_import` workflow stores original bytes privately and stages normalized text/proposals in `waiting_for_approval`, releasing its execution lease without writing canonical profile/evidence/claims. Each proposal contains `proposal_id`, `kind`, OL-005 typed `payload`, exact Unicode `source_start`/`source_end` and `quote`. Review expires independently after seven days; resumed execution is bounded to 60 seconds.
+
+Every proposal requires an explicit skip/add/replace decision (default skip), at least one accepted proposal and explicit review confirmation in the UI. Replacements show current versus proposed fields and require unique active same-kind owner targets. Payloads use the OL-005 field/date rules; forged/duplicate proposal IDs, duplicate targets, archived/foreign/wrong-kind targets and over-capacity batches are refused. A 412 requires explicit comparison/rebase while retaining review selections, never silent overwrite. Pending merge blocks conflicting local editors; dirty buffers guard sign-out/navigation and are retained on network/session failures.
+
+Worker publication rechecks the exact reviewed profile version, targets, quotas, expiry, cancellation and installation/workflow fences under the commit lock. Failure leaves no partial canonical mutation. Success creates exactly one profile revision, immutable imported-source evidence and accepted claim revisions with original normalized source digest/spans/quotes and `user_asserted` support. Evidence is owner assertion, not independent verification. Ordinary merge preserves unrelated facts/sources. Separately confirmed `replace_all` archives displaced active claims/sources while preserving identity and immutable history; it is not erasure. Idempotent replay cannot duplicate the merge.
+
+The dedicated parser service has no network, secrets, DB or blob mount, a read-only root and a private import spool; both PDF and plaintext run in a supervised sealed child, never in API/worker. Limits are 10 MiB upload, 50 PDF pages, 2 MiB decoded content per page/16 MiB total, 80,000 Unicode scalars and 256 KiB normalized UTF-8 output, at most 100 proposals and a 30-second parser timeout, plus CPU/memory/file/process limits and process-group kill/reap. Strict UTF-8, CRLF/CR-to-LF and NFC normalization preserve remaining whitespace. Broken/encrypted/image-only/empty/over-limit inputs fail visibly, never as successful empty fallback. Source text stays out of audit/outbox/errors/logs; embedded instructions remain data.
+
+### Observed OL-006 checkpoint — 2026-10-25
+
+OL-006 is implemented and technically verified on the active private baseline. Frontend TypeScript, ESLint, all 41 Vitest tests, production build and audit passed. All 35 parser tests passed using the actual Linux Docker parser on Darwin. Fresh PostgreSQL backend qualification passed 205 tests with 62 warnings in 87.85 seconds (`.local/ol-006/backend-02/pytest.log` and `receipt.json`). Final Ruff check/format (58 files) and strict mypy (39 sources) passed after the final test/CI style repair. These checks do not complete M1 or establish production, amd64 or rights qualification.
+
+The isolated native-arm64 M0 regression passed all 19 checks in `.local/ol-006/offerloom-proof-ol006-01/receipt.json`, including six-service parser kernel/mount/network canaries and matched backup/restore. This is an M0 regression, not the OL-006 actual browser acceptance scenario. The first full backend run failed (15 failed, 150 passed, 41 errors) on Darwin resource-limit handling and FK teardown order; fixes are implemented and the passing fresh run above is distinct evidence, not a relabelled first run. Local evidence pointers are not runtime/CI dependencies or a public reproducibility bundle. OL-005 and original M0 evidence remain separate historical records.
+
+Actual authenticated browser proof passed (`.local/ol-006/ui/browser-receipt.json`): real text/selectable-PDF uploads, staging without canonical writes, exact NFC/LF/Unicode spans and distinct raw/normalized hashes, PostgreSQL-backed original-blob evidence pins, duplicate preservation/default skip, explicit keep-current/edited fields/all five profile kinds and skips, 412 retained-buffer comparison/rebase, asynchronous single-revision merge/reload, separately confirmed replace-all preserving identity/displaced history, and accepted-review refusal after a late profile-version change. Existing reviewed document words/pins/review and PDF SHA stayed unchanged while the draft became stale.
+
+Actual malformed/encrypted/image-only/51-page/64-MiB decoded-bomb/invalid-UTF-8/U+0000 fixtures failed without canonical mutation. Running-parser cancellation (parser stopped/restarted), waiting-review cancellation and approved-pending cancellation (worker stopped/restarted) prevented late publication. Desktop 1360 and mobile 320/390 CSS-pixel light/dark surfaces had matching scroll/client widths, no inline styles or injected script; screenshots were inspected and browser console/errors were empty.
+
+The original qualification candidate, then tagged `offerloom:ol006-final`, had image/index identity `sha256:8bc3920bfc7a5305bea8bd3243e98910df0fe2a84d0ca1d8d7614dc99037a1cc`. `.local/ol-006/security/receipt.json` retains its zero HIGH/CRITICAL vulnerabilities, zero image/source secret findings and 653-component image SBOM. This is the image used by the earlier integrated M0 regression and main browser scenarios, not the complete later image.
+
+The final documented rebuild now tagged `offerloom:ol006-final` has image/index identity `sha256:431b844c58eb21486c729eca1d84dc625ae6570e544015d79d56d756361c4800`, Linux arm64 manifest `sha256:ae98d943ae991de67ba31949ab7ff833875cda75e943bd3ba6ff2344e1533d63` and config `sha256:4082ab11a06e830503bbaaf0303eb25a15386902df87e87e51b7a1c5b57195bc`. Comparing 2,184 source/migration/deployment/emitted-web/installed-package files, excluding bytecode, found exactly three differences: Offerloom's README-derived distribution `METADATA`, wheel `RECORD`, and inspected `uv_cache.json` installer/source timestamps. Executable contents match. The initial overbroad comparison and its measured correction remain in the browser receipt; neither is hidden as an unchanged whole image. The rebuilt image was separately started in the actual installation, preserving the owner session/profile; a fresh local upload/review/merge/reload succeeded, and the reviewed document/PDF remained unchanged.
+
+Pinned Trivy 0.69.3 rescanned the final image: `.local/ol-006/security-final/receipt.json` records zero HIGH/CRITICAL vulnerabilities, zero image/source secret findings and a 653-component CycloneDX SBOM. Source scanning excludes `.docs`, `.local`, `.secrets`, `.venv`, `web/node_modules` and `web/dist`; private credentials are outside that declared scope. Alpine lifecycle-table and 24-MB inventory-memory warnings remain recorded, not waived or interpreted as an EOL verdict. No ignore-unfixed or explicit vulnerability suppression was used. Scans/SBOMs do not clear lower severities, licensing obligations or rights approval.
+
+## OL-007 manual posting and reviewed-source contract
+
+The Opportunities and job sources panel is independent of profile revision editing. Paste a title, employer, location and complete posting text; an optional safe HTTPS link is a reference only and is never fetched. Saving creates an owner-scoped posting and attributable manual observation without a source, network or model dependency. Idempotent replay preserves identity; separately entered similar roles are not heuristically merged. Open a retained posting to read complete inert text, source/hash/freshness metadata and paginated exact observations. Missing upstream jobs are not inferred closed or deleted.
+
+All paths are relative to `/api/v1` and use the existing owner/session/Origin/CSRF boundary:
+
+| Operation | Deployed request/result |
+|---|---|
+| `POST /postings` | `{title, company, location_text, description_text, canonical_url?}`, `Idempotency-Key`; 201 full posting detail. No invented profile precondition and no URL fetch. Title/employer max 500, location max 2,000, description max 200,000 Unicode scalars; invalid/empty required text is refused, not truncated. |
+| `GET /postings`, `GET /postings/{id}` | Bounded summary page `{items, next_cursor}` or complete detail; list omits description/snapshots. Default 20, maximum 100; opaque exclusive created-at/UUID cursors. |
+| `GET /postings/{id}/observations`, `GET /postings/{id}/observations/{observation_id}` | Bounded summary history with the same page bounds, or exact owner-scoped retained snapshot. Source ID/kind, board token, external ID, policy version, digest and collection/creation times stay attributable. |
+| `POST /sources`, `PUT /sources/{id}` | `{source_kind: "greenhouse", board_token, company, terms_url, terms_revision, terms_review_acknowledged, enabled, request_limit_per_minute}`, `Idempotency-Key`; update also requires quoted **source** `If-Match`. A board token is immutable after creation. At most 99 Greenhouse boards reserve room for the manual source. |
+| `GET /sources`, `GET /sources/{id}` | Bounded `{items}` or current source detail: enablement, exact review/policy version, allowed host, health, last success/error, next permitted read and unknown provider quota. `rate_limit_blocked` and decimal-string `retry_after_seconds` preserve unrepresentable provider minimums without shortening them. |
+| `POST /sources/{id}/refresh` | Empty `{}`, quoted **source** `If-Match` and `Idempotency-Key`; 202 `{workflow_id, source_id}`. Refuses disabled/unreviewed boards, concurrent runs and premature reads before enqueue/network. A 429 includes the minimum `Retry-After`. |
+| `POST /workflows/{workflow_id}/cancel` | Existing quoted **workflow** precondition and idempotency identity, not the source/profile version. Durable state is available through existing workflow reads; no manual `/retry` endpoint is invented. |
+
+New boards are disabled by default. Review the exact employer, ASCII board token, terms URL and dated/revision reference, allowed host and own rate policy before acknowledging and enabling. Owner acknowledgement records immutable review evidence; it is not automated legal clearance. The numerical provider quota is **unknown**. The configured own limit of 1–60 requests/minute is a conservative local policy, not a Greenhouse allowance. Disabling or changing policy invalidates old queued/running publication; it does not erase postings or old reviews. Failed saves retain editor buffers and retry identities. A 412 requires explicit current-source comparison/rebase and fresh acknowledgement before enabled publication, never silent overwrite.
+
+The `source_refresh` durable workflow pins the immutable policy identity/hash, reserves a DB-time source interval, releases DB locks before I/O and publishes the complete normalized batch only after installation/owner/workflow/source/cancellation/epoch checks. One source has at most one active run. Attempts are capped at three with a 180-second workflow deadline; source attempts are bounded to 15 seconds. Provider 429 delta/date Retry-After is a minimum: a delay beyond the workflow budget fails that run without resending but preserves the board pause. A delay outside representable timestamp range keeps the source blocked rather than clamping it down. Review/disable/reenable cannot shorten that upstream minimum. 403/404 failures stop automatic retries; failed/disabled/cancelled runs retain prior catalog/history. Unchanged content preserves observation identity within its reviewed policy; changed content or a new policy preserves attributable history instead of rewriting old snapshots.
+
+A received Retry-After can outlive its request's lease or review. Only its monotonic scheduling restriction is persisted independently of workflow publication, including after disable/review/cancel/epoch/lease changes. Stale tasks still cannot publish catalog content, source failure metadata or workflow results. Cancelling an already-consumed request does not revoke the upstream minimum.
+
+Production transport uses only `GET https://boards-api.greenhouse.io/v1/boards/{board_token}/jobs?content=true`; it has no submission, search, JSONP, user-URL, auth/cookie/header or ambient-proxy capability. All DNS answers and the connected peer are checked, verified TLS preserves the exact host, and redirects are refused. Upstream wire size is capped at 5 MiB, parsed depth at 32, published records at 2,000 and normalized description at 200,000 scalars. Unsupported/compressed encoding, malformed/duplicate/incomplete/over-limit data fails the whole batch, never a silent truncation or successful empty fallback. The bounded internal relay envelope allows 20 MiB because original snapshots and normalized text are both retained. Prospect posts (`internal_job_id: null`) are excluded with a visible count. HTML becomes inert text. Original snapshots retain their stable canonical content hash and source update field; fetch time is separate.
+
+HTTP header lines are capped at 4 KiB and aggregate headers at 32 KiB. Every admitted decimal Retry-After is preserved exactly, including values beyond 128 digits; header values outside the admitted bound fail the response rather than becoming a shorter fallback wait.
+
+The [official Job Board API documentation](https://docs.greenhouse.io/job-board.html), retrieved 2026-10-25, documents an all-published list and `content`, not a pagination or ETag guarantee. Pagination markers/total mismatches are rejected as incomplete while retaining previous data. Display-only HTTPS references are not DNS-verified or recursively fetched. API/worker have no general outbound route; a separate fixed-route, no-secret relay is the only source transport, as described in the [architecture boundary](../architecture/README.md#ol-007--reviewed-source-transport-boundary).
+
+A real board read still requires board-specific terms review and explicit owner authorization. Fictional real-TLS fixtures prove the local mechanism, not collection rights or a successful real-board run. No live board, real account, model/provider or paid call is inferred from local acceptance. Current observed verification and exact artifact evidence must be read separately from this deployed contract.
+
+### Observed OL-007 local mechanism checkpoint — 2026-10-25
+
+The manual-posting and reviewed-source mechanism is implemented on schema 7 for the active private macOS/arm64 Docker baseline. This is local technical qualification, not a live employer-board read, M1 completion, native amd64 qualification or rights approval. The complete discovery/search/save-dismiss/application/model loop is not included.
+
+| Exercised check | Observed result and scope |
+| --- | --- |
+| Python quality | Ruff check and format check passed for 65 files; strict mypy passed for 46 sources, including the expanded recovery probe. |
+| Fresh PostgreSQL backend | 330 tests passed with 98 warnings in 110.77 seconds; includes 35 actual Linux parser cases and 89 real TLS/HTTP transport cases. Logs and hashes: `.local/ol-007/backend-04/`. |
+| Frontend | TypeScript, ESLint, all 53 Vitest tests, production build and dependency audit passed. Commands/log hashes: `.local/ol-007/frontend-final-receipt.json`. |
+| Actual authenticated browser | 39 accepted checks passed. One earlier probe expected words absent from the fixture; its failed expectation and corrected exact-text comparison remain explicitly recorded, not hidden as a product pass. Receipt: `.local/ol-007/ui-02/browser-receipt.json`. |
+| Exact runtime image security | Pinned Trivy 0.69.3 found zero selected HIGH/CRITICAL vulnerabilities and zero image secrets; separate CycloneDX generation recorded 653 components. Evidence: `.local/ol-007/image-security.json`, `candidate-sbom.cdx.json` and `security-receipt.json`. |
+
+Actual browser acceptance covered provider-offline manual save/reload, exact inert original text and retained observation JSON, disabled-by-default review gates, published-only collection through the real worker/relay/local-TLS path, excluded prospects, unchanged observation identity and append-only changed history. Real 403, incomplete lists and JSONP failures retained the catalog. In-flight cancellation and policy disable prevented publication. Finite and 129-digit upstream waits remained exact; early refresh was refused, re-review/reenable did not shorten the pause, and unrepresentable waits stayed blocked. An aborted browser request retained the manual buffer and retried without duplication; a real 412 required explicit comparison/rebase and fresh acknowledgement. Professional facts and the immutable profile revision remained unchanged throughout.
+
+Desktop and 320/390 CSS-pixel light/dark surfaces were exercised and screenshots inspected, including long provider-minimum text without horizontal overflow. Posting content loaded no off-origin script, image or tracker resources. An explicit inline-script injection was refused by the actual CSP; its expected console diagnostic is retained separately from uncaught application errors. The owner signed out and the managed browser closed.
+
+Failure history remains attributable. The first backend run failed on PostgreSQL's finite regular-expression repetition bound; the unpublished schema-7 constraint was corrected without rewriting migrations 1–6. Ten new late-response cases failed before restrictive pause persistence was separated from fenced publication, then passed in the fresh backend run. Two real TLS/relay cases failed before numeric Retry-After values beyond 128 digits stopped becoming 60-second fallbacks. An actual browser pause stayed disabled after expiry; the failing-before regression now verifies that the rendered clock observes overdue deadlines. Earlier images and failed receipts are preserved under `.local/ol-007/`; no failed run was relabelled.
+
+The final exercised/scanned runtime, tagged `offerloom:ol007-candidate`, has index `sha256:a7ebed561f17fad39b15461c211b9105fc99abca941b7ca1895ff79c51c81ede`, Linux arm64 manifest `sha256:8d6096a1284bdd6324633f4b99ff64c81f5812311ac1ebb96c54489f7fab66fe` and config `sha256:ff7b7b56eb89bb6206c60a9e187f0e1ab9d1412b03d92cf846dd781a7a735f1a`. The full backend run preceded the final web-only rebuild; the unchanged Python/migration/runtime layers and final frontend build have distinct evidence scopes. The served JavaScript is `index-CVGMNPqr.js`. The preceding image is retained as `offerloom:ol007-pre-ui-clock`; earlier OL-006 artifacts and manifests remain historical.
+
+The scan used the recorded database updated 2026-10-24, whose next-update time is 2026-10-25T13:07:23Z. Alpine lifecycle-table, Python METADATA/license, large source-inventory and pinned-scanner-version warnings remain recorded. No ignore-unfixed or explicit vulnerability suppression was used. The SBOM is not a license review, and the earlier public rights inventory is neither regenerated nor approved for this image. A real board read still needs the employer, exact token, terms URL/revision, own request limit and explicit owner read authorization; no live board/account/provider/model/paid call or publication occurred.
+
+The final native Linux arm64 M0 regression passed all 20 checks (`.local/ol-007/offerloom-proof-ol007-02/receipt.json`), including seven-container secret/mount/network canaries, an actual source-egress-to-DB-IP denial, worker crash/reclaim/fencing, real Chromium authentication, PDF rendering and matched isolated recovery. Recovered data included two source configurations, one immutable policy review, one posting and one observation; restored API representations matched exactly, rather than comparing empty new tables. Restored sessions were revoked and workers stayed stopped. The first M0 namespace retains its two-check failure receipt and explicit Docker address-pool-exhaustion diagnosis; only completed task-owned networks were freed before the fresh successful run.
+
+Final source hygiene returned `source_eligible: true` with no blockers, separately from release approval (`.local/ol-007/source-policy.json`). The final source secret scan found zero matches with `.git`, `.local`, `.docs`, `.secrets`, `.venv`, `web/node_modules` and `web/dist` excluded; private credentials are outside that declared scan scope. `.local/ol-007/security-final-receipt.json` binds the exact image archive, image scan, SBOM and final source reports by hash. All OL-007 task-owned containers and networks were removed without deleting volumes; all 63 task volumes and nine host keyring sets remain preserved with receipts and failure evidence. The owner signed out and the browser closed. OL-008 is the next private implementation story; no part of it is delivered by this checkpoint.
+
+
+## Development gates
+
+Backend gates require a disposable PostgreSQL 18 database, distinct migration/runtime roles and tracked migrations. Never use a personal or production database. `.github/backend_gate.py` creates an isolated CI namespace, PostgreSQL test database `offerloom_test` and scoped credentials, then runs the following gates; it also needs a locally built `offerloom-m0:local` image for its one-shot preparation helper:
+
+```sh
+docker build --target app --tag offerloom-m0:local .
+uv run --frozen python .github/backend_gate.py
+# The backend runner executes:
+uv run --frozen ruff check .
+uv run --frozen ruff format --check .
+uv run --frozen mypy --strict
+uv run --frozen pytest
+# With Node 22.23.4 and pnpm 10.33.3:
+pnpm --dir web exec tsc --noEmit
+pnpm --dir web lint
+pnpm --dir web test
+pnpm --dir web build
+pnpm --dir web audit --audit-level high
+```
+
+For a separately provisioned test database, supply `OFFERLOOM_TEST_MIGRATION_DSN` and `OFFERLOOM_TEST_RUNTIME_DSN` (plus runtime `OFFERLOOM_TEST_DSN`) from restrictive local configuration. Test databases must be explicitly named `offerloom_test`, `test_*` or `*_test` and may be cleared by the suite. The API role must fail DDL; the migration role owns schema objects. Lack of PostgreSQL does not count as a skipped green integration gate. The CI override alone publishes PostgreSQL on loopback port 15432; ordinary deployment does not.
+
+On non-Linux hosts, parser tests require actual Docker and `OFFERLOOM_TEST_PARSER_IMAGE` naming the locally built application image (for example `offerloom-m0:local`). They run the real isolated Linux parser rather than pretending Darwin supports Linux resource limits. CI explicitly supplies this image setting. A missing image/Docker runtime is a missing prerequisite, not a passing parser gate.
+
+## Destructive, disposable integrated proof
+
+Install the pinned browser runtime, then use a **fresh** namespace for each execution:
+
+```sh
+uv run --frozen playwright install chromium
+uv run --frozen python -m tools.m0_probe \
+  --project offerloom-proof-arm64-01 \
+  --confirm-disposable offerloom-proof-arm64-01 \
+  --platform linux/arm64 --image offerloom-m0:proof-arm64 --port 18000
+
+# Run only when your Docker engine supports the target natively or by emulation.
+uv run --frozen python -m tools.m0_probe \
+  --project offerloom-proof-amd64-01 \
+  --confirm-disposable offerloom-proof-amd64-01 \
+  --platform linux/amd64 --image offerloom-m0:proof-amd64 --port 18100
+```
+
+The confirmation must exactly repeat a namespace beginning `offerloom-proof-`; the tool refuses existing matching containers/volumes/networks or evidence directories, accepts no external DSN, and restores only into a newly created `-restore` namespace. It deliberately kills workers and changes synthetic database clocks/revocation state. The platform selects the actual image build/run target. It records Docker-engine architecture and native/emulated classification; do not relabel emulated proof as native. `--skip-build` uses an existing image but does not skip runtime checks.
+
+For **native amd64 qualification**, run the probe on an operator-confirmed native Linux x86_64 host with an amd64 Docker engine. A builder's advertised `linux/amd64` platform is not proof of native execution. Check both host and engine before creating a disposable namespace; these checks are necessary, not a certificate that the underlying machine is not emulated:
+
+```sh
+case "$(uname -s)-$(uname -m)" in
+  Linux-x86_64) ;;
+  *) printf '%s\n' 'Native amd64 qualification requires a native Linux x86_64 host' >&2; exit 2 ;;
+esac
+case "$(docker info --format '{{.Architecture}}')" in
+  x86_64|amd64) ;;
+  *) printf '%s\n' 'Docker engine is not amd64; native qualification refused' >&2; exit 2 ;;
+esac
+```
+
+Load the checksum-verified saved amd64 image and verify its recorded image identity before using `--skip-build`; a rebuilt image requires fresh image scans and bindings. Keep the full probe, actual browser and every renderer limit. An unavailable native target remains a blocker, not permission to weaken limits or rename an emulated result.
+
+The runner checks cold startup, invalid config/key/schema refusal, secure-cookie/Origin/CSRF/bootstrap concurrency, profile preconditions, response-loss idempotency replay/conflict, real task execution, concurrent distinct claims by two live workers after saturating one process's bounded slots, crash after claim and committed staging/reclaim/stale-fence rejection, cancellation/poison bounds, duplicate outbox consumption, PDF text extraction, actual Chromium login/reload, restart persistence, password/expiry/session revocation, persistent auth throttling, resource/mount/capability/UID inspection, direct renderer file/network canaries, and an isolated dump/blob restore. It does not assume that two queued tasks must be scheduled fairly across two processes: a single worker has multiple slots. A failure stops the sequence and records no success for unexecuted checks. Receipts are redacted under `.local/<project>/receipt.json`; credentials, HTTP bodies and profile/PDF content are not emitted. Resources remain for inspection; this is deliberate, not silent cleanup.
+
+The restore drill stops all source writers, captures a PostgreSQL custom-format dump of the application-owned `offerloom` and `offerloom_migrations` schemas plus the matching blob set, verifies hashes/archive paths/limits, deliberately refuses corrupt input, restores into new volumes under the migrator role, compares nonempty table counts/blob hashes, revokes restored sessions/approvals/leases, verifies owner login and blocked egress, and leaves restored workers stopped. It preserves the new deployment's administrator-owned `public` schema ACL instead of attempting to restore it through the restricted migrator. **This is an in-memory synthetic M0 recovery test, not the M1 encrypted/off-host backup product, backup scheduler, signed recovery archive or production restore CLI.** It never promotes over the source installation. Keep original credentials and source volumes until any real recovery is independently reviewed.
+
+After inspecting a proof, remove only its explicitly named disposable resources if desired. For example, after confirming the exact project is disposable:
+
+```sh
+docker compose --env-file .local/offerloom-proof-arm64-01/compose.env \
+  --project-name offerloom-proof-arm64-01 down --volumes
+docker compose --env-file .local/offerloom-proof-arm64-01/restore/compose.env \
+  --project-name offerloom-proof-arm64-01-restore down --volumes
+```
+
+Do not substitute your ordinary installation's project name or volumes into these destructive commands. Evidence directories/keys are retained locally and must be handled as private data, not uploaded wholesale.
+
+## Private milestone progression
+
+Owner decision, 2026-10-25: continue private development through the project on **macOS / Apple Silicon with Linux arm64 containers under Docker Desktop**. This keeps the existing backend, PostgreSQL, worker and renderer deployment; it is not a native macOS backend port. The observed M0 technical checkpoint is sufficient for OL-005/M1 implementation. Later milestones retain their functional dependencies and scenario-specific verification; a public release is not a prerequisite for implementing the next private increment.
+
+| Item | Current disposition | Revisit trigger | Effect on private development |
+| --- | --- | --- | --- |
+| DFR-001 — native Linux amd64 qualification | Deferred by owner; built/scanned image is not runtime-qualified | Before advertising or distributing an amd64-supported artifact, or when the owner supplies a native target and requests qualification | Does not block private M1 or later work on the macOS/arm64 baseline |
+| Independent contribution/provenance and dependency rights review | Separately pending; not coupled to DFR-001 and not newly deferred or approved | Before public distribution or rights-clearance claims; contributor acceptance retains its existing policy | Does not impose a blanket private-milestone hold; unresolved integration-specific rights still prevent enabling that integration |
+
+Keep applicable Python/frontend checks, actual browser/worker/PDF/recovery probes, security scans and renderer containment on the active platform. Do not label configured amd64 CI as executed or passing, or weaken an amd64 check to make the local lane green. A changed runtime image invalidates its affected evidence; a documented deferral does not repair a failed technical boundary.
+
+Private M2/M3 and optional-integration implementation may proceed when their actual technical prerequisites are satisfied; **public-beta/stable promotion and publication remain gated** by the existing release checklist and separate authorization. Model-route factual review, real-source terms/consent, paid-call authorization and external-action approvals remain independent requirements. M0 proof does not claim those later milestones complete.
+
+## Dependency, contribution and release gates
+
+CI is configured for frozen backend/frontend gates on native Linux amd64 and arm64 runners, actual container/browser/recovery proof, source/secret checks, pinned pip-audit and pnpm audit, and pinned Trivy built-image vulnerability/secret/SBOM collection **without a mounted Docker socket**. It produces exact lock/environment/native/font inventory and license/SBOM reports, not invented rights approval. The security shell preserves a nonzero finding/error result while still collecting separate JSON vulnerability, CycloneDX and source-secret reports; report generation does not turn a failed scan green. APK transitive package versions are collected from the exported runtime image; a pinned base alone does not freeze subsequent signed repository resolution. High/critical vulnerability failures require real triage/remediation, not an ignored expected-failure step. Configured remote CI has not been executed in this local implementation session.
+
+```sh
+uv run --frozen python -m tools.compliance source
+# Requires the same exact host Node/pnpm PATH and installed web/node_modules above:
+uv run --frozen python tools/inventory.py --uv-lock uv.lock --python-root .venv \
+  --web-root web --image offerloom-m0:local --output .local/locked-components.json
+uv run --frozen python -m tools.compliance sbom --inventory .local/locked-components.json \
+  --output .local/sbom.json
+# Deliberate blocking release gate, not ordinary private development CI:
+uv run --frozen python -m tools.compliance check --inventory .local/locked-components.json \
+  --output .local/release-compliance.json
+```
+
+The release check must remain blocked while human provenance/rights/native/font approvals are pending. A workflow-dispatch option runs it explicitly; normal private CI does not misclassify that known governance block as a failed development build. Pull requests separately require the exact dual-license grant in [CONTRIBUTING.md](../../CONTRIBUTING.md) and real author `Signed-off-by` trailers for every contributed commit. Only the two exact historical hashes documented in [bootstrap attestations](../compliance/bootstrap-commit-attestations.md) are exempted; automation never creates a certification.
+
+See [architecture/ADR-0002](../architecture/README.md), [security](../../SECURITY.md), and the [release compliance checklist](../compliance/release-compliance-checklist.md) for limitations. No unrun gate, generated SBOM or M0 success qualifies M1, public release or production operation.
