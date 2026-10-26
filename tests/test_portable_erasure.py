@@ -25,9 +25,10 @@ from test_installation_control import _queue_control
 from test_installation_control import renderer_spool as renderer_spool
 from test_sources import SourceContext
 from test_sources import catalog as catalog
-from test_suitability import _profile
+from test_suitability import _posting, _profile, _queue, _route, _view
 from test_tracking import _application
 
+from offerloom import suitability
 from offerloom.approvals import consume_action_approval, prepare_action_approval
 from offerloom.import_parser import ImportParserClient
 from offerloom.installation_control import Control, InstallationMaintenance, begin_control
@@ -315,13 +316,25 @@ def test_unwritable_live_purge_stays_closed_then_resumes_exact_remaining_bytes(
 
 @pytest.mark.postgres
 def test_workspace_erasure_removes_reviewed_source_and_profile_history_but_keeps_login(
-    catalog: SourceContext, parser: ImportParserClient, renderer_spool: Path
+    catalog: SourceContext,
+    parser: ImportParserClient,
+    renderer_spool: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
 ) -> None:
     _base(catalog, _profile(catalog))
     previous_profile = catalog.client.get("/api/v1/profile").json()
     catalog.create(enabled=False)
     application = _application(catalog)
     stored = _attachment(catalog, application, b"Synthetic workspace-private bytes")
+    with catalog.runtime.transaction() as conn:
+        previous_workflow = enqueue(conn, catalog.owner_id, "posting_extract", {})
+        conn.execute(
+            text("""UPDATE offerloom.local_model_reservations SET owner_id=:owner,
+            workflow_run_id=:workflow,fence=1,reserved_until=clock_timestamp()
+            WHERE singleton"""),
+            {"owner": catalog.owner_id, "workflow": previous_workflow},
+        )
     control = _deletion(catalog)
     maintenance = InstallationMaintenance(catalog.runtime, control, parser.spool, renderer_spool)
     with maintenance.quiescent():
@@ -379,3 +392,8 @@ def test_workspace_erasure_removes_reviewed_source_and_profile_history_but_keeps
         catalog.client.get("/api/v1/profile").json()["current_revision"]["snapshot"]["display_name"]
         == "Synthetic owner after erasure"
     )
+    _route(monkeypatch, tmp_path)
+    posting = _posting(catalog)
+    task = _queue(catalog, _view(catalog, posting["id"]))
+    with catalog.runtime.transaction() as conn:
+        assert suitability._reserve_call(conn, task, catalog.identity.settings, 2) is not None
