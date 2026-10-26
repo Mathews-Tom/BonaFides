@@ -2,6 +2,19 @@
 
 The repository contains completed local M1 engineering through OL-015 and final privacy/profile/defaults acceptance on schema 25, targeting Linux arm64 containers hosted on macOS Apple Silicon. Scoped runtime, quality, browser and recovery results retain their original identities; source/commit/isolated-prefix attestations live in the existing ignored integration-owner checkpoint. Model-dependent mechanisms remain **implemented / live-unqualified**, with optional routes disabled. Genuine human factual review, owner walkthrough and human usability evaluation/refinement are deferred to M1b, not passed. Actual-model and real-board qualification remain separate pending, disabled/unqualified limits; optional hosted adapters belong to OL-017/M2 and are not implemented or qualified M1 capabilities. This is not fully validated M1, public-distribution clearance or production readiness.
 
+## Post-checkpoint review fixes — schema 26
+
+Configured PR review findings were fixed after the schema-25 checkpoint below. The checkpoint and its receipts stay historical and do not cover these changes. Each fix has a regression test that failed before the fix and passes after it.
+
+- Append-only migration 026 replaces `erase_portable_scope`. Workspace erasure now releases the installation-wide `local_model_reservations` row instead of deleting it, so later local-model reservations keep working after an owner's workspace is erased.
+- Terminal-input retention now checks for eligible input every 60-second sweep. It no longer skips sweeps for 24 hours after a successful one, which could keep input for up to about 48 hours. Only redundant empty success receipts are suppressed.
+- Import tasks that fail with a busy parser (`import_parser_busy`) are retried within the existing three attempts instead of failing permanently.
+- The source compliance gate flags symbolic links to directories and dangling symbolic links. These were previously skipped.
+- After a session expires, re-sign-in and compatible resume stay available while durable work is active. Discarding editors stays blocked.
+- The actual-renderer glyph tests always run in the sealed production image. Before this change, Linux hosts with extra CJK/Unifont fonts painted glyphs that the shipped image rejects.
+
+Known limit, tracked in issue #4: portable export fails with `archive_size_limit` once an owner's distinct stored files exceed 112 MiB, although write quotas allow more. No data is lost, and encrypted backups are unaffected.
+
 ## Observed final M1 engineering checkpoint — 2026-10-26
 
 Final image `offerloom:m1-final-r`, index identity `sha256:d3a1a773607a07cd5d49d3473da48def9012add60daedfb00ef28e2c6c8788bd`, passed the complete schema-25 nonempty native drill: encrypted matched capture, independent `backup-restore` and `backup-verify` clean targets, table-content/relationship/blob comparisons, origin-bound credential decryption with exact encryption-use increments, pre-DDL negative validation, closed authority followed by supported offline opening, and actual fresh-owner profile/posting/tracking/PDF/portable-export consumers on both targets. Current persisted Compact/Letter/concise defaults survived capture and both restores. The source and both targets retain all volumes, ciphertexts, keys and evidence; owned services are stopped. These are synthetic same-host technical observations, not off-host custody or human qualification.
@@ -154,7 +167,7 @@ Stop every ordinary target actor and leave both sealed target daemons running in
 
 ### Fixed terminal-input retention
 
-The lifecycle worker independently sweeps eligible terminal workflow/model input 24 hours after `finished_at`. Completed sweeps run daily; partial batches and failures retry at the 60-second lifecycle cadence, with at most 100 workflows per invocation. This is an eligibility window plus a sweep cadence, not a promise of deletion at exactly 24 hours. The policy has no extension control. Active, retryable, approval-waiting, unknown-delivery and positively registered executions or unreleased controls are excluded.
+The lifecycle worker independently sweeps eligible terminal workflow/model input 24 hours after `finished_at`. Sweeps run at the 60-second lifecycle cadence while the lifecycle controller is available, with at most 100 workflows per invocation; an empty sweep after a recent successful one records no new audit receipt. This is an eligibility window plus a sweep cadence, not a promise of deletion at exactly 24 hours. The policy has no extension control. Active, retryable, approval-waiting, unknown-delivery and positively registered executions or unreleased controls are excluded.
 
 Expiry removes frozen prompt/source text, nested context, frames, plans and unknown payload content. It retains only validated named top-level resource UUIDs, digest/schema pins and immutable source-refresh policy pins needed by retry/history/portable scope consumers. Committed profile/evidence/document revisions, result IDs, model parameters/usage/hashes, attachments and saved PDFs remain unchanged. Previously downloaded copies and encrypted recovery archives are not rewritten by this sweep.
 
