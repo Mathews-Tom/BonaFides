@@ -376,6 +376,43 @@ describe('maintenance and preserved-workspace reconnection', () => {
     expect(input).toHaveValue('Unsaved wording kept through the pause');
   });
 
+  it('allows re-sign-in and compatible resume during active durable work without discarding editors', async () => {
+    const user = userEvent.setup(); const api = new Api(); let revoked = false;
+    mockRequest(api, async (path, method) => {
+      if (path === '/session' && method === 'POST') { revoked = false; return session; }
+      if (path === '/session') return session;
+      if (path === '/auth/challenge') return { csrf_token: 'reconnect-challenge', bootstrap_available: false };
+      if (path === '/profile') return profile;
+      if (path === '/workflows') return { items: [task({ kind: 'source_refresh', state: 'running' })] };
+      if (path === '/workflows/task-1') return task({ kind: 'source_refresh', state: 'running' });
+      throw new ApiError(404, 'not_found');
+    }, null, [], async () => { if (revoked) throw new ApiError(401, 'session_revoked'); return installation; });
+    render(<App api={api} />);
+    const input = await screen.findByLabelText('Professional headline');
+    await waitFor(() => expect(api.writeBlock).toBeNull());
+    fireEvent.change(input, { target: { value: 'Unsaved wording during durable source work' } });
+    await user.click(screen.getByRole('button', { name: 'Load saved source refresh tasks' }));
+    await user.click(await screen.findByRole('button', { name: 'Open source refresh task task-1' }));
+    await screen.findByRole('heading', { name: 'Source refresh task task-1' });
+    revoked = true; fireEvent(document, new Event('visibilitychange'));
+    await user.type(await screen.findByLabelText('Password to reconnect'), 'Fictional reconnect password 817!');
+    const signIn = screen.getByRole('button', { name: 'Sign in and retain editors' });
+    expect(signIn).toBeEnabled();
+    await user.click(signIn);
+    await screen.findByText('Review the current workspace before resuming writes.');
+    expect(input).toHaveValue('Unsaved wording during durable source work');
+    await user.click(screen.getByRole('button', { name: 'Check connection and compare saved workspace' }));
+    const resume = await screen.findByRole('button', { name: 'Resume writes and keep all editor text' });
+    expect(resume).toBeEnabled();
+    expect(screen.getByRole('checkbox', { name: /I have preserved the text I need/ })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Discard all editors and load this saved workspace' })).toBeDisabled();
+    await user.click(resume);
+    await waitFor(() => expect(api.writeBlock).toBeNull());
+    expect(screen.getByLabelText('Professional headline')).toBe(input);
+    expect(input).toHaveValue('Unsaved wording during durable source work');
+    expect(screen.getByRole('heading', { name: 'Source refresh task task-1' })).toBeInTheDocument();
+  });
+
   it('retains drafts through revoked-session sign-in and rejects version aliasing until explicit full reload', async () => {
     const user = userEvent.setup(); const api = new Api(); let status = installation; let saved = { ...profile, version: 9 };
     let revoked = false; let profileReads = 0;
