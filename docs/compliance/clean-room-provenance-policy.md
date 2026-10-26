@@ -17,3 +17,5 @@ If a contributor encounters questionable material: stop incorporating it; do not
 ## Gates
 
 A provenance reviewer must trace major implementation choices and all incorporated external assets before public release; counsel must review unresolved independence/rights concerns and eligibility claims. Absence of identifiable names, successful keyword scanning or lack of code similarity findings is not proof of independence. CI may check declaration presence and accidental identifiers/secrets but cannot certify original authorship. Keep release-specific approvals bound to exact artifacts; reopening material assumptions requires renewed review.
+
+The owner's [scoped source publication authorization](licensing-policy.md#scoped-source-publication-authorization) changes only the review-before-publication sequencing for the identified source-only PR. Independent review remains pending, not passed; release-specific approvals and all actual rights/attribution obligations remain required. The exception does not permit publication of questionable or restricted material, private data, runtime images or packages.

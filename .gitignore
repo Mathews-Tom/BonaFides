@@ -51,6 +51,9 @@ blob-report/
 /exports/
 /backups/
 /secrets/
+/.secrets/
+/.local/
+/artifacts/
 /models/
 /logs/
 /tmp/

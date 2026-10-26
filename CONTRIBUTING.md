@@ -1,6 +1,6 @@
 # Contributing to Offerloom
 
-Offerloom is currently at the architecture/design stage, not a deployed application. Start with the public [development guide](docs/development/README.md) and [architecture overview](docs/architecture/README.md). Detailed implementation planning is maintained locally and is not included in repository clones. Do not mistake proposed commands or controls for existing software. External contributions must satisfy the policies below before acceptance.
+Offerloom contains a local M0 proof-of-architecture implementation, not a production-qualified application. Start with the public [development guide](docs/development/README.md) for frozen installation, checks and the disposable proof, and the [architecture overview](docs/architecture/README.md) for boundaries and limitations. Detailed implementation planning is maintained locally and is not included in repository clones. Distinguish commands and implemented controls from observed qualification evidence. External contributions must satisfy the policies below before acceptance.
 
 ## Licensing authorization
 
@@ -24,8 +24,8 @@ Before adding a dependency, asset, font, model, or dataset, provide its exact ve
 
 Keep changes scoped; reference a neutral story ID and relevant design contract. Use synthetic fixtures only. Explain behavior, failure paths, migration/rollback impact, privacy/egress changes, accessibility, and checks actually executed with their results. Never claim an unrun scan, stub-only provider test, or automatic accessibility scan proves production readiness. New adapters require conformance tests and an approved real local smoke before enabling them; external writes and paid calls need separate explicit authorization.
 
-Source files should carry `SPDX-License-Identifier: MIT OR Apache-2.0` where the format permits, without replacing third-party headers. Applicable future package manifests and publication metadata must use the same expression. Do not insert comments into JSON or binary files; record their provenance separately. No app test command is promised by this design-stage document.
+Original source files should carry `SPDX-License-Identifier: MIT OR Apache-2.0` where the format permits, without replacing third-party headers. Application package manifests and publication metadata must use the same expression. Do not insert comments into JSON, generated lock metadata or binary files; record their provenance separately. The [development guide](docs/development/README.md#development-gates) defines the application checks and their disposable PostgreSQL prerequisites.
 
 ## Review and reporting
 
-Maintainers gate acceptance on authorization, provenance, dependency review, contract correctness, and future implementation CI. Report vulnerabilities using [SECURITY.md](SECURITY.md), not public payloads containing personal data. Release compliance is blocking, not optional housekeeping. Policies are under [docs/compliance](docs/compliance/).
+Maintainers gate acceptance on authorization, provenance, dependency review, contract correctness and application CI. Report vulnerabilities using [SECURITY.md](SECURITY.md), not public payloads containing personal data. Release compliance is blocking, not optional housekeeping. Policies are under [docs/compliance](docs/compliance/).

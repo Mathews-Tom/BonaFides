@@ -1,0 +1,33 @@
+{
+  "schema_version": 1,
+  "standard": "OWASP Application Security Verification Standard",
+  "version": "5.0.0",
+  "release_url": "https://github.com/OWASP/ASVS/releases/tag/v5.0.0_release",
+  "release_tag": "v5.0.0_release",
+  "release_tag_commit": "5cf9b032440be53ce345ab3c130fda46ba1ce7a2",
+  "release_published_at": "2025-05-30T09:35:31Z",
+  "source_url": "https://github.com/OWASP/ASVS/releases/download/v5.0.0_release/OWASP_Application_Security_Verification_Standard_5.0.0_en.csv",
+  "source_filename": "OWASP_Application_Security_Verification_Standard_5.0.0_en.csv",
+  "source_sha256": "6124dba176dc563f66363a11ae0c47f9b86b8a4a84c66a793670bd196ed86cd5",
+  "source_bytes": 105446,
+  "retrieval_date": "2026-10-24",
+  "requirement_count": 345,
+  "source_columns": [
+    "chapter_id",
+    "chapter_name",
+    "section_id",
+    "section_name",
+    "req_id",
+    "req_description",
+    "L"
+  ],
+  "register_path": "compliance/asvs-5.0.0.csv",
+  "versioned_id_rule": "v5.0.0- followed by source req_id without leading V; source req_id is retained verbatim",
+  "title_policy": "Official CSV has no per-requirement title; chapter_name and section_name are preserved verbatim, never invented titles. req_description is exact source requirement text.",
+  "license": "CC-BY-SA-4.0",
+  "attribution": "OWASP Foundation and OWASP ASVS contributors, Application Security Verification Standard 5.0.0",
+  "license_url": "https://creativecommons.org/licenses/by-sa/4.0/",
+  "upstream_license_url": "https://github.com/OWASP/ASVS/blob/v5.0.0_release/LICENSE.md",
+  "adaptation": "Original requirement columns preserved; Offerloom applicability, responsibility and pending evidence fields added. Register adaptation distributed under CC-BY-SA-4.0. No endorsement implied.",
+  "verification": "No conformance, test pass, exclusion approval, reviewer signature or Level 2 completion is asserted."
+}

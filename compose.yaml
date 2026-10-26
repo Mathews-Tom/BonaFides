@@ -1,0 +1,174 @@
+# SPDX-License-Identifier: MIT OR Apache-2.0
+name: ${COMPOSE_PROJECT_NAME:-offerloom}
+x-app: &app
+  image: ${OFFERLOOM_IMAGE:-offerloom-m0:local}
+  build: {context: ., target: app}
+  user: "10001:10001"
+  read_only: true
+  cap_drop: [ALL]
+  security_opt: [no-new-privileges:true]
+  pids_limit: 96
+  mem_limit: 512m
+  cpus: 1.0
+  tmpfs: ["/tmp:rw,noexec,nosuid,nodev,size=67108864,mode=1777"]
+  init: true
+  stop_grace_period: 30s
+  restart: "on-failure:3"
+  logging: {driver: json-file, options: {max-size: 5m, max-file: "2"}}
+x-settings: &settings
+  OFFERLOOM_DATABASE_DSN_FILE: /run/offerloom/runtime_dsn
+  OFFERLOOM_KEYRING_FILE: /run/offerloom/keyring
+  OFFERLOOM_BOOTSTRAP_TOKEN_FILE: /run/offerloom/bootstrap_token
+  OFFERLOOM_ORIGIN: ${OFFERLOOM_ORIGIN:-http://localhost:8000}
+  OFFERLOOM_BLOB_ROOT: /data/blobs
+  OFFERLOOM_RENDERER_SPOOL: /spool
+  OFFERLOOM_IMPORT_SPOOL: /import-spool
+  OFFERLOOM_MODE: ${OFFERLOOM_MODE:-production}
+  OFFERLOOM_LOCAL_MODEL_ROUTE_FILE: ${OFFERLOOM_LOCAL_MODEL_ROUTE_FILE:-}
+services:
+  prepare:
+    <<: *app
+    user: "0:0"
+    entrypoint: [python, /app/deploy/prepare.py]
+    restart: "no"
+    network_mode: none
+    cap_add: [CHOWN, DAC_OVERRIDE]
+    volumes:
+      - ${OFFERLOOM_SECRET_DIR:-./.secrets}:/input:ro
+      - app-secrets:/state/app-secrets
+      - migration-secrets:/state/migration-secrets
+      - db-secrets:/state/db-secrets
+      - pg:/state/pg
+      - blobs:/state/blobs
+      - spool:/state/spool
+      - import-spool:/state/import-spool
+  db:
+    image: postgres:18-alpine@sha256:898c60cb390d1085bc97bdd6a1ae968757421df394b071848b52b1c09c89d6a5
+    user: "70:70"
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    pids_limit: 128
+    mem_limit: 1g
+    cpus: 1.0
+    shm_size: 128m
+    tmpfs: ["/tmp:rw,noexec,nosuid,nodev,size=33554432,mode=1777", "/var/run/postgresql:rw,noexec,nosuid,nodev,size=8388608,uid=70,gid=70"]
+    restart: "on-failure:3"
+    stop_grace_period: 60s
+    environment:
+      POSTGRES_DB: offerloom
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD_FILE: /run/offerloom-db-secrets/admin_password
+      POSTGRES_INITDB_ARGS: --auth-host=scram-sha-256 --auth-local=trust
+    volumes:
+      - pg:/var/lib/postgresql
+      - db-secrets:/run/offerloom-db-secrets:ro
+      - ./deploy/init-db.sh:/docker-entrypoint-initdb.d/10-offerloom.sh:ro
+    networks: [private]
+    depends_on: {prepare: {condition: service_completed_successfully}}
+    healthcheck:
+      test: [CMD-SHELL, "pg_isready -U postgres -d offerloom"]
+      interval: 3s
+      timeout: 3s
+      retries: 30
+  migrate:
+    <<: *app
+    command: [migrate]
+    restart: "no"
+    environment:
+      OFFERLOOM_DATABASE_DSN_FILE: /run/migration/migrator_dsn
+      OFFERLOOM_MIGRATION_DSN_FILE: /run/migration/migrator_dsn
+    volumes: [migration-secrets:/run/migration:ro]
+    networks: [private]
+    depends_on: {db: {condition: service_healthy}}
+  api:
+    <<: *app
+    command: [api]
+    environment: *settings
+    volumes: [app-secrets:/run/offerloom:ro, blobs:/data/blobs, spool:/spool, import-spool:/import-spool]
+    networks: [private]
+    depends_on: {migrate: {condition: service_completed_successfully}, renderer: {condition: service_started}, parser: {condition: service_started}}
+    healthcheck:
+      test: [CMD, python, -m, offerloom, healthcheck]
+      interval: 5s
+      timeout: 5s
+      retries: 24
+      start_period: 10s
+  ingress:
+    <<: *app
+    entrypoint: [python, -m, offerloom.relay]
+    command: [api]
+    tmpfs: []
+    pids_limit: 32
+    mem_limit: 128m
+    cpus: 0.5
+    networks: [ingress, private]
+    ports: ["127.0.0.1:${OFFERLOOM_PORT:-8000}:8000"]
+    depends_on: {api: {condition: service_healthy}}
+    healthcheck:
+      test: [CMD, python, -c, "import socket; socket.create_connection(('127.0.0.1',8000),2).close()"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+  lifecycle:
+    <<: *app
+    command: [lifecycle]
+    environment: *settings
+    volumes: [app-secrets:/run/offerloom:ro, blobs:/data/blobs, spool:/spool, import-spool:/import-spool]
+    networks: [private]
+    depends_on: {migrate: {condition: service_completed_successfully}, renderer: {condition: service_started}, parser: {condition: service_started}}
+  worker:
+    <<: *app
+    command: [worker]
+    mem_limit: 1g
+    environment: *settings
+    volumes: [app-secrets:/run/offerloom:ro, blobs:/data/blobs, spool:/spool, import-spool:/import-spool]
+    networks: [private, sources]
+    depends_on: {migrate: {condition: service_completed_successfully}, renderer: {condition: service_started}, parser: {condition: service_started}}
+  source-egress:
+    <<: *app
+    command: [source-gateway]
+    pids_limit: 32
+    mem_limit: 256m
+    cpus: 0.5
+    networks: [sources, source-outbound]
+    healthcheck:
+      test: [CMD, python, -c, "import socket; socket.create_connection(('127.0.0.1',8766),2).close()"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+  renderer:
+    <<: *app
+    command: [renderer]
+    network_mode: none
+    pids_limit: 32
+    mem_limit: 512m
+    cpus: 1.0
+    environment:
+      OFFERLOOM_RENDERER_SPOOL: /spool
+    volumes: [spool:/spool]
+    depends_on: {prepare: {condition: service_completed_successfully}}
+  parser:
+    <<: *app
+    command: [parser]
+    network_mode: none
+    pids_limit: 32
+    mem_limit: 512m
+    cpus: 1.0
+    environment:
+      OFFERLOOM_IMPORT_SPOOL: /import-spool
+    volumes: [import-spool:/import-spool]
+    depends_on: {prepare: {condition: service_completed_successfully}}
+networks:
+  private: {internal: true}
+  ingress: {}
+  sources: {internal: true}
+  source-outbound: {}
+volumes:
+  pg:
+  blobs:
+  spool:
+  import-spool:
+  app-secrets:
+  migration-secrets:
+  db-secrets:

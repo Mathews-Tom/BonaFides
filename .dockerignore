@@ -1,0 +1,20 @@
+# SPDX-License-Identifier: MIT OR Apache-2.0
+.git
+.docs
+.env
+.env.*
+!.env.example
+.secrets
+**/node_modules
+**/.venv
+**/__pycache__
+**/.pytest_cache
+**/.mypy_cache
+**/.ruff_cache
+**/dist
+**/coverage
+*.log
+artifacts
+backups
+.local
+.DS_Store

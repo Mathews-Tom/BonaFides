@@ -18,4 +18,13 @@ Maintainers review inbound authorization, provenance and exact shipped obligatio
 
 No license/dependency/secret scan or counsel approval is claimed by this design document. Automated implementation gates must begin at M0 and run again against each exact release artifact. A later license change requires a new ADR and rights review; it cannot silently revoke grants already made.
 
+### Scoped source publication authorization
+
+On 2026-10-26, the repository owner, Mathews-Tom, explicitly authorized an owner-approved, source-only public pull request from `feat/job-search-and-application-workflows` into `main`. The implementation scope is commit `fc8a0685b3fee0a91c30dab3a4262b40bd0cdc51`, together with the documentation/provenance changes recording this authorization. This is a narrow change to the sequencing of the project's review gates for that PR, not an independent provenance verdict, legal opinion or certification of third-party rights.
+
+The rationale is to permit public review of the owner's authorized original-source contribution under the existing `MIT OR Apache-2.0` grant while leaving independent provenance/legal review explicitly pending. Original and third-party license texts, notices, contribution disclosures and actual license obligations remain applicable. This authorization cannot grant missing rights, excuse known unauthorized material or bypass a demonstrated secret/security blocker.
+
+Only the source branch and PR are authorized. No merge, tag, binary/image/package release, private-data/evidence upload, model download, paid/hosted call or unqualified integration enablement is authorized. M1b human validation and actual-model/real-board qualification retain their existing dispositions. Binary/image/package distribution remains blocked. This authorization ends when that PR closes and does not cover unrelated branches or material implementation changes beyond the stated scope.
+
+
 Sources reviewed 2026-10-24: [MIT](https://spdx.org/licenses/MIT.html), [Apache-2.0](https://www.apache.org/licenses/LICENSE-2.0.txt).

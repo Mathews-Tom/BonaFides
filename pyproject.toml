@@ -1,0 +1,67 @@
+# SPDX-License-Identifier: MIT OR Apache-2.0
+[build-system]
+requires = ["hatchling==1.27.0"]
+build-backend = "hatchling.build"
+
+[project]
+name = "offerloom"
+version = "0.1.0"
+description = "Local-first, evidence-grounded career workspace architecture proof"
+readme = "README.md"
+requires-python = ">=3.12,<3.13"
+license = "MIT OR Apache-2.0"
+license-files = ["LICENSE-MIT", "LICENSE-APACHE", "NOTICE"]
+dependencies = [
+  "fastapi==0.135.2",
+  "uvicorn==0.42.0",
+  "pydantic==2.12.5",
+  "sqlalchemy==2.0.48",
+  "psycopg==3.3.3",
+  "alembic==1.18.4",
+  "argon2-cffi==25.1.0",
+  "cryptography==50.0.2",
+  "weasyprint==70.0",
+  "jinja2==3.1.6",
+  "pypdf==6.21.2",
+  "anyio==4.15.1",
+]
+
+[project.scripts]
+offerloom = "offerloom.cli:main"
+
+[dependency-groups]
+build = [
+  "editables==0.6",
+  "hatchling==1.27.0",
+  "packaging==26.3",
+  "pathspec==1.1.1",
+  "pluggy==1.7.0",
+  "trove-classifiers==2026.9.21.13",
+]
+dev = [
+  "pytest==9.0.3",
+  "mypy==1.19.1",
+  "ruff==0.17.2",
+  "httpx==0.28.1",
+  "hypothesis==6.151.9",
+  "pip-audit==2.10.0",
+  "pip-licenses==5.5.1",
+  "playwright==1.64.1",
+]
+
+[tool.uv]
+default-groups = ["dev", "build"]
+no-build-isolation = true
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/offerloom"]
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+files = ["src", "tools", "tests", "migrations"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+markers = ["postgres: requires disposable PostgreSQL 18 configured by OFFERLOOM_TEST_DSN"]
