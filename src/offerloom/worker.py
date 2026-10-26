@@ -190,8 +190,7 @@ class Worker:
                 self._record_failure(
                     task,
                     exc.code,
-                    task.attempt < 3
-                    and exc.code in {"import_timeout", "import_parser_unavailable"},
+                    task.attempt < 3 and exc.code in {"import_timeout", "import_parser_busy"},
                 )
         except (OperationalError, OSError):
             self._record_failure(task, "temporary_local_unavailable", True)

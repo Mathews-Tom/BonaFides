@@ -568,6 +568,37 @@ def test_parser_failure_and_publication_rollback_never_partially_mutate_profile(
 
 
 @pytest.mark.postgres
+def test_busy_parser_retries_only_within_three_attempts(
+    importing: ImportContext, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def busy(
+        self: ImportParserClient, data: bytes, media_type: str, interrupted: Event | None = None
+    ) -> ParsedImport:
+        raise ImportFailure("import_parser_busy")
+
+    monkeypatch.setattr(ImportParserClient, "parse", busy)
+    response = importing.upload()
+    assert response.status_code == 202
+    identifier = response.json()["import_id"]
+    for attempt in range(1, 4):
+        task = importing.run()
+        assert task.attempt == attempt
+        batch = importing.batch(identifier)
+        assert batch["state"] == ("retryable_failure" if attempt < 3 else "permanent_failure")
+        assert batch["error_code"] == "import_parser_busy"
+        assert batch["text"] is None
+        with importing.identity.admin.transaction() as conn:
+            conn.execute(
+                text("""UPDATE offerloom.workflow_runs
+                SET next_attempt_at=clock_timestamp()-interval '1 second'
+                WHERE owner_id=:owner AND id=:id"""),
+                {"owner": importing.owner_id, "id": task.id},
+            )
+    with importing.runtime.transaction() as conn:
+        assert claim(conn, uuid4()) is None
+
+
+@pytest.mark.postgres
 def test_upload_security_owner_scope_limits_and_retry_fingerprint(
     importing: ImportContext, monkeypatch: pytest.MonkeyPatch
 ) -> None:
