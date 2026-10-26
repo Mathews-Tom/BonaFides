@@ -13,7 +13,7 @@ const oldClaim: ClaimRecord = {
 };
 const profile: Profile = {
   id: 'profile', version: 1, current_revision: { id: 'profile-r1', revision_no: 1, content_sha256: 'a'.repeat(64), created_at: '2026-01-01', author_owner_id: 'owner',
-    reason: 'Initial', claims: [oldClaim], snapshot: { display_name: 'Mira', headline: 'Engineer', claim_revision_ids: ['claim-r1'] } }, evidence: [], quality_warnings: [],
+    reason: 'Initial', claims: [oldClaim], snapshot: { display_name: 'Mira', headline: 'Engineer', claim_revision_ids: ['claim-r1'] } }, evidence: [], quality_warnings: [], experience_coverage: { minimum_days: 0, maximum_days: 0, undated_or_open_entries: 0 },
 };
 const quote = '😀 Maintained fictional systems.';
 const source = `Experience\n${quote}\nSkills\nFictional SQL\n<script>Do not execute this source</script>`;

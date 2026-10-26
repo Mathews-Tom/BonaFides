@@ -3,10 +3,10 @@ import { act, fireEvent, render, screen, waitFor, within } from '@testing-librar
 import userEvent, { type UserEvent } from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
 import { Documents } from './Documents';
-import { Api, ApiError, type ApplicationDocuments, type DocumentRecord, type DocumentSaveRequest, type GenerationContext, type Profile, type SectionProposal, type SectionRegenerationContext, type Workflow } from './api';
+import { Api, ApiError, type ApplicationDocuments, type DocumentDefaults, type DocumentDefaultsPatch, type DocumentRecord, type DocumentSaveRequest, type GenerationContext, type Profile, type SectionProposal, type SectionRegenerationContext, type Workflow } from './api';
 import type { ApplicationSummary } from './tracking-api';
 
-const profile: Profile = { id: 'profile', version: 3, current_revision: { id: 'profile-rev-3', revision_no: 3, content_sha256: 'a'.repeat(64), created_at: '2026-10-25T12:00:00Z', author_owner_id: 'owner', reason: 'Accepted facts', claims: [], snapshot: { display_name: 'Mira Vale', headline: '', claim_revision_ids: ['claim-1', 'claim-2'], contact: { email: 'mira@example.test', phone: '', location: '', postal_address: '' } } }, evidence: [], quality_warnings: [] };
+const profile: Profile = { id: 'profile', version: 3, current_revision: { id: 'profile-rev-3', revision_no: 3, content_sha256: 'a'.repeat(64), created_at: '2026-10-25T12:00:00Z', author_owner_id: 'owner', reason: 'Accepted facts', claims: [], snapshot: { display_name: 'Mira Vale', headline: '', claim_revision_ids: ['claim-1', 'claim-2'], contact: { email: 'mira@example.test', phone: '', location: '', postal_address: '' } } }, evidence: [], quality_warnings: [], experience_coverage: { minimum_days: 0, maximum_days: 0, undated_or_open_entries: 0 } };
 const saved: DocumentRecord = {
   id: 'base-doc', version: 4, scope: 'base', kind: 'resume', application_id: null, reviewed: false, unsupported_claims: [], stale: false, stale_reason: null,
   artifacts: [{ id: 'old-artifact', revision_id: 'old-revision', format: 'pdf' }],
@@ -28,12 +28,17 @@ const workflow: Workflow = {
   cancellation: { requested: false, local_fence_settled: false, provider_stopped: null, completed_effects_preserved: true, reason: null },
   usage: { status: 'not_applicable', model_runs: 0, inference_post_attempts: 0, inference_post_limit: null, input_tokens: null, output_tokens: null, token_budget: 0, tokens_used: 0, cost_budget_microunits: 0, cost_used_microunits: null, currency: 'USD' },
 };
+const remembered: DocumentDefaults = { version: 8, template_version: 'offerloom-evidence-v1', tone: 'professional', language: 'en', revision_retention: 'until_owner_erasure', task_input_retention_seconds: 86400, temporary_export_retention_seconds: 86400, extension_supported: false };
 
 type Handler = (path: string, method: string, body: unknown, version: number | undefined, key: boolean | string | undefined) => Promise<unknown>;
-function fixture(document: DocumentRecord | null = saved, handler?: Handler) {
+function fixture(document: DocumentRecord | null = saved, handler?: Handler, defaultsHandler?: Handler) {
   const api = new Api();
   const request = vi.spyOn(api, 'request').mockImplementation(async <T,>(path: string, method = 'GET', body?: unknown, version?: number, key?: boolean | string) => {
-    if (path === '/document-templates') return { items: [{ version: 'offerloom-evidence-v1', label: 'Evidence', language: 'en', paper: 'A4' }, { version: 'offerloom-compact-v1', label: 'Compact', language: 'en', paper: 'A4' }] } as T;
+    if (path === '/document-templates') return { items: [{ version: 'offerloom-evidence-v1', label: 'Evidence', language: 'en', paper: 'A4' }, { version: 'offerloom-compact-v1', label: 'Compact', language: 'en', paper: 'A4' }, { version: 'offerloom-evidence-letter-v1', label: 'Evidence', language: 'en', paper: 'Letter' }, { version: 'offerloom-compact-letter-v1', label: 'Compact', language: 'en', paper: 'Letter' }] } as T;
+    if (path === '/document-defaults') {
+      if (defaultsHandler) return await defaultsHandler(path, method, body, version, key) as T;
+      if (method === 'GET') return remembered as T;
+    }
     if (path === '/profile/base-resume' && method === 'GET') { if (document) return document as T; throw new ApiError(404, 'base_resume_not_found'); }
     if (handler) return await handler(path, method, body, version, key) as T;
     throw new ApiError(404, 'not_found');
@@ -45,6 +50,125 @@ async function ready() {
   await waitFor(() => expect(input).toBeEnabled());
   return input;
 }
+
+describe('remembered document defaults and current operation isolation', () => {
+  it('persists only the edited presentation while retaining a dirty saved document and current choices, then uses it in a new workspace', async () => {
+    const user = userEvent.setup(); let stored: DocumentDefaults = { ...remembered, template_version: 'offerloom-evidence-letter-v1', tone: 'concise' };
+    const { api, request } = fixture(saved, async (path, method) => {
+      if (path === '/applications') return { items: [application], next_cursor: null };
+      if (path === '/applications/application-1/documents') return pair;
+      if (path.startsWith('/applications/application-1/generation-context?')) {
+        const query = new URL(path, 'https://offerloom.test').searchParams;
+        return { ...context, template_version: query.get('template_version'), tone: query.get('tone'), generation_route: { ...route, status: 'qualified', identity: { endpoint: 'http://local-model.test:11434/api/chat', model: 'default-consumer-fixture' } } };
+      }
+      if (path === '/applications/application-1/generation' && method === 'POST') return { ...workflow, mode: 'tailored_ai' };
+      throw new ApiError(404, 'not_found');
+    }, async (_path, method, body, version) => {
+      if (method === 'PATCH') {
+        expect(version).toBe(stored.version);
+        stored = { ...stored, ...body as DocumentDefaultsPatch, version: stored.version + 1 };
+      }
+      return stored;
+    });
+    const view = render(<Documents api={api} profile={profile} />); const input = await ready();
+    expect(screen.getByLabelText('Built-in presentation')).toHaveValue('offerloom-evidence-letter-v1');
+    expect(screen.getByLabelText('Remembered writing tone')).toHaveValue('concise');
+    expect(within(screen.getByLabelText('Built-in presentation')).getByRole('option', { name: 'Evidence · English · Letter' })).toBeInTheDocument();
+    fireEvent.change(input, { target: { value: 'Dirty words retained while defaults change.' } });
+    await user.selectOptions(screen.getByLabelText('Remembered built-in presentation'), 'offerloom-compact-letter-v1');
+    await user.click(screen.getByRole('button', { name: 'Save remembered defaults' }));
+    await screen.findByText(/Remembered defaults saved for future work/);
+    const patch = request.mock.calls.find(call => call[1] === 'PATCH');
+    expect(patch?.[2]).toEqual({ template_version: 'offerloom-compact-letter-v1' }); expect(patch?.[4]).toBeTypeOf('string');
+    expect(stored.tone).toBe('concise'); expect(stored.revision_retention).toBe('until_owner_erasure');
+    expect(input).toHaveValue('Dirty words retained while defaults change.');
+    expect(screen.getByLabelText('Built-in presentation')).toHaveValue('offerloom-evidence-letter-v1');
+    expect(request.mock.calls.some(call => call[1] === 'PUT' || call[0].startsWith('/documents/'))).toBe(false);
+    view.unmount(); render(<Documents api={api} profile={profile} />); await ready();
+    expect(screen.getByLabelText('Built-in presentation')).toHaveValue('offerloom-compact-letter-v1');
+    expect(screen.getByLabelText('Block text: b-1')).toHaveValue(saved.current_revision.body.sections[0]!.blocks[0]!.text);
+    await openTailored(user);
+    expect(screen.getByLabelText('Writing tone')).toHaveValue('concise');
+    expect(screen.getByLabelText('Section writing tone')).toHaveValue('concise');
+    await user.click(screen.getByRole('button', { name: 'Preview reviewed generation context' }));
+    const confirm = await screen.findByRole('checkbox', { name: /I reviewed this exact projection/ });
+    expect(screen.getByRole('button', { name: 'Generate résumé and cover letter pair' })).toBeDisabled();
+    expect(screen.getByText('http://local-model.test:11434/api/chat', { selector: 'code' })).toBeVisible();
+    await user.click(confirm);
+    await user.click(screen.getByRole('button', { name: 'Generate résumé and cover letter pair' }));
+    await screen.findByRole('heading', { name: 'Document task: pending' });
+    expect(request.mock.calls.find(call => call[0] === '/applications/application-1/generation' && call[1] === 'POST')?.[2]).toEqual({ profile_revision_id: profile.current_revision.id, requirements_revision_id: context.requirements_revision_id, template_version: 'offerloom-compact-letter-v1', tone: 'concise', language: 'en', context_sha256: context.context_sha256 });
+  });
+
+  it('keeps defaults loading failures visible and retries without replacing explicit choices or dirty text', async () => {
+    const user = userEvent.setup(); let reads = 0;
+    const { api, request } = fixture(saved, undefined, async () => {
+      if (++reads === 1) throw new TypeError('offline');
+      return { ...remembered, template_version: 'offerloom-evidence-letter-v1', tone: 'concise' };
+    });
+    render(<Documents api={api} profile={profile} />); const input = await ready();
+    expect(await screen.findByText(/Remembered defaults could not be loaded/)).toBeInTheDocument();
+    expect(screen.getByLabelText('Built-in presentation')).toHaveValue('');
+    expect(screen.queryByRole('button', { name: 'Save remembered defaults' })).not.toBeInTheDocument();
+    await user.selectOptions(screen.getByLabelText('Built-in presentation'), 'offerloom-compact-v1');
+    fireEvent.change(input, { target: { value: 'Retained while settings recover.' } });
+    await user.click(screen.getByRole('button', { name: 'Reload remembered defaults' }));
+    await waitFor(() => expect(screen.getByLabelText('Remembered writing tone')).toHaveValue('concise'));
+    expect(screen.queryByText(/Remembered defaults could not be loaded/)).not.toBeInTheDocument();
+    expect(screen.getByLabelText('Built-in presentation')).toHaveValue('offerloom-compact-v1');
+    expect(input).toHaveValue('Retained while settings recover.');
+    expect(request.mock.calls.filter(call => call[1] !== 'GET' && call[1] !== undefined)).toHaveLength(0);
+  });
+
+  it('requires reloading a concurrent defaults version and retains only locally changed fields before explicit resave', async () => {
+    const user = userEvent.setup(); let stored: DocumentDefaults = { ...remembered, tone: 'concise' }; let writes = 0;
+    const { api, request } = fixture(saved, undefined, async (_path, method, body) => {
+      if (method === 'PATCH') {
+        if (++writes === 1) { stored = { ...stored, version: 12, tone: 'professional' }; throw new ApiError(412, 'version_conflict'); }
+        stored = { ...stored, ...body as DocumentDefaultsPatch, version: 13 };
+      }
+      return stored;
+    });
+    render(<Documents api={api} profile={profile} />); await ready();
+    await user.selectOptions(screen.getByLabelText('Remembered built-in presentation'), 'offerloom-compact-letter-v1');
+    await user.click(screen.getByRole('button', { name: 'Save remembered defaults' }));
+    await screen.findByText(/The saved version changed/);
+    expect(screen.getByRole('button', { name: 'Save remembered defaults' })).toBeDisabled();
+    await user.click(screen.getByRole('button', { name: 'Reload remembered defaults' }));
+    await waitFor(() => expect(screen.getByLabelText('Remembered writing tone')).toHaveValue('professional'));
+    expect(screen.getByLabelText('Remembered built-in presentation')).toHaveValue('offerloom-compact-letter-v1');
+    expect(writes).toBe(1);
+    await user.click(screen.getByRole('button', { name: 'Save remembered defaults' }));
+    await screen.findByText(/Remembered defaults saved for future work/);
+    const patches = request.mock.calls.filter(call => call[1] === 'PATCH');
+    expect(patches.map(call => call[2])).toEqual([{ template_version: 'offerloom-compact-letter-v1' }, { template_version: 'offerloom-compact-letter-v1' }]);
+    expect(patches.map(call => call[3])).toEqual([8, 12]); expect(patches[1]?.[4]).not.toBe(patches[0]?.[4]);
+    expect(stored.tone).toBe('professional');
+    expect(screen.getByLabelText('Built-in presentation')).toHaveValue('offerloom-evidence-v1');
+  });
+
+  it('retains an offline defaults draft and reuses the same key only on explicit identical retry', async () => {
+    const user = userEvent.setup(); let writes = 0;
+    const { api, request } = fixture(saved, undefined, async (_path, method, body) => {
+      if (method === 'PATCH') {
+        if (++writes === 1) throw new TypeError('offline');
+        return { ...remembered, ...body as DocumentDefaultsPatch, version: 9 };
+      }
+      return remembered;
+    });
+    render(<Documents api={api} profile={profile} />); await ready();
+    await user.selectOptions(screen.getByLabelText('Remembered writing tone'), 'concise');
+    await user.click(screen.getByRole('button', { name: 'Save remembered defaults' }));
+    await screen.findByText(/Remembered defaults were not confirmed saved/);
+    expect(screen.getByLabelText('Remembered writing tone')).toHaveValue('concise');
+    expect(writes).toBe(1);
+    await user.click(screen.getByRole('button', { name: 'Save remembered defaults' }));
+    await screen.findByText(/Remembered defaults saved for future work/);
+    const patches = request.mock.calls.filter(call => call[1] === 'PATCH');
+    expect(patches).toHaveLength(2); expect(patches[0]?.[2]).toEqual({ tone: 'concise' });
+    expect(patches[1]?.[4]).toBe(patches[0]?.[4]);
+  });
+});
 
 describe('saved document editing and recovery', () => {
   it('retains attempted wording on 412, explicitly compares/rebases and preserves unrelated newer server blocks', async () => {
@@ -248,7 +372,7 @@ describe('review, export and generation boundaries', () => {
     expect(projection).not.toBeNull();
     const firstPre = projection!.querySelector('pre'); expect(JSON.parse(firstPre!.textContent!)).toEqual(context.model_projection);
     expect(firstPre).not.toHaveTextContent('mira@example.test');
-    expect(within(projection!).getByText(/Only this model projection/)).toHaveTextContent('not anonymization');
+    expect(within(projection!).getByText(/Destination from this operation/)).toHaveTextContent('not anonymization');
     expect(request.mock.calls.filter(call => call[1] === 'POST')).toHaveLength(0);
   });
   it.each([false, true])('keeps the selected application document on task reconnect after an earlier result read failed (dirty: %s)', async keepDirty => {
@@ -357,7 +481,7 @@ function sectionPreview(path: string, status: 'qualified' | 'unqualified' | 'dis
     document_id: tailored.id, document_version: tailored.version, revision_id: tailored.current_revision.id,
     content_sha256: tailored.current_revision.content_sha256, section_key: section.key, tone, context_sha256: '2'.repeat(64),
     model_projection: { requirements: [{ text: 'Linux service care' }], tone, target: { kind: tailored.kind, section_key: section.key, heading: section.heading, blocks: section.blocks.map(({ text, claim_kind, claim_revision_ids, evidence_revision_ids }) => ({ text, claim_kind, claim_revision_ids, evidence_revision_ids })) } },
-    generation_route: { status, reason: `${status} regenerate_section stage`, identity: { model: 'synthetic-section-route' } },
+    generation_route: { status, reason: `${status} regenerate_section stage`, identity: { endpoint: 'http://section-model.test:11434/api/chat', model: 'synthetic-section-route' } },
   };
 }
 function proposalFixture(handler: Handler, members: DocumentRecord[] = [tailored]) {
@@ -385,7 +509,7 @@ describe('saved tailored section proposals', () => {
     render(<Documents api={api} profile={profile} />); const input = await ready();
     expect(screen.queryByRole('heading', { name: 'Selected-section proposals' })).not.toBeInTheDocument();
     expect(screen.queryByLabelText('Section to regenerate')).not.toBeInTheDocument();
-    expect(screen.queryByLabelText(/writing tone/i)).not.toBeInTheDocument();
+    expect(screen.queryByLabelText(/^(Section )?writing tone$/i)).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /projection|proposal|Generate résumé and cover letter/ })).not.toBeInTheDocument();
     await user.type(input, ' More owner wording.');
     expect(screen.queryByRole('button', { name: /projection|proposal|Generate résumé and cover letter/ })).not.toBeInTheDocument();
@@ -409,6 +533,8 @@ describe('saved tailored section proposals', () => {
     expect(JSON.parse(projection.querySelector('pre')!.textContent!)).toEqual(expected.model_projection);
     expect(projection.querySelector('pre')).not.toHaveTextContent('mira@example.test');
     expect(projection.querySelector('pre')).not.toHaveTextContent('Maintained Linux service checks.');
+    expect(within(projection).getByText('http://section-model.test:11434/api/chat', { selector: 'code' })).toBeVisible();
+    expect(within(projection).getByText(/24 hours after terminal completion/)).toBeVisible();
     expect(screen.getByRole('button', { name: 'Request section proposal' })).toBeDisabled();
     expect(request.mock.calls.filter(call => call[1] === 'POST')).toHaveLength(0);
     await user.click(screen.getByRole('checkbox', { name: /I reviewed this exact selected-section projection/ }));

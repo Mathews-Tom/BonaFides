@@ -18,12 +18,12 @@ from pydantic import Field, ValidationError, field_validator, model_validator
 from sqlalchemy import Connection, text
 from sqlalchemy.engine import RowMapping
 
-from offerloom import documents, local_model, suitability
+from offerloom import document_defaults, documents, local_model, suitability
 from offerloom.auth import Owner, require_owner
 from offerloom.commands import append_outbox, canonical_json, command, lock_installation
 from offerloom.config import Settings
 from offerloom.db import Database
-from offerloom.document_frame import TEMPLATES, PrintableFrame, template_digest
+from offerloom.document_frame import TEMPLATE_PAPER, TEMPLATES, PrintableFrame, template_digest
 from offerloom.problems import Problem
 from offerloom.workflows import Claim, assert_fence, enqueue, get_workflow
 
@@ -998,6 +998,8 @@ def _response(status: int, result: dict[str, object]) -> Response:
 
 
 def install_routes(router: APIRouter, db: Database, settings: Settings) -> None:
+    document_defaults.install_routes(router, db)
+
     @router.get("/document-templates")
     def templates(owner: Annotated[Owner, Depends(require_owner)]) -> Response:
         del owner
@@ -1005,7 +1007,12 @@ def install_routes(router: APIRouter, db: Database, settings: Settings) -> None:
             200,
             {
                 "items": [
-                    {"version": version, "label": item[0], "language": "en", "paper": "A4"}
+                    {
+                        "version": version,
+                        "label": item[0],
+                        "language": "en",
+                        "paper": TEMPLATE_PAPER[version],
+                    }
                     for version, item in TEMPLATES.items()
                 ]
             },

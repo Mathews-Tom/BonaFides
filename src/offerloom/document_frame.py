@@ -12,8 +12,22 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 TEMPLATES: Final = {
     "offerloom-evidence-v1": ("Evidence", "evidence-v1.html"),
     "offerloom-compact-v1": ("Compact", "compact-v1.html"),
+    "offerloom-evidence-letter-v1": ("Evidence", "evidence-letter-v1.html"),
+    "offerloom-compact-letter-v1": ("Compact", "compact-letter-v1.html"),
 }
-TemplateVersion = Literal["offerloom-base-v1", "offerloom-evidence-v1", "offerloom-compact-v1"]
+TEMPLATE_PAPER: Final[dict[str, Literal["A4", "Letter"]]] = {
+    "offerloom-evidence-v1": "A4",
+    "offerloom-compact-v1": "A4",
+    "offerloom-evidence-letter-v1": "Letter",
+    "offerloom-compact-letter-v1": "Letter",
+}
+TemplateVersion = Literal[
+    "offerloom-base-v1",
+    "offerloom-evidence-v1",
+    "offerloom-compact-v1",
+    "offerloom-evidence-letter-v1",
+    "offerloom-compact-letter-v1",
+]
 
 
 def template_digest(version: str) -> str:

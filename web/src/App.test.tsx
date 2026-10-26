@@ -6,7 +6,7 @@ import { App } from './App';
 import { Api, ApiError, type DocumentRecord, type InstallationStatus, type Profile, type RequirementsView, type Session, type Snapshot, type Workflow } from './api';
 import { stages, type ApplicationDetail } from './tracking-api';
 const session: Session = { owner_id: 'owner', login_name: 'mira', csrf_token: 'session-csrf', expires_at: '2030-01-01' };
-const profile: Profile = { id: 'profile', version: 1, current_revision: { id: 'revision-1', revision_no: 1, content_sha256: 'a'.repeat(64), created_at: '2026-01-01T00:00:00Z', author_owner_id: 'owner', reason: 'Initial profile', claims: [], snapshot: { display_name: 'Mira', headline: 'Engineer', claim_revision_ids: [] } }, evidence: [], quality_warnings: [] };
+const profile: Profile = { id: 'profile', version: 1, current_revision: { id: 'revision-1', revision_no: 1, content_sha256: 'a'.repeat(64), created_at: '2026-01-01T00:00:00Z', author_owner_id: 'owner', reason: 'Initial profile', claims: [], snapshot: { display_name: 'Mira', headline: 'Engineer', claim_revision_ids: [] } }, evidence: [], quality_warnings: [], experience_coverage: { minimum_days: 0, maximum_days: 0, undated_or_open_entries: 0 } };
 const installation: InstallationStatus = { namespace_id: 'namespace-one', maintenance_epoch: 0, workspace_version: 1, maintenance_active: false, recovery_required: false, operation: null, drain: { active_calls: 0, provider_executions: 0 } };
 function task(overrides: Partial<Workflow> = {}): Workflow {
   return {
@@ -24,6 +24,7 @@ function mockRequest(api: Api, handler: (path: string, method: string, body?: un
   return vi.spyOn(api, 'request').mockImplementation(async <T,>(path: string, method = 'GET', body?: unknown) => {
     if (method === 'GET' && path === '/maintenance') return await maintenance() as T;
     if (method === 'GET' && path === '/document-templates') return { items: [{ version: 'offerloom-evidence-v1', label: 'Evidence', language: 'en', paper: 'A4' }, { version: 'offerloom-compact-v1', label: 'Compact', language: 'en', paper: 'A4' }] } as T;
+    if (method === 'GET' && path === '/document-defaults') return { version: 1, template_version: 'offerloom-evidence-v1', tone: 'professional', language: 'en', revision_retention: 'until_owner_erasure', task_input_retention_seconds: 86400, temporary_export_retention_seconds: 86400, extension_supported: false } as T;
     if (method === 'GET' && path === '/profile/base-resume') { if (baseDocument) return baseDocument as T; throw new ApiError(404, 'base_resume_not_found'); }
     if (method === 'GET' && path === '/applications') return { items: applications, next_cursor: null, query_elapsed_ms: 1, as_of: '2026-10-25T12:00:00Z' } as T;
     if (method === 'GET' && path.startsWith('/applications/counts?')) {

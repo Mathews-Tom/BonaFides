@@ -126,7 +126,7 @@ describe('manual application buffers and selection boundaries', () => {
     const { api, request } = connected(async (path, method) => {
       if (path === '/maintenance') return { namespace_id: 'tracking-test-namespace', maintenance_epoch: 0, workspace_version: 1, maintenance_active: false, recovery_required: false, operation: null, drain: { active_calls: 0, provider_executions: 0 } };
       if (path === '/session') return { owner_id: 'synthetic-owner', login_name: 'mira', csrf_token: 'csrf', expires_at: timestamp };
-      if (path === '/profile' && method === 'GET') return { id: 'profile', version: 1, current_revision: { id: 'revision', revision_no: 1, content_sha256: 'a'.repeat(64), created_at: timestamp, author_owner_id: 'synthetic-owner', reason: '', snapshot: { display_name: 'Mira', headline: '', claim_revision_ids: [] }, claims: [] }, evidence: [], quality_warnings: [] } satisfies Profile;
+      if (path === '/profile' && method === 'GET') return { id: 'profile', version: 1, current_revision: { id: 'revision', revision_no: 1, content_sha256: 'a'.repeat(64), created_at: timestamp, author_owner_id: 'synthetic-owner', reason: '', snapshot: { display_name: 'Mira', headline: '', claim_revision_ids: [] }, claims: [] }, evidence: [], quality_warnings: [], experience_coverage: { minimum_days: 0, maximum_days: 0, undated_or_open_entries: 0 } } satisfies Profile;
       if (path === '/postings') return { items: [], next_cursor: null, as_of: timestamp, query_elapsed_ms: 1 };
       if (path === '/sources') return { items: [] };
     });

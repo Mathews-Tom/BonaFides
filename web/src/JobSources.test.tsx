@@ -49,7 +49,7 @@ function server() {
   const request = vi.spyOn(api, 'request').mockImplementation(async <T,>(path: string, method = 'GET', body?: unknown, version?: number, key: boolean | string = false, signal?: AbortSignal): Promise<T> => {
     if (method !== 'GET') state.submissions.push({ path, method, body, version, key });
     const url = new URL(path, 'http://offerloom.local');
-    if (path === '/profile' && method === 'GET') return { id: 'profile-one', version: 1, current_revision: { id: 'profile-revision-one', revision_no: 1, content_sha256: 'b'.repeat(64), created_at: savedPosting.created_at, author_owner_id: 'owner-one', reason: 'owner_save', snapshot: { display_name: 'Fictional owner', headline: '', claim_revision_ids: [], evidence_revision_ids: [] }, claims: [] }, evidence: [], quality_warnings: ['empty_profile'] } as T;
+    if (path === '/profile' && method === 'GET') return { id: 'profile-one', version: 1, current_revision: { id: 'profile-revision-one', revision_no: 1, content_sha256: 'b'.repeat(64), created_at: savedPosting.created_at, author_owner_id: 'owner-one', reason: 'owner_save', snapshot: { display_name: 'Fictional owner', headline: '', claim_revision_ids: [], evidence_revision_ids: [] }, claims: [] }, evidence: [], quality_warnings: ['empty_profile'], experience_coverage: { minimum_days: 0, maximum_days: 0, undated_or_open_entries: 0 } } as T;
     if (/^\/postings\/[^/]+\/requirements$/.test(path) && method === 'GET') {
       const posting = state.postings.find(item => item.id === path.split('/')[2]);
       if (!posting) throw new ApiError(404, 'posting_not_found');

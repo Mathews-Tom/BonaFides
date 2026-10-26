@@ -345,7 +345,14 @@ def actual_renderer(
 
 
 @pytest.mark.parametrize(
-    "template", ["offerloom-base-v1", "offerloom-evidence-v1", "offerloom-compact-v1"]
+    "template",
+    [
+        "offerloom-base-v1",
+        "offerloom-evidence-v1",
+        "offerloom-compact-v1",
+        "offerloom-evidence-letter-v1",
+        "offerloom-compact-letter-v1",
+    ],
 )
 def test_actual_renderer_preserves_supported_unicode_long_literal_text_and_order(
     template: str,
@@ -378,6 +385,43 @@ def test_actual_renderer_preserves_supported_unicode_long_literal_text_and_order
     assert positions == sorted(positions)
     assert "\ufffd" not in extracted
     assert data.startswith(b"%PDF-") and len(data) <= MAX_PDF_BYTES
+
+
+@pytest.mark.parametrize(
+    ("template", "width", "height"),
+    [
+        ("offerloom-evidence-v1", 210 / 25.4 * 72, 297 / 25.4 * 72),
+        ("offerloom-compact-v1", 210 / 25.4 * 72, 297 / 25.4 * 72),
+        ("offerloom-evidence-letter-v1", 612, 792),
+        ("offerloom-compact-letter-v1", 612, 792),
+    ],
+)
+def test_actual_renderer_uses_selected_paper_geometry_and_preserves_frame_and_body(
+    template: str,
+    width: float,
+    height: float,
+    actual_renderer: Callable[[DocumentBody, str, PrintableFrame | None], bytes],
+) -> None:
+    body = _body("First supported professional fact.", "Final supported professional fact.")
+    frame = PrintableFrame(
+        display_name="Synthetic Page Owner",
+        contact=ProfileContact(email="page-owner@example.invalid"),
+    )
+    data = actual_renderer(body, template, frame)
+    reader = PdfReader(io.BytesIO(data))
+    assert reader.pages
+    for page in reader.pages:
+        assert float(page.mediabox.width) == pytest.approx(width, abs=0.01)
+        assert float(page.mediabox.height) == pytest.approx(height, abs=0.01)
+    extracted = " ".join(page.extract_text() for page in reader.pages)
+    normalized = " ".join(extracted.split())
+    for value in (
+        frame.display_name,
+        "page-owner@example.invalid",
+        "First supported professional fact.",
+        "Final supported professional fact.",
+    ):
+        assert value in normalized
 
 
 @pytest.mark.parametrize("text", ["王小明", "unassigned \u0378", "noncharacter \U0010ffff"])

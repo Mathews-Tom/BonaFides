@@ -1,0 +1,39 @@
+{# SPDX-License-Identifier: MIT OR Apache-2.0 #}
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>{{ document.title }}</title>
+<style>
+@page { size: Letter; margin: 18mm 19mm; }
+body { font-family: "DejaVu Sans", sans-serif; color: #18252b; font-size: 10pt; line-height: 1.4; }
+header { margin-bottom: 5mm; }
+h1 { font-size: 21pt; line-height: 1.2; margin: 0 0 2mm; overflow-wrap: anywhere; }
+h2 { font-size: 11pt; border-left: 2pt solid #245b65; padding-left: 2mm; margin: 5mm 0 2mm; break-after: avoid; }
+p { margin: 0 0 2.5mm; white-space: pre-wrap; overflow-wrap: anywhere; }
+.contact { font-size: 8.5pt; margin-bottom: .5mm; }
+.document-title { font-size: 11pt; font-weight: bold; margin-top: 3mm; }
+.correspondence { margin: 5mm 0; }
+</style></head>
+<body>
+<header>
+{% if frame.display_name %}<h1>{{ frame.display_name }}</h1>{% endif %}
+{% if frame.contact %}
+{% for value in [frame.contact.email, frame.contact.phone, frame.contact.location, frame.contact.postal_address] %}
+{% if value %}<p class="contact">{{ value }}</p>{% endif %}
+{% endfor %}
+{% endif %}
+<p class="document-title">{{ document.title }}</p>
+</header>
+{% if document.title == 'Cover letter' %}
+<div class="correspondence">
+{% if frame.correspondence_date %}<p>{{ frame.correspondence_date }}</p>{% endif %}
+{% if frame.recipient %}<p>{{ frame.recipient }}</p>{% endif %}
+{% if frame.organization %}<p>{{ frame.organization }}</p>{% endif %}
+{% if frame.role %}<p>{{ frame.role }}</p>{% endif %}
+</div>
+{% endif %}
+{% for section in document.sections %}
+<section><h2>{{ section.heading }}</h2>
+{% for block in section.blocks %}<p>{{ block.text }}</p>{% endfor %}
+</section>
+{% endfor %}
+</body></html>

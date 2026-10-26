@@ -146,6 +146,20 @@ def test_owner_can_download_nonempty_blocked_document_and_exact_evidence_bytes(
     assert catalog.client.get("/api/v1/profile").status_code == 200
     listed = catalog.client.get("/api/v1/portable-exports").json()["items"]
     assert listed[0]["id"] == task["id"] and listed[0]["downloadable"] is True
+    disclosure = catalog.client.get("/api/v1/document-defaults")
+    assert disclosure.status_code == 200, disclosure.text
+    with catalog.runtime.transaction() as conn:
+        actual_retention_seconds = float(
+            conn.execute(
+                text("""SELECT extract(epoch FROM expires_at-created_at)
+                FROM offerloom.portable_exports
+                WHERE owner_id=:owner AND workflow_run_id=:workflow"""),
+                {"owner": catalog.owner_id, "workflow": UUID(str(task["id"]))},
+            ).scalar_one()
+        )
+    assert (
+        abs(actual_retention_seconds - disclosure.json()["temporary_export_retention_seconds"]) < 1
+    )
 
 
 @pytest.mark.postgres

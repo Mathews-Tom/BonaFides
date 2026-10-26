@@ -4,7 +4,7 @@ export interface Challenge { csrf_token: string; bootstrap_available: boolean }
 export interface ProfileContact { email: string; phone: string; location: string; postal_address: string }
 export interface Snapshot { display_name: string; headline: string; claim_revision_ids: string[]; evidence_revision_ids?: string[]; contact?: ProfileContact | null }
 export type ClaimKind = 'identity' | 'experience' | 'education' | 'skill' | 'project' | 'certification' | 'preference' | 'other' | 'language';
-export interface ClaimPayload { text: string; organization?: string; role?: string; start_date?: string; end_date?: string; proficiency?: string }
+export interface ClaimPayload { text: string; organization?: string; role?: string; start_date?: string; end_date?: string; proficiency?: string; project_url?: string }
 export interface RevisionMetadata { id: string; revision_no: number; content_sha256: string; created_at: string; author_owner_id: string }
 export interface EvidenceRevision extends RevisionMetadata { payload: { text: string; source: string } }
 export interface EvidenceLink { evidence_revision_id: string; support_kind: 'direct' | 'user_asserted' | 'context'; excerpt: string }
@@ -15,9 +15,15 @@ export interface PinnedEvidence { id: string; revision: EvidenceRevision }
 export interface EvidenceRecord extends PinnedEvidence { version: number; archived: boolean; current_revision_id: string }
 export interface ProfileRevisionSummary extends RevisionMetadata { snapshot: Snapshot; reason: string }
 export interface ProfileRevision extends ProfileRevisionSummary { claims: PinnedClaim[]; evidence: PinnedEvidence[] }
-export interface Profile { id: string; version: number; current_revision: ProfileRevisionSummary & { claims: ClaimRecord[] }; evidence: EvidenceRecord[]; quality_warnings: string[] }
+export interface Profile { id: string; version: number; current_revision: ProfileRevisionSummary & { claims: ClaimRecord[] }; evidence: EvidenceRecord[]; quality_warnings: string[]; experience_coverage: { minimum_days: number; maximum_days: number; undated_or_open_entries: number } }
 export interface RevisionPage { items: ProfileRevisionSummary[]; next_cursor: number | null }
 export interface FieldError { loc: (string | number)[]; code: string; message: string }
+export interface TaskRetentionStatus {
+  state: 'not_run' | 'in_progress' | 'succeeded' | 'failed';
+  last_success_at: string | null; last_failure_at: string | null;
+  failure_code: 'task_input_retention_failed' | null; processed_count: number;
+  policy: { terminal_input_retention_seconds: number; sweep_interval_seconds: number; batch_retry_interval_seconds: number; batch_size: number; extension_supported: false };
+}
 export type WorkflowState = 'pending' | 'running' | 'waiting_for_approval' | 'retryable_failure' | 'permanent_failure' | 'cancelled' | 'succeeded';
 export interface WorkflowPage { items: Workflow[]; next_cursor: string | null }
 export interface TaskPage<T> { items: T[]; next_cursor: string | null }
@@ -111,7 +117,13 @@ export interface DocumentRecord {
   artifacts: { id: string; revision_id: string; format: 'pdf' }[];
 }
 export interface DocumentRevisionPage { items: DocumentRevision[]; next_cursor: number | null }
-export interface DocumentTemplate { version: string; label: string; language: 'en'; paper: 'A4' }
+export interface DocumentTemplate { version: string; label: string; language: 'en'; paper: 'A4' | 'Letter' }
+export interface DocumentDefaults {
+  version: number; template_version: string; tone: 'professional' | 'concise'; language: 'en';
+  revision_retention: 'until_owner_erasure'; task_input_retention_seconds: 86400;
+  temporary_export_retention_seconds: 86400; extension_supported: false;
+}
+export type DocumentDefaultsPatch = Partial<Pick<DocumentDefaults, 'template_version' | 'tone'>>;
 export interface GenerationRoute { status: 'disabled' | 'unqualified' | 'qualified'; reason: string; identity: Record<string, unknown> | null }
 export interface ApplicationDocuments {
   application_id: string; version: number; items: DocumentRecord[]; generation_route: GenerationRoute; requirements_revision_id: string | null;

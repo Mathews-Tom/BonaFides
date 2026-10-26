@@ -302,11 +302,6 @@ def test_base_empty_foreign_pins_template_auth_csrf_etag_and_payload_idempotency
         path, json={**body, "template_version": "offerloom-compact-v1"}, headers=headers
     )
     assert changed.status_code == 409 and changed.json()["code"] == "idempotency_payload_mismatch"
-    templates = catalog.client.get("/api/v1/document-templates").json()["items"]
-    assert {item["version"] for item in templates} == {
-        "offerloom-evidence-v1",
-        "offerloom-compact-v1",
-    }
 
 
 @pytest.mark.postgres

@@ -12,7 +12,7 @@ import type { ApplicationDetail, ApplicationSummary } from './tracking-api';
 const owner = '11111111-1111-4111-8111-111111111111';
 const applicationId = '22222222-2222-4222-8222-222222222222';
 const expiry = '2099-01-01T00:00:00Z';
-const profile: Profile = { id: 'profile', version: 9, evidence: [], quality_warnings: [], current_revision: {
+const profile: Profile = { id: 'profile', version: 9, evidence: [], quality_warnings: [], experience_coverage: { minimum_days: 0, maximum_days: 0, undated_or_open_entries: 0 }, current_revision: {
   id: 'profile-revision', revision_no: 1, content_sha256: 'a'.repeat(64), created_at: '2026-01-01', author_owner_id: owner,
   reason: 'Initial', claims: [], snapshot: { display_name: 'Fictional owner', headline: '', claim_revision_ids: [] },
 } };

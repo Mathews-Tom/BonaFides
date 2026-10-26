@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Api, ApiError, errorText, terminal, type ApplicationDocuments, type BaseResumeRequest, type DocumentBody, type DocumentFact, type DocumentRecord, type DocumentRenderRequest, type DocumentRestoreRequest, type DocumentReviewRequest, type DocumentRevision, type DocumentRevisionPage, type DocumentSaveRequest, type DocumentTemplate, type GenerationContext, type GenerationRequest, type Profile, type ProfileRevisionSummary, type RevisionPage, type SectionProposal, type SectionProposalApplyRequest, type SectionProposalPage, type SectionRegenerationContext, type SectionRegenerationRequest, type Workflow } from './api';
+import { Api, ApiError, errorText, terminal, type ApplicationDocuments, type BaseResumeRequest, type DocumentBody, type DocumentDefaults, type DocumentDefaultsPatch, type DocumentFact, type DocumentRecord, type DocumentRenderRequest, type DocumentRestoreRequest, type DocumentReviewRequest, type DocumentRevision, type DocumentRevisionPage, type DocumentSaveRequest, type DocumentTemplate, type GenerationContext, type GenerationRequest, type Profile, type ProfileRevisionSummary, type RevisionPage, type SectionProposal, type SectionProposalApplyRequest, type SectionProposalPage, type SectionRegenerationContext, type SectionRegenerationRequest, type Workflow } from './api';
 import type { ApplicationPage, ApplicationSummary } from './tracking-api';
 import { copyBody, issueAnchor, rebaseBody, sameBody } from './document-state';
 import { proposalMatches, SectionProposals } from './SectionProposals';
@@ -29,6 +29,13 @@ export function Documents({ api, profile, disabled = false, externalDocumentId, 
   const [mode, setMode] = useState<'base' | 'tailored'>('base');
   const [templates, setTemplates] = useState<DocumentTemplate[]>([]);
   const [template, setTemplate] = useState('');
+  const [defaults, setDefaults] = useState<DocumentDefaults | null>(null);
+  const [defaultsDraft, setDefaultsDraft] = useState({ template_version: '', tone: 'professional' as DocumentDefaults['tone'] });
+  const [defaultsError, setDefaultsError] = useState('');
+  const [defaultsConflict, setDefaultsConflict] = useState(false);
+  const defaultsState = useRef({ saved: defaults, draft: defaultsDraft });
+  defaultsState.current = { saved: defaults, draft: defaultsDraft };
+  const choicesInitialized = useRef(false);
   const [profileRevisions, setProfileRevisions] = useState<ProfileRevisionSummary[]>([]);
   const [profileCursor, setProfileCursor] = useState<number | null>(null);
   const [selectedProfile, setSelectedProfile] = useState('');
@@ -160,18 +167,58 @@ export function Documents({ api, profile, disabled = false, externalDocumentId, 
     const chosen = value.items.find(item => item.id === preferredId) ?? value.items.find(item => item.kind === 'resume') ?? value.items[0];
     if (chosen) receive(chosen); else if (!current.current.dirty) { setDoc(null); setHistory(null); setPreview(null); }
   }, [request, receive]);
+  const loadDefaults = useCallback(async (signal: AbortSignal) => {
+    try {
+      const value = await request<DocumentDefaults>(signal, '/document-defaults');
+      const previous = defaultsState.current;
+      const draft = {
+        template_version: previous.saved && previous.draft.template_version !== previous.saved.template_version ? previous.draft.template_version : value.template_version,
+        tone: previous.saved && previous.draft.tone !== previous.saved.tone ? previous.draft.tone : value.tone,
+      };
+      setDefaults(value); setDefaultsDraft(draft); setDefaultsError(''); setDefaultsConflict(false);
+      defaultsState.current = { saved: value, draft };
+      if (!choicesInitialized.current) {
+        choicesInitialized.current = true;
+        setTemplate(value.template_version); setTone(value.tone); setSectionTone(value.tone);
+      }
+    } catch (failure) {
+      if (!aborted(failure)) setDefaultsError(`Remembered defaults could not be loaded. ${errorText(failure)}`);
+      throw failure;
+    }
+  }, [request]);
+  function saveDefaults() {
+    if (!defaults || locked || defaultsConflict) return;
+    const body: DocumentDefaultsPatch = {};
+    if (defaultsDraft.template_version !== defaults.template_version) body.template_version = defaultsDraft.template_version;
+    if (defaultsDraft.tone !== defaults.tone) body.tone = defaultsDraft.tone;
+    if (!Object.keys(body).length) return;
+    void run(async signal => {
+      try {
+        const value = await request<DocumentDefaults>(signal, '/document-defaults', 'PATCH', body, defaults.version, keyFor('/document-defaults', body, defaults.version));
+        mutation.current = null; setDefaults(value); setDefaultsDraft({ template_version: value.template_version, tone: value.tone }); setDefaultsError(''); setDefaultsConflict(false);
+        setNotice('Remembered defaults saved for future work. Current operation choices, saved documents, history, PDFs and permissions are unchanged.');
+      } catch (failure) {
+        if (!aborted(failure)) {
+          setDefaultsError(`Remembered defaults were not confirmed saved. ${errorText(failure)}`);
+          if (failure instanceof ApiError && failure.status === 412) setDefaultsConflict(true);
+        }
+        throw failure;
+      }
+    });
+  }
   useEffect(() => {
     const epoch = selection.current;
     void run(async signal => {
       const results = await Promise.allSettled([
         request<{ items: DocumentTemplate[] }>(signal, '/document-templates').then(result => {
-          setTemplates(result.items); setTemplate(value => value || result.items[0]?.version || '');
+          setTemplates(result.items);
         }),
         loadBase(signal, epoch),
+        loadDefaults(signal),
       ]);
       for (const result of results) if (result.status === 'rejected') throw result.reason;
     });
-  }, [request, run, loadBase]);
+  }, [request, run, loadBase, loadDefaults]);
   useEffect(() => {
     const externalKey = externalRequestKey ?? externalDocumentId ?? null;
     if (!externalDocumentId || !externalKey || handledExternal.current === externalKey || busy || lock.current) return;
@@ -458,22 +505,41 @@ export function Documents({ api, profile, disabled = false, externalDocumentId, 
   return <section className="documents document-panel" aria-labelledby="documents-heading">
     <h2 id="documents-heading" ref={headingRef} tabIndex={-1}>Documents</h2>
     <p>Saved words, frozen sources and exact-revision PDF. No export sends an application or changes tracking.</p>
+    <p className="disclosure">Document history: saved revisions and committed proposals remain until explicit, confirmed scoped erasure in Privacy and portable data; rebuilding, changing defaults or archiving is not erasure. Local backups and downloaded files, and any external copies, have independent retention and must be handled separately.</p>
     <div ref={errorRef} className="error" role="alert" tabIndex={-1} hidden={!error}>{error}</div><p className="status" role="status">{notice}</p>
+    <fieldset disabled={locked}><legend>Remembered defaults for future work</legend>
+      <p>These owner-local defaults initialize future workspace choices, not existing documents or this operation. Saving grants no integration permissions. English only; retention is fixed, not an adjustable expiry.</p>
+      {defaults ? <p>Last loaded remembered defaults: {templates.find(item => item.version === defaults.template_version)?.label ?? defaults.template_version} · {templates.find(item => item.version === defaults.template_version)?.paper ?? 'paper metadata unavailable'} · {defaults.tone}. Version {defaults.version}.</p> : <p>Remembered defaults have not been loaded. Current choices are not confirmed saved defaults.</p>}
+      {defaultsError && <p className="error">{defaultsError}</p>}
+      <button className="secondary" onClick={() => { void run(signal => loadDefaults(signal)); }}>Reload remembered defaults</button>
+      {defaults && <>
+        <label>Remembered built-in presentation<select value={defaultsDraft.template_version} onChange={event => setDefaultsDraft(value => ({ ...value, template_version: event.target.value }))}>{!templates.length && <option value={defaultsDraft.template_version}>{defaultsDraft.template_version} · catalog unavailable</option>}{templates.map(item => <option key={item.version} value={item.version}>{item.label} · English · {item.paper}</option>)}</select></label>
+        <label>Remembered writing tone<select value={defaultsDraft.tone} onChange={event => setDefaultsDraft(value => ({ ...value, tone: event.target.value as DocumentDefaults['tone'] }))}><option value="professional">Professional</option><option value="concise">Concise</option></select></label>
+        {defaultsConflict && <p className="disclosure">The saved version changed. Reload remembered defaults, compare the last loaded values with your retained choices, then explicitly save again.</p>}
+        <button disabled={defaultsConflict || !templates.some(item => item.version === defaultsDraft.template_version) || (defaultsDraft.template_version === defaults.template_version && defaultsDraft.tone === defaults.tone)} onClick={saveDefaults}>Save remembered defaults</button>
+        <button className="secondary" disabled={dirty || defaultsConflict || !!defaultsError} onClick={() => { choicesInitialized.current = true; setTemplate(defaults.template_version); setTone(defaults.tone); setSectionTone(defaults.tone); setNotice('Last loaded remembered defaults selected for this operation. Saved documents are unchanged.'); }}>Use remembered defaults for current operation</button>
+      </>}
+      <p>Terminal task inputs are eligible for clearing after 24 hours, with a daily sweep and no extension. Temporary portable exports remain downloadable until their displayed expiry, currently 24 hours after creation; physical removal waits for the lifecycle controller. Committed document revisions do not expire automatically.</p>
+    </fieldset>
     <fieldset disabled={locked || dirty}><legend>Document workspace</legend><div className="actions"><button className="secondary" aria-pressed={mode === 'base'} onClick={() => changeMode('base')}>Base résumé</button><button className="secondary" aria-pressed={mode === 'tailored'} onClick={() => changeMode('tailored')}>Tracked application documents</button></div></fieldset>
     <fieldset disabled={locked || dirty}><legend>{mode === 'base' ? 'Profile-only composition' : 'Tailored pair preparation'}</legend>
       <label>Saved profile revision<select value={profileId} onChange={event => setSelectedProfile(event.target.value === profile?.current_revision.id ? '' : event.target.value)}><option value={profile?.current_revision.id ?? ''}>{profile ? `Current revision ${profile.current_revision.revision_no}` : 'Load and save your profile first'}</option>{profileRevisions.filter(item => item.id !== profile?.current_revision.id).map(item => <option key={item.id} value={item.id}>Revision {item.revision_no} · {item.created_at}</option>)}</select></label>
       <button className="secondary" onClick={() => { void run(async signal => { const page = await request<RevisionPage>(signal, `/profile/revisions?limit=20${profileCursor === null ? '' : `&before=${profileCursor}`}`); setProfileRevisions(old => [...old.filter(item => !page.items.some(next => next.id === item.id)), ...page.items]); setProfileCursor(page.next_cursor); }); }}>Load {profileRevisions.length && profileCursor !== null ? 'more ' : ''}profile revisions</button>
-      <label>Built-in presentation<select value={template} onChange={event => setTemplate(event.target.value)}><option value="" disabled>{templates.length ? 'Choose a template' : 'Templates unavailable — reload to retry'}</option>{templates.map(item => <option key={item.version} value={item.version}>{item.label} · English · A4</option>)}</select></label>
-      {!templates.length && <button className="secondary" onClick={() => { void run(async signal => { const value = await request<{ items: DocumentTemplate[] }>(signal, '/document-templates'); setTemplates(value.items); setTemplate(value.items[0]?.version ?? ''); }); }}>Reload built-in templates</button>}
-      <p className="hint">English only. No translation or user-authored HTML/CSS templates. Existing revisions retain their original template and printable contact frame.</p>
+      <label>Built-in presentation<select value={template} onChange={event => { choicesInitialized.current = true; setTemplate(event.target.value); }}><option value="" disabled>{templates.length ? 'Choose a template' : 'Templates unavailable — reload to retry'}</option>{templates.map(item => <option key={item.version} value={item.version}>{item.label} · English · {item.paper}</option>)}</select></label>
+      {!templates.length && <button className="secondary" onClick={() => { void run(async signal => { const value = await request<{ items: DocumentTemplate[] }>(signal, '/document-templates'); setTemplates(value.items); }); }}>Reload built-in templates</button>}
+      <p className="hint">Current operation choices below are separate from remembered defaults. English only. No translation or user-authored HTML/CSS templates. Existing revisions retain their original template and printable contact frame.</p>
       {mode === 'base' ? <><p>This résumé copies accepted facts from the selected profile snapshot on this installation. No posting, application, letter, model or external provider is needed. No inference or ModelRun is created. An empty usable profile cannot produce a résumé.</p><div className="actions"><button disabled={!profile || !profileId || !template} onClick={startBase}>{doc ? 'Rebuild base from selected profile' : 'Create base résumé'}</button><button className="secondary" onClick={() => { void run(signal => loadBase(signal, selection.current)); }}>Reload saved base résumé</button></div></> : <>
         <div className="actions"><button className="secondary" onClick={() => loadApplications()}>Reload tracked applications</button>{applicationCursor && <button className="secondary" onClick={() => loadApplications(applicationCursor)}>Load more tracked applications</button>}</div>
         <label>Tracked application<select value={applicationId} onChange={event => selectApplication(event.target.value)}><option value="">Select an existing tracked application</option>{applications.map(item => <option key={item.id} value={item.id}>{item.title} · {item.company} · attempt {item.attempt_no}{item.archived_at ? ' · archived (read-only generation)' : ''}</option>)}</select></label>
         {!applications.length && <p>No tracked applications loaded. Begin tracking explicitly in Tracking; generation never creates an application.</p>}
         {applicationId && <><button className="secondary" onClick={() => { void run(signal => loadPair(signal, applicationId, selection.current, doc?.id)); }}>Reload application documents</button>{pair && <><p>{pair.items.some(item => item.kind === 'resume') && pair.items.some(item => item.kind === 'cover_letter') ? 'Saved résumé and cover letter available.' : pair.items.length ? 'The requested pair is incomplete. A missing member is not a successful pair.' : 'No saved pair. Existing application data remains available.'}</p><div className="actions">{(['resume', 'cover_letter'] as const).map(kind => { const member = pair.items.find(item => item.kind === kind); return <button key={kind} className="secondary" disabled={!member} aria-pressed={doc?.id === member?.id} onClick={() => { if (member) { selection.current++; receive(member, true); } }}>{kind === 'resume' ? 'Résumé' : 'Cover letter'}{!member ? ' unavailable' : ''}</button>; })}</div></>}
           {route && <p className="disclosure"><strong>Generation route: {route.status}.</strong> {route.reason}</p>}{!pair?.requirements_revision_id && <p>Reviewed, current, nonempty requirements are required. Review them in the posting workspace before preparing a pair.</p>}{application?.archived_at && <p>Archived applications remain readable. Generation is unavailable.</p>}
-          <label>Writing tone<select value={tone} onChange={event => setTone(event.target.value as 'professional' | 'concise')}><option value="professional">Professional</option><option value="concise">Concise</option></select></label><button className="secondary" disabled={!profile || !profileId || !template || !!application?.archived_at} onClick={previewContext}>Preview reviewed generation context</button>
-          {context && <section className="disclosure"><h3>Exact minimized model projection</h3><p>Only this model projection reaches the selected local route. Dedicated identity/contact fields, private tracking notes/contacts/appointments/attachments, credentials, internal owner/workflow IDs and route/budget settings are excluded. Narrative professional facts can still contain personal information; this is not anonymization. No hosted fallback.</p><pre className="import-source">{JSON.stringify(context.model_projection, null, 2)}</pre><details><summary>Trusted printable frame (not sent to the model)</summary><pre className="import-source">{JSON.stringify(context.frame, null, 2)}</pre></details><details><summary>Frozen selection and route identity</summary><p>Profile {context.profile_revision_id}; reviewed requirements {context.requirements_revision_id}; template {context.template_version}; context SHA-256 {context.context_sha256}.</p><pre className="import-source">{JSON.stringify(context.generation_route.identity, null, 2)}</pre></details><p>At most two inference POST attempts across retries/reclaims. Workflow success is not semantic or human qualification. A synthetic conformance route does not qualify real model weights.</p><label className="check"><input type="checkbox" checked={contextConfirmed} disabled={context.generation_route.status !== 'qualified'} onChange={event => setContextConfirmed(event.target.checked)} />I reviewed this exact projection, route, frozen inputs and privacy limitation for this one task</label><button disabled={!contextConfirmed || context.generation_route.status !== 'qualified' || !!application?.archived_at} onClick={startPair}>Generate résumé and cover letter pair</button></section>}
+          <label>Writing tone<select value={tone} onChange={event => { choicesInitialized.current = true; setTone(event.target.value as 'professional' | 'concise'); }}><option value="professional">Professional</option><option value="concise">Concise</option></select></label><button className="secondary" disabled={!profile || !profileId || !template || !!application?.archived_at} onClick={previewContext}>Preview reviewed generation context</button>
+          {context && <section className="disclosure"><h3>Exact minimized model projection</h3>
+            <p>Destination from this operation’s route: <code>{typeof context.generation_route.identity?.endpoint === 'string' ? context.generation_route.identity.endpoint : 'No endpoint supplied — inspect route identity below'}</code>. Model: {typeof context.generation_route.identity?.model === 'string' ? context.generation_route.identity.model : 'Not supplied'}. A local endpoint is not a universal no-network guarantee; prose may still contain personal information, not anonymization. No hosted fallback.</p>
+            <p>Included categories: posting title, organization and source text; reviewed requirements with importance and source spans; accepted professional claim text, structured fields and source references; evidence text and references; selected tone and language. Dedicated identity/contact fields, private tracking notes/contacts/appointments/attachments, credentials, internal owner/workflow IDs and route/budget settings are excluded.</p>
+            <p>Temporary task inputs are eligible for clearing 24 hours after terminal completion, with a daily sweep and no extension. Saved revisions remain until explicit, confirmed scoped erasure; local backups/downloads and external copies are independent.</p>
+            <pre className="import-source">{JSON.stringify(context.model_projection, null, 2)}</pre><details><summary>Trusted printable frame (not sent to the model)</summary><pre className="import-source">{JSON.stringify(context.frame, null, 2)}</pre></details><details><summary>Frozen selection and route identity</summary><p>Profile {context.profile_revision_id}; reviewed requirements {context.requirements_revision_id}; template {context.template_version}; context SHA-256 {context.context_sha256}.</p><pre className="import-source">{JSON.stringify(context.generation_route.identity, null, 2)}</pre></details><p>At most two inference POST attempts across retries/reclaims. Workflow success is not semantic or human qualification. A synthetic conformance route does not qualify real model weights.</p><label className="check"><input type="checkbox" checked={contextConfirmed} disabled={context.generation_route.status !== 'qualified'} onChange={event => setContextConfirmed(event.target.checked)} />I reviewed this exact projection, route, frozen inputs and privacy limitation for this one task</label><button disabled={!contextConfirmed || context.generation_route.status !== 'qualified' || !!application?.archived_at} onClick={startPair}>Generate résumé and cover letter pair</button></section>}
         </>}
       </>}
     </fieldset>
@@ -503,7 +569,7 @@ export function Documents({ api, profile, disabled = false, externalDocumentId, 
         {comparison && <section className="comparison"><h4>Current server document revision {comparison.current_revision.revision_no}</h4><ReadonlyBody revision={comparison.current_revision} /><p>Your editor above is unchanged. Rebase preserves unrelated server fields and applies your changed fields only; inspect both versions before reconfirming. Any overlapping edits will use your displayed local wording.</p><label className="check"><input type="checkbox" checked={rebaseConfirmed} disabled={locked} onChange={event => setRebaseConfirmed(event.target.checked)} />I compared both revisions and reconfirm my changed fields against this server version</label><div className="actions"><button className="secondary" disabled={locked || !rebaseConfirmed} onClick={rebase}>Rebase my edits onto compared revision</button><button className="secondary" disabled={locked || !rebaseConfirmed} onClick={() => { receive(comparison, true); mutation.current = null; setNotice('Editor explicitly replaced with compared saved revision.'); }}>Replace editor with compared revision</button></div></section>}
         {reconcile && !comparison && <p className="disclosure">Your attempted text is retained. Compare the server revision, explicitly rebase/reconfirm, then save again. No automatic overwrite or retry.</p>}
         <div className="actions"><button disabled={locked || dirty || doc.reviewed || !!issues.length || !allReviewed} onClick={review}>{doc.reviewed ? 'Exact revision reviewed' : 'Accept this exact revision'}</button><button disabled={locked || dirty || !doc.reviewed || !!issues.length} onClick={renderPdf}>Render reviewed PDF</button></div>
-        {doc.scope === 'tailored' && <SectionProposals document={doc} dirty={dirty} locked={locked} archived={!!application?.archived_at} sectionKey={sectionKey} tone={sectionTone} context={sectionContext} confirmed={sectionConfirmed} proposals={proposals} proposal={proposal} applyConfirmed={applyConfirmed} onSection={setSectionKey} onTone={setSectionTone} onPreview={previewSection} onConfirm={setSectionConfirmed} onRequest={requestSection} onReload={proposalPage} onOpen={openProposal} onApplyConfirm={setApplyConfirmed} onApply={applyProposal} />}
+        {doc.scope === 'tailored' && <SectionProposals document={doc} dirty={dirty} locked={locked} archived={!!application?.archived_at} sectionKey={sectionKey} tone={sectionTone} context={sectionContext} confirmed={sectionConfirmed} proposals={proposals} proposal={proposal} applyConfirmed={applyConfirmed} onSection={setSectionKey} onTone={value => { choicesInitialized.current = true; setSectionTone(value); }} onPreview={previewSection} onConfirm={setSectionConfirmed} onRequest={requestSection} onReload={proposalPage} onOpen={openProposal} onApplyConfirm={setApplyConfirmed} onApply={applyProposal} />}
         {doc.artifacts.filter(artifact => artifact.format === 'pdf' && artifact.revision_id === doc.current_revision.id).map(artifact => <p className="download" key={artifact.id}><a className="document-download" href={`/api/v1/artifacts/${encodeURIComponent(artifact.id)}`} download>Download rendered PDF for revision {doc.current_revision.revision_no}</a><span>Actual saved-revision artifact. Downloaded files contain personal data; store securely. Nothing was sent.</span></p>)}
       </>}
       <section><h3>Immutable document history</h3><button className="secondary" disabled={locked} onClick={() => historyPage()}>Load document history</button>{history && <><ol>{history.items.map(item => <li key={item.id}><button className="secondary" disabled={locked || dirty} onClick={() => historyPreview(item.id)}>Preview revision {item.revision_no} — {item.origin}</button><p>{item.created_at}{item.reason ? ` · ${item.reason}` : ''}</p></li>)}</ol>{history.next_cursor !== null && <button className="secondary" disabled={locked} onClick={() => historyPage(history.next_cursor!)}>Load older document revisions</button>}</>}</section>
