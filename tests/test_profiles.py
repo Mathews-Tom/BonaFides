@@ -601,3 +601,100 @@ def test_unattached_evidence_history_restore_and_post_delete_replay(
                 .all()
             )
             assert pins == [UUID(evidence["revision"]["id"])]
+
+
+@pytest.mark.postgres
+def test_experience_coverage_merges_overlaps_without_inventing_unknown_dates(
+    profile_owner: IdentityContext,
+) -> None:
+    with profile_owner.client() as client:
+        boot = _bootstrap(profile_owner, client)
+        csrf = str(_json(boot)["csrf_token"])
+        profile = _attest(client, profile_owner, csrf)
+        for start, end in (
+            ("2024-01-01", "2024-01-31"),
+            ("2024-01-15", "2024-02-14"),
+            ("2024-01-20", "2024-01-25"),
+            ("2024-02-29", "2024-03-01"),
+        ):
+            profile = _add_claim(
+                client,
+                profile_owner,
+                csrf,
+                profile,
+                "experience",
+                start_date=start,
+                end_date=end,
+            )
+        profile = _add_claim(client, profile_owner, csrf, profile, "experience")
+        profile = _add_claim(
+            client,
+            profile_owner,
+            csrf,
+            profile,
+            "education",
+            start_date="2000",
+            end_date="2025",
+        )
+        before = profile["current_revision"]
+        reloaded = _json(client.get("/api/v1/profile"))
+        assert reloaded["experience_coverage"]["minimum_days"] == 47
+        assert reloaded["experience_coverage"]["maximum_days"] == 47
+        assert reloaded["experience_coverage"]["undated_or_open_entries"] == 1
+        assert reloaded["current_revision"] == before
+        profile = _add_claim(
+            client,
+            profile_owner,
+            csrf,
+            profile,
+            "experience",
+            start_date="2023",
+            end_date="2023",
+        )
+        assert profile["experience_coverage"]["minimum_days"] == 47
+        assert profile["experience_coverage"]["maximum_days"] == 412
+        assert (
+            profile["current_revision"]["claims"][-1]["revision"]["payload"]["start_date"] == "2023"
+        )
+
+
+@pytest.mark.postgres
+def test_project_link_is_syntactic_and_pinned_without_loading_its_target(
+    profile_owner: IdentityContext,
+) -> None:
+    with profile_owner.client() as client:
+        boot = _bootstrap(profile_owner, client)
+        csrf = str(_json(boot)["csrf_token"])
+        profile = _attest(client, profile_owner, csrf)
+        evidence_id = profile["evidence"][0]["revision"]["id"]
+        for invalid in (
+            "javascript:alert(1)",
+            "file:///etc/passwd",
+            "https://",
+            "https://user:pass@example.test/",
+            "https://example.test/\nsecret",
+        ):
+            response = _mutate(
+                client,
+                profile_owner,
+                csrf,
+                "POST",
+                "/claims",
+                profile["version"],
+                _claim_body(evidence_id, "project", project_url=invalid),
+            )
+            assert response.status_code == 422
+            assert _json(client.get("/api/v1/profile"))["version"] == profile["version"]
+        profile = _add_claim(
+            client,
+            profile_owner,
+            csrf,
+            profile,
+            "project",
+            project_url="https://127.0.0.1:1/private-project",
+        )
+        claim = profile["current_revision"]["claims"][0]
+        assert claim["kind"] == "project"
+        assert claim["revision"]["payload"]["project_url"] == "https://127.0.0.1:1/private-project"
+        reloaded = _json(client.get("/api/v1/profile"))
+        assert reloaded["current_revision"] == profile["current_revision"]

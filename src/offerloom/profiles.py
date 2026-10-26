@@ -92,7 +92,7 @@ def get_profile(conn: Connection, owner_id: UUID) -> dict[str, object]:
     if row is None:
         raise Problem(404, "profile_not_found")
     snapshot = row["snapshot"]
-    from offerloom.profile_entries import active_evidence, hydrate_claims
+    from offerloom.profile_entries import active_evidence, experience_coverage, hydrate_claims
 
     claims = hydrate_claims(conn, owner_id, snapshot.get("claim_revision_ids", []))
     warnings: list[str] = []
@@ -116,6 +116,7 @@ def get_profile(conn: Connection, owner_id: UUID) -> dict[str, object]:
         },
         "quality_warnings": warnings,
         "evidence": active_evidence(conn, owner_id),
+        "experience_coverage": experience_coverage(claims),
     }
 
 

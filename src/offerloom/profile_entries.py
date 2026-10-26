@@ -5,13 +5,13 @@ from __future__ import annotations
 
 import calendar
 import re
-from collections.abc import Callable
+from collections.abc import Callable, Mapping, Sequence
 from datetime import date, datetime
 from typing import Annotated, Literal, cast
 from uuid import UUID, uuid4
 
 from fastapi import APIRouter, Depends, Header, Response
-from pydantic import Field, ValidationInfo, field_validator
+from pydantic import Field, HttpUrl, ValidationInfo, field_validator
 from sqlalchemy import Connection, text
 from sqlalchemy.engine import RowMapping
 
@@ -47,6 +47,40 @@ def _date_bounds(value: str) -> tuple[date, date]:
     return lower, date(year, upper_month, upper_day)
 
 
+def _covered_days(intervals: list[tuple[int, int]]) -> int:
+    total, last_end = 0, 0
+    for start, end in sorted(intervals):
+        if start <= end:
+            total += max(0, end - max(start, last_end + 1) + 1)
+            last_end = max(last_end, end)
+    return total
+
+
+def experience_coverage(claims: Sequence[Mapping[str, object]]) -> dict[str, int]:
+    """Conservative calendar-day bounds, not verified employment or seniority."""
+    minimum: list[tuple[int, int]] = []
+    maximum: list[tuple[int, int]] = []
+    unbounded = 0
+    for claim in claims:
+        if claim["kind"] != "experience":
+            continue
+        revision = cast(Mapping[str, object], claim["revision"])
+        payload = cast(Mapping[str, object], revision["payload"])
+        start, end = payload.get("start_date"), payload.get("end_date")
+        if not isinstance(start, str) or not isinstance(end, str):
+            unbounded += 1
+            continue
+        start_min, start_max = _date_bounds(start)
+        end_min, end_max = _date_bounds(end)
+        minimum.append((start_max.toordinal(), end_min.toordinal()))
+        maximum.append((start_min.toordinal(), end_max.toordinal()))
+    return {
+        "minimum_days": _covered_days(minimum),
+        "maximum_days": _covered_days(maximum),
+        "undated_or_open_entries": unbounded,
+    }
+
+
 class ClaimPayload(StrictModel):
     text: str = Field(min_length=1, max_length=4000)
     organization: str | None = Field(default=None, max_length=200)
@@ -54,6 +88,21 @@ class ClaimPayload(StrictModel):
     start_date: str | None = Field(default=None, max_length=10)
     end_date: str | None = Field(default=None, max_length=10)
     proficiency: str | None = Field(default=None, max_length=120)
+    project_url: str | None = Field(default=None, max_length=2048)
+
+    @field_validator("project_url")
+    @classmethod
+    def syntactic_project_url(cls, value: str | None) -> str | None:
+        if value is not None:
+            if (
+                any(character.isspace() or ord(character) < 32 for character in value)
+                or "\\" in value
+            ):
+                raise ValueError("invalid_project_url")
+            parsed = HttpUrl(value)
+            if parsed.username is not None or parsed.password is not None:
+                raise ValueError("invalid_project_url")
+        return value
 
     @field_validator("start_date", "end_date")
     @classmethod
