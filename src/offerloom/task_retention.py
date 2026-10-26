@@ -3,11 +3,12 @@
 
 The fixed policy is 24 hours after workflow ``finished_at``; extensions are not
 supported. The lifecycle controller checks once a minute, processes at most 100
-workflows per call, and starts a new completed sweep after 24 hours. A partial
-batch or failure is retried on the next minute, not reported as whole-backlog
-success. Each batch commits independently, so a crash resumes from remaining
-unscrubbed inputs. Model prompt bodies live in workflow input; model_runs keeps
-hashes, parameters and usage/provenance metadata and is deliberately unchanged.
+workflows per call. Every cadence expires newly eligible inputs; empty success
+receipts are limited to once per day. A partial batch or failure is retried on
+the next minute, not reported as whole-backlog success. Each batch commits
+independently, so a crash resumes from remaining unscrubbed inputs. Model prompt
+bodies live in workflow input; model_runs keeps hashes, parameters and
+usage/provenance metadata and is deliberately unchanged.
 
 Only validated, explicitly named top-level resource UUIDs, SHA-256 pins, the
 input schema version and immutable source policy version survive. The exact
@@ -98,8 +99,7 @@ def _expire_owner(db: Database, owner_id: UUID, limit: int) -> tuple[int, bool]:
     with db.transaction() as conn:
         if not _lock_owner(conn, owner_id):
             return 0, False
-        # Only a completed sweep suppresses work for a day. Batches and failures
-        # stay due, including a failure after an earlier successful sweep.
+        # Suppress only redundant empty success receipts, never newly eligible work.
         latest = (
             conn.execute(
                 text("""SELECT detail->>'result' AS result,
@@ -111,8 +111,6 @@ def _expire_owner(db: Database, owner_id: UUID, limit: int) -> tuple[int, bool]:
             .mappings()
             .one_or_none()
         )
-        if latest is not None and latest["result"] == "succeeded" and latest["recent"]:
-            return 0, False
         parameters = {"owner": owner_id, "retention": RETENTION_SECONDS, "limit": limit}
         rows = conn.execute(
             text(f"""SELECT w.id,retained.input FROM offerloom.workflow_runs w
@@ -134,7 +132,8 @@ def _expire_owner(db: Database, owner_id: UUID, limit: int) -> tuple[int, bool]:
                 parameters,
             ).scalar_one()
         )
-        _record(conn, owner_id, "batch" if pending else "succeeded", len(rows))
+        if rows or latest is None or latest["result"] != "succeeded" or not latest["recent"]:
+            _record(conn, owner_id, "batch" if pending else "succeeded", len(rows))
         return len(rows), pending
 
 
@@ -222,7 +221,7 @@ def task_retention_status(conn: Connection, owner_id: UUID) -> dict[str, object]
         "processed_count": count if type(count) is int and 0 <= count <= BATCH_SIZE else 0,
         "policy": {
             "terminal_input_retention_seconds": RETENTION_SECONDS,
-            "sweep_interval_seconds": RETENTION_SECONDS,
+            "sweep_interval_seconds": 60,
             "batch_retry_interval_seconds": 60,
             "batch_size": BATCH_SIZE,
             "extension_supported": False,

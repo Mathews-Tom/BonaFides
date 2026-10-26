@@ -294,7 +294,7 @@ export function Tasks({ api, session, requestedTask, disabled = false, resultDis
       {retention && <><p>Last observed sweep: {retention.state.replaceAll('_', ' ')}. Latest bounded batch: {retention.processed_count} tasks.</p>
         <dl className="task-facts"><div><dt>Last complete sweep</dt><dd>{time(retention.last_success_at)}</dd></div><div><dt>Last failed sweep</dt><dd>{time(retention.last_failure_at)}</dd></div></dl>
         {retention.failure_code && <p>Recorded failure: <code>{retention.failure_code}</code>. Later success does not erase this historical failure.</p>}
-        <p>A completed sweep runs at least daily while the lifecycle controller is available; bounded backlog batches and failures retry no sooner than one minute. Extensions are not supported.</p></>}
+        <p>Sweeps run every minute while the lifecycle controller is available, processing bounded batches. Extensions are not supported.</p></>}
     </section>
     <div className="task-toolbar"><label>Task state filter<select value={filter} disabled={listLoading} onChange={event => { const value = event.target.value as WorkflowState | ''; setFilter(value); if (page) void loadList(value); }}><option value="">All states</option>{states.map(state => <option key={state} value={state}>{stateLabels[state]}</option>)}</select></label>
       <button className="secondary" disabled={listLoading} onClick={() => { void loadList(filter); }}>{page ? 'Reload tasks' : 'Load tasks'}</button></div>

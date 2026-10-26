@@ -265,6 +265,24 @@ def test_terminal_cutoff_and_active_retry_waiting_inputs_remain_untouched(
         assert _row(catalog, identifier) == before[identifier]
 
 
+def test_newly_expired_input_is_scrubbed_after_recent_success(catalog: SourceContext) -> None:
+    identifier = _seed(catalog, hours=23)
+    assert expire_task_inputs(catalog.runtime) == {"processed_count": 0, "has_more": False}
+    first_status = _status(catalog)
+    assert expire_task_inputs(catalog.runtime) == {"processed_count": 0, "has_more": False}
+    assert _status(catalog) == first_status  # No redundant no-op audit receipt.
+    with catalog.identity.admin.transaction() as conn:
+        conn.execute(
+            text("""UPDATE offerloom.workflow_runs
+            SET finished_at=clock_timestamp()-interval '24 hours'
+            WHERE owner_id=:owner AND id=:id"""),
+            {"owner": catalog.owner_id, "id": identifier},
+        )
+    assert expire_task_inputs(catalog.runtime) == {"processed_count": 1, "has_more": False}
+    assert _row(catalog, identifier)["input"] == {"schema_version": 1}
+    assert _status(catalog)["processed_count"] == 1
+
+
 def test_unknown_delivery_provider_live_execution_and_unreleased_control_are_preserved(
     catalog: SourceContext,
 ) -> None:
@@ -319,7 +337,7 @@ def test_bounded_batches_resume_without_premature_whole_sweep_success(
     assert status["processed_count"] == 2
     assert status["policy"] == {
         "terminal_input_retention_seconds": 86400,
-        "sweep_interval_seconds": 86400,
+        "sweep_interval_seconds": 60,
         "batch_retry_interval_seconds": 60,
         "batch_size": 100,
         "extension_supported": False,
