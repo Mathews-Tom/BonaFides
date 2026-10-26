@@ -2,6 +2,8 @@
 
 Status: **not executed; no public release authorized by this design session**. Each future release needs an owner, reviewer, date, exact commit and artifact/image digests, reports, exceptions and verdict. Checkboxes below are requirements, not assertions.
 
+The owner separately authorized the [identified source-only review PR](licensing-policy.md#scoped-source-publication-authorization) on 2026-10-26. That scoped sequencing exception permits its branch push and PR creation without claiming the independent reviews below have occurred. It authorizes no merge, tag, binary/image/package release or broader public-distribution clearance. All checkboxes retain their actual unexecuted/pending status; actual rights, notices and confidentiality obligations are not waived.
+
 ## M0 — repository initialization
 
 - [ ] Full canonical MIT and Apache-2.0 texts, NOTICE, CONTRIBUTING, SECURITY, canonical ADR and six compliance policies present.
