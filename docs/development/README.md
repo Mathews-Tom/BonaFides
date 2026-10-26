@@ -1,6 +1,17 @@
 # Development, reviewed imports and job-source collection
 
-The repository contains M0 through the local OL-015 encrypted installation-backup implementation, with an observed schema-24 Linux arm64 deployment. Scoped runtime, quality, browser and recovery results retain their original identities; source/commit/isolated-prefix attestations live in the ignored integration-owner checkpoint. Model-dependent work remains **implemented / live-unqualified**, with the main optional route disabled. M1 engineering remains incomplete until final integrated acceptance closes. Genuine human factual review, owner walkthrough and human usability evaluation/refinement are deferred to M1b, not passed. Actual-model and real-board qualification remain separate pending, disabled/unqualified limits; they do not stop independent engineering. DFR-001 remains deferred and independent public-distribution rights remain pending.
+The repository contains completed local M1 engineering through OL-015 and final privacy/profile/defaults acceptance on schema 25, targeting Linux arm64 containers hosted on macOS Apple Silicon. Scoped runtime, quality, browser and recovery results retain their original identities; source/commit/isolated-prefix attestations live in the existing ignored integration-owner checkpoint. Model-dependent mechanisms remain **implemented / live-unqualified**, with optional routes disabled. Genuine human factual review, owner walkthrough and human usability evaluation/refinement are deferred to M1b, not passed. Actual-model and real-board qualification remain separate pending, disabled/unqualified limits; optional hosted adapters belong to OL-017/M2 and are not implemented or qualified M1 capabilities. This is not fully validated M1, public-distribution clearance or production readiness.
+
+## Observed final M1 engineering checkpoint — 2026-10-26
+
+Final image `offerloom:m1-final-r`, index identity `sha256:d3a1a773607a07cd5d49d3473da48def9012add60daedfb00ef28e2c6c8788bd`, passed the complete schema-25 nonempty native drill: encrypted matched capture, independent `backup-restore` and `backup-verify` clean targets, table-content/relationship/blob comparisons, origin-bound credential decryption with exact encryption-use increments, pre-DDL negative validation, closed authority followed by supported offline opening, and actual fresh-owner profile/posting/tracking/PDF/portable-export consumers on both targets. Current persisted Compact/Letter/concise defaults survived capture and both restores. The source and both targets retain all volumes, ciphertexts, keys and evidence; owned services are stopped. These are synthetic same-host technical observations, not off-host custody or human qualification.
+
+The final deployed owner browser separately passed defaults persistence and partial-update isolation, dirty-document preservation, explicit reconnect/retry after a browser-local request failure, unchanged saved revision and original PDF bytes, actual minimized generation-context/retention disclosure with a disabled route, 320px reflow and automated AA-target accessibility with zero violations or incomplete checks. Earlier P profile/navigation/retention browser evidence is reused only for unchanged relevant source and configuration. Real rendering/geometry/selectable-text checks for all four A4/Letter variants are likewise reused with unchanged renderer/template/dependency bytes; they are not relabelled as a new R run.
+
+Applicable scoped PostgreSQL, process-crash, mutation, frontend and strict/static gates passed in the recorded commands. Corrected fixture failures and the demonstrated one-hour-versus-24-hour export-disclosure defect retain failing-before and passing-after receipts; overlapping suites are not summed into a fictitious full-suite count. Actual history retained 52 saved revisions and appended revision 53 on restore without deleting displaced history. The existing completion ledger reconciles each active clause, engineering versus M1b/live-qualification dispositions, bounded local reviews and independently green signed-off logical commits. Final source/manifests and exact commit binding are delivery attestations in that same ledger.
+
+R image scanning reported zero selected HIGH/CRITICAL vulnerabilities and zero image secret findings; independent OCI inspection matched copied source, installed application files and emitted assets. Lower severities, lifecycle warnings and independent provenance/package/native/font rights remain unresolved distribution limits. No model was downloaded, no paid/hosted call or real-board read occurred, and nothing was pushed, published or sent. Genuine model factual quality, human factual/assistive-technology/usability acceptance, owner walkthrough, native amd64 and off-host recovery custody are not established.
+
 
 ## OL-014: owner-data portability and erasure
 
@@ -141,6 +152,45 @@ Stop every ordinary target actor and leave both sealed target daemons running in
 
 
 
+### Fixed terminal-input retention
+
+The lifecycle worker independently sweeps eligible terminal workflow/model input 24 hours after `finished_at`. Completed sweeps run daily; partial batches and failures retry at the 60-second lifecycle cadence, with at most 100 workflows per invocation. This is an eligibility window plus a sweep cadence, not a promise of deletion at exactly 24 hours. The policy has no extension control. Active, retryable, approval-waiting, unknown-delivery and positively registered executions or unreleased controls are excluded.
+
+Expiry removes frozen prompt/source text, nested context, frames, plans and unknown payload content. It retains only validated named top-level resource UUIDs, digest/schema pins and immutable source-refresh policy pins needed by retry/history/portable scope consumers. Committed profile/evidence/document revisions, result IDs, model parameters/usage/hashes, attachments and saved PDFs remain unchanged. Previously downloaded copies and encrypted recovery archives are not rewritten by this sweep.
+
+`GET /api/v1/status` returns owner-scoped `task_input_retention` with `state`, `last_success_at`, `last_failure_at`, a fixed safe `failure_code`, the last batch's `processed_count` and the fixed `policy`. The Tasks panel loads this status explicitly and retains its last observation on read failure. Whole-sweep success means the eligible backlog was exhausted; a partial batch is `in_progress`, not successful cleanup of every retained workflow. Count-only audits contain no removed input text; a later successful sweep retains the last failure timestamp.
+
+### Offline credential-key rotation
+
+Schema 25 adds provider-origin-bound AAD v2 and persistent conservative per-key encryption-use accounting. It preserves historical v1 AAD bytes for explicit migration and native recovery. Stop all API, worker, lifecycle, cleanup and backup actors; preserve the canonical blob-root lock and separately escrow every key required by retained backups. Atomically deploy a protected read-only keyring containing an independent new active key and all retained old read keys. Do not reuse old key bytes under another ID. Rotation does not write the deployed keyring, change passwords/sessions, revoke provider tokens, reconnect accounts or enable a provider.
+
+Run `python -m offerloom credential-rotate --config /absolute/protected/rotation.json` using the offline migrator. The mode-0600 JSON binds the exact namespace, maintenance epoch, previous/new active key IDs and every retained credential:
+
+```json
+{
+  "migration_dsn_file": "/run/offline/migrator-dsn",
+  "blob_root": "/data/blobs",
+  "credential_keyring_file": "/run/offline/deployed-keyring.json",
+  "namespace_id": "<exact installation UUID>",
+  "maintenance_epoch": 0,
+  "previous_active_key_id": "retained-old-key",
+  "new_active_key_id": "independent-new-key",
+  "batch_size": 100,
+  "credential_bindings": [{
+    "owner_id": "<exact owner UUID>",
+    "credential_id": "<exact credential UUID>",
+    "external_account_id": null,
+    "provider_key": null,
+    "purpose": "access_token",
+    "provider_origin": "https://provider.example"
+  }]
+}
+```
+
+All paths must be absolute. Use the credential's actual account/provider tuple, or null for both; the sample is not provider authorization. Each canonical HTTPS origin is an exact destination binding, not a URL to fetch. Existing v2 origins cannot be reassigned. The command requires the existing exclusive physical guard, matching namespace/epoch/guard, migrator/current-schema authority and no live work, control, unfinished daily slot, connected/revocation-pending account, OAuth transaction or unsupported cursor envelope.
+
+Preflight authenticates every credential before any credential rewrite. Small transactions use fresh nonces, exact old key IDs and optimistic row versions; restart verifies and skips already-current v2 rows. Missing old keys, authentication failure, changed origin or version conflict fail closed. The receipt reports verified/rotated/already-current counts and explicitly retains old-backup key requirements. Native schema-25 recovery preserves v1/v2 origin/version/key identity while rebinding the namespace and accounting for every new encryption. Recover a historical schema-24 archive with its matching historical image/source/schema and escrow first, then apply additive migrations; the strict native source-identity gate is not bypassed.
+
 ### Guarded interrupted-operation recovery
 
 Schema 23 binds ordinary API, worker, lifecycle, cleanup and backup participants to a canonical kernel-held execution guard for their full lifetime. Shared descriptors inherited by child processes continue excluding privileged recovery after the parent closes. Concurrent first startup serializes initialization before publishing a usable shared guard; a missing or malformed persisted identity is not silently repaired or adopted. Copying the lock bytes does not copy its authority: SQL also binds its actual device/inode identity. Run the backend and recovery operator in the same Linux kernel/filesystem domain, not a mixture of macOS-native actors and Linux containers.
@@ -244,9 +294,9 @@ All paths below are relative to `/api/v1` and use the existing owner session and
 
 | Operation | Implemented request/result |
 |---|---|
-| `GET /profile` | Current revision, `current_revision.claims`, root active `evidence`, version and quality warnings; no duplicate root claims. |
+| `GET /profile` | Current revision, `current_revision.claims`, root active `evidence`, version, quality warnings and derived `experience_coverage`; no duplicate root claims or mutation of historical snapshots. |
 | `PUT /profile` | Raw `{display_name, headline, claim_revision_ids, evidence_revision_ids?}` snapshot, not a `ProfileWrite` envelope. Source-state IDs are captured automatically; sending them cannot archive/reactivate sources. |
-| `POST /claims`, `PUT /claims/{id}` | `{kind, payload: {text, organization?, role?, start_date?, end_date?, proficiency?}, evidence_links: [{evidence_revision_id, support_kind, excerpt}]}`. Kind is immutable; 1–16 links; support is `direct`, `user_asserted` or `context`. |
+| `POST /claims`, `PUT /claims/{id}` | `{kind, payload: {text, organization?, role?, start_date?, end_date?, proficiency?, project_url?}, evidence_links: [{evidence_revision_id, support_kind, excerpt}]}`. Kind is immutable; 1–16 links; support is `direct`, `user_asserted` or `context`. |
 | `POST /evidence`, `PUT /evidence/{id}` | `{payload: {text, source}}`; manual text only, no file import. |
 | `DELETE /claims/{id}`, `DELETE /evidence/{id}` | No body; archive while preserving immutable history and links. |
 | `GET /claims`, `GET /evidence` | Active records, bounded by 100 claims and 200 sources; writes refuse capacity overflow rather than silently truncate. |
@@ -256,6 +306,8 @@ All paths below are relative to `/api/v1` and use the existing owner session and
 | `POST /profile/restore` | `{revision_id}`; explicit append-only restoration under the same profile-wide concurrency/idempotency boundary. |
 
 Dates preserve supplied precision (`YYYY`, `YYYY-MM`, `YYYY-MM-DD`), reject impossible dates and definitely reversed intervals, and never invent unknown months/days. Claim text is 1–4,000 characters; source text 1–8,000; source reference 1–500; identity limits are 120/300. Optional structured strings are omitted when unset. Validation problems include `fields: [{loc, code, message}]` with allowlisted field paths and fixed safe messages; raw values, validator context/messages and unknown input keys are never echoed.
+
+Derived experience coverage merges overlapping inclusive calendar intervals once. Partial dates produce conservative minimum/maximum day counts; open or undated entries are reported separately and excluded rather than assigned today's date. This is owner-supplied date coverage, not verified employment, seniority or qualification. Proficiency preserves the owner's explicit scale, such as `CEFR B2`; a language name alone cannot prove a required level. Project references accept bounded HTTP/HTTPS syntax only, reject credentials/control characters, remain inert displayed text and are never crawled or inserted into model projections. Section links such as `#profile-experience`, `#profile-project`, `#profile-evidence-title` and `#profile-history-title` focus the named section; newly opened claim/source editors focus their first input.
 
 Theme defaults to System and follows device changes. Explicit Light/Dark stores only `offerloom.theme = {version: 1, theme, expiresAt}`, expiring exactly 365 days after selection; reload never extends it. System removes the override. Unknown, malformed, expired or cleared storage returns to System. Denied storage visibly limits the choice to the current visit. Theme does not alter document text, fixed light paper palette/typography or PDF rendering; no profile/session data is stored with it.
 
@@ -548,11 +600,19 @@ Optional profile `contact` fields are `email`, `phone`, `location` and `postal_a
 
 Selecting an older profile snapshot deliberately preserves its contact/order choices, not withdrawn or superseded professional facts. New composition accepts that historical selection only while its claim/evidence revisions and structured factual payload remain active/current and eligible in the current owner profile. The workflow separately pins the current profile pointer/version for late-output fencing. Historical document restoration never silently substitutes newer profile data; current source-eligibility checks still govern new review/export.
 
+Remembered document defaults are owner-local selections for future workspace operations, separate from the current operation and every saved document. `GET /document-defaults` returns the current workspace `version`, `template_version`, `tone`, English-only language and fixed retention disclosures. `PATCH /document-defaults` accepts only nonempty validated partial `template_version`/`tone` changes under the ordinary Origin/CSRF, workspace `If-Match` and idempotency controls. It preserves unrelated settings, factual/profile/document revisions, PDFs and integration permissions. Corrupted stored defaults fail explicitly; they are not silently replaced. Reload a conflicting saved version, compare retained choices and explicitly save again.
+
+The admitted immutable presentations are Evidence and Compact in A4 and Letter, using `offerloom-evidence-v1`, `offerloom-compact-v1`, `offerloom-evidence-letter-v1` and `offerloom-compact-letter-v1`. Existing A4 template bytes and saved revision pins are unchanged. Defaults initialize future workspace choices; an explicit action applies the last loaded defaults to the current operation. Existing saved words, frames and artifacts are never restyled by a preference change.
+
+Saved document revisions and committed section proposals have no automatic expiry or arbitrary fifty-version cap. They remain until explicit, confirmed erasure of the applicable application or workspace; archive/rebuild/default changes are not erasure. The history API retains bounded pagination, not bounded retention. Temporary terminal task inputs instead become eligible after 24 hours and follow the lifecycle sweep; portable local copies have their independently displayed 24-hour download expiry and wait for the lifecycle controller for physical removal. Downloaded files, encrypted backups and external copies remain outside those live-data deletion boundaries.
+
 All document routes below are under `/api/v1`, require owner authentication and return private no-store data. Mutations require the existing exact-Origin/CSRF controls, payload-bound `Idempotency-Key` and quoted aggregate `If-Match`; base generation uses the profile version, pair generation the application version, and document save/review/restore/render the document version. A lost-response replay reuses its original command rather than creating another revision or inference.
 
 | Route | Contract |
 | --- | --- |
 | `GET /document-templates` | Fixed built-in choices with `version`, `label`, `language` and `paper`. No user HTML/CSS, executable templates, translation or DOCX. |
+| `GET /document-defaults` | Owner-local remembered presentation/tone, workspace version and fixed retention/language policy; reading unset defaults does not mutate the owner. |
+| `PATCH /document-defaults` | Validated nonempty partial `{template_version?,tone?}` with workspace-version concurrency and exact replay; unrelated preferences, saved revisions and permissions remain unchanged. |
 | `GET /profile/base-resume` | Current single owner base résumé; `404 base_resume_not_found` before one exists. |
 | `POST /profile/base-resume` | `{profile_revision_id,template_version}` queues deterministic durable composition and returns `202 Workflow`; success retains `{document_id,revision_id}`. Rebuilding appends to the same base identity and must not overwrite an intervening manual revision. |
 | `GET /applications/{id}/documents` | Application version, independently durable résumé/letter records, reviewed-requirements pin and explicit generation-route status/reason/identity. Archived pursuits remain readable but cannot start generation. |
@@ -569,6 +629,8 @@ All document routes below are under `/api/v1`, require owner authentication and 
 Tailored generation uses the explicit built-in bounded local-provider adapter, not the synthetic benchmark composer. It pins profile/evidence/posting/reviewed requirements, target document versions, template, language/tone, context/privacy version and route/runtime/model identity before work. The initial résumé and cover letter publish atomically: malformed, refused, truncated, one-half, cancelled, stale or failed output cannot replace either member. A shape-valid unsupported candidate is visibly blocked, not silently repaired or presented as approved. Existing suitability qualification does not qualify document generation; adapter/projection changes invalidate incompatible receipts. No provider fallback, automatic model download or implicit hosted consent is allowed.
 
 The provider sees only the previewed minimized professional projection, not dedicated owner identity/contact, tracking notes/contacts/interviews/attachments, credentials, internal workflow/owner identifiers or route/budget configuration. Professional free text can itself contain personal information; exclusion of dedicated fields is not general PII removal. Model usage/cost are actual when supplied and otherwise unknown, never fabricated zero. The existing durable cumulative two-inference-attempt cap, singleton reservation, strict bounded transport and pre/post runtime/model identity checks also apply to this stage.
+
+Pair and selected-section confirmations display the actual route endpoint/model, included and excluded input categories, terminal-input eligibility/sweep policy and independently retained copies before processing. Local inference is not a blanket no-network guarantee. Disabled routes permit inspecting the projection, not inference; unavailable hosted import, mail and other integrations are not implied by this disclosure.
 
 Professional assertions include titles, headings and text labelled as greeting or future intent; citation existence alone is not support. The conservative M1 automatic policy establishes exact accepted fact reuse and a bounded safe nonfactual language set, not arbitrary paraphrase meaning or credentials. Unestablished wording must be removed/reworded or supported by a genuinely accepted profile claim/evidence revision. A checkbox or review annotation cannot waive unsupported text. Readable frozen claim/evidence/status/provenance and per-block blockers distinguish supported evidence from owner assertions; neither is independent human factual qualification.
 
