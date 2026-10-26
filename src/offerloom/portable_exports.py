@@ -290,6 +290,31 @@ class LifecycleWorker:
         while not self.stopping.is_set():
             try:
                 if time.monotonic() - last_cleanup >= 60:
+                    from offerloom.backup_schedule import run_due
+
+                    try:
+                        scheduled = run_due(self.db, self.settings)
+                    except ConfigurationError:
+                        print(
+                            json.dumps(
+                                {
+                                    "event": "backup_schedule_failed",
+                                    "code": "backup_configuration_invalid",
+                                }
+                            ),
+                            flush=True,
+                        )
+                    else:
+                        if scheduled.get("state") == "failed":
+                            print(
+                                json.dumps(
+                                    {
+                                        "event": "backup_schedule_failed",
+                                        "code": scheduled["failure_code"],
+                                    }
+                                ),
+                                flush=True,
+                            )
                     expire_exports(self.db, self.settings)
                     last_cleanup = time.monotonic()
                 if self.run_once():

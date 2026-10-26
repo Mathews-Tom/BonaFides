@@ -4,13 +4,18 @@
 from __future__ import annotations
 
 import hashlib
+import os
+import stat
+from pathlib import Path
 from typing import TYPE_CHECKING
+from uuid import UUID
 
 from sqlalchemy import Connection, text
 
-from offerloom.backup_archive import BackupError, BackupManifest, BundleReceipt
+from offerloom.backup_archive import MAX_BUNDLE_BYTES, BackupError, BackupManifest, BundleReceipt
 from offerloom.commands import canonical_json
 from offerloom.installation_control import Control
+from offerloom.storage import directory
 
 if TYPE_CHECKING:
     from offerloom.installation_restore import NativeRecoveryReceipt
@@ -119,3 +124,54 @@ def verify_generation(
     if updated is None:
         raise BackupError("backup_generation_identity_mismatch")
     return receipt_sha
+
+
+def verify_ciphertext(destination: Path, record: dict[str, object]) -> None:
+    """Independently reopen and hash the exact complete, stable regular file."""
+    name = str(record["file_name"])
+    try:
+        if name != str(UUID(name.removesuffix(".cms"))) + ".cms":
+            raise BackupError("backup_checkpoint_file_invalid")
+        length = int(str(record["byte_length"]))
+        if not 0 < length <= MAX_BUNDLE_BYTES:
+            raise BackupError("backup_checkpoint_size_invalid")
+        with directory(destination) as folder:
+            fd = os.open(name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=folder)
+            try:
+                before = os.fstat(fd)
+                if not stat.S_ISREG(before.st_mode) or before.st_size != length:
+                    raise BackupError("backup_checkpoint_size_mismatch")
+                digest = hashlib.sha256()
+                remaining = length
+                while remaining:
+                    chunk = os.read(fd, min(remaining, 1024**2))
+                    if not chunk:
+                        raise BackupError("backup_checkpoint_size_mismatch")
+                    digest.update(chunk)
+                    remaining -= len(chunk)
+                after = os.fstat(fd)
+                if (
+                    os.read(fd, 1)
+                    or (
+                        before.st_dev,
+                        before.st_ino,
+                        before.st_size,
+                        before.st_mtime_ns,
+                        before.st_ctime_ns,
+                    )
+                    != (
+                        after.st_dev,
+                        after.st_ino,
+                        after.st_size,
+                        after.st_mtime_ns,
+                        after.st_ctime_ns,
+                    )
+                    or digest.hexdigest() != record["cipher_sha256"]
+                ):
+                    raise BackupError("backup_checkpoint_cipher_mismatch")
+            finally:
+                os.close(fd)
+    except (OSError, ValueError) as error:
+        if isinstance(error, BackupError):
+            raise
+        raise BackupError("backup_checkpoint_file_unavailable") from error

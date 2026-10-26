@@ -64,6 +64,9 @@ def main(argv: list[str] | None = None) -> int:
             "backup-status",
             "backup-restore",
             "backup-verify",
+            "backup-schedule-run",
+            "backup-schedule-resolve",
+            "backup-open",
             "maintenance-inspect",
             "maintenance-recover",
         ),
@@ -73,6 +76,12 @@ def main(argv: list[str] | None = None) -> int:
     )
     arguments = parser.parse_args(argv)
     try:
+        if arguments.command == "backup-open":
+            from offerloom.installation_open import run as open_run
+
+            if arguments.config is None:
+                raise BackupError("backup_open_configuration_required")
+            return open_run(arguments.config)
         if arguments.command.startswith("maintenance-"):
             from offerloom.maintenance_operator import run as maintenance_run
 

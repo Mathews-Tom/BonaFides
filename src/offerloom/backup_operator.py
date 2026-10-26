@@ -11,14 +11,15 @@ import subprocess
 from dataclasses import asdict
 from pathlib import Path
 from typing import Self
-from uuid import uuid4
+from uuid import UUID, uuid4
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from pydantic import BaseModel, ConfigDict, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
 
 from offerloom.backup_archive import BackupError, Digest, recipient_certificate, recover_bundle
-from offerloom.backup_generations import verify_generation
+from offerloom.backup_generations import verify_ciphertext, verify_generation
 from offerloom.commands import canonical_json
 from offerloom.config import MigrationSettings, Settings, read_secret
 from offerloom.crypto import Keyring
@@ -44,12 +45,30 @@ class _Configuration(BaseModel):
         return self
 
 
+class DailyScheduleConfiguration(_Configuration):
+    enabled: bool
+    namespace_id: UUID
+    utc_hour: int = Field(default=2, ge=0, le=23)
+    utc_minute: int = Field(default=0, ge=0, le=59)
+    display_timezone: str = "UTC"
+    copy_destination: Path | None = None
+
+    @model_validator(mode="after")
+    def timezone_known(self) -> Self:
+        try:
+            ZoneInfo(self.display_timezone)
+        except (ValueError, ZoneInfoNotFoundError) as error:
+            raise ValueError("Backup display timezone must be an IANA zone") from error
+        return self
+
+
 class CaptureConfiguration(_Configuration):
     recipient: Path
     destination: Path
     staging_root: Path
     migrations: Path
     image_sha256: Digest
+    schedule: DailyScheduleConfiguration | None = None
 
 
 class RecoveryConfiguration(_Configuration):
@@ -97,8 +116,8 @@ def _migration_database(path: Path) -> Database:
     return db
 
 
-def _capture(config: CaptureConfiguration) -> dict[str, object]:
-    settings = Settings.load()
+def _capture(config: CaptureConfiguration, settings: Settings | None = None) -> dict[str, object]:
+    settings = settings or Settings.load()
     with recipient_certificate(config.recipient):
         schema_sources(config.migrations / "sql")
     with directory(config.staging_root, create=True) as staging:
@@ -142,6 +161,13 @@ def _capture(config: CaptureConfiguration) -> dict[str, object]:
                 "byte_length": receipt.byte_length,
                 "restore_verified": False,
             }
+            verify_ciphertext(config.destination, result)
+            with db.transaction() as conn:
+                conn.execute(
+                    text("""UPDATE offerloom.installation_backups
+                    SET cipher_verified_at=clock_timestamp() WHERE id=:id"""),
+                    {"id": control.id},
+                )
             maintenance.finish(result)
             return result
     finally:
@@ -151,29 +177,13 @@ def _capture(config: CaptureConfiguration) -> dict[str, object]:
 def _status(config: CaptureConfiguration) -> dict[str, object]:
     with recipient_certificate(config.recipient) as (_, fingerprint):
         schema_sources(config.migrations / "sql")
+    from offerloom.backup_schedule import backup_status
+
     db = Database(Settings.load())
     try:
-        with db.transaction() as conn:
-            conn.execute(text("SET TRANSACTION READ ONLY"))
-            rows = (
-                conn.execute(
-                    text("""SELECT b.id,b.cipher_sha256,b.byte_length,b.captured_at,b.restore_verified_at,
-                b.restore_receipt_sha256,b.namespace_id=i.namespace_id AS current_installation
-                FROM offerloom.installation_backups b CROSS JOIN offerloom.installation_state i
-                WHERE i.singleton AND b.config_sha256=:config
-                ORDER BY b.captured_at DESC,b.id LIMIT 30"""),
-                    {"config": configuration_sha256(config)},
-                )
-                .mappings()
-                .all()
-            )
-        return {
-            "configuration_present": True,
-            "recipient_sha256": fingerprint,
-            "key_custody": "not_attested",
-            "offhost_copy": "not_verified",
-            "generations": [dict(row) for row in rows],
-        }
+        result = backup_status(db, config)
+        result["recipient_sha256"] = fingerprint
+        return result
     finally:
         db.close()
 
@@ -251,20 +261,54 @@ def _recover(command: str, config: RecoveryConfiguration) -> dict[str, object]:
     return _recover_impl(command, config, None)
 
 
+def _resolve_schedule(config: CaptureConfiguration) -> dict[str, object]:
+    from offerloom.backup_schedule import resolve_interrupted
+
+    settings = Settings.load()
+    try:
+        guard = ExecutionGuard(settings.blob_root, exclusive=True, create=False)
+    except BlockingIOError as error:
+        raise BackupError("backup_schedule_stop_all_runtime_actors") from error
+    with guard:
+        db = Database(settings.database_dsn)
+        db.execution_guard = guard
+        try:
+            return resolve_interrupted(db, config)
+        finally:
+            db.close()
+
+
 def run(command: str, path: Path) -> int:
     """A protected config file carries paths; no secret is accepted in argv."""
     try:
         encoded = read_secret(path, "backup_configuration")
-        if command in {"backup-create", "backup-status"}:
+        if command in {
+            "backup-create",
+            "backup-status",
+            "backup-schedule-run",
+            "backup-schedule-resolve",
+        }:
             capture = CaptureConfiguration.model_validate_json(encoded)
-            result = _capture(capture) if command == "backup-create" else _status(capture)
+            if command == "backup-schedule-resolve":
+                result = _resolve_schedule(capture)
+            elif command == "backup-schedule-run":
+                from offerloom.backup_schedule import run_due
+
+                settings = Settings.load()
+                db = Database(settings)
+                try:
+                    result = run_due(db, settings, capture)
+                finally:
+                    db.close()
+            else:
+                result = _capture(capture) if command == "backup-create" else _status(capture)
         elif command in {"backup-restore", "backup-verify"}:
             recovery = RecoveryConfiguration.model_validate_json(encoded)
             result = _recover(command, recovery)
         else:
             raise BackupError("unsupported_backup_command")
         print(json.dumps(result, default=str, sort_keys=True))
-        return 0
+        return 1 if result.get("state") == "failed" else 0
     except (OSError, subprocess.SubprocessError, SQLAlchemyError) as error:
         # Driver/child exception messages can contain credentials or private rows.
         raise BackupError("backup_operator_failed") from error

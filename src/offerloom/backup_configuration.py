@@ -4,8 +4,6 @@
 from __future__ import annotations
 
 import hashlib
-import os
-import stat
 from dataclasses import dataclass
 from typing import Annotated
 from uuid import UUID
@@ -14,15 +12,14 @@ from fastapi import APIRouter, Depends
 from pydantic import ValidationError
 from sqlalchemy import Connection, text
 
-from offerloom.auth import Owner, require_owner
-from offerloom.backup_archive import MAX_BUNDLE_BYTES, BackupError, recipient_certificate
-from offerloom.backup_generations import credential_keyring_sha256
+from offerloom.auth import Owner, require_readonly_owner
+from offerloom.backup_archive import BackupError, recipient_certificate
+from offerloom.backup_generations import credential_keyring_sha256, verify_ciphertext
 from offerloom.backup_operator import CaptureConfiguration, configuration_sha256, source_sha256
 from offerloom.config import ConfigurationError, Settings, read_secret
 from offerloom.db import Database
 from offerloom.installation_backup import schema_sources
 from offerloom.problems import Problem
-from offerloom.storage import directory
 
 
 @dataclass(frozen=True)
@@ -83,6 +80,7 @@ def _candidate(
         AND b.namespace_id=i.namespace_id AND b.maintenance_epoch=i.maintenance_epoch
         AND b.workspace_version=s.workspace_version
         AND b.owner_auth_epoch=o.auth_epoch AND b.installation_auth_epoch=i.auth_epoch
+        AND b.pruned_at IS NULL
         AND b.restore_verified_at IS NOT NULL AND b.restore_receipt_sha256 IS NOT NULL
         AND b.schema_versions=CAST(:versions AS jsonb)
         AND b.schema_versions=(SELECT jsonb_object_agg(version::text,source_sha256)
@@ -104,44 +102,6 @@ def _candidate(
     return dict(row)
 
 
-def _verify_ciphertext(config: CaptureConfiguration, row: dict[str, object]) -> None:
-    name = str(row["file_name"])
-    try:
-        if name != str(UUID(name.removesuffix(".cms"))) + ".cms":
-            raise BackupError("backup_checkpoint_file_invalid")
-        expected_length = int(str(row["byte_length"]))
-        if not 0 < expected_length <= MAX_BUNDLE_BYTES:
-            raise BackupError("backup_checkpoint_size_invalid")
-        with directory(config.destination) as folder:
-            fd = os.open(name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=folder)
-            try:
-                before = os.fstat(fd)
-                if not stat.S_ISREG(before.st_mode) or before.st_size != expected_length:
-                    raise BackupError("backup_checkpoint_size_mismatch")
-                digest = hashlib.sha256()
-                remaining = expected_length
-                while remaining:
-                    chunk = os.read(fd, min(remaining, 1024**2))
-                    if not chunk:
-                        raise BackupError("backup_checkpoint_size_mismatch")
-                    digest.update(chunk)
-                    remaining -= len(chunk)
-                after = os.fstat(fd)
-                if (
-                    os.read(fd, 1)
-                    or (before.st_size, before.st_mtime_ns, before.st_ctime_ns)
-                    != (after.st_size, after.st_mtime_ns, after.st_ctime_ns)
-                    or digest.hexdigest() != row["cipher_sha256"]
-                ):
-                    raise BackupError("backup_checkpoint_cipher_mismatch")
-            finally:
-                os.close(fd)
-    except (OSError, ValueError) as error:
-        if isinstance(error, BackupError):
-            raise
-        raise BackupError("backup_checkpoint_file_unavailable") from error
-
-
 def verified_checkpoint(
     db: Database,
     settings: Settings,
@@ -159,7 +119,7 @@ def verified_checkpoint(
     with db.transaction() as conn:
         conn.execute(text("SET TRANSACTION READ ONLY"))
         row = _candidate(conn, owner_id, pins, versions, generation_id)
-    _verify_ciphertext(config, row)
+    verify_ciphertext(config.destination, row)
     if capture_configuration(settings) != config or capture_runtime_pins(config, settings) != pins:
         raise BackupError("backup_configuration_changed")
     selected = UUID(str(row["id"]))
@@ -189,47 +149,26 @@ def build_router(db: Database, settings: Settings) -> APIRouter:
     router = APIRouter(prefix="/api/v1/installation-backups")
 
     @router.get("")
-    def status(owner: Annotated[Owner, Depends(require_owner)]) -> dict[str, object]:
-        with db.transaction() as conn:
-            conn.execute(text("SET TRANSACTION READ ONLY"))
-            rows = (
-                conn.execute(
-                    text("""SELECT id,captured_at,restore_verified_at,byte_length
-                FROM offerloom.installation_backups WHERE owner_id=:owner
-                ORDER BY captured_at DESC,id LIMIT 30"""),
-                    {"owner": owner.id},
-                )
-                .mappings()
-                .all()
-            )
+    def status(owner: Annotated[Owner, Depends(require_readonly_owner)]) -> dict[str, object]:
+        from offerloom.backup_schedule import backup_status
+
+        config = None
         checkpoint = None
         reason = None
-        if settings.backup_capture_config_file is None:
-            reason = "backup_not_configured"
-        else:
-            try:
+        try:
+            if settings.backup_capture_config_file is not None:
+                config = capture_configuration(settings)
                 checkpoint = str(verified_checkpoint(db, settings, owner.id).generation_id)
-            except ConfigurationError as error:
-                raise Problem(503, "backup_configuration_invalid") from error
-            except BackupError as error:
-                reason = str(error)
+            else:
+                reason = "backup_not_configured"
+        except ConfigurationError as error:
+            raise Problem(503, "backup_configuration_invalid") from error
+        except BackupError as error:
+            reason = str(error)
         return {
-            "configuration_present": settings.backup_capture_config_file is not None,
+            **backup_status(db, config, owner.id),
             "eligible_checkpoint_id": checkpoint,
             "eligibility_reason": reason,
-            "key_custody": "not_attested",
-            "offhost_copy": "not_verified",
-            "generations": [
-                {
-                    "id": str(row["id"]),
-                    "captured_at": row["captured_at"].isoformat(),
-                    "restore_verified_at": row["restore_verified_at"].isoformat()
-                    if row["restore_verified_at"] is not None
-                    else None,
-                    "byte_length": row["byte_length"],
-                }
-                for row in rows
-            ],
         }
 
     return router

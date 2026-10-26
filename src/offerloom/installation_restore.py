@@ -245,11 +245,19 @@ def _revoke_restored_authority(conn: Connection, namespace: UUID, operation: UUI
         text("UPDATE offerloom.owner_settings SET privacy_mode='local_only',version=version+1")
     )
     conn.execute(
+        text("""UPDATE offerloom.backup_daily_runs
+    SET state='disabled',finished_at=clock_timestamp(),
+    failure_code='backup_schedule_restored_disabled'
+    WHERE finished_at IS NULL AND state IN ('running','created','copied')""")
+    )
+    conn.execute(
         text("""INSERT INTO offerloom.audit_events
     (owner_id,action,actor_kind,actor_id,request_id,entity_type,detail)
-    SELECT id,'installation_restored','operator','host-local-recovery',:operation,
-    'installation',jsonb_build_object('maintenance_active',true,'promoted',false)
-    FROM offerloom.owners"""),
+    SELECT o.id,'installation_restored','operator','host-local-recovery',:operation,
+    'installation',jsonb_build_object('maintenance_active',true,'promoted',false,
+    'namespace_id',i.namespace_id,'maintenance_epoch',i.maintenance_epoch,
+    'execution_guard_id',i.execution_guard_id)
+    FROM offerloom.owners o CROSS JOIN offerloom.installation_state i WHERE i.singleton"""),
         {"operation": operation},
     )
 

@@ -1,9 +1,13 @@
 # SPDX-License-Identifier: MIT OR Apache-2.0
 from __future__ import annotations
 
+import base64
 import hashlib
 import io
 import json
+import subprocess
+import sys
+import time
 from copy import deepcopy
 from dataclasses import replace
 from pathlib import Path
@@ -255,3 +259,109 @@ def test_export_api_requires_owner_csrf_precondition_and_bounded_single_pending(
         assert catalog.client.get(f"{path}/{task['id']}/download").status_code == 401
     finally:
         catalog.client.cookies.update(cookies)
+
+
+@pytest.mark.postgres
+def test_invalid_backup_configuration_does_not_stall_export_or_expired_copy_cleanup(
+    catalog: SourceContext,
+    parser: ImportParserClient,
+    renderer_spool: Path,
+    tmp_path: Path,
+) -> None:
+    document = _base(catalog, _profile(catalog))
+    expired = _queue(catalog)
+    assert _worker(catalog, parser, renderer_spool).run_once()
+    expired_path = (
+        catalog.identity.settings.blob_root
+        / "portable_exports"
+        / str(catalog.owner_id)
+        / (str(expired["id"]) + ".zip")
+    )
+    with catalog.identity.admin.transaction() as conn:
+        conn.execute(
+            text("""UPDATE offerloom.portable_exports
+            SET created_at=clock_timestamp()-interval '2 days',
+                expires_at=clock_timestamp()-interval '1 day'
+            WHERE owner_id=:owner AND workflow_run_id=:id"""),
+            {"owner": catalog.owner_id, "id": UUID(str(expired["id"]))},
+        )
+    assert expired_path.exists()
+    queued = _queue(catalog)
+    malformed = tmp_path / "malformed-backup.json"
+    malformed.touch(mode=0o600)
+    malformed.write_text("{not valid JSON")
+    keyring = catalog.identity.settings.keyring
+    config_path = tmp_path / "lifecycle.json"
+    config_path.touch(mode=0o600)
+    config_path.write_text(
+        json.dumps(
+            {
+                "database_dsn": catalog.identity.settings.database_dsn,
+                "origin": catalog.identity.settings.origin,
+                "blob_root": str(catalog.identity.settings.blob_root),
+                "import_spool": str(parser.spool),
+                "renderer_spool": str(renderer_spool),
+                "capture": str(malformed),
+                "keyring": {
+                    "active_key_id": keyring.active_key_id,
+                    "keys": {
+                        name: base64.b64encode(value).decode()
+                        for name, value in keyring.keys.items()
+                    },
+                },
+            }
+        )
+    )
+    child = subprocess.Popen(
+        [
+            sys.executable,
+            "-c",
+            """import json,sys
+from pathlib import Path
+from offerloom.config import Settings
+from offerloom.crypto import Keyring
+from offerloom.db import Database
+from offerloom.portable_exports import LifecycleWorker
+config=json.loads(Path(sys.argv[1]).read_text())
+settings=Settings(database_dsn=config['database_dsn'],origin=config['origin'],
+    keyring=Keyring.parse(json.dumps(config['keyring'])),mode='benchmark',
+    blob_root=Path(config['blob_root']),import_spool=Path(config['import_spool']),
+    renderer_spool=Path(config['renderer_spool']),
+    backup_capture_config_file=Path(config['capture']))
+db=Database(settings)
+try: LifecycleWorker(db,settings).run()
+finally: db.close()
+""",
+            str(config_path),
+        ],
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    try:
+        deadline = time.monotonic() + 30
+        result: dict[str, object] = {}
+        while time.monotonic() < deadline:
+            response = catalog.client.get(f"/api/v1/workflows/{queued['id']}")
+            result = response.json()
+            if result.get("state") in {"succeeded", "permanent_failure", "cancelled"}:
+                break
+            assert child.poll() is None, "Lifecycle process exited before finishing the export"
+            time.sleep(0.05)
+        assert result.get("state") == "succeeded", result
+        downloaded = catalog.client.get(f"/api/v1/portable-exports/{queued['id']}/download")
+        assert downloaded.status_code == 200
+        with ZipFile(io.BytesIO(downloaded.content)) as archive:
+            manifest = json.loads(archive.read("manifest.json"))
+            revision = next(
+                row
+                for row in manifest["records"]["document_revisions"]
+                if row["id"] == document["current_revision"]["id"]
+            )
+            assert revision["body"] == document["current_revision"]["body"]
+        assert not expired_path.exists()
+    finally:
+        child.terminate()
+        stdout, _ = child.communicate(timeout=15)
+    events = [json.loads(line) for line in stdout.splitlines()]
+    assert any(event.get("code") == "backup_configuration_invalid" for event in events)

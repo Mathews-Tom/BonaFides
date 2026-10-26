@@ -161,6 +161,7 @@ def migrate(settings: MigrationConfig) -> None:
                 "021_portable_scope_binding.up.sql",
                 "022_portable_previews.up.sql",
                 "023_offline_maintenance_recovery.up.sql",
+                "024_daily_backups.up.sql",
             )
             if len(rows) != len(names):
                 raise RuntimeError("unsupported migration ledger")
