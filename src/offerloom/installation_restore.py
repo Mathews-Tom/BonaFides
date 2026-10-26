@@ -118,23 +118,42 @@ def _copy_blobs(bundle: RecoveredBundle, blob_root: Path) -> None:
 def _rebind_credentials(
     conn: Connection, manifest: BackupManifest, keyring: Keyring, namespace: UUID
 ) -> int:
-    # Nonempty connector cursor envelopes have no M1 serialization contract.
-    # Never advertise full recovery by silently dropping an unknown encrypted field.
+    # Uncontracted connector/OAuth envelopes cannot be silently discarded or
+    # advertised as recovered. Their data contract must precede integration.
     if conn.execute(
-        text(
-            "SELECT EXISTS(SELECT 1 FROM offerloom.external_accounts WHERE sync_cursor_ciphertext IS NOT NULL)"
-        )
+        text("""SELECT EXISTS(SELECT 1 FROM offerloom.external_accounts
+        WHERE sync_cursor_ciphertext IS NOT NULL OR sync_cursor_key_id IS NOT NULL)
+        OR EXISTS(SELECT 1 FROM offerloom.oauth_transactions)""")
     ).scalar_one():
-        raise BackupError("restore_unsupported_cursor_envelope")
+        raise BackupError("restore_unsupported_credential_envelope")
     verified = 0
     rows = (
         conn.execute(
-            text("""SELECT owner_id,id,purpose,key_id,nonce,ciphertext,aad_version
-        FROM offerloom.encrypted_credentials ORDER BY owner_id,id""")
+            text("""SELECT owner_id,id,purpose,key_id,nonce,ciphertext,aad_version,
+        provider_origin,version FROM offerloom.encrypted_credentials ORDER BY owner_id,id""")
         )
         .mappings()
         .all()
     )
+    counts: dict[str, int] = {}
+    for row in rows:
+        counts[row["key_id"]] = counts.get(row["key_id"], 0) + 1
+    for key_id, count in counts.items():
+        conn.execute(
+            text("""INSERT INTO offerloom.credential_key_usage(key_id,encryption_count)
+            VALUES(:key,:count) ON CONFLICT(key_id) DO UPDATE SET encryption_count=greatest(
+            offerloom.credential_key_usage.encryption_count,EXCLUDED.encryption_count)"""),
+            {"key": key_id, "count": count},
+        )
+        if (
+            conn.execute(
+                text("""UPDATE offerloom.credential_key_usage SET encryption_count=encryption_count+:count
+            WHERE key_id=:key AND encryption_count<=1048576-:count RETURNING key_id"""),
+                {"key": key_id, "count": count},
+            ).scalar_one_or_none()
+            is None
+        ):
+            raise BackupError("restore_credential_key_usage_exhausted")
     for row in rows:
         original = Envelope(
             row["key_id"], bytes(row["nonce"]), bytes(row["ciphertext"]), row["aad_version"]
@@ -145,9 +164,15 @@ def _rebind_credentials(
             row["purpose"],
             row["id"],
             row["aad_version"],
+            row["provider_origin"],
         )
         new_context = EnvelopeContext(
-            namespace, row["owner_id"], row["purpose"], row["id"], row["aad_version"]
+            namespace,
+            row["owner_id"],
+            row["purpose"],
+            row["id"],
+            row["aad_version"],
+            row["provider_origin"],
         )
         try:
             plaintext = decrypt(keyring, old_context, original)
@@ -156,17 +181,19 @@ def _rebind_credentials(
             rebound = encrypt(Keyring(row["key_id"], keyring.keys), new_context, plaintext)
             if decrypt(keyring, new_context, rebound) != plaintext:
                 raise BackupError("restore_credential_rebinding_failed")
+            del plaintext
         except (KeyError, ValueError, InvalidTag) as error:
             raise BackupError("restore_credential_authentication_failed") from error
         conn.execute(
             text("""UPDATE offerloom.encrypted_credentials
             SET nonce=:nonce,ciphertext=:cipher,version=version+1,rotated_at=clock_timestamp()
-            WHERE owner_id=:owner AND id=:id"""),
+            WHERE owner_id=:owner AND id=:id AND version=:version"""),
             {
                 "nonce": rebound.nonce,
                 "cipher": rebound.ciphertext,
                 "owner": row["owner_id"],
                 "id": row["id"],
+                "version": row["version"],
             },
         )
         verified += 1

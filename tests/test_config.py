@@ -13,7 +13,14 @@ from hypothesis import given
 from hypothesis import strategies as st
 
 from offerloom.config import ConfigurationError, MigrationSettings, Settings, read_secret
-from offerloom.crypto import EnvelopeContext, Keyring, decrypt, encrypt
+from offerloom.crypto import (
+    EnvelopeContext,
+    Keyring,
+    canonical_provider_origin,
+    decrypt,
+    decrypt_connected_credential,
+    encrypt,
+)
 
 
 def keyring() -> Keyring:
@@ -235,3 +242,127 @@ def test_aead_rejects_wrong_key_ciphertext_tag_and_nonce() -> None:
         decrypt(keys, context, replace(encrypted, key_id="missing"))
     with pytest.raises(ValueError):
         decrypt(keys, replace(context, version=2), encrypted)
+
+
+def test_legacy_aad_bytes_remain_exact_for_native_backup_recovery() -> None:
+    namespace, owner, record = uuid4(), uuid4(), uuid4()
+    context = EnvelopeContext(namespace, owner, "provider_token", record)
+    assert (
+        context.aad()
+        == json.dumps(
+            {
+                "algorithm": "AES-256-GCM",
+                "namespace_id": str(namespace),
+                "owner_id": str(owner),
+                "purpose": "provider_token",
+                "record_id": str(record),
+                "version": 1,
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode()
+    )
+
+
+@pytest.mark.parametrize(
+    "origin",
+    [
+        "http://provider.example",
+        "https://Provider.example",
+        "https://provider.example/",
+        "https://provider.example:443",
+        "https://provider.example:0",
+        "https://provider.example:65536",
+        "https://provider.example.",
+        "https://provider.example?next=x",
+        "https://provider.example#fragment",
+        "https://user:password@provider.example",
+        "https://provider.example\n",
+        "https://provider.example\\other",
+        "https://-provider.example",
+        "https://provider..example",
+    ],
+)
+def test_credential_origin_requires_exact_canonical_https(origin: str) -> None:
+    with pytest.raises(ValueError, match="canonical provider origin"):
+        canonical_provider_origin(origin)
+
+
+@pytest.mark.parametrize(
+    "origin", ["https://provider.example", "https://provider.example:8443", "https://[::1]"]
+)
+def test_credential_origin_accepts_only_canonical_destination(origin: str) -> None:
+    assert canonical_provider_origin(origin) == origin
+
+
+@pytest.mark.parametrize(
+    "field", ["namespace_id", "owner_id", "record_id", "purpose", "provider_origin"]
+)
+def test_origin_bound_v2_rejects_every_substituted_context(field: str) -> None:
+    context = EnvelopeContext(
+        uuid4(), uuid4(), "provider_token", uuid4(), 2, "https://provider.example"
+    )
+    envelope = encrypt(keyring(), context, b"synthetic provider credential")
+    assert envelope.version == 2
+    assert decrypt(keyring(), context, envelope) == b"synthetic provider credential"
+    if field == "namespace_id":
+        substituted = replace(context, namespace_id=uuid4())
+    elif field == "owner_id":
+        substituted = replace(context, owner_id=uuid4())
+    elif field == "record_id":
+        substituted = replace(context, record_id=uuid4())
+    elif field == "purpose":
+        substituted = replace(context, purpose="other-purpose")
+    else:
+        substituted = replace(context, provider_origin="https://other.example")
+    with pytest.raises(InvalidTag):
+        decrypt(keyring(), substituted, envelope)
+
+
+@pytest.mark.parametrize("status", ["disconnected", "reauthorize", "revocation_pending"])
+def test_retained_disconnected_credentials_never_authorize_live_reads(status: str) -> None:
+    context = EnvelopeContext(
+        uuid4(), uuid4(), "provider_token", uuid4(), 2, "https://provider.example"
+    )
+    envelope = encrypt(keyring(), context, b"synthetic retained token")
+    with pytest.raises(ValueError, match="connection and provider origin"):
+        decrypt_connected_credential(
+            keyring(),
+            context,
+            envelope,
+            configured_provider_origin="https://provider.example",
+            account_status=status,
+        )
+    assert decrypt(keyring(), context, envelope) == b"synthetic retained token"
+
+
+def test_live_credential_read_requires_v2_and_same_configured_provider() -> None:
+    legacy = EnvelopeContext(uuid4(), uuid4(), "provider_token", uuid4())
+    with pytest.raises(ValueError, match="connection and provider origin"):
+        decrypt_connected_credential(
+            keyring(),
+            legacy,
+            encrypt(keyring(), legacy, b"synthetic token"),
+            configured_provider_origin="https://provider.example",
+            account_status="connected",
+        )
+    context = replace(legacy, version=2, provider_origin="https://provider.example")
+    envelope = encrypt(keyring(), context, b"synthetic token")
+    with pytest.raises(ValueError, match="connection and provider origin"):
+        decrypt_connected_credential(
+            keyring(),
+            context,
+            envelope,
+            configured_provider_origin="https://other.example",
+            account_status="connected",
+        )
+    assert (
+        decrypt_connected_credential(
+            keyring(),
+            context,
+            envelope,
+            configured_provider_origin="https://provider.example",
+            account_status="connected",
+        )
+        == b"synthetic token"
+    )

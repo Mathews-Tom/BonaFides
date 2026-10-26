@@ -69,13 +69,22 @@ def main(argv: list[str] | None = None) -> int:
             "backup-open",
             "maintenance-inspect",
             "maintenance-recover",
+            "credential-rotate",
         ),
     )
     parser.add_argument(
-        "--config", type=Path, help="protected backup or offline maintenance configuration file"
+        "--config",
+        type=Path,
+        help="protected backup, credential or offline maintenance configuration",
     )
     arguments = parser.parse_args(argv)
     try:
+        if arguments.command == "credential-rotate":
+            from offerloom.credential_rotation import run as rotation_run
+
+            if arguments.config is None:
+                raise BackupError("credential_rotation_configuration_required")
+            return rotation_run(arguments.config)
         if arguments.command == "backup-open":
             from offerloom.installation_open import run as open_run
 
@@ -95,7 +104,9 @@ def main(argv: list[str] | None = None) -> int:
                 raise BackupError("backup_configuration_required")
             return run(arguments.command, arguments.config)
         if arguments.config is not None:
-            raise ConfigurationError("--config is only valid for backup/maintenance commands")
+            raise ConfigurationError(
+                "--config is only valid for backup/maintenance/credential commands"
+            )
         if arguments.command == "renderer":
             from offerloom.render_service import run_renderer
 

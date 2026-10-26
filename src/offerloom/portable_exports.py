@@ -290,7 +290,12 @@ class LifecycleWorker:
         while not self.stopping.is_set():
             try:
                 if time.monotonic() - last_cleanup >= 60:
+                    last_cleanup = time.monotonic()
                     from offerloom.backup_schedule import run_due
+                    from offerloom.task_retention import expire_task_inputs
+
+                    # Independent privacy expiry must not depend on optional backup config.
+                    expire_task_inputs(self.db)
 
                     try:
                         scheduled = run_due(self.db, self.settings)
@@ -316,7 +321,6 @@ class LifecycleWorker:
                                 flush=True,
                             )
                     expire_exports(self.db, self.settings)
-                    last_cleanup = time.monotonic()
                 if self.run_once():
                     continue
             except (DBAPIError, Problem, OSError, ValueError) as error:

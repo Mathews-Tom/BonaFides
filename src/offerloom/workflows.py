@@ -162,6 +162,7 @@ def migrate(settings: MigrationConfig) -> None:
                 "022_portable_previews.up.sql",
                 "023_offline_maintenance_recovery.up.sql",
                 "024_daily_backups.up.sql",
+                "025_credential_rotation.up.sql",
             )
             if len(rows) != len(names):
                 raise RuntimeError("unsupported migration ledger")
@@ -1388,6 +1389,8 @@ def build_router(db: Database, settings: Settings) -> APIRouter:
 
     @router.get("/status")
     def status(owner: Annotated[Owner, Depends(require_owner)]) -> dict[str, object]:
+        from offerloom.task_retention import task_retention_status
+
         with db.transaction() as conn:
             queue = (
                 conn.execute(
@@ -1419,12 +1422,14 @@ def build_router(db: Database, settings: Settings) -> APIRouter:
                 .mappings()
                 .one()
             )
+            retention = task_retention_status(conn, owner.id)
         return {
             "queue": {key: float(value) for key, value in queue.items()},
             "worker": {
                 key: float(value) if value is not None else None for key, value in workers.items()
             },
             "outbox": {key: float(value) for key, value in outbox.items()},
+            "task_input_retention": retention,
         }
 
     return router

@@ -10,7 +10,7 @@ from sqlalchemy.engine import make_url
 from offerloom.config import Settings
 from offerloom.execution_guard import ExecutionGuard
 
-SCHEMA_VERSION = 24
+SCHEMA_VERSION = 25
 
 
 class Database:

@@ -8,11 +8,14 @@ unique key on (key_id, nonce). This helper never accepts caller-selected nonces.
 from __future__ import annotations
 
 import base64
+import ipaddress
 import json
+import re
 import secrets
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from types import MappingProxyType
+from urllib.parse import urlsplit
 from uuid import UUID
 
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
@@ -54,6 +57,38 @@ class Keyring:
             raise ValueError("Invalid keyring configuration") from exc
 
 
+def canonical_provider_origin(origin: str) -> str:
+    """Require an exact HTTPS origin, never normalize a different destination."""
+    try:
+        parsed = urlsplit(origin)
+        host, port = parsed.hostname, parsed.port
+        if host is None:
+            raise ValueError
+        if ":" in host:
+            canonical_host = f"[{ipaddress.IPv6Address(host).compressed}]"
+        else:
+            if len(host) > 253 or any(
+                re.fullmatch(r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?", label) is None
+                for label in host.split(".")
+            ):
+                raise ValueError
+            canonical_host = host
+        if (
+            parsed.scheme != "https"
+            or parsed.username is not None
+            or parsed.password is not None
+            or parsed.path
+            or parsed.query
+            or parsed.fragment
+            or (port is not None and (not 1 <= port <= 65535 or port == 443))
+            or origin != f"https://{canonical_host}{f':{port}' if port is not None else ''}"
+        ):
+            raise ValueError
+    except ValueError as error:
+        raise ValueError("Invalid canonical provider origin") from error
+    return origin
+
+
 @dataclass(frozen=True)
 class EnvelopeContext:
     namespace_id: UUID
@@ -61,22 +96,28 @@ class EnvelopeContext:
     purpose: str
     record_id: UUID
     version: int = 1
+    provider_origin: str | None = None
 
     def aad(self) -> bytes:
-        if not self.purpose or len(self.purpose) > 128 or self.version != 1:
+        if (
+            not self.purpose
+            or len(self.purpose) > 128
+            or self.version not in (1, 2)
+            or (self.version == 1 and self.provider_origin is not None)
+            or (self.version == 2 and self.provider_origin is None)
+        ):
             raise ValueError("Invalid envelope context")
-        return json.dumps(
-            {
-                "algorithm": "AES-256-GCM",
-                "namespace_id": str(self.namespace_id),
-                "owner_id": str(self.owner_id),
-                "purpose": self.purpose,
-                "record_id": str(self.record_id),
-                "version": self.version,
-            },
-            sort_keys=True,
-            separators=(",", ":"),
-        ).encode("utf-8")
+        value: dict[str, str | int] = {
+            "algorithm": "AES-256-GCM",
+            "namespace_id": str(self.namespace_id),
+            "owner_id": str(self.owner_id),
+            "purpose": self.purpose,
+            "record_id": str(self.record_id),
+            "version": self.version,
+        }
+        if self.provider_origin is not None:
+            value["provider_origin"] = canonical_provider_origin(self.provider_origin)
+        return json.dumps(value, sort_keys=True, separators=(",", ":")).encode("utf-8")
 
 
 @dataclass(frozen=True)
@@ -93,13 +134,13 @@ def encrypt(keyring: Keyring, context: EnvelopeContext, plaintext: bytes) -> Env
     ciphertext = AESGCM(keyring.keys[keyring.active_key_id]).encrypt(
         nonce, plaintext, context.aad()
     )
-    return Envelope(keyring.active_key_id, nonce, ciphertext)
+    return Envelope(keyring.active_key_id, nonce, ciphertext, context.version)
 
 
 def decrypt(keyring: Keyring, context: EnvelopeContext, envelope: Envelope) -> bytes:
     if (
         envelope.version != context.version
-        or envelope.version != 1
+        or envelope.version not in (1, 2)
         or len(envelope.nonce) != 12
         or len(envelope.ciphertext) < 16
     ):
@@ -108,3 +149,25 @@ def decrypt(keyring: Keyring, context: EnvelopeContext, envelope: Envelope) -> b
     return AESGCM(keyring.keys[envelope.key_id]).decrypt(
         envelope.nonce, envelope.ciphertext, context.aad()
     )
+
+
+def decrypt_connected_credential(
+    keyring: Keyring,
+    context: EnvelopeContext,
+    envelope: Envelope,
+    *,
+    configured_provider_origin: str,
+    account_status: str,
+) -> bytes:
+    """Live reads cannot reuse disconnected, reauthorize or legacy credentials.
+
+    Generic decrypt is reserved for explicit envelope migration/native recovery.
+    This boundary grants no account connection or provider execution authority.
+    """
+    if (
+        account_status != "connected"
+        or context.version != 2
+        or context.provider_origin != canonical_provider_origin(configured_provider_origin)
+    ):
+        raise ValueError("Credential connection and provider origin required")
+    return decrypt(keyring, context, envelope)
