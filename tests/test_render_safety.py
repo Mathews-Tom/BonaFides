@@ -258,14 +258,12 @@ def test_child_main_exposes_only_safe_numeric_failure(
 def actual_renderer(
     tmp_path_factory: pytest.TempPathFactory,
 ) -> Iterator[Callable[[DocumentBody, str, PrintableFrame | None], bytes]]:
-    if sys.platform == "linux":
-        yield render_pdf
-        return
-    # The app image includes the production renderer. Match the parser suite's
-    # explicit image binding; never fall back to unsupported native macOS fonts.
+    # Glyph support is a property of the shipped image's font set, not the test
+    # host's: CI runners carry extra CJK/Unifont fonts. Always paint through the
+    # sealed production renderer image; never fall back to host fonts.
     image = os.environ.get("OFFERLOOM_TEST_PARSER_IMAGE")
     if not image:
-        pytest.fail("Non-Linux renderer tests require OFFERLOOM_TEST_PARSER_IMAGE and Docker.")
+        pytest.fail("Actual renderer tests require OFFERLOOM_TEST_PARSER_IMAGE and Docker.")
     spool = tmp_path_factory.mktemp("actual-renderer")
     container = "offerloom-renderer-test-" + uuid4().hex
     process = subprocess.Popen(
