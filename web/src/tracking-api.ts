@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
-import { Api, ApiError, type FieldError } from './api';
+import { Api } from './api';
 
 export const stages = ['preparing', 'applied', 'screening', 'interview', 'offer', 'accepted', 'rejected', 'withdrawn'] as const;
 export type Stage = typeof stages[number];
@@ -53,14 +53,5 @@ export async function attachmentDigest(file: File): Promise<string> {
 
 // The only binary tracking write. Files never become an object URL or a browser preview.
 export async function uploadAttachment(api: Api, applicationId: string, file: File, version: number, key: string, signal: AbortSignal): Promise<ApplicationDetail> {
-  const response = await fetch(`/api/v1/applications/${encodeURIComponent(applicationId)}/attachments?display_name=${encodeURIComponent(file.name)}`, {
-    method: 'POST', credentials: 'same-origin', signal, body: file,
-    headers: { Accept: 'application/json', 'Content-Type': 'application/octet-stream', 'X-CSRF-Token': api.csrf, 'If-Match': `"${version}"`, 'Idempotency-Key': key },
-  });
-  if (!response.ok) {
-    let code = `http_${response.status}`; let fields: FieldError[] = [];
-    try { const problem = await response.json() as { code?: string; fields?: FieldError[] }; code = problem.code ?? code; fields = problem.fields ?? []; } catch { /* Rejected bytes are never treated as saved. */ }
-    throw new ApiError(response.status, code, fields);
-  }
-  return await response.json() as ApplicationDetail;
+  return api.upload<ApplicationDetail>(`/applications/${encodeURIComponent(applicationId)}/attachments?display_name=${encodeURIComponent(file.name)}`, file, 'application/octet-stream', version, key, signal);
 }

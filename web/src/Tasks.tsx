@@ -29,7 +29,7 @@ function controlError(failure: unknown): string {
   return `${errorText(failure)} Reload task status before deciding whether a control request is still appropriate.`;
 }
 const time = (value: string | null) => value ? <time dateTime={value}>{value}</time> : 'Not recorded';
-const approvalIdentity = (value: ActionApproval) => JSON.stringify([value.id, value.version, value.workflow_run_id, value.action_kind, value.payload_sha256, value.destination_sha256, value.revision_id, value.target_version, value.expires_at, value.approved_at, value.consumed_at, value.intent]);
+const approvalIdentity = (value: ActionApproval) => JSON.stringify([value.id, value.version, value.workflow_run_id, value.action_kind, value.payload_sha256, value.destination_sha256, value.revision_id, value.target_version, value.expires_at, value.approved_at, value.consumed_at, value.intent, value.confirmation_phrase]);
 function approvalHelp(value: ActionApproval): string {
   if (value.consumed_at) return 'This exact authorization has already been consumed. It is not permission to execute again. Inspect the resulting task; do not resend it.';
   if (value.approved_at) return 'This exact action was approved. Approval is not evidence of execution; inspect task checkpoints. It cannot be approved again under another key.';
@@ -79,6 +79,7 @@ export function Tasks({ api, session, requestedTask, disabled = false, resultDis
   const [comparison, setComparison] = useState<ActionApproval | null>(null);
   const [approvalMissing, setApprovalMissing] = useState(false);
   const [confirmed, setConfirmed] = useState(false);
+  useEffect(() => { setConfirmed(false); }, [session.csrf_token]);
   const mounted = useRef(false);
   const controllers = useRef(new Set<AbortController>());
   const selection = useRef({ id: null as string | null, epoch: 0 });
@@ -229,7 +230,7 @@ export function Tasks({ api, session, requestedTask, disabled = false, resultDis
     });
   }
   async function approve() {
-    if (!approval || !confirmed || comparison) return;
+    if (!approval || approval.action_kind !== 'hosted_egress' || !confirmed || comparison) return;
     const reviewed = approval;
     await run(async (live, epoch) => {
       let latest: ActionApproval;
@@ -240,10 +241,10 @@ export function Tasks({ api, session, requestedTask, disabled = false, resultDis
       }
       if (!matches(live.id, epoch)) return;
       if (approvalIdentity(latest) !== approvalIdentity(reviewed)) { setComparison(latest); setConfirmed(false); setError('The prepared action changed. Compare both envelopes and explicitly review the current one; no approval was sent.'); return; }
-      if (latest.workflow_run_id !== live.id || !latest.applicable || !latest.capability_available || latest.consumed_at || latest.approved_at || Date.parse(latest.expires_at) <= Date.now() || live.state !== 'waiting_for_approval' || live.cancel_requested_at || live.delivery_state === 'unknown') {
+      if (latest.action_kind !== 'hosted_egress' || latest.workflow_run_id !== live.id || !latest.applicable || !latest.capability_available || latest.consumed_at || latest.approved_at || Date.parse(latest.expires_at) <= Date.now() || live.state !== 'waiting_for_approval' || live.cancel_requested_at || live.delivery_state === 'unknown') {
         setApproval(latest); setConfirmed(false); setError(`${approvalHelp(latest)} No approval was sent.`); return;
       }
-      const body: ActionApprovalRequest = { payload_sha256: reviewed.payload_sha256, destination_sha256: reviewed.destination_sha256, revision_id: reviewed.revision_id, target_version: reviewed.target_version, confirmed: true };
+      const body: ActionApprovalRequest = { payload_sha256: reviewed.payload_sha256, destination_sha256: reviewed.destination_sha256, revision_id: reviewed.revision_id, target_version: reviewed.target_version, confirmed: true, confirmation_phrase: null };
       const path = `${pathFor(live.id)}/approval/approve`;
       const value = await request<Workflow>(path, 'POST', body, live.version, keyFor(path, body, live.version));
       if (!matches(live.id, epoch)) return;
@@ -268,8 +269,8 @@ export function Tasks({ api, session, requestedTask, disabled = false, resultDis
     });
   }
   const retryDue = !!detail && detail.state === 'retryable_failure' && detail.retryable && detail.remaining_attempts > 0 && Date.parse(detail.deadline_at) > Date.now() && (!detail.next_attempt_at || Date.parse(detail.next_attempt_at) <= Date.now()) && !detail.cancel_requested_at && detail.delivery_state !== 'unknown';
-  const approvalAllowed = !!detail && !!approval && approval.workflow_run_id === detail.id && !comparison && !approvalMissing && approval.applicable && approval.capability_available && !approval.approved_at && !approval.consumed_at && Date.parse(approval.expires_at) > Date.now() && detail.state === 'waiting_for_approval' && !detail.cancel_requested_at && detail.delivery_state !== 'unknown';
-  const locked = disabled || busy;
+  const approvalAllowed = !!detail && !!approval && approval.workflow_run_id === detail.id && !comparison && !approvalMissing && approval.applicable && approval.capability_available && approval.action_kind === 'hosted_egress' && !approval.approved_at && !approval.consumed_at && Date.parse(approval.expires_at) > Date.now() && detail.state === 'waiting_for_approval' && !detail.cancel_requested_at && detail.delivery_state !== 'unknown';
+  const locked = disabled || busy || !!api.writeBlock;
   const resultDocuments = detail?.state === 'succeeded' ? detail.result?.documents ?? (detail.result?.document_id ? [{ kind: null, document_id: detail.result.document_id }] : []) : [];
   return <section className="panel tasks" aria-labelledby="tasks-title"><h2 id="tasks-title">Task workspace</h2>
     <p>Durable status, local safety checkpoints and exact action review. Opening a task does not replace an editor or accept its output.</p>
@@ -300,6 +301,7 @@ export function Tasks({ api, session, requestedTask, disabled = false, resultDis
           {approvalMissing && <p>{detail.kind === 'profile_import' ? 'No generic prepared action exists for a résumé import. Use the existing “Import a résumé” review to inspect source lines and make individual merge decisions.' : 'No prepared action exists for this task. No generic approval or proposal was fabricated. Use the existing requirements or document proposal editor for domain-specific review. A new destructive preview is available only when its actual domain capability exists.'}</p>}
           {approval && <><p>Applicability: {approval.reason}. {approvalHelp(approval)}</p><p>Capability: {approval.capability_available ? 'Available for this exact prepared action only' : 'Unavailable — approval cannot enable execution'}</p><Intent approval={approval} label="Reviewed prepared action" />
             {comparison && <><p className="disclosure">The server now reports a different prepared action or lifecycle. No approval was sent. Compare this current envelope with the one you reviewed.</p><Intent approval={comparison} label="Current server comparison" /><button className="secondary" disabled={locked} onClick={() => { setApproval(comparison); setComparison(null); setConfirmed(false); mutation.current = null; }}>Review this current preparation</button></>}
+            {approval.action_kind !== 'hosted_egress' && <p>Destructive actions cannot be approved in Tasks. Open <a href="#owner-data-portability">Owner-data portability and complete owner-data review</a> to review the full preview, record counts, remaining copies, credential policy, owner identity and checkpoint/archive before confirming there.</p>}
             <label className="check"><input type="checkbox" checked={confirmed} disabled={locked || !approvalAllowed} onChange={event => setConfirmed(event.target.checked)} />I compared the exact payload, destination, target revision/version and limits, and confirm only this prepared action.</label>
             <button disabled={locked || !approvalAllowed || !confirmed || !!statusError} onClick={() => { void approve(); }}>Approve this exact action</button>
             <details><summary>Recent sign-in and bound-session recovery</summary><p>Approval requires a successful sign-in within five minutes, checked by the server clock. Signing in rotates the session and invalidates its old bound intent; obtain a genuine fresh domain preview afterwards. It never renews or rebinds an approval.</p><form onSubmit={event => { void reauthenticate(event); }}><label>Current password for task review<input type="password" name="task_password" autoComplete="current-password" required maxLength={128} /></label><button className="secondary" disabled={locked}>Sign in again for task review</button></form></details>

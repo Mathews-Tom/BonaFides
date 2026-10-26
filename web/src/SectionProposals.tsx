@@ -26,7 +26,7 @@ interface Props {
 export function SectionProposals({ document, dirty, locked, archived, sectionKey, tone, context, confirmed, proposals, proposal, applyConfirmed, onSection, onTone, onPreview, onConfirm, onRequest, onReload, onOpen, onApplyConfirm, onApply }: Props) {
   const unavailable = locked || dirty || archived;
   const targetMatches = !!proposal && proposalMatches(proposal, document);
-  const canApply = !locked && !dirty && !!proposal?.applicable && targetMatches;
+  const canApply = !locked && !dirty && !proposal?.historical && !!proposal?.applicable && targetMatches;
   return <section className="section-proposals" aria-labelledby="section-proposals-heading">
     <h3 id="section-proposals-heading">Selected-section proposals</h3>
     <p>Regenerate one saved tailored section, not the whole document. The heading, other sections, printable contact frame and template stay frozen. Completion stores a proposal only; it never replaces saved wording or your editor. Nothing is sent as an application.</p>
@@ -52,6 +52,7 @@ export function SectionProposals({ document, dirty, locked, archived, sectionKey
     </section>
     {proposal && <section className="comparison" aria-label="Section proposal comparison"><h4>Compare original and proposed section</h4><p>Proposal {proposal.id}. Target revision {proposal.target_revision_id}; document version {proposal.target_document_version}; content SHA-256 {proposal.target_content_sha256}. The original below is the proposal’s immutable target, not a claim that your current editor is unchanged.</p>
       <div className="proposal-columns"><ProposalSection section={proposal.original_section} label="Original saved section" /><ProposalSection section={proposal.proposed_section} label="Proposed section" /></div>
+      {proposal.historical && <p className="disclosure">Imported historical proposal. Original model metadata is retained for inspection, not restored invocation or consent authority. This proposal cannot be applied. Request a new proposal through a separately qualified route when needed.</p>}
       {proposal.validation_issues.length > 0 ? <div className="error"><strong>Proposed draft has review/export blockers.</strong><ul>{proposal.validation_issues.map((issue, index) => <li key={`${issue.path}-${issue.code}-${index}`}>{issue.path}: {issue.code}</li>)}</ul><p>Applying retains these issues in an editable draft. Correct unsupported statements or accepted sources and save/revalidate before exact-revision review or PDF. Human review cannot waive blockers.</p></div> : <p>No structural/source blocker was reported. This is not factual approval; compare every statement with the frozen sources.</p>}
       {(!targetMatches || !proposal.applicable) && <p className="disclosure">This proposal cannot be applied to the displayed saved target or current source state. A manual save or restoration changes target identity even if words match. Reload proposals and compare the current document; request a new proposal when appropriate. Nothing is automatically rebased or overwritten.</p>}
       <details><summary>Stored proposal model provenance</summary><pre className="import-source">{JSON.stringify(proposal.model_run, null, 2)}</pre></details>

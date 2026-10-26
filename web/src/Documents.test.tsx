@@ -343,7 +343,7 @@ const sectionProposal: SectionProposal = {
   section_key: 'experience', original_section: tailored.current_revision.body.sections[0]!,
   proposed_section: { ...tailored.current_revision.body.sections[0]!, blocks: [{ ...tailored.current_revision.body.sections[0]!.blocks[0]!, block_key: 'proposal-1-block-0', text: 'Led an unsupported global team.' }] },
   validation_issues: [{ path: '/sections/0/blocks/0', code: 'unestablished_factual_text' }],
-  model_run: { id: 'section-run-1', stage: 'regenerate_section' }, created_at: '2026-10-25T14:00:00Z', applicable: true,
+  model_run: { id: 'section-run-1', stage: 'regenerate_section' }, created_at: '2026-10-25T14:00:00Z', applicable: true, historical: false,
 };
 const completedSectionWorkflow: Workflow = {
   ...sectionWorkflow, version: 2, state: 'succeeded',
@@ -510,6 +510,25 @@ describe('saved tailored section proposals', () => {
     expect(screen.getByRole('button', { name: 'Save document revision' })).toBeEnabled();
     expect(request.mock.calls.some(call => call[1] === 'POST')).toBe(false);
     expect(screen.queryByRole('heading', { name: /Document task:/ })).not.toBeInTheDocument();
+  });
+
+  it('keeps imported historical proposals readable but refuses applying them even with a matching target and applicability flag', async () => {
+    const user = userEvent.setup();
+    const historical: SectionProposal = { ...sectionProposal, historical: true, applicable: true };
+    const { api, request } = proposalFixture(async path => {
+      if (path === '/documents/tailored-resume/regeneration-proposals?limit=20') return { items: [historical], next_cursor: null };
+      if (path === '/documents/tailored-resume/regeneration-proposals/proposal-1') return historical;
+      throw new ApiError(404, 'not_found');
+    });
+    render(<Documents api={api} profile={profile} />); await openTailored(user);
+    await user.click(screen.getByRole('button', { name: 'Reload saved section proposals' }));
+    await user.click(await screen.findByRole('button', { name: /Compare proposal for Experience/ }));
+    await screen.findByRole('region', { name: 'Section proposal comparison' });
+    expect(screen.getByText(/Imported historical proposal/)).toBeVisible();
+    expect(screen.getByRole('checkbox', { name: /I compared the original and proposal/ })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Apply proposal as new draft revision' })).toBeDisabled();
+    expect(screen.getByLabelText('Block text: b-1')).toHaveValue('Maintained Linux service checks.');
+    expect(request.mock.calls.some(call => call[1] === 'POST')).toBe(false);
   });
 
   it('retains recoverable edits after apply 412 and never retargets an old proposal onto a newer or restored revision', async () => {

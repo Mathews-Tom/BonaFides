@@ -3,10 +3,11 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { App } from './App';
-import { Api, ApiError, type DocumentRecord, type Profile, type RequirementsView, type Session, type Snapshot, type Workflow } from './api';
+import { Api, ApiError, type DocumentRecord, type InstallationStatus, type Profile, type RequirementsView, type Session, type Snapshot, type Workflow } from './api';
 import { stages, type ApplicationDetail } from './tracking-api';
 const session: Session = { owner_id: 'owner', login_name: 'mira', csrf_token: 'session-csrf', expires_at: '2030-01-01' };
 const profile: Profile = { id: 'profile', version: 1, current_revision: { id: 'revision-1', revision_no: 1, content_sha256: 'a'.repeat(64), created_at: '2026-01-01T00:00:00Z', author_owner_id: 'owner', reason: 'Initial profile', claims: [], snapshot: { display_name: 'Mira', headline: 'Engineer', claim_revision_ids: [] } }, evidence: [], quality_warnings: [] };
+const installation: InstallationStatus = { namespace_id: 'namespace-one', maintenance_epoch: 0, workspace_version: 1, maintenance_active: false, recovery_required: false, operation: null, drain: { active_calls: 0, provider_executions: 0 } };
 function task(overrides: Partial<Workflow> = {}): Workflow {
   return {
     id: 'task-1', version: 1, state: 'pending', attempt: 0, max_attempts: 3, result: null, last_error_code: null,
@@ -19,8 +20,9 @@ function task(overrides: Partial<Workflow> = {}): Workflow {
   };
 }
 afterEach(() => { window.history.replaceState(null, '', '/'); });
-function mockRequest(api: Api, handler: (path: string, method: string, body?: unknown) => Promise<unknown>, baseDocument: DocumentRecord | null = null, applications: ApplicationDetail[] = []) {
+function mockRequest(api: Api, handler: (path: string, method: string, body?: unknown) => Promise<unknown>, baseDocument: DocumentRecord | null = null, applications: ApplicationDetail[] = [], maintenance: () => Promise<InstallationStatus> = async () => installation) {
   return vi.spyOn(api, 'request').mockImplementation(async <T,>(path: string, method = 'GET', body?: unknown) => {
+    if (method === 'GET' && path === '/maintenance') return await maintenance() as T;
     if (method === 'GET' && path === '/document-templates') return { items: [{ version: 'offerloom-evidence-v1', label: 'Evidence', language: 'en', paper: 'A4' }, { version: 'offerloom-compact-v1', label: 'Compact', language: 'en', paper: 'A4' }] } as T;
     if (method === 'GET' && path === '/profile/base-resume') { if (baseDocument) return baseDocument as T; throw new ApiError(404, 'base_resume_not_found'); }
     if (method === 'GET' && path === '/applications') return { items: applications, next_cursor: null, query_elapsed_ms: 1, as_of: '2026-10-25T12:00:00Z' } as T;
@@ -92,6 +94,36 @@ describe('profile editing', () => {
     await user.click(await screen.findByRole('button', { name: 'Load SYN-CORE benchmark evidence' }));
     expect(await screen.findByText(/Benchmark endpoints are disabled here/)).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Start synthetic proof task' })).not.toBeInTheDocument();
+  });
+  it.each([false, true])('retains an unsaved profile while password confirmation fails=%s', async failure => {
+    const user = userEvent.setup(); const api = new Api();
+    mockRequest(api, async (path, method) => {
+      if (path === '/session') return session;
+      if (path === '/profile' && method === 'GET') return profile;
+      if (path === '/session/reauthenticate') {
+        if (failure) throw new ApiError(403, 'reauthentication_failed');
+        return { ...session, csrf_token: 'confirmed-csrf' };
+      }
+      throw new ApiError(404, 'not_found');
+    });
+    render(<App api={api} />);
+    const input = await screen.findByLabelText('Professional headline');
+    await user.clear(input); await user.type(input, 'Unsaved profile wording');
+    await user.click(screen.getByText('Confirm owner identity', { selector: 'summary' }));
+    const password = screen.getByLabelText('Password to confirm owner identity');
+    await user.type(password, 'Synthetic confirmation phrase 817!');
+    await user.click(screen.getByRole('button', { name: 'Confirm owner identity' }));
+    if (failure) {
+      expect(await screen.findByRole('alert')).toHaveTextContent('reauthentication_failed');
+      expect(api.csrf).toBe(session.csrf_token);
+    } else {
+      await screen.findByText(/Owner identity confirmed for five minutes/);
+      expect(api.csrf).toBe('confirmed-csrf');
+    }
+    await waitFor(() => expect(password).toHaveValue(''));
+    expect(input).toHaveValue('Unsaved profile wording');
+    expect(screen.getByRole('button', { name: 'Save profile' })).toBeEnabled();
+    expect(screen.getByRole('button', { name: 'Sign out' })).toBeDisabled();
   });
 });
 describe('printable profile contact', () => {
@@ -311,5 +343,90 @@ describe('task navigation and workspace edit boundaries', () => {
     expect(screen.getByRole('button', { name: 'Open document result' })).toBeDisabled();
     expect(request.mock.calls.some(call => call[0] === '/documents/retained-task-result')).toBe(false);
     expect(request.mock.calls.filter(call => call[1] === 'PUT' || call[1] === 'POST')).toHaveLength(0);
+  });
+});
+
+describe('maintenance and preserved-workspace reconnection', () => {
+  it('keeps a draft through maintenance and resumes only after an explicit unchanged-workspace comparison', async () => {
+    const user = userEvent.setup(); const api = new Api(); let status = installation;
+    mockRequest(api, async path => {
+      if (path === '/session') return session;
+      if (path === '/profile') return profile;
+      throw new ApiError(404, 'not_found');
+    }, null, [], async () => status);
+    render(<App api={api} />);
+    const input = await screen.findByLabelText('Professional headline');
+    await waitFor(() => expect(api.writeBlock).toBeNull());
+    await user.clear(input); await user.type(input, 'Unsaved wording kept through the pause');
+    status = { ...installation, maintenance_active: true, maintenance_epoch: 1 };
+    fireEvent(document, new Event('visibilitychange'));
+    await screen.findByText('Maintenance is active. Writers remain closed.');
+    expect(api.writeBlock).toBe('workspace_reconnect_required');
+    expect(screen.getByRole('button', { name: 'Save profile' })).toBeDisabled();
+    expect(input).toBeEnabled(); expect(input).toHaveValue('Unsaved wording kept through the pause');
+    status = { ...status, maintenance_active: false };
+    fireEvent(document, new Event('visibilitychange'));
+    await screen.findByText('Review the current workspace before resuming writes.');
+    expect(api.writeBlock).toBe('workspace_reconnect_required');
+    await user.click(screen.getByRole('button', { name: 'Check connection and compare saved workspace' }));
+    await user.click(await screen.findByRole('button', { name: 'Resume writes and keep all editor text' }));
+    await waitFor(() => expect(api.writeBlock).toBeNull());
+    expect(input).toBe(screen.getByLabelText('Professional headline'));
+    expect(input).toHaveValue('Unsaved wording kept through the pause');
+  });
+
+  it('retains drafts through revoked-session sign-in and rejects version aliasing until explicit full reload', async () => {
+    const user = userEvent.setup(); const api = new Api(); let status = installation; let saved = { ...profile, version: 9 };
+    let revoked = false; let profileReads = 0;
+    const request = mockRequest(api, async (path, method) => {
+      if (path === '/session' && method === 'POST') { revoked = false; return { ...session, csrf_token: 'renewed-owner-csrf' }; }
+      if (path === '/session') return session;
+      if (path === '/auth/challenge') return { csrf_token: 'reconnect-challenge', bootstrap_available: false };
+      if (path === '/profile') { profileReads++; return saved; }
+      throw new ApiError(404, 'not_found');
+    }, null, [], async () => { if (revoked) throw new ApiError(401, 'session_revoked'); return status; });
+    render(<App api={api} />);
+    const input = await screen.findByLabelText('Professional headline');
+    await waitFor(() => expect(api.writeBlock).toBeNull());
+    await user.clear(input); await user.type(input, 'Private text from the previous workspace');
+    revoked = true; fireEvent(document, new Event('visibilitychange'));
+    const password = await screen.findByLabelText('Password to reconnect');
+    const readsBeforeSignIn = profileReads;
+    status = { ...installation, namespace_id: 'restored-namespace', workspace_version: 1, maintenance_epoch: 2 };
+    saved = { ...profile, id: 'restored-profile', version: 1 };
+    await user.type(password, 'Fictional reconnect password 817!');
+    await user.click(screen.getByRole('button', { name: 'Sign in and retain editors' }));
+    await screen.findByText('Review the current workspace before resuming writes.');
+    expect(profileReads).toBe(readsBeforeSignIn); expect(api.csrf).toBe('renewed-owner-csrf');
+    expect(input).toHaveValue('Private text from the previous workspace');
+    await user.click(screen.getByRole('button', { name: 'Check connection and compare saved workspace' }));
+    await screen.findByRole('region', { name: 'Saved workspace comparison' });
+    expect(screen.queryByRole('button', { name: 'Resume writes and keep all editor text' })).not.toBeInTheDocument();
+    expect(input).toHaveValue('Private text from the previous workspace');
+    const reload = screen.getByRole('button', { name: 'Discard all editors and load this saved workspace' });
+    expect(reload).toBeDisabled(); expect(api.writeBlock).toBe('workspace_reconnect_required');
+    await user.click(screen.getByRole('checkbox', { name: /I have preserved the text I need/ }));
+    await user.click(reload);
+    await waitFor(() => expect(screen.getByLabelText('Professional headline')).toHaveValue('Engineer'));
+    expect(screen.getByLabelText('Professional headline')).not.toBe(input);
+    expect(api.writeBlock).toBeNull();
+    expect(request.mock.calls.filter(call => call[1] === 'PUT')).toHaveLength(0);
+  });
+
+  it('does not bypass startup maintenance with an authentication challenge and retries only on request', async () => {
+    const user = userEvent.setup(); const api = new Api(); let maintenance = true;
+    const request = mockRequest(api, async path => {
+      if (path === '/session') { if (maintenance) throw new ApiError(503, 'installation_maintenance'); return session; }
+      if (path === '/profile') return profile;
+      throw new ApiError(404, 'not_found');
+    });
+    render(<App api={api} />);
+    await screen.findByRole('region', { name: 'Installation unavailable' });
+    expect(request.mock.calls.some(call => call[0] === '/auth/challenge')).toBe(false);
+    expect(screen.queryByLabelText('Professional headline')).not.toBeInTheDocument();
+    maintenance = false;
+    await user.click(screen.getByRole('button', { name: 'Check installation again' }));
+    expect(await screen.findByLabelText('Professional headline')).toHaveValue('Engineer');
+    await waitFor(() => expect(api.writeBlock).toBeNull());
   });
 });

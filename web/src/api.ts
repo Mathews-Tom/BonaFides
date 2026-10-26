@@ -31,11 +31,39 @@ export interface ActionApproval {
   id: string; workflow_run_id: string; action_kind: 'hosted_egress' | 'replace_workspace' | 'privacy_delete';
   intent: Record<string, unknown>; payload_sha256: string; destination_sha256: string; revision_id: string | null;
   target_version: number; expires_at: string; approved_at: string | null; consumed_at: string | null; version: number;
-  applicable: boolean; reason: string; capability_available: boolean;
+  applicable: boolean; reason: string; capability_available: boolean; confirmation_phrase: string | null;
 }
 export interface ActionApprovalRequest {
-  payload_sha256: string; destination_sha256: string; revision_id: string | null; target_version: number; confirmed: true;
+  payload_sha256: string; destination_sha256: string; revision_id: string | null; target_version: number; confirmed: true; confirmation_phrase: string | null;
 }
+export interface InstallationStatus {
+  namespace_id: string; maintenance_epoch: number; workspace_version: number;
+  maintenance_active: boolean; recovery_required: boolean;
+  operation: { workflow_id: string; purpose: string; phase: string } | null;
+  drain: { active_calls: number; provider_executions: number };
+}
+export interface PortablePlan {
+  id: string; workflow_run_id: string; action_kind: 'replace_workspace' | 'privacy_delete';
+  binding: { namespace_id: string; workspace_version: number; [key: string]: unknown };
+  expires_at: string; remaining_copies: string[]; connections_after_operation: string;
+  payload: { categories?: string[]; application_id?: string; application_version?: number; replacement_sha256?: string };
+  record_counts: Record<string, number>; credentials_erased?: boolean; local_login_retained?: boolean;
+  source_owner_id?: string; source_namespace?: string; source_schema_version?: number;
+  manifest_sha256?: string; blob_count?: number; byte_length?: number; checkpoint_id?: string;
+  runtime_pins?: Record<string, unknown>; credential_policy?: string;
+}
+export interface PortablePreview {
+  id: string; workflow_run_id: string; version: number; workflow: Workflow; plan: PortablePlan;
+  preview_sha256: string; expires_at: string; cleared_at: string | null; clear_reason: string | null;
+  approval: ActionApproval | null;
+}
+export interface PortablePreviewPage { workspace_version: number; items: PortablePreview[] }
+export interface InstallationBackups {
+  configuration_present: boolean; eligible_checkpoint_id: string | null; eligibility_reason: string | null;
+  key_custody: string; offhost_copy: string;
+  generations: { id: string; captured_at: string; restore_verified_at: string | null; byte_length: number }[];
+}
+export const MAX_PORTABLE_BYTES = 128 * 1024 * 1024;
 export interface Workflow {
   id: string; version: number; state: WorkflowState; attempt: number; kind?: string; mode?: 'deterministic_base' | 'tailored_ai' | 'section_regeneration';
   max_attempts: number; next_attempt_at: string | null; last_error_code: string | null;
@@ -102,7 +130,7 @@ export interface SectionProposal {
   id: string; document_id: string; target_revision_id: string; target_content_sha256: string;
   target_document_version: number; section_key: string; original_section: DocumentBody['sections'][number];
   proposed_section: DocumentBody['sections'][number]; validation_issues: DocumentIssue[];
-  model_run: Record<string, unknown>; created_at: string; applicable: boolean;
+  model_run: Record<string, unknown>; created_at: string; applicable: boolean; historical: boolean;
 }
 export interface SectionProposalPage { items: SectionProposal[]; next_cursor: string | null }
 export interface SectionRegenerationRequest {
@@ -198,13 +226,26 @@ export class ApiError extends Error {
 }
 export class Api {
   csrf = '';
+  writeBlock: string | null = null;
+  onUnavailable: ((failure: unknown) => void) | null = null;
   async request<T>(path: string, method = 'GET', body?: unknown, version?: number, idempotent: boolean | string = false, signal?: AbortSignal): Promise<T> {
     const headers: Record<string, string> = { Accept: 'application/json' };
     if (method !== 'GET') headers['X-CSRF-Token'] = this.csrf;
     if (body !== undefined) headers['Content-Type'] = 'application/json';
     if (version !== undefined) headers['If-Match'] = `"${version}"`;
     if (idempotent) headers['Idempotency-Key'] = typeof idempotent === 'string' ? idempotent : crypto.randomUUID();
-    const response = await fetch(`/api/v1${path}`, { method, headers, credentials: 'same-origin', cache: 'no-store', ...(signal ? { signal } : {}), ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
+    return this.send<T>(path, { method, headers, ...(signal ? { signal } : {}), ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
+  }
+  private async send<T>(path: string, options: RequestInit): Promise<T> {
+    const method = options.method ?? 'GET';
+    const authentication = method === 'POST' && ['/session', '/bootstrap', '/session/reauthenticate'].includes(path);
+    if (method !== 'GET' && this.writeBlock && !authentication) throw new ApiError(409, this.writeBlock);
+    let response: Response;
+    try { response = await fetch(`/api/v1${path}`, { ...options, credentials: 'same-origin', cache: 'no-store' }); }
+    catch (failure) {
+      if (!(failure instanceof DOMException && failure.name === 'AbortError')) this.onUnavailable?.(failure);
+      throw failure;
+    }
     if (!response.ok) {
       let code = `http_${response.status}`;
       let fields: FieldError[] = [];
@@ -212,29 +253,35 @@ export class Api {
       const retryAfter = response.headers.get('Retry-After');
       const parsedRetryAfter = retryAfter && /^\d+$/.test(retryAfter) ? Number(retryAfter) : NaN;
       const retryAfterSeconds = Number.isFinite(parsedRetryAfter) ? parsedRetryAfter : undefined;
-      throw new ApiError(response.status, code, fields, retryAfterSeconds);
+      const failure = new ApiError(response.status, code, fields, retryAfterSeconds);
+      if (response.status === 401 || response.status === 503) this.onUnavailable?.(failure);
+      throw failure;
     }
     if (response.status === 204) return undefined as T;
-    return await response.json() as T;
+    try { return await response.json() as T; }
+    catch (failure) {
+      if (!(failure instanceof DOMException && failure.name === 'AbortError')) this.onUnavailable?.(failure);
+      throw failure;
+    }
+  }
+  async upload<T>(path: string, body: Blob, mediaType: string, version: number, key: string, signal?: AbortSignal, extraHeaders: Record<string, string> = {}): Promise<T> {
+    return this.send<T>(path, {
+      method: 'POST', body, ...(signal ? { signal } : {}),
+      headers: { Accept: 'application/json', 'Content-Type': mediaType, 'X-CSRF-Token': this.csrf,
+        'If-Match': `"${version}"`, 'Idempotency-Key': key, ...extraHeaders },
+    });
   }
   async uploadImport(body: Blob, mediaType: ImportMediaType, profileVersion: number, idempotencyKey: string): Promise<ImportAccepted> {
-    const response = await fetch('/api/v1/imports', {
-      method: 'POST', credentials: 'same-origin', body,
-      headers: { Accept: 'application/json', 'Content-Type': mediaType, 'X-CSRF-Token': this.csrf,
-        'If-Match': `"${profileVersion}"`, 'Idempotency-Key': idempotencyKey },
-    });
-    if (!response.ok) {
-      let code = `http_${response.status}`;
-      let fields: FieldError[] = [];
-      try { const problem = await response.json() as { code?: string; fields?: FieldError[] }; code = problem.code ?? code; fields = problem.fields ?? []; } catch { /* An upstream error never becomes an accepted import. */ }
-      throw new ApiError(response.status, code, fields);
-    }
-    return await response.json() as ImportAccepted;
+    return this.upload<ImportAccepted>('/imports', body, mediaType, profileVersion, idempotencyKey);
+  }
+  async uploadPortable(body: Blob, workspaceVersion: number, idempotencyKey: string, sourceOwner?: string, signal?: AbortSignal): Promise<PortablePreview> {
+    return this.upload<PortablePreview>('/portable-previews/import', body, 'application/zip', workspaceVersion, idempotencyKey, signal, sourceOwner ? { 'X-Source-Owner': sourceOwner } : {});
   }
 }
 export const terminal = (state: WorkflowState) => ['succeeded', 'cancelled', 'permanent_failure'].includes(state);
 export function errorText(error: unknown): string {
   if (error instanceof ApiError) {
+    if (error.code === 'workspace_reconnect_required') return 'Writes are paused. Reconnect and review the current workspace before saving. Your editor text remains here.';
     if (error.status === 412) return 'A newer revision exists. Your text remains here. Load the current revision for comparison before saving again.';
     if (error.status === 401) return 'Your session is unavailable or expired. Sign in again. Unsaved text remains here for this visit.';
     if (error.status === 422 && error.fields.length) return error.fields.map(field => `${field.loc.filter(part => part !== 'body').join('.') || 'Request'}: ${field.message}`).join(' ');

@@ -21,7 +21,7 @@ function task(overrides: Partial<Workflow> = {}): Workflow {
 function prepared(overrides: Partial<ActionApproval> = {}): ActionApproval {
   return {
     id: 'approval-one', workflow_run_id: 'task-one', action_kind: 'hosted_egress', version: 1, applicable: true,
-    reason: 'approval_required', capability_available: true, payload_sha256: 'a'.repeat(64), destination_sha256: 'b'.repeat(64),
+    reason: 'approval_required', capability_available: true, confirmation_phrase: null, payload_sha256: 'a'.repeat(64), destination_sha256: 'b'.repeat(64),
     revision_id: 'revision-one', target_version: 7, expires_at: '2030-01-01T00:00:00Z', approved_at: null, consumed_at: null,
     intent: { destination: { provider: 'synthetic-disabled-test-provider', model: 'bounded-test' }, projection: { text: '<script>privateReview()</script>' }, token_budget: 500, cost_budget_microunits: 200, workspace_version: 7 }, ...overrides,
   };
@@ -251,12 +251,41 @@ describe('exact action review and privacy', () => {
     await user.tab(); expect(approvalButton()).toHaveFocus(); await user.keyboard('{Enter}');
     await waitFor(() => expect(stateStatus()).toHaveTextContent('Pending'));
     const posts = request.mock.calls.filter(call => call[1] === 'POST'); expect(posts).toHaveLength(1);
-    expect(posts[0]?.slice(0, 5)).toEqual(['/workflows/task-one/approval/approve', 'POST', { payload_sha256: 'a'.repeat(64), destination_sha256: 'b'.repeat(64), revision_id: 'revision-one', target_version: 7, confirmed: true }, initial.version, expect.any(String)]);
+    expect(posts[0]?.slice(0, 5)).toEqual(['/workflows/task-one/approval/approve', 'POST', { payload_sha256: 'a'.repeat(64), destination_sha256: 'b'.repeat(64), revision_id: 'revision-one', target_version: 7, confirmed: true, confirmation_phrase: null }, initial.version, expect.any(String)]);
     expect(storage).not.toHaveBeenCalled(); expect(onOpenDocument).not.toHaveBeenCalled();
+  });
+
+  it.each(['privacy_delete', 'replace_workspace'] as const)('routes %s to full owner-data review even when the generic intent is applicable and executable', async actionKind => {
+    const user = userEvent.setup(); const initial = task({ state: 'waiting_for_approval', kind: actionKind });
+    const { api, state, request } = server(initial);
+    state.approval = prepared({ action_kind: actionKind, applicable: true, capability_available: true, confirmation_phrase: actionKind === 'privacy_delete' ? 'DELETE ALL WORKSPACE DATA' : 'REPLACE WORKSPACE' });
+    show(api, initial); await openPrepared(user);
+    expect(screen.getByRole('region', { name: 'Reviewed prepared action' })).toBeVisible();
+    expect(screen.getByRole('link', { name: /Owner-data portability/ })).toHaveAttribute('href', '#owner-data-portability');
+    expect(screen.queryByLabelText(/Type the exact task confirmation phrase/)).not.toBeInTheDocument();
+    expect(approvalCheckbox()).toBeDisabled(); expect(approvalButton()).toBeDisabled();
+    fireEvent.click(approvalCheckbox()); fireEvent.click(approvalButton());
+    expect(request.mock.calls.filter(call => call[1] === 'POST')).toHaveLength(0);
+    expect(screen.getByRole('button', { name: 'Cancel task' })).toBeEnabled();
+    await user.click(screen.getByRole('button', { name: 'Reload prepared action' }));
+    expect(approvalButton()).toBeDisabled();
+    expect(request.mock.calls.filter(call => call[1] === 'POST')).toHaveLength(0);
+  });
+
+  it('clears hosted confirmation when the browser session changes', async () => {
+    const user = userEvent.setup(); const initial = task({ state: 'waiting_for_approval' });
+    const { api, state, request } = server(initial); state.approval = prepared();
+    const { rerender, onSession, onOpenDocument } = show(api, initial); await openPrepared(user);
+    await user.click(approvalCheckbox()); expect(approvalButton()).toBeEnabled();
+    rerender(<Tasks api={api} session={{ ...session, csrf_token: 'rotated-session' }} requestedTask={initial} onSession={onSession} onOpenDocument={onOpenDocument} />);
+    await waitFor(() => expect(approvalCheckbox()).not.toBeChecked());
+    expect(approvalButton()).toBeDisabled();
+    expect(request.mock.calls.filter(call => call[1] === 'POST')).toHaveLength(0);
   });
 
   it.each([
     { capability_available: false, reason: 'execution_unavailable' },
+    { action_kind: 'privacy_delete' as const, confirmation_phrase: null, reason: 'approval_required' },
     { applicable: false, reason: 'workspace_changed' },
     { applicable: false, reason: 'session_revoked' },
     { expires_at: '2020-01-01T00:00:00Z', reason: 'approval_expired' },
@@ -323,7 +352,7 @@ describe('exact action review and privacy', () => {
     await user.click(screen.getByRole('button', { name: 'Review this current preparation' })); expect(approvalCheckbox()).not.toBeChecked();
     await user.click(approvalCheckbox()); await user.click(approvalButton());
     await waitFor(() => expect(stateStatus()).toHaveTextContent('Pending'));
-    expect(request.mock.calls.find(call => call[1] === 'POST')?.[2]).toEqual({ payload_sha256: 'd'.repeat(64), destination_sha256: 'c'.repeat(64), revision_id: 'revision-one', target_version: 8, confirmed: true });
+    expect(request.mock.calls.find(call => call[1] === 'POST')?.[2]).toEqual({ payload_sha256: 'd'.repeat(64), destination_sha256: 'c'.repeat(64), revision_id: 'revision-one', target_version: 8, confirmed: true, confirmation_phrase: null });
   });
 
   it('keeps an unavailable result inspectable without opening over a dirty workspace', async () => {
