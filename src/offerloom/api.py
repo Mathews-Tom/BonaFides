@@ -6,21 +6,26 @@ from __future__ import annotations
 import re
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from threading import BoundedSemaphore
 from urllib.parse import urlsplit
 from uuid import uuid4
 
+from anyio import CancelScope
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy.exc import SQLAlchemyError
+from starlette.concurrency import run_in_threadpool
 from starlette.exceptions import HTTPException
 from starlette.responses import JSONResponse, Response
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
-from offerloom import __version__, auth, profiles
+from offerloom import __version__, auth, installation_control, profiles
 from offerloom.config import Settings
-from offerloom.db import Database
+from offerloom.db import SCHEMA_VERSION, Database
 from offerloom.import_parser import MAX_UPLOAD_BYTES
+from offerloom.maintenance import finish_activity, start_api_activity
+from offerloom.portable_archive import MAX_ARCHIVE_BYTES
 from offerloom.problems import Problem, problem_response
 
 _VALIDATION_FIELDS = frozenset(
@@ -122,6 +127,10 @@ _VALIDATION_FIELDS = frozenset(
         "payload_sha256",
         "destination_sha256",
         "target_version",
+        "confirmation_phrase",
+        "scope",
+        "application_id",
+        "application_version",
     }
 )
 _VALIDATION_MESSAGES = {
@@ -138,12 +147,67 @@ _VALIDATION_MESSAGES = {
 }
 
 
+class ActivityBoundary:
+    def __init__(self, app: ASGIApp, db: Database) -> None:
+        self.app = app
+        self.db = db
+        self.participant_id = uuid4()
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if (
+            scope["type"] != "http"
+            or not scope["path"].startswith("/api/")
+            or scope["path"] == installation_control.MAINTENANCE_STATUS_PATH
+            and scope["method"] == "GET"
+        ):
+            await self.app(scope, receive, send)
+            return
+        request = Request(scope)
+        try:
+            activity = await run_in_threadpool(
+                start_api_activity, self.db, self.participant_id, request.state.request_id
+            )
+        except Problem as exc:
+            await problem_response(request, exc)(scope, receive, send)
+            return
+        except SQLAlchemyError:
+            await problem_response(request, Problem(503, "database_unavailable"))(
+                scope, receive, send
+            )
+            return
+        try:
+            # Keep registration until streaming and synchronous route threads end.
+            await self.app(scope, receive, send)
+        finally:
+            with CancelScope(shield=True):
+                await run_in_threadpool(finish_activity, self.db, activity)
+
+
 class BrowserBoundary:
     def __init__(self, app: ASGIApp, settings: Settings) -> None:
         self.app = app
         self.settings = settings
+        self.portable_upload = BoundedSemaphore(1)
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        portable = (
+            scope["type"] == "http"
+            and scope["method"] == "POST"
+            and scope["path"] == "/api/v1/portable-previews/import"
+        )
+        if not portable:
+            await self._http(scope, receive, send)
+            return
+        acquired = self.portable_upload.acquire(blocking=False)
+        try:
+            await self._http(scope, receive, send, portable_slot=acquired)
+        finally:
+            if acquired:
+                self.portable_upload.release()
+
+    async def _http(
+        self, scope: Scope, receive: Receive, send: Send, *, portable_slot: bool = True
+    ) -> None:
         if scope["type"] != "http":
             await self.app(scope, receive, send)
             return
@@ -200,8 +264,15 @@ class BrowserBoundary:
             )
             is not None
         )
+        is_portable_import = (
+            request.method == "POST" and scope["path"] == "/api/v1/portable-previews/import"
+        )
         body_limit = (
-            MAX_UPLOAD_BYTES if is_import or is_attachment else self.settings.max_body_bytes
+            MAX_ARCHIVE_BYTES
+            if is_portable_import
+            else MAX_UPLOAD_BYTES
+            if is_import or is_attachment
+            else self.settings.max_body_bytes
         )
         if request.headers.get("host", "").lower() != expected_host.lower():
             await reject(Problem(400, "host_rejected"))
@@ -217,6 +288,8 @@ class BrowserBoundary:
                     if is_import
                     else {"application/octet-stream"}
                     if is_attachment
+                    else {"application/zip"}
+                    if is_portable_import
                     else {"application/json"}
                 )
                 if content_type not in allowed:
@@ -227,10 +300,15 @@ class BrowserBoundary:
                             if is_import
                             else "unsupported_attachment_media"
                             if is_attachment
+                            else "unsupported_portable_media"
+                            if is_portable_import
                             else "json_required",
                         )
                     )
                     return
+        if is_portable_import and not portable_slot:
+            await reject(Problem(429, "portable_upload_in_progress"))
+            return
         content_length = request.headers.get("content-length")
         if content_length is not None:
             try:
@@ -257,6 +335,7 @@ class BrowserBoundary:
             if not message.get("more_body", False):
                 break
         body = b"".join(chunks)
+        del chunks, chunk, message
         delivered = False
 
         async def bounded_receive() -> Message:
@@ -280,10 +359,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
-        if not db.ready():
-            raise RuntimeError("Database schema readiness failed")
-        yield
-        db.close()
+        try:
+            if not db.ready():
+                raise RuntimeError("Database schema readiness failed")
+            yield
+        finally:
+            db.close()
 
     app = FastAPI(
         title="Offerloom M0 proof API",
@@ -295,6 +376,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     )
     app.state.settings = resolved
     app.state.db = db
+    app.add_middleware(ActivityBoundary, db=db)
     app.add_middleware(BrowserBoundary, settings=resolved)
 
     @app.exception_handler(Problem)
@@ -347,7 +429,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return JSONResponse(
             {
                 "status": "ready" if available else "unavailable",
-                "schema_version": 13,
+                "schema_version": SCHEMA_VERSION,
                 "version": __version__,
             },
             status_code=200 if available else 503,
@@ -355,10 +437,25 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     app.include_router(auth.build_router(db, resolved))
     app.include_router(profiles.build_router(db, resolved))
-    from offerloom import approvals, documents, imports, sources, suitability, tracking, workflows
+    from offerloom import (
+        approvals,
+        backup_configuration,
+        documents,
+        imports,
+        portable_exports,
+        portable_previews,
+        sources,
+        suitability,
+        tracking,
+        workflows,
+    )
 
     app.include_router(workflows.build_router(db, resolved))
     app.include_router(approvals.build_router(db))
+    app.include_router(installation_control.build_router(db))
+    app.include_router(backup_configuration.build_router(db, resolved))
+    app.include_router(portable_exports.build_router(db, resolved))
+    app.include_router(portable_previews.build_router(db, resolved))
     app.include_router(documents.build_router(db, resolved))
     app.include_router(imports.build_router(db, resolved))
     app.include_router(sources.build_router(db, resolved))

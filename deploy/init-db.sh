@@ -10,6 +10,12 @@ case "$migrator:$runtime" in *[!a-f0-9:]*) exit 1;; esac
 {
   printf "CREATE ROLE offerloom_migrator LOGIN NOINHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION PASSWORD '%s';\n" "$migrator"
   printf "CREATE ROLE offerloom_runtime LOGIN NOINHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION PASSWORD '%s';\n" "$runtime"
-  printf '%s\n' 'REVOKE ALL ON DATABASE offerloom FROM PUBLIC;' 'GRANT CONNECT ON DATABASE offerloom TO offerloom_migrator, offerloom_runtime;' 'GRANT CREATE ON DATABASE offerloom TO offerloom_migrator;' 'REVOKE ALL ON SCHEMA public FROM PUBLIC;'
+  printf '%s\n' \
+    'REVOKE ALL ON DATABASE offerloom FROM PUBLIC;' \
+    'GRANT CONNECT ON DATABASE offerloom TO offerloom_migrator, offerloom_runtime;' \
+    'GRANT CREATE ON DATABASE offerloom TO offerloom_migrator;' \
+    'GRANT TEMPORARY ON DATABASE offerloom TO offerloom_migrator WITH GRANT OPTION;' \
+    'GRANT TEMPORARY ON DATABASE offerloom TO offerloom_runtime;' \
+    'REVOKE ALL ON SCHEMA public FROM PUBLIC;'
 } | psql --username postgres --dbname offerloom --no-psqlrc --set ON_ERROR_STOP=1 --quiet
 unset migrator runtime

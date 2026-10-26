@@ -134,6 +134,7 @@ def command(
         "source": "source_configs",
         "posting": "job_postings",
         "application": "applications",
+        "workspace": "owner_settings",
     }
     if resource_kind not in tables:
         raise ValueError("unsupported command aggregate")
@@ -157,6 +158,19 @@ def command(
             }
         ).encode()
     ).hexdigest()
+    erased = conn.execute(
+        text("""SELECT request_sha256 FROM offerloom.erased_request_keys
+        WHERE owner_id=:owner AND route_sha256=:route AND key_sha256=:key"""),
+        {
+            "owner": owner_id,
+            "route": hashlib.sha256(route.encode()).hexdigest(),
+            "key": hashlib.sha256(idempotency_key.encode()).hexdigest(),
+        },
+    ).scalar_one_or_none()
+    if erased is not None:
+        if erased != fingerprint:
+            raise Problem(409, "idempotency_payload_mismatch")
+        raise Problem(410, "data_erased")
     replay = (
         conn.execute(
             text(
@@ -182,12 +196,19 @@ def command(
                 {"owner": owner_id, "id": resource_id},
             )
         table = tables[resource_kind]  # Static allowlist, never user-controlled SQL.
-        current = conn.execute(
-            text(
-                f"SELECT version FROM offerloom.{table} WHERE owner_id=:owner AND id=:id FOR UPDATE"
-            ),
-            {"owner": owner_id, "id": resource_id},
-        ).scalar_one_or_none()
+        if resource_kind == "workspace":
+            current = conn.execute(
+                text("""SELECT workspace_version FROM offerloom.owner_settings
+                WHERE owner_id=:owner FOR UPDATE"""),
+                {"owner": owner_id},
+            ).scalar_one_or_none()
+        else:
+            current = conn.execute(
+                text(
+                    f"SELECT version FROM offerloom.{table} WHERE owner_id=:owner AND id=:id FOR UPDATE"
+                ),
+                {"owner": owner_id, "id": resource_id},
+            ).scalar_one_or_none()
         if current is None:
             raise Problem(404, "resource_not_found")
         if int(current) != expected:

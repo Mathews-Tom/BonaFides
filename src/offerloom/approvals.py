@@ -1,9 +1,9 @@
 # SPDX-License-Identifier: MIT OR Apache-2.0
-"""Exact-bound approval controls, not executors or hosted-provider adapters.
+"""Exact-bound approvals for trusted producers; hosted effects remain unavailable.
 
-All internal operations use the caller's transaction. Domain producers alone prepare
-fixed intents; OL013 intentionally has no public prepare, resume, or execute route.
-An authorization receipt is not evidence that any external effect happened.
+All operations use the caller's transaction. Destructive execution is enabled
+only by a persisted OL014 owner preview, never arbitrary client intent input.
+An authorization receipt is not evidence that an external effect happened.
 """
 
 from __future__ import annotations
@@ -15,13 +15,14 @@ from typing import Annotated, Literal, cast
 from urllib.parse import urlsplit
 from uuid import UUID, uuid4
 
-from fastapi import APIRouter, Depends, Header
+from fastapi import APIRouter, Depends, Header, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 from sqlalchemy import Connection, text
 
 from offerloom.auth import Owner, require_owner
 from offerloom.commands import canonical_json, command, lock_installation
+from offerloom.config import Settings
 from offerloom.db import Database
 from offerloom.problems import Problem
 from offerloom.workflows import Claim
@@ -40,6 +41,7 @@ class ApprovalDecision(StrictModel):
     destination_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
     revision_id: Annotated[UUID, Field(strict=False)] | None
     target_version: int = Field(ge=1)
+    confirmation_phrase: str | None = Field(default=None, max_length=100)
     confirmed: Literal[True]
 
     @field_validator("confirmed", mode="before")
@@ -87,6 +89,8 @@ class DeletionPayload(StrictModel):
             "all_workspace",
         ]
     ] = Field(min_length=1, max_length=8)
+    application_id: str | None = None
+    application_version: int | None = Field(default=None, ge=1, le=9223372036854775807)
 
 
 def _sha(value: object) -> str:
@@ -127,6 +131,13 @@ def _validate_action(
                     "all_workspace" in deletion.categories and len(deletion.categories) != 1
                 ):
                     raise ValueError("noncanonical categories")
+                if (deletion.application_id is None) != (deletion.application_version is None):
+                    raise ValueError("incomplete application scope")
+                if deletion.application_id is not None and (
+                    deletion.categories != ["applications"]
+                    or str(UUID(deletion.application_id)) != deletion.application_id
+                ):
+                    raise ValueError("invalid application scope")
         else:
             raise ValueError("unsupported action")
         canonical_json(destination)
@@ -402,11 +413,33 @@ def _view(
             else value
         )
     revision = approval["document_revision_id"]
+    capable = False
+    phrase = None
+    if approval["action_kind"] != "hosted_egress":
+        from offerloom.portable_previews import approval_preview, confirmation_phrase
+
+        try:
+            intent_payload = cast(
+                dict[str, object], cast(dict[str, object], approval["intent"])["payload"]
+            )
+            plan = approval_preview(
+                conn,
+                owner_id,
+                cast(UUID, approval["workflow_run_id"]),
+                intent_payload.get("preview_sha256"),
+            )
+            if plan is not None:
+                capable = True
+                phrase = confirmation_phrase(plan)
+        except Problem as error:
+            if reason in {"approval_required", "approved"}:
+                reason = error.code
     result.update(
         revision_id=str(revision) if revision is not None else None,
         applicable=reason in {"approval_required", "approved"},
         reason=reason,
-        capability_available=False,
+        capability_available=capable,
+        confirmation_phrase=phrase,
     )
     return result
 
@@ -573,7 +606,8 @@ def prepare_action_approval(
     return result
 
 
-def _require_recent_owner(conn: Connection, owner: Owner, approval: Mapping[str, object]) -> None:
+def require_recent_authentication(conn: Connection, owner: Owner) -> None:
+    """Use before receipt replay as well as before creating or approving a plan."""
     session = _session(conn, owner.id, owner.session_id)
     if session is None:
         raise Problem(403, "session_revoked")
@@ -584,6 +618,10 @@ def _require_recent_owner(conn: Connection, owner: Owner, approval: Mapping[str,
         raise Problem(403, "authentication_changed")
     if not session["recent"]:
         raise Problem(403, "reauthentication_required")
+
+
+def _require_recent_owner(conn: Connection, owner: Owner, approval: Mapping[str, object]) -> None:
+    require_recent_authentication(conn, owner)
     intent = cast(dict[str, object], approval["intent"])
     if str(owner.session_id) != intent["session_id"]:
         raise Problem(409, "session_changed")
@@ -592,7 +630,7 @@ def _require_recent_owner(conn: Connection, owner: Owner, approval: Mapping[str,
 def approve_action(
     conn: Connection, owner: Owner, workflow_id: UUID, body: ApprovalDecision
 ) -> dict[str, object]:
-    """Review only; caller's command supplies workflow version and idempotency guard."""
+    """Review and queue supported previews; command supplies version and replay guards."""
     context = _context(conn, owner.id, workflow_id)
     approval = _approval(conn, owner.id, workflow_id)
     if approval is None:
@@ -609,6 +647,12 @@ def approve_action(
         or body.confirmed is not True
     ):
         raise Problem(409, "approval_comparison_mismatch")
+    from offerloom.portable_previews import approval_preview, confirmation_phrase
+
+    intent_payload = cast(dict[str, object], cast(dict[str, object], approval["intent"])["payload"])
+    plan = approval_preview(conn, owner.id, workflow_id, intent_payload.get("preview_sha256"))
+    if plan is not None and body.confirmation_phrase != confirmation_phrase(plan):
+        raise Problem(422, "confirmation_phrase_mismatch")
     conn.execute(
         text("""UPDATE offerloom.action_approvals SET approved_at=clock_timestamp(),
         approved_session_id=:session,approved_auth_epoch=:epoch,version=version+1
@@ -620,11 +664,14 @@ def approve_action(
             "epoch": owner.auth_epoch,
         },
     )
-    # No real executor exists for these actions in OL013. Approval never queues unsupported work.
+    # Only a trusted persisted preview queues real destructive work. Legacy
+    # review-only and hosted intents still cannot acquire execution capability.
     conn.execute(
         text("""UPDATE offerloom.workflow_runs SET version=version+1,updated_at=clock_timestamp(),
-        last_error_code='execution_unavailable' WHERE owner_id=:owner AND id=:workflow"""),
-        {"owner": owner.id, "workflow": workflow_id},
+        state=CASE WHEN :capable THEN 'pending' ELSE state END,
+        last_error_code=CASE WHEN :capable THEN NULL ELSE 'execution_unavailable' END
+        WHERE owner_id=:owner AND id=:workflow"""),
+        {"owner": owner.id, "workflow": workflow_id, "capable": plan is not None},
     )
     _audit(conn, owner.id, approval, "approved")
     _attempt(conn, owner.id, workflow_id, "approved")
@@ -898,6 +945,7 @@ def build_router(db: Database) -> APIRouter:
         workflow_id: UUID,
         body: ApprovalDecision,
         owner: Annotated[Owner, Depends(require_owner)],
+        request: Request,
         if_match: Annotated[str | None, Header()] = None,
         idempotency_key: Annotated[str | None, Header()] = None,
     ) -> JSONResponse:
@@ -913,6 +961,20 @@ def build_router(db: Database) -> APIRouter:
                     if approval is None:
                         raise Problem(404, "approval_not_found")
                     _require_recent_owner(conn, owner, approval)
+                    from offerloom.portable_previews import approval_preview, checked_plan
+
+                    intent_payload = cast(
+                        dict[str, object], cast(dict[str, object], approval["intent"])["payload"]
+                    )
+                    if (
+                        approval_preview(
+                            conn, owner.id, workflow_id, intent_payload.get("preview_sha256")
+                        )
+                        is not None
+                    ):
+                        checked_plan(
+                            conn, cast(Settings, request.app.state.settings), owner.id, workflow_id
+                        )
                     status, result = command(
                         conn,
                         owner.id,

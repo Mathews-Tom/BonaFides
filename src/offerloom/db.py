@@ -8,6 +8,9 @@ from sqlalchemy import Connection, Engine, create_engine, text
 from sqlalchemy.engine import make_url
 
 from offerloom.config import Settings
+from offerloom.execution_guard import ExecutionGuard
+
+SCHEMA_VERSION = 23
 
 
 class Database:
@@ -28,10 +31,20 @@ class Database:
                 "options": "-c search_path=offerloom,pg_catalog -c statement_timeout=15000 -c lock_timeout=5000",
             },
         )
+        try:
+            self.execution_guard = (
+                ExecutionGuard(settings.blob_root) if isinstance(settings, Settings) else None
+            )
+        except BaseException:
+            self.engine.dispose()
+            raise
 
     @contextmanager
     def transaction(self) -> Iterator[Connection]:
         with self.engine.begin() as conn:
+            conn.info["execution_guard"] = self.execution_guard
+            if self.execution_guard is not None:
+                self.execution_guard.verify()
             yield conn
 
     def ready(self) -> bool:
@@ -39,10 +52,22 @@ class Database:
             version = conn.execute(
                 text("SELECT max(version) FROM offerloom.schema_migrations")
             ).scalar_one()
-            return bool(
-                version == 13
-                and conn.execute(text("SHOW server_version_num")).scalar_one()[:2] == "18"
-            )
+            if version != SCHEMA_VERSION:
+                return False
+            if self.execution_guard is not None:
+                identity = self.execution_guard.verify()
+                stored = conn.execute(
+                    text(
+                        "SELECT execution_guard_id FROM offerloom.installation_state WHERE singleton"
+                    )
+                ).scalar_one()
+                if stored is not None and stored != identity:
+                    return False
+            return bool(conn.execute(text("SHOW server_version_num")).scalar_one()[:2] == "18")
 
     def close(self) -> None:
-        self.engine.dispose()
+        try:
+            self.engine.dispose()
+        finally:
+            if self.execution_guard is not None:
+                self.execution_guard.close()

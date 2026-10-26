@@ -871,7 +871,9 @@ def test_invalid_model_results_fail_and_veto_promoted_route(
         )
         if kind == "invalid_shape":
             output = {"score": 100}
-    monkeypatch.setattr(local_model, "OllamaClient", lambda _route: FixtureModel(output))
+    monkeypatch.setattr(
+        local_model, "OllamaClient", lambda _route, _lifecycle: FixtureModel(output)
+    )
     Worker(catalog.runtime, catalog.identity.settings)._execute(task, Event())
     workflow = catalog.workflow(task.id)
     assert workflow["state"] == "permanent_failure" and workflow["last_error_code"] is not None
@@ -903,7 +905,7 @@ def test_provider_outage_worker_retries_at_most_two_transmissions_and_reservatio
     posting = _posting(catalog)
     task = _queue(catalog, _view(catalog, posting["id"]))
     model = FixtureModel({}, failure=ModelFailure("model_unavailable", retryable=True))
-    monkeypatch.setattr(local_model, "OllamaClient", lambda _route: model)
+    monkeypatch.setattr(local_model, "OllamaClient", lambda _route, _lifecycle: model)
     worker = Worker(catalog.runtime, catalog.identity.settings)
     worker._execute(task, Event())
     first = catalog.workflow(task.id)
@@ -1459,7 +1461,7 @@ def test_model_gap_proposal_allowed_but_negative_label_invention_vetoes_route(
     bad_task = _queue(catalog, current, profile)
     invented = {**gap, "explanation": invention}
     bad_model = FixtureModel(_matching([invented]))
-    monkeypatch.setattr(local_model, "OllamaClient", lambda _route: bad_model)
+    monkeypatch.setattr(local_model, "OllamaClient", lambda _route, _lifecycle: bad_model)
     Worker(catalog.runtime, catalog.identity.settings)._execute(bad_task, Event())
     failed = catalog.workflow(bad_task.id)
     assert failed["state"] == "permanent_failure"

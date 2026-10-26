@@ -15,8 +15,10 @@ WORKDIR /app
 COPY --from=uv /uv /usr/local/bin/uv
 # Preserve APK ownership/license metadata for the exported-image collector.
 # libpq-dev supplies the linker name; binutils supplies CPython's libpq discovery.
+# Match the supported PostgreSQL 18 server for genuine custom-format recovery.
+# OpenSSL CMS supplies a standard authenticated recipient-encryption envelope.
 RUN test "$(python --version)" = 'Python 3.12.15' \
- && apk add --no-cache libpq libpq-dev binutils pango harfbuzz-subset libjpeg-turbo openjpeg libffi fontconfig font-dejavu ca-certificates \
+ && apk add --no-cache libpq libpq-dev postgresql18-client openssl binutils pango harfbuzz-subset libjpeg-turbo openjpeg libffi fontconfig font-dejavu ca-certificates \
  && mkdir -p /usr/share/offerloom /data/blobs /spool /import-spool /run/offerloom \
  && apk info -v > /usr/share/offerloom/native-packages.txt \
  && fc-list > /usr/share/offerloom/fonts.txt \

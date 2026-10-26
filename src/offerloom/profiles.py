@@ -40,20 +40,30 @@ def content_hash(value: object) -> str:
     return hashlib.sha256(canonical(value).encode("utf-8")).hexdigest()
 
 
-def create_empty_profile(conn: Connection, owner_id: UUID) -> None:
-    profile_id, revision_id = uuid4(), uuid4()
+def create_empty_profile(
+    conn: Connection, owner_id: UUID, *, profile_id: UUID | None = None
+) -> None:
+    revision_id = uuid4()
     snapshot: dict[str, object] = {
         "display_name": "",
         "headline": "",
         "claim_revision_ids": [],
         "evidence_revision_ids": [],
     }
-    conn.execute(
-        text(
-            "INSERT INTO offerloom.profiles(owner_id,id,current_revision_id) VALUES(:owner,:id,:revision)"
-        ),
-        {"owner": owner_id, "id": profile_id, "revision": revision_id},
-    )
+    if profile_id is None:
+        profile_id = uuid4()
+        conn.execute(
+            text(
+                "INSERT INTO offerloom.profiles(owner_id,id,current_revision_id) VALUES(:owner,:id,:revision)"
+            ),
+            {"owner": owner_id, "id": profile_id, "revision": revision_id},
+        )
+    else:
+        conn.execute(
+            text("""UPDATE offerloom.profiles SET current_revision_id=:revision
+            WHERE owner_id=:owner AND id=:id AND current_revision_id IS NULL RETURNING id"""),
+            {"owner": owner_id, "id": profile_id, "revision": revision_id},
+        ).scalar_one()
     conn.execute(
         text(
             "INSERT INTO offerloom.profile_revisions(owner_id,id,profile_id,revision_no,snapshot,content_sha256,reason) VALUES(:owner,:revision,:profile,1,CAST(:snapshot AS jsonb),:sha,'bootstrap')"

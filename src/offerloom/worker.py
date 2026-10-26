@@ -16,6 +16,7 @@ from offerloom.commands import canonical_json, lock_installation
 from offerloom.config import Settings
 from offerloom.db import Database
 from offerloom.import_parser import ImportFailure
+from offerloom.maintenance import finish_activity, start_worker_activity
 from offerloom.problems import Problem
 from offerloom.render_service import RenderClient, RenderFailure
 from offerloom.storage import BlobStore
@@ -77,6 +78,17 @@ class Worker:
             )
 
     def _execute(self, task: Claim, interrupted: Event) -> None:
+        try:
+            activity = start_worker_activity(self.db, self.id, task)
+        except (Problem, DBAPIError):
+            # Admission or an obsolete claim cannot start provider/filesystem work.
+            return
+        try:
+            self._execute_active(task, interrupted)
+        finally:
+            finish_activity(self.db, activity)
+
+    def _execute_active(self, task: Claim, interrupted: Event) -> None:
         try:
             if task.input.get("schema_version") != 1:
                 raise Problem(422, "unsupported_workflow_input_version")
@@ -243,10 +255,30 @@ class Worker:
                     if event is not None:
                         with self.db.transaction() as conn:
                             deliver_outbox(conn, event)
-                except (DBAPIError, Problem):
-                    # Stop renewing computation on DB loss; expired leases are recoverable.
+                except (DBAPIError, Problem) as exc:
+                    cancelled_workflows: set[UUID] | None = None
+                    if isinstance(exc, Problem) and exc.code == "installation_maintenance":
+                        # The barrier fences publication, not an existing HTTP response.
+                        # Let the provider positively acknowledge terminal completion.
+                        # Owner cancellation still interrupts; this read renews no lease.
+                        try:
+                            with self.db.transaction() as conn:
+                                cancelled_workflows = set()
+                                for active in running:
+                                    if conn.execute(
+                                        text("""SELECT EXISTS(
+                                        SELECT 1 FROM offerloom.workflow_runs
+                                        WHERE owner_id=:owner AND id=:id
+                                          AND cancel_requested_at IS NOT NULL)"""),
+                                        {"owner": active.task.owner_id, "id": active.task.id},
+                                    ).scalar_one():
+                                        cancelled_workflows.add(active.task.id)
+                        except DBAPIError:
+                            # DB uncertainty stops the client, never acknowledges the provider.
+                            cancelled_workflows = None
                     for active in running:
-                        active.interrupted.set()
+                        if cancelled_workflows is None or active.task.id in cancelled_workflows:
+                            active.interrupted.set()
                 self.stopping.wait(0.5)
             for active in running:
                 active.interrupted.set()

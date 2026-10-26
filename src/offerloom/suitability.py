@@ -29,6 +29,7 @@ from offerloom.auth import Owner, StrictModel, audit, require_owner
 from offerloom.commands import append_outbox, canonical_json, command, lock_installation
 from offerloom.config import Settings
 from offerloom.db import Database
+from offerloom.maintenance import ProviderExecution
 from offerloom.problems import Problem
 from offerloom.workflows import Claim, assert_fence, enqueue, publish
 
@@ -1151,6 +1152,11 @@ def _reserve_call(conn: Connection, task: Claim, settings: Settings, seconds: in
     )
     if not row["available"]:
         return None
+    if conn.execute(
+        text("SELECT EXISTS(SELECT 1 FROM offerloom.provider_executions)")
+    ).scalar_one():
+        # An expired local reservation cannot prove that remote inference stopped.
+        return None
     permitted = conn.execute(
         text("""UPDATE offerloom.workflow_runs SET model_network_attempts=model_network_attempts+1
         WHERE owner_id=:owner AND id=:id AND model_network_attempts<2
@@ -1234,7 +1240,9 @@ def _execute_reserved_model(
             raise Problem(409, "stale_model_route")
         if interrupted.is_set():
             raise local_model.ModelFailure("model_interrupted", retryable=False)
-        result = (client or local_model.OllamaClient(active_route)).call(
+        result = (
+            client or local_model.OllamaClient(active_route, ProviderExecution(db, task, run_id))
+        ).call(
             stage,
             cast(dict[str, object], task.input["context"]),
             str(task.input["prompt_version"]),

@@ -649,6 +649,7 @@ source = { editable = "." }
 default-groups = ["build", "dev"]
 dependencies = [
     { name = "alembic" },
+    { name = "anyio" },
     { name = "argon2-cffi" },
     { name = "cryptography" },
     { name = "fastapi" },
@@ -684,6 +685,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "alembic", specifier = "==1.18.4" },
+    { name = "anyio", specifier = "==4.15.1" },
     { name = "argon2-cffi", specifier = "==25.1.0" },
     { name = "cryptography", specifier = "==50.0.2" },
     { name = "fastapi", specifier = "==0.135.2" },

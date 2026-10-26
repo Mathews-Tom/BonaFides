@@ -66,6 +66,10 @@ class Bootstrap(Login):
     bootstrap_token: SecretStr = Field(min_length=40, max_length=128)
 
 
+class Reauthentication(StrictModel):
+    current_password: SecretStr = Field(min_length=1, max_length=128)
+
+
 class PasswordChange(StrictModel):
     current_password: SecretStr = Field(min_length=1, max_length=128)
     new_password: SecretStr = Field(min_length=15, max_length=128)
@@ -294,49 +298,65 @@ def _challenge(request: Request, conn: Connection) -> None:
         raise Problem(403, "csrf_rejected")
 
 
-def require_owner(request: Request) -> Owner:
-    db: Database = request.app.state.db
+def _session_owner(conn: Connection, request: Request) -> Owner:
     raw = request.cookies.get(SESSION_COOKIE, "")
     if not raw or len(raw) > 128:
         raise Problem(401, "authentication_required")
+    row = (
+        conn.execute(
+            text(
+                "SELECT o.id AS owner_id,o.login_name,s.id,s.csrf_token,s.csrf_sha256,s.expires_at,s.authenticated_at,s.auth_epoch FROM offerloom.sessions s JOIN offerloom.owners o ON o.id=s.owner_id WHERE s.token_sha256=:token AND s.revoked_at IS NULL AND s.auth_epoch=o.auth_epoch AND s.expires_at>now() AND s.last_seen_at>now()-interval '12 hours'"
+            ),
+            {"token": digest(raw)},
+        )
+        .mappings()
+        .one_or_none()
+    )
+    if row is None:
+        raise Problem(401, "authentication_required")
+    if request.method not in {"GET", "HEAD", "OPTIONS"}:
+        same_origin(request)
+        supplied = request.headers.get("x-csrf-token", "")
+        if (
+            not supplied
+            or len(supplied) > 128
+            or not hmac.compare_digest(digest(supplied), row["csrf_sha256"])
+        ):
+            raise Problem(403, "csrf_rejected")
+    return Owner(
+        row["owner_id"],
+        str(row["login_name"]),
+        row["id"],
+        str(row["csrf_token"]),
+        row["expires_at"],
+        row["authenticated_at"],
+        int(row["auth_epoch"]),
+    )
+
+
+def require_owner(request: Request) -> Owner:
+    db: Database = request.app.state.db
     with db.transaction() as conn:
         lock_installation(conn)
-        row = (
-            conn.execute(
-                text(
-                    "SELECT o.id AS owner_id,o.login_name,s.id,s.csrf_token,s.csrf_sha256,s.expires_at,s.authenticated_at,s.auth_epoch FROM offerloom.sessions s JOIN offerloom.owners o ON o.id=s.owner_id WHERE s.token_sha256=:token AND s.revoked_at IS NULL AND s.auth_epoch=o.auth_epoch AND s.expires_at>now() AND s.last_seen_at>now()-interval '12 hours'"
-                ),
-                {"token": digest(raw)},
-            )
-            .mappings()
-            .one_or_none()
-        )
-        if row is None:
-            raise Problem(401, "authentication_required")
-        if request.method not in {"GET", "HEAD", "OPTIONS"}:
-            same_origin(request)
-            supplied = request.headers.get("x-csrf-token", "")
-            if (
-                not supplied
-                or len(supplied) > 128
-                or not hmac.compare_digest(digest(supplied), row["csrf_sha256"])
-            ):
-                raise Problem(403, "csrf_rejected")
+        owner = _session_owner(conn, request)
         conn.execute(
             text(
                 "UPDATE offerloom.sessions SET last_seen_at=now() WHERE owner_id=:owner AND id=:id AND last_seen_at<now()-interval '1 minute'"
             ),
-            {"owner": row["owner_id"], "id": row["id"]},
+            {"owner": owner.id, "id": owner.session_id},
         )
-        owner = Owner(
-            row["owner_id"],
-            str(row["login_name"]),
-            row["id"],
-            str(row["csrf_token"]),
-            row["expires_at"],
-            row["authenticated_at"],
-            int(row["auth_epoch"]),
-        )
+    request.state.owner = owner
+    return owner
+
+
+def require_readonly_owner(request: Request) -> Owner:
+    """Authenticate a read without extending a session or admitting a writer."""
+    if request.method not in {"GET", "HEAD"}:
+        raise Problem(405, "read_only_resource")
+    db: Database = request.app.state.db
+    with db.transaction() as conn:
+        conn.execute(text("SET TRANSACTION READ ONLY"))
+        owner = _session_owner(conn, request)
     request.state.owner = owner
     return owner
 
@@ -564,6 +584,66 @@ def build_router(db: Database, settings: Settings) -> APIRouter:
     @router.get("/session")
     def session(owner: Annotated[Owner, Depends(require_owner)]) -> dict[str, object]:
         return owner.response()
+
+    @router.post("/session/reauthenticate", status_code=201)
+    def reauthenticate(
+        body: Reauthentication,
+        request: Request,
+        response: Response,
+        owner: Annotated[Owner, Depends(require_owner)],
+    ) -> dict[str, object]:
+        source = _source(request)
+        _reserve_attempt(db, source)
+        with db.transaction() as conn:
+            previous = (
+                conn.execute(
+                    text("SELECT password_hash,auth_epoch FROM offerloom.owners WHERE id=:owner"),
+                    {"owner": owner.id},
+                )
+                .mappings()
+                .one()
+            )
+        if not verify_password(
+            str(previous["password_hash"]), body.current_password.get_secret_value()
+        ):
+            # A wrong confirmation does not invalidate the otherwise valid session.
+            raise Problem(403, "reauthentication_failed")
+        with db.transaction() as conn:
+            _lock_identity(conn)
+            current = (
+                conn.execute(
+                    text(
+                        "SELECT password_hash,auth_epoch FROM offerloom.owners WHERE id=:owner FOR UPDATE"
+                    ),
+                    {"owner": owner.id},
+                )
+                .mappings()
+                .one()
+            )
+            if (
+                current["password_hash"] != previous["password_hash"]
+                or current["auth_epoch"] != owner.auth_epoch
+            ):
+                raise Problem(401, "authentication_failed")
+            revoked = conn.execute(
+                text("""UPDATE offerloom.sessions SET revoked_at=clock_timestamp()
+                WHERE owner_id=:owner AND id=:session AND auth_epoch=:epoch
+                AND authenticated_at=:authenticated AND revoked_at IS NULL
+                AND expires_at>clock_timestamp()
+                AND last_seen_at>clock_timestamp()-interval '12 hours'"""),
+                {
+                    "owner": owner.id,
+                    "session": owner.session_id,
+                    "epoch": owner.auth_epoch,
+                    "authenticated": owner.authenticated_at,
+                },
+            )
+            if revoked.rowcount != 1:
+                raise Problem(401, "authentication_failed")
+            _reset_attempts(conn, source)
+            fresh = _new_session(conn, owner.id, response)
+            audit(conn, owner.id, "session_reauthenticated", request.state.request_id)
+        return fresh.response()
 
     @router.delete("/session", status_code=204)
     def logout(request: Request, owner: Annotated[Owner, Depends(require_owner)]) -> Response:

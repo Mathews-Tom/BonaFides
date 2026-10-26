@@ -78,6 +78,9 @@ def identity(tmp_path: Path) -> Iterator[IdentityContext]:
             pytest.fail(
                 "Identity singleton tests require an empty disposable test database; refusing to remove an existing owner."
             )
+        conn.execute(
+            text("UPDATE offerloom.installation_state SET execution_guard_id=NULL WHERE singleton")
+        )
         conn.execute(text("DELETE FROM offerloom.auth_challenges"))
         conn.execute(text("DELETE FROM offerloom.auth_throttles"))
     blob, spool, import_spool = (
@@ -118,6 +121,16 @@ def identity(tmp_path: Path) -> Iterator[IdentityContext]:
         with admin.transaction() as conn:
             # Defer only the new lifecycle edge in the document/model/consent cycle.
             conn.execute(text("SET CONSTRAINTS offerloom.hosted_consent_approval_binding DEFERRED"))
+            conn.execute(
+                text("""UPDATE offerloom.installation_state SET maintenance_active=false
+                WHERE singleton AND EXISTS(
+                SELECT 1 FROM offerloom.installation_controls c JOIN offerloom.owners o
+                ON o.id=c.owner_id WHERE o.login_name=:login)"""),
+                {"login": context.login_name},
+            )
+            conn.execute(
+                text("DELETE FROM offerloom.maintenance_recoveries WHERE control_id IS NULL")
+            )
             # RESTRICT preserves evidence pins; remove this fixture's links before its owner.
             conn.execute(
                 text("""UPDATE offerloom.local_model_reservations SET owner_id=NULL,
@@ -126,6 +139,9 @@ def identity(tmp_path: Path) -> Iterator[IdentityContext]:
                 {"login": context.login_name},
             )
             for table in (
+                "portable_purges",
+                "installation_backups",
+                "installation_controls",
                 "idempotency_records",
                 "action_approvals",
                 "document_regeneration_proposals",

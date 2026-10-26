@@ -348,18 +348,19 @@ def _same_target(target: RowMapping, proposal: RowMapping) -> bool:
 
 def proposal_view(conn: Connection, owner: UUID, row: RowMapping) -> dict[str, object]:
     applicable = False
-    try:
-        target, _, _ = _source_context(
-            conn,
-            owner,
-            row["document_draft_id"],
-            str(row["section_key"]),
-            str(row["context_snapshot"]["tone"]),
-        )
-        applicable = _same_target(target, row)
-    except Problem as exc:
-        if exc.status not in {404, 409, 422}:
-            raise
+    if row["historical_model_run_id"] is None:
+        try:
+            target, _, _ = _source_context(
+                conn,
+                owner,
+                row["document_draft_id"],
+                str(row["section_key"]),
+                str(row["context_snapshot"]["tone"]),
+            )
+            applicable = _same_target(target, row)
+        except Problem as exc:
+            if exc.status not in {404, 409, 422}:
+                raise
     return {
         "id": str(row["id"]),
         "document_id": str(row["document_draft_id"]),
@@ -373,6 +374,7 @@ def proposal_view(conn: Connection, owner: UUID, row: RowMapping) -> dict[str, o
         "model_run": row["model_run"],
         "created_at": row["created_at"].isoformat(),
         "applicable": applicable,
+        "historical": row["historical_model_run_id"] is not None,
     }
 
 
@@ -504,6 +506,8 @@ def install_routes(router: APIRouter, db: Database, settings: Settings) -> None:
     ) -> Response:
         def effect(conn: Connection) -> tuple[int, dict[str, object]]:
             proposal = _proposal(conn, owner.id, document_id, proposal_id)
+            if proposal["historical_model_run_id"] is not None:
+                raise Problem(409, "historical_regeneration_proposal")
             target = _target(conn, owner.id, document_id)
             if (
                 not _same_target(target, proposal)

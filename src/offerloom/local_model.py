@@ -25,13 +25,13 @@ from dataclasses import dataclass, field
 from io import BufferedReader
 from pathlib import Path
 from threading import Event, Thread
-from typing import IO, Annotated, Literal, cast
+from typing import IO, Annotated, Literal, Protocol, cast
 from urllib.parse import urlsplit
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
-ADAPTER_VERSION = "ol-ollama-v4"
+ADAPTER_VERSION = "ol-ollama-v5"
 _REQUEST_FRAMING_BYTES = 1024
 _TRANSPORT_POLICY = {
     "version": "ol-local-pre-post-manifest-v1",
@@ -391,6 +391,14 @@ class ModelFailure(ValueError):
 class ModelResult:
     output: dict[str, object]
     metadata: dict[str, object]
+
+
+class InferenceLifecycle(Protocol):
+    """Durable admission before transmission and positive remote completion."""
+
+    def started(self) -> None: ...
+
+    def completed(self) -> None: ...
 
 
 def _json(value: object) -> bytes:
@@ -884,8 +892,9 @@ def _verify_manifest(route: LocalRoute, tags: dict[str, object]) -> str:
 
 
 class OllamaClient:
-    def __init__(self, route: LocalRoute) -> None:
+    def __init__(self, route: LocalRoute, lifecycle: InferenceLifecycle | None = None) -> None:
         self.route = route
+        self.lifecycle = lifecycle
 
     def call(
         self,
@@ -1102,6 +1111,16 @@ class OllamaClient:
                     raise ModelFailure("model_timeout", retryable=True)
                 if interrupted is not None and interrupted.is_set():
                     raise ModelFailure("model_interrupted")
+                if method == "POST" and self.lifecycle is not None:
+                    # Commit admission before any inference bytes can leave. A crash
+                    # from this point is unknown, not proof that the provider stopped.
+                    self.lifecycle.started()
+                    # Admission can wait on PostgreSQL. Recheck after it returns,
+                    # not only before it starts; the watcher is not a send fence.
+                    if expired.is_set() or time.monotonic() - started >= deadline_seconds:
+                        raise ModelFailure("model_timeout", retryable=True)
+                    if interrupted is not None and interrupted.is_set():
+                        raise ModelFailure("model_interrupted")
                 connection.request(
                     method,
                     path,
@@ -1124,11 +1143,19 @@ class OllamaClient:
             if runtime.get("version") != route.identity()["runtime_version"]:
                 raise ModelFailure("model_identity_changed")
             body = request("POST", "/api/chat", payload)
+            envelope = _decode(body)
+            if (
+                envelope.get("done") is True
+                and envelope.get("model") == route.model
+                and self.lifecycle is not None
+            ):
+                # Completion is independent of output acceptance/publication. Even
+                # a refused or length-limited terminal answer has stopped inference.
+                self.lifecycle.completed()
             if expired.is_set() or time.monotonic() - started >= deadline_seconds:
                 raise ModelFailure("model_timeout", retryable=True)
             if interrupted is not None and interrupted.is_set():
                 raise ModelFailure("model_interrupted")
-            envelope = _decode(body)
             if (
                 envelope.get("done") is not True
                 or envelope.get("model") != route.model

@@ -110,6 +110,13 @@ services:
       interval: 3s
       timeout: 3s
       retries: 20
+  lifecycle:
+    <<: *app
+    command: [lifecycle]
+    environment: *settings
+    volumes: [app-secrets:/run/offerloom:ro, blobs:/data/blobs, spool:/spool, import-spool:/import-spool]
+    networks: [private]
+    depends_on: {migrate: {condition: service_completed_successfully}, renderer: {condition: service_started}, parser: {condition: service_started}}
   worker:
     <<: *app
     command: [worker]

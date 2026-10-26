@@ -1023,7 +1023,7 @@ class Proof:
         self.checked("saved_posting_retired_reviewed_source_and_profile_isolation")
 
     def restore(self) -> None:
-        self.compose("stop", "ingress", "api", "worker", "renderer", "parser")
+        self.compose("stop", "ingress", "api", "worker", "lifecycle", "renderer", "parser")
         before = self.sql(_SNAPSHOT_COUNTS)
         authorization_before = json.loads(self.sql(_RESTORE_AUTHORIZATION_ROWS))
         dump = self.compose(
@@ -1192,6 +1192,52 @@ class Proof:
             "run", "--rm", "--no-deps", "--entrypoint", "python", "api", "-c", blob_code
         )
         require(blob_members(blobs) == blob_members(restored_blobs), "restore_blob_hash_mismatch")
+        # This explicitly disposable plaintext fixture needs a target-physical guard.
+        # Do not clear the guard or weaken normal readiness to accept a copied identity.
+        guard_handoff_code = """
+import json
+from pathlib import Path
+from sqlalchemy import text
+from offerloom.db import Database
+from offerloom.execution_guard import ExecutionGuard
+with ExecutionGuard(Path('/data/blobs'), exclusive=True, create=False) as guard:
+    db = Database(Path('/run/migration/migrator_dsn').read_text().strip())
+    try:
+        with db.transaction() as conn:
+            assert conn.execute(text('SELECT current_user')).scalar_one() == 'offerloom_migrator'
+            previous = conn.execute(text(
+                'SELECT execution_guard_id FROM offerloom.installation_state WHERE singleton FOR UPDATE'
+            )).scalar_one()
+            assert previous is not None and previous != guard.identity
+            bound = conn.execute(text(
+                'UPDATE offerloom.installation_state SET execution_guard_id=:guard '
+                'WHERE singleton AND NOT maintenance_active AND execution_guard_id=:previous '
+                'RETURNING execution_guard_id'
+            ), {'guard': guard.identity, 'previous': previous}).scalar_one()
+            assert bound == guard.verify()
+        print(json.dumps({'offline_exclusive': True, 'source_guard_reused': False,
+                          'previous': str(previous), 'target': str(guard.identity)}))
+    finally:
+        db.close()
+"""
+        guard_handoff = json.loads(
+            target.compose(
+                "run",
+                "--rm",
+                "--no-deps",
+                "--volume",
+                f"{target.project}_blobs:/data/blobs",
+                "--entrypoint",
+                "python",
+                "migrate",
+                "-c",
+                guard_handoff_code,
+            )
+        )
+        require(
+            guard_handoff["offline_exclusive"] and not guard_handoff["source_guard_reused"],
+            "restore_target_guard_not_handed_off",
+        )
         target.compose("up", "-d", "--wait", "api", "ingress", timeout=180)
         stale = API(target.origin)
         stale.cookie, stale.csrf = dict(self.api.cookie), self.api.csrf
@@ -1229,6 +1275,8 @@ class Proof:
         )
         self.evidence["restore"] = {
             "project": target.project,
+            "scope": "Disposable plaintext M0 regression fixture, not an encrypted installation backup or OL015 drill",
+            "target_guard_handoff": guard_handoff,
             "manifest": manifest,
             "authorization_counts": {
                 name: len(rows) for name, rows in authorization_before.items()

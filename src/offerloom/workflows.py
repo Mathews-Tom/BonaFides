@@ -151,6 +151,16 @@ def migrate(settings: MigrationConfig) -> None:
                 "011_documents.up.sql",
                 "012_section_regeneration.up.sql",
                 "013_task_controls.up.sql",
+                "014_activity_admission.up.sql",
+                "015_provider_executions.up.sql",
+                "016_installation_controls.up.sql",
+                "017_portable_exports.up.sql",
+                "018_portable_model_history.up.sql",
+                "019_backup_generations.up.sql",
+                "020_portable_erasure.up.sql",
+                "021_portable_scope_binding.up.sql",
+                "022_portable_previews.up.sql",
+                "023_offline_maintenance_recovery.up.sql",
             )
             if len(rows) != len(names):
                 raise RuntimeError("unsupported migration ledger")
@@ -183,6 +193,10 @@ def enqueue(conn: Connection, owner_id: UUID, kind: str, input_snapshot: dict[st
         "source_refresh",
         "posting_extract",
         "matching",
+        "portable_export",
+        "portable_import",
+        "privacy_delete",
+        "backup",
     }:
         raise Problem(422, "unsupported_workflow_kind")
     epoch = lock_installation(conn)
@@ -204,13 +218,17 @@ def enqueue(conn: Connection, owner_id: UUID, kind: str, input_snapshot: dict[st
             "dedupe": str(workflow_id),
             "sha": sha,
             "epoch": epoch,
-            "attempts": 2
+            "attempts": 1
+            if kind in {"portable_import", "privacy_delete"}
+            else 2
             if kind in {"posting_extract", "matching"}
             or pinned.get("mode") in {"tailored_ai", "section_regeneration"}
             else 4
             if kind == "profile_import"
             else 3,
-            "deadline": 480
+            "deadline": 900
+            if kind == "backup"
+            else 480
             if kind in {"posting_extract", "matching"}
             or pinned.get("mode") in {"tailored_ai", "section_regeneration"}
             else 180,
@@ -745,13 +763,17 @@ def retry_workflow(conn: Connection, owner_id: UUID, workflow_id: UUID) -> dict[
     return get_workflow(conn, owner_id, workflow_id)
 
 
-def claim(conn: Connection, holder: UUID) -> Claim | None:
+def _claim(
+    conn: Connection, holder: UUID, kinds: tuple[str, ...], workflow_id: UUID | None = None
+) -> Claim | None:
     epoch = lock_installation(conn)
     row = (
         conn.execute(
             text("""WITH candidate AS MATERIALIZED (
         SELECT w.owner_id,w.id FROM offerloom.workflow_runs w
         WHERE w.maintenance_epoch=:epoch AND w.state IN ('pending','retryable_failure')
+        AND w.kind=ANY(:kinds)
+        AND (CAST(:workflow AS uuid) IS NULL OR w.id=CAST(:workflow AS uuid))
         AND w.next_attempt_at<=clock_timestamp() AND w.deadline_at>clock_timestamp()
         AND w.cancel_requested_at IS NULL AND w.attempt<w.max_attempts
         AND (w.token_budget=0 OR w.tokens_used<w.token_budget)
@@ -764,7 +786,13 @@ def claim(conn: Connection, holder: UUID) -> Claim | None:
         lease_expires_at=clock_timestamp()+make_interval(secs=>:lease),fence=w.fence+1,
         attempt=w.attempt+1,version=w.version+1,updated_at=clock_timestamp(),last_heartbeat_at=NULL
         FROM candidate c WHERE w.owner_id=c.owner_id AND w.id=c.id RETURNING w.*"""),
-            {"epoch": epoch, "holder": holder, "lease": LEASE_SECONDS},
+            {
+                "epoch": epoch,
+                "holder": holder,
+                "lease": LEASE_SECONDS,
+                "kinds": list(kinds),
+                "workflow": workflow_id,
+            },
         )
         .mappings()
         .first()
@@ -774,6 +802,33 @@ def claim(conn: Connection, holder: UUID) -> Claim | None:
     append_attempt_event(conn, row["owner_id"], row["id"], "claimed")
     return Claim(
         row["owner_id"], row["id"], holder, row["fence"], row["attempt"], row["kind"], row["input"]
+    )
+
+
+def claim(conn: Connection, holder: UUID) -> Claim | None:
+    return _claim(
+        conn,
+        holder,
+        (
+            "document_generate",
+            "pdf_render",
+            "profile_import",
+            "source_refresh",
+            "posting_extract",
+            "matching",
+        ),
+    )
+
+
+def claim_control(
+    conn: Connection, holder: UUID, *, workflow_id: UUID | None = None
+) -> Claim | None:
+    """A separate executor owns lifecycle work; it never registers as an ordinary activity."""
+    return _claim(
+        conn,
+        holder,
+        ("portable_export", "portable_import", "privacy_delete", "backup", "restore_validate"),
+        workflow_id,
     )
 
 
@@ -1159,6 +1214,12 @@ def cancel_workflow(conn: Connection, owner_id: UUID, workflow_id: UUID) -> dict
             {"workflow_id": str(workflow_id)},
             int(version),
         )
+    conn.execute(
+        text("""UPDATE offerloom.portable_previews SET candidate_bytes=NULL,
+        cleared_at=clock_timestamp(),clear_reason='cancelled'
+        WHERE owner_id=:owner AND workflow_run_id=:id AND cleared_at IS NULL"""),
+        {"owner": owner_id, "id": workflow_id},
+    )
     return get_workflow(conn, owner_id, workflow_id)
 
 

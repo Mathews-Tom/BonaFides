@@ -35,6 +35,7 @@ from uuid import uuid4
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from offerloom.spool_guard import SpoolBusy, acknowledge_pause, shared_spool
 from offerloom.storage import atomic_file, directory, read_file
 
 if TYPE_CHECKING:
@@ -277,7 +278,7 @@ class ImportParserClient:
         job_id = _hash(uuid4().bytes + bytes.fromhex(digest))
         deadline = time.monotonic() + self.timeout
         try:
-            with directory(self.spool, create=True) as fd:
+            with directory(self.spool, create=True) as fd, shared_spool(fd):
                 while True:
                     _check_interrupted(interrupted)
                     try:
@@ -334,6 +335,8 @@ class ImportParserClient:
                                 _remove_job(fd, job_id)
                     except (OSError, ValueError):
                         pass
+        except SpoolBusy:
+            raise ImportFailure("import_parser_busy") from None
         except ImportFailure:
             raise
         except (OSError, ValueError):
@@ -602,6 +605,18 @@ def _parse_child(spool: Path, job_id: str) -> None:
 def _supervise(
     spool: Path, fd: int, job_id: str, active: int, stopping: threading.Event | None = None
 ) -> None:
+    with shared_spool(fd) as guard:
+        _supervise_active(spool, fd, job_id, active, stopping, guard)
+
+
+def _supervise_active(
+    spool: Path,
+    fd: int,
+    job_id: str,
+    active: int,
+    stopping: threading.Event | None,
+    guard: int,
+) -> None:
     raw = read_file(fd, f"{job_id}.request.json", _REQUEST_BYTES)
     digest = _hash(raw)
     input_digest = "0" * 64
@@ -626,7 +641,7 @@ def _supervise(
             env=environment,
             start_new_session=True,
             close_fds=True,
-            pass_fds=(active,),
+            pass_fds=(active, guard),
         )
         try:
             deadline = time.monotonic() + PARSER_TIMEOUT
@@ -697,7 +712,10 @@ def run_parser(spool: Path) -> None:
         with directory(spool, create=True) as fd, _lock(fd, ".parser-lock"):
             while not stopping.is_set():
                 try:
-                    with _lock(fd, ".admission-lock"):
+                    if acknowledge_pause(fd):
+                        time.sleep(_POLL_SECONDS)
+                        continue
+                    with shared_spool(fd), _lock(fd, ".admission-lock"):
                         names = _snapshot(fd)
                         _sweep(fd, names)
                         names = _snapshot(fd)
@@ -709,7 +727,10 @@ def run_parser(spool: Path) -> None:
                             continue
                         job_id = match.group(1)
                         try:
-                            with _lock(fd, f"{job_id}.active", create=False) as active:
+                            with (
+                                shared_spool(fd),
+                                _lock(fd, f"{job_id}.active", create=False) as active,
+                            ):
                                 if _has_receipt(fd, job_id):
                                     if _cancelled(fd, job_id):
                                         _remove_job(fd, job_id)

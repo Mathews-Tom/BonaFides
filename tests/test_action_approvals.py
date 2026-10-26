@@ -44,7 +44,7 @@ from offerloom.approvals import (
 from offerloom.auth import Owner, recover_password
 from offerloom.commands import canonical_json, command
 from offerloom.problems import Problem
-from offerloom.workflows import Claim, cancel_workflow, claim, get_workflow
+from offerloom.workflows import Claim, cancel_workflow, claim, claim_control, get_workflow
 
 
 @dataclass(frozen=True)
@@ -248,7 +248,7 @@ def _trusted_dispatch(context: ApprovalContext, prepared: Prepared) -> Claim:
         ).first()
         assert changed is not None
     with context.pg.runtime.begin() as conn:
-        task = claim(conn, uuid4())
+        task = (claim if prepared.kind == "hosted_egress" else claim_control)(conn, uuid4())
     assert task is not None and task.id == prepared.workflow_id
     return task
 

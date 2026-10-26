@@ -92,10 +92,10 @@ def read_file(fd: int, name: str, limit: int) -> bytes:
         os.close(source)
 
 
-def atomic_file(fd: int, name: str, data: bytes) -> None:
+def atomic_file(fd: int, name: str, data: bytes, *, staging_id: UUID | None = None) -> None:
     if "/" in name or name in (".", ".."):
         raise ValueError("invalid_storage_key")
-    temporary = f".staging-{uuid4().hex}"
+    temporary = f".staging-{(staging_id or uuid4()).hex}"
     target = os.open(
         temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600, dir_fd=fd
     )
@@ -128,7 +128,9 @@ class BlobStore:
             raise ValueError("invalid_pdf_output")
         return self.put_bytes(owner_id, data)
 
-    def put_bytes(self, owner_id: UUID, data: bytes) -> StoredBlob:
+    def put_bytes(
+        self, owner_id: UUID, data: bytes, *, staging_id: UUID | None = None
+    ) -> StoredBlob:
         if not 0 < len(data) <= MAX_PDF_BYTES:
             raise ValueError("invalid_blob_size")
         digest = hashlib.sha256(data).hexdigest()
@@ -140,7 +142,7 @@ class BlobStore:
             try:
                 existing = read_file(bucket, digest, MAX_PDF_BYTES)
             except FileNotFoundError:
-                atomic_file(bucket, digest, data)
+                atomic_file(bucket, digest, data, staging_id=staging_id)
             else:
                 if hashlib.sha256(existing).hexdigest() != digest:
                     raise ValueError("blob_integrity_failed")

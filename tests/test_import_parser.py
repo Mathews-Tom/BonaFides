@@ -47,8 +47,8 @@ def _wait_for(predicate: Callable[[], bool]) -> None:
 
 
 @pytest.fixture
-def parser(tmp_path: Path) -> Iterator[ImportParserClient]:
-    spool = tmp_path / "spool"
+def parser(tmp_path_factory: pytest.TempPathFactory) -> Iterator[ImportParserClient]:
+    spool = tmp_path_factory.mktemp("import-parser") / "spool"
     spool.mkdir(mode=0o700)
     container: str | None = None
     if sys.platform == "linux":

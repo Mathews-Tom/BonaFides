@@ -29,6 +29,7 @@ from pydantic import Field, model_validator
 
 from offerloom.document_frame import TEMPLATES, PrintableFrame, TemplateVersion, template_digest
 from offerloom.documents import TEMPLATE_VERSION, DocumentBody, StrictModel, canonical
+from offerloom.spool_guard import SpoolBusy, acknowledge_pause, shared_spool
 from offerloom.storage import MAX_PDF_BYTES, atomic_file, directory, read_file
 
 MAX_REQUEST_BYTES = 1024 * 1024
@@ -234,7 +235,7 @@ class RenderClient:
             raise RenderFailure("render_invalid_input")
         digest = hashlib.sha256(payload).hexdigest()
         job_id = hashlib.sha256(uuid4().bytes + bytes.fromhex(digest)).hexdigest()
-        with directory(self.spool, create=True) as fd:
+        with directory(self.spool, create=True) as fd, shared_spool(fd):
             # Admission is bounded even if a renderer is stopped. Only opaque IDs occur.
             queued = sum(1 for name in os.listdir(fd) if name.endswith(".request.json"))
             if queued >= 32:
@@ -294,6 +295,11 @@ def _render_child(spool: Path, job_id: str) -> None:
 
 
 def _supervise(spool: Path, fd: int, job_id: str) -> None:
+    with shared_spool(fd) as guard:
+        _supervise_active(spool, fd, job_id, guard)
+
+
+def _supervise_active(spool: Path, fd: int, job_id: str, guard: int) -> None:
     raw = read_file(fd, f"{job_id}.request.json", MAX_REQUEST_BYTES)
     digest = hashlib.sha256(raw).hexdigest()
     error: RenderError | None = None
@@ -321,6 +327,7 @@ def _supervise(spool: Path, fd: int, job_id: str) -> None:
             env=environment,
             start_new_session=True,
             close_fds=True,
+            pass_fds=(guard,),
         )
         try:
             try:
@@ -363,6 +370,9 @@ def run_renderer(spool: Path) -> None:
             # Exactly one renderer child across daemon restarts/replicas.
             fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
             while True:
+                if acknowledge_pause(fd):
+                    time.sleep(0.1)
+                    continue
                 names = os.listdir(fd)
                 for name in names:
                     match = re.fullmatch(r"([0-9a-f]{64})\.request\.json", name)
@@ -370,21 +380,24 @@ def run_renderer(spool: Path) -> None:
                         continue
                     job_id = match.group(1)
                     try:
-                        if (
-                            time.time() - os.stat(name, dir_fd=fd, follow_symlinks=False).st_mtime
-                            > 3600
-                        ):
-                            for suffix in ("request.json", "result.json", "pdf"):
-                                with contextlib.suppress(FileNotFoundError):
-                                    os.unlink(f"{job_id}.{suffix}", dir_fd=fd)
-                            continue
-                        try:
-                            read_file(fd, f"{job_id}.result.json", 4096)
-                        except FileNotFoundError:
-                            _supervise(spool, fd, job_id)
+                        with shared_spool(fd):
+                            if (
+                                time.time()
+                                - os.stat(name, dir_fd=fd, follow_symlinks=False).st_mtime
+                                > 3600
+                            ):
+                                for suffix in ("request.json", "result.json", "pdf"):
+                                    with contextlib.suppress(FileNotFoundError):
+                                        os.unlink(f"{job_id}.{suffix}", dir_fd=fd)
+                                continue
+                            try:
+                                read_file(fd, f"{job_id}.result.json", 4096)
+                            except FileNotFoundError:
+                                _supervise(spool, fd, job_id)
+                    except SpoolBusy:
+                        break
                     except (OSError, ValueError):
-                        # Content/path details are deliberately not logged. Invalid
-                        # files cannot become database artifact references.
+                        # Content/path details never enter logs or artifact references.
                         continue
                 time.sleep(0.1)
         finally:

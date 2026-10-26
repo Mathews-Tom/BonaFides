@@ -60,6 +60,9 @@ def pg_context() -> Iterator[PGContext]:
         if conn.execute(text("SELECT count(*) FROM offerloom.owners")).scalar_one():
             pytest.fail("PostgreSQL invariant tests require an empty disposable owner database")
         conn.execute(
+            text("UPDATE offerloom.installation_state SET execution_guard_id=NULL WHERE singleton")
+        )
+        conn.execute(
             text(
                 "INSERT INTO offerloom.owners(id,login_name,password_hash) VALUES(:id,'m0-invariant-test','not-a-login-hash')"
             ),
@@ -88,6 +91,24 @@ def pg_context() -> Iterator[PGContext]:
         yield PGContext(migrator, runtime, owner_id, profile_id, revision_id)
     finally:
         with migrator.begin() as conn:
+            conn.execute(
+                text("""UPDATE offerloom.installation_state SET maintenance_active=false
+                WHERE singleton AND EXISTS(
+                SELECT 1 FROM offerloom.installation_controls WHERE owner_id=:owner)"""),
+                {"owner": owner_id},
+            )
+            conn.execute(
+                text("DELETE FROM offerloom.portable_purges WHERE owner_id=:owner"),
+                {"owner": owner_id},
+            )
+            conn.execute(
+                text("DELETE FROM offerloom.installation_backups WHERE owner_id=:owner"),
+                {"owner": owner_id},
+            )
+            conn.execute(
+                text("DELETE FROM offerloom.installation_controls WHERE owner_id=:owner"),
+                {"owner": owner_id},
+            )
             conn.execute(text("DELETE FROM offerloom.owners WHERE id=:owner"), {"owner": owner_id})
         runtime.dispose()
         migrator.dispose()

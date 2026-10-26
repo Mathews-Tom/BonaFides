@@ -12,6 +12,7 @@ from urllib.error import URLError
 from urllib.parse import urlsplit
 from urllib.request import ProxyHandler, Request, build_opener
 
+from offerloom.backup_archive import BackupError
 from offerloom.config import ConfigurationError, MigrationSettings, Settings
 from offerloom.problems import Problem
 
@@ -50,6 +51,7 @@ def main(argv: list[str] | None = None) -> int:
         choices=(
             "api",
             "worker",
+            "lifecycle",
             "renderer",
             "parser",
             "source-gateway",
@@ -58,10 +60,33 @@ def main(argv: list[str] | None = None) -> int:
             "config-check",
             "init-bootstrap",
             "recover-password",
+            "backup-create",
+            "backup-status",
+            "backup-restore",
+            "backup-verify",
+            "maintenance-inspect",
+            "maintenance-recover",
         ),
+    )
+    parser.add_argument(
+        "--config", type=Path, help="protected backup or offline maintenance configuration file"
     )
     arguments = parser.parse_args(argv)
     try:
+        if arguments.command.startswith("maintenance-"):
+            from offerloom.maintenance_operator import run as maintenance_run
+
+            if arguments.config is None:
+                raise BackupError("maintenance_recovery_configuration_required")
+            return maintenance_run(arguments.command, arguments.config)
+        if arguments.command.startswith("backup-"):
+            from offerloom.backup_operator import run
+
+            if arguments.config is None:
+                raise BackupError("backup_configuration_required")
+            return run(arguments.command, arguments.config)
+        if arguments.config is not None:
+            raise ConfigurationError("--config is only valid for backup/maintenance commands")
         if arguments.command == "renderer":
             from offerloom.render_service import run_renderer
 
@@ -113,6 +138,16 @@ def main(argv: list[str] | None = None) -> int:
 
             run_worker(settings)
             return 0
+        if arguments.command == "lifecycle":
+            from offerloom.db import Database
+            from offerloom.portable_exports import LifecycleWorker
+
+            db = Database(settings)
+            try:
+                LifecycleWorker(db, settings).run()
+            finally:
+                db.close()
+            return 0
         from offerloom.auth import init_bootstrap, recover_password
         from offerloom.db import Database
 
@@ -131,6 +166,8 @@ def main(argv: list[str] | None = None) -> int:
         # Never print exception repr/causes, which may contain connection inputs.
         if isinstance(exc, Problem):
             print(f"Operation refused: {exc.code}", file=sys.stderr)
+        elif isinstance(exc, BackupError):
+            print(f"Operation refused: {exc}", file=sys.stderr)
         elif isinstance(exc, ConfigurationError):
             print(str(exc), file=sys.stderr)
         else:

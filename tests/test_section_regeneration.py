@@ -861,7 +861,7 @@ def test_worker_dispatches_section_proposal_without_automatic_document_publicati
     preview = _section_preview(catalog, document)
     task = _queue_section(catalog, preview)
     model = FixtureModel(_output(preview))
-    monkeypatch.setattr(local_model, "OllamaClient", lambda _: model)
+    monkeypatch.setattr(local_model, "OllamaClient", lambda _route, _lifecycle: model)
     Worker(catalog.runtime, catalog.identity.settings)._execute(task, Event())
     assert model.calls == 1 and catalog.workflow(task.id)["state"] == "succeeded"
     assert _document(catalog, document["id"]) == document
