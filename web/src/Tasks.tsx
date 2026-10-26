@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react';
-import { Api, ApiError, errorText, terminal, type ActionApproval, type ActionApprovalRequest, type AttemptEvent, type Challenge, type Session, type TaskPage, type Workflow, type WorkflowPage, type WorkflowState, type WorkflowStep } from './api';
+import { Api, ApiError, errorText, terminal, type ActionApproval, type ActionApprovalRequest, type AttemptEvent, type Challenge, type Session, type TaskPage, type TaskRetentionStatus, type Workflow, type WorkflowPage, type WorkflowState, type WorkflowStep } from './api';
 
 export interface TasksProps {
   api: Api; session: Session; requestedTask?: Workflow | null; disabled?: boolean; resultDisabled?: boolean;
@@ -64,6 +64,9 @@ export function Tasks({ api, session, requestedTask, disabled = false, resultDis
   const [pageFilter, setPageFilter] = useState<WorkflowState | ''>('');
   const [listLoading, setListLoading] = useState(false);
   const [listError, setListError] = useState('');
+  const [retention, setRetention] = useState<TaskRetentionStatus | null>(null);
+  const [retentionBusy, setRetentionBusy] = useState(false);
+  const [retentionError, setRetentionError] = useState('');
   const [detail, setDetail] = useState<Workflow | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
@@ -93,7 +96,7 @@ export function Tasks({ api, session, requestedTask, disabled = false, resultDis
   const errorRef = useRef<HTMLDivElement>(null);
   const detailHeading = useRef<HTMLHeadingElement>(null);
   const matches = (id: string, epoch: number) => mounted.current && selection.current.id === id && selection.current.epoch === epoch;
-  const focusError = error || statusError || listError;
+  const focusError = error || statusError || listError || retentionError;
   useEffect(() => { if (focusError) errorRef.current?.focus(); }, [focusError]);
   useEffect(() => { callbacks.current.onBusyChange?.(busy); }, [busy]);
   useEffect(() => {
@@ -113,6 +116,15 @@ export function Tasks({ api, session, requestedTask, disabled = false, resultDis
     } catch (failure) { if (timedOut) throw new ApiError(408, 'task_request_timeout'); throw failure; }
     finally { clearTimeout(timeout); controllers.current.delete(controller); }
   }, [api]);
+  async function loadRetention() {
+    setRetentionBusy(true); setRetentionError('');
+    try {
+      const value = await request<{ task_input_retention: TaskRetentionStatus }>('/status');
+      setRetention(value.task_input_retention);
+    } catch (failure) {
+      if (!aborted(failure)) setRetentionError(`${errorText(failure)} Any previous retention status is only the last observation, not current success.`);
+    } finally { if (mounted.current) setRetentionBusy(false); }
+  }
   const receive = useCallback((value: Workflow) => {
     const previous = current.current;
     if (selection.current.id !== value.id || (previous?.id === value.id && previous.version > value.version)) return;
@@ -274,8 +286,16 @@ export function Tasks({ api, session, requestedTask, disabled = false, resultDis
   const resultDocuments = detail?.state === 'succeeded' ? detail.result?.documents ?? (detail.result?.document_id ? [{ kind: null, document_id: detail.result.document_id }] : []) : [];
   return <section className="panel tasks" aria-labelledby="tasks-title"><h2 id="tasks-title">Task workspace</h2>
     <p>Durable status, local safety checkpoints and exact action review. Opening a task does not replace an editor or accept its output.</p>
-    <div ref={errorRef} role="alert" tabIndex={-1} className="error" hidden={!focusError}>{[error, statusError, listError].filter(Boolean).join(' ')}</div>
+    <div ref={errorRef} role="alert" tabIndex={-1} className="error" hidden={!focusError}>{[error, statusError, listError, retentionError].filter(Boolean).join(' ')}</div>
     <p role="status">{notice}</p>
+    <section aria-labelledby="task-retention-title"><h3 id="task-retention-title">Task input retention</h3>
+      <p>Unused task text becomes eligible for deletion 24 hours after terminal completion; the sweep schedule below determines actual removal. Saved facts, document revisions and PDFs remain. Active work and unresolved provider delivery are not silently purged; limited task IDs and hashes remain for history and scoped deletion. This does not remove retained encrypted backups or downloaded copies.</p>
+      <button className="secondary" disabled={retentionBusy || disabled} onClick={() => { void loadRetention(); }}>{retentionBusy ? 'Loading retention status…' : 'Load input-retention status'}</button>
+      {retention && <><p>Last observed sweep: {retention.state.replaceAll('_', ' ')}. Latest bounded batch: {retention.processed_count} tasks.</p>
+        <dl className="task-facts"><div><dt>Last complete sweep</dt><dd>{time(retention.last_success_at)}</dd></div><div><dt>Last failed sweep</dt><dd>{time(retention.last_failure_at)}</dd></div></dl>
+        {retention.failure_code && <p>Recorded failure: <code>{retention.failure_code}</code>. Later success does not erase this historical failure.</p>}
+        <p>A completed sweep runs at least daily while the lifecycle controller is available; bounded backlog batches and failures retry no sooner than one minute. Extensions are not supported.</p></>}
+    </section>
     <div className="task-toolbar"><label>Task state filter<select value={filter} disabled={listLoading} onChange={event => { const value = event.target.value as WorkflowState | ''; setFilter(value); if (page) void loadList(value); }}><option value="">All states</option>{states.map(state => <option key={state} value={state}>{stateLabels[state]}</option>)}</select></label>
       <button className="secondary" disabled={listLoading} onClick={() => { void loadList(filter); }}>{page ? 'Reload tasks' : 'Load tasks'}</button></div>
     {listLoading && <p role="status">Loading task page… Existing visible tasks are retained.</p>}
