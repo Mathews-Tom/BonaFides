@@ -241,6 +241,25 @@ class SourceTests(unittest.TestCase):
         self.assertNotIn(synthetic, json.dumps(findings))
         self.assertFalse(compliance.scan_secrets("password = 'short-placeholder'"))
 
+    def test_source_gate_rejects_all_symlink_targets(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            subprocess.run(["git", "init", "-q", str(root)], check=True)
+            (root / "target").mkdir()
+            (root / "target.txt").write_text("synthetic fixture")
+            for name, target in (
+                ("directory-link", "target"),
+                ("dangling-link", "missing"),
+                ("file-link", "target.txt"),
+            ):
+                (root / name).symlink_to(target)
+            report = compliance.check_source(root)
+            self.assertFalse(report["source_eligible"])
+            for name in ("directory-link", "dangling-link", "file-link"):
+                self.assertIn(
+                    f"{name}: symbolic link requires explicit source review", report["blockers"]
+                )
+
     def test_source_gate_and_exclusions(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

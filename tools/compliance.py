@@ -483,10 +483,12 @@ def check_source(root: str | Path) -> SourceReport:
     source_suffixes = {".py", ".ts", ".tsx", ".js", ".jsx", ".css", ".sh", ".sql", ".yaml", ".yml"}
     for name in sorted(set(result.stdout.decode().split("\0")) - {""}):
         path = root / name
-        if excluded.intersection(Path(name).parts) or not path.is_file():
+        if excluded.intersection(Path(name).parts):
             continue
         if path.is_symlink():
             blockers.append(f"{name}: symbolic link requires explicit source review")
+            continue
+        if not path.is_file():
             continue
         try:
             text = path.read_text()
