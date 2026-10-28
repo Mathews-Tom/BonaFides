@@ -4,7 +4,8 @@
 from __future__ import annotations
 
 import hashlib
-from typing import cast
+import io
+from typing import BinaryIO, cast
 from uuid import UUID, uuid4
 
 from pydantic import JsonValue
@@ -14,7 +15,13 @@ from offerloom.commands import canonical_json
 from offerloom.config import Settings
 from offerloom.db import Database
 from offerloom.installation_control import Control, assert_control
-from offerloom.portable_archive import ArchiveError, PortableArchive, decode_archive
+from offerloom.portable_archive import (
+    MAX_ARCHIVE_BYTES,
+    ArchiveError,
+    PortableArchive,
+    decode_archive,
+    hash_stream,
+)
 from offerloom.portable_columns import COLUMNS
 from offerloom.portable_data import quarantine_records
 from offerloom.portable_erasure import assert_checkpoint, erase_scope, orphan_inventory, purge_scope
@@ -128,7 +135,7 @@ def import_controlled_owner_data(
     db: Database,
     settings: Settings,
     control: Control,
-    payload: bytes,
+    payload: bytes | BinaryIO,
     *,
     expected_source_owner: UUID,
     checkpoint_id: UUID,
@@ -140,62 +147,65 @@ def import_controlled_owner_data(
     not hold the controller row needed by its independent heartbeat. A lost lease
     leaves only immutable orphan bytes, never a published partial replacement.
     """
-    digest = hashlib.sha256(payload).hexdigest()
+    source = io.BytesIO(payload) if isinstance(payload, bytes) else payload
+    source.seek(0)
+    digest, _ = hash_stream(source, limit=MAX_ARCHIVE_BYTES)
+    source.seek(0)
     with db.transaction() as conn:
         _authorize(conn, control, digest)
         assert_checkpoint(conn, control, checkpoint_id, runtime_pins)
-    archive = decode_archive(payload, expected_source_owner=expected_source_owner)
-    with db.transaction() as conn:
-        quarantine_records(conn, archive)
-    inventory = orphan_inventory(db, settings, control)
-    store = BlobStore(settings.blob_root)
-    for member in archive.manifest.blob_manifest:
+    with decode_archive(source, expected_source_owner=expected_source_owner) as archive:
+        with db.transaction() as conn:
+            quarantine_records(conn, archive)
+        inventory = orphan_inventory(db, settings, control)
+        store = BlobStore(settings.blob_root)
+        for member in archive.manifest.blob_manifest:
+            with db.transaction() as conn:
+                _authorize(conn, control, digest)
+            staging_id = uuid4()
+            try:
+                store.read(
+                    control.owner_id,
+                    f"{member.sha256[:2]}/{member.sha256}",
+                    member.sha256,
+                    member.byte_length,
+                )
+            except FileNotFoundError:
+                # Commit ownership BEFORE the first byte. Offline abort may remove
+                # only this operation's fresh CAS object / exact named partial write.
+                with db.transaction() as conn:
+                    conn.execute(
+                        text("""SELECT offerloom.register_portable_staging(
+                        :id,:holder,:fence,:sha,:length,:staging)"""),
+                        {
+                            **control.parameters,
+                            "sha": member.sha256,
+                            "length": member.byte_length,
+                            "staging": f".staging-{staging_id.hex}",
+                        },
+                    )
+            stored = store.put_bytes(
+                control.owner_id, archive.blobs[member.sha256], staging_id=staging_id
+            )
+            if stored.sha256 != member.sha256 or stored.byte_length != member.byte_length:
+                raise ArchiveError("portable_import_blob_mismatch")
         with db.transaction() as conn:
             _authorize(conn, control, digest)
-        staging_id = uuid4()
-        try:
-            store.read(
-                control.owner_id,
-                f"{member.sha256[:2]}/{member.sha256}",
-                member.sha256,
-                member.byte_length,
+            erase_scope(
+                conn, control, inventory, checkpoint_id=checkpoint_id, runtime_pins=runtime_pins
             )
-        except FileNotFoundError:
-            # Commit ownership BEFORE the first byte. Offline abort may remove
-            # only this operation's fresh CAS object / exact named partial write.
-            with db.transaction() as conn:
-                conn.execute(
-                    text("""SELECT offerloom.register_portable_staging(
-                    :id,:holder,:fence,:sha,:length,:staging)"""),
-                    {
-                        **control.parameters,
-                        "sha": member.sha256,
-                        "length": member.byte_length,
-                        "staging": f".staging-{staging_id.hex}",
-                    },
-                )
-        stored = store.put_bytes(
-            control.owner_id, archive.blobs[member.sha256], staging_id=staging_id
-        )
-        if stored.sha256 != member.sha256 or stored.byte_length != member.byte_length:
-            raise ArchiveError("portable_import_blob_mismatch")
-    with db.transaction() as conn:
-        _authorize(conn, control, digest)
-        erase_scope(
-            conn, control, inventory, checkpoint_id=checkpoint_id, runtime_pins=runtime_pins
-        )
-        _empty_target(conn, control.owner_id)
-        _persist_records(conn, control.owner_id, archive)
-        # The final guard also refuses a lease that elapsed during a large insert.
-        _authorize(conn, control, digest)
-    purge_scope(db, settings, control)
-    return {
-        "archive_sha256": digest,
-        "manifest_sha256": archive.manifest.manifest_sha256,
-        "source_namespace": str(archive.manifest.source_namespace),
-        "source_owner_id": str(archive.manifest.source_owner_id),
-        "record_count": sum(len(rows) for rows in archive.manifest.records.values()),
-        "blob_count": len(archive.manifest.blob_manifest),
-        "connectors_enabled": False,
-        "filesystem_complete": True,
-    }
+            _empty_target(conn, control.owner_id)
+            _persist_records(conn, control.owner_id, archive)
+            # The final guard also refuses a lease that elapsed during a large insert.
+            _authorize(conn, control, digest)
+        purge_scope(db, settings, control)
+        return {
+            "archive_sha256": digest,
+            "manifest_sha256": archive.manifest.manifest_sha256,
+            "source_namespace": str(archive.manifest.source_namespace),
+            "source_owner_id": str(archive.manifest.source_owner_id),
+            "record_count": sum(len(rows) for rows in archive.manifest.records.values()),
+            "blob_count": len(archive.manifest.blob_manifest),
+            "connectors_enabled": False,
+            "filesystem_complete": True,
+        }

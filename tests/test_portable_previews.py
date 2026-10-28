@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import io
 from collections.abc import AsyncIterator
 from dataclasses import replace
 from pathlib import Path
@@ -41,6 +42,7 @@ from offerloom.import_parser import ImportParserClient
 from offerloom.portable_data import export_owner_data
 from offerloom.portable_exports import LifecycleWorker
 from offerloom.portable_previews import expire_previews
+from offerloom.portable_uploads import load_candidate
 from offerloom.storage import BlobStore
 
 
@@ -252,8 +254,11 @@ def test_uploaded_nonempty_import_is_bound_and_candidate_bytes_are_released(
 ) -> None:
     _base(catalog, _profile(catalog))
     original = _application(catalog, title="Synthetic archive application")
-    attachment = _attachment(catalog, original, b"Original archive attachment bytes")
-    archive = export_owner_data(catalog.runtime, catalog.identity.settings, catalog.owner_id)
+    original_bytes = b"Original archive attachment bytes\n" * 70_000
+    attachment = _attachment(catalog, original, original_bytes)
+    output = io.BytesIO()
+    export_owner_data(catalog.runtime, catalog.identity.settings, catalog.owner_id, output)
+    archive = output.getvalue()
     added_later = _application(catalog, title="Synthetic replaced live application")
     settings = _eligible_policy_checkpoint(catalog, parser, renderer_spool, tmp_path)
     with TestClient(create_app(settings), base_url=settings.origin) as client:
@@ -279,13 +284,9 @@ def test_uploaded_nonempty_import_is_bound_and_candidate_bytes_are_released(
         )
         assert preview["plan"]["source_owner_id"] == str(catalog.owner_id)
         with catalog.runtime.transaction() as conn:
-            assert (
-                conn.execute(
-                    text("SELECT candidate_bytes FROM offerloom.portable_previews WHERE id=:id"),
-                    {"id": UUID(preview["id"])},
-                ).scalar_one()
-                == archive
-            )
+            restored = io.BytesIO()
+            load_candidate(conn, catalog.owner_id, UUID(preview["workflow_run_id"]), restored)
+            assert restored.getvalue() == archive
         with pytest.raises(DBAPIError), catalog.runtime.transaction() as conn:
             conn.execute(text("UPDATE offerloom.portable_previews SET plan='{}'"))
         if operation == "dispatch":
@@ -314,7 +315,7 @@ def test_uploaded_nonempty_import_is_bound_and_candidate_bytes_are_released(
                     attachment.sha256,
                     attachment.byte_length,
                 )
-                == b"Original archive attachment bytes"
+                == original_bytes
             )
             reason = "erased"
         elif operation in {"cancel", "generic_cancel"}:
@@ -352,6 +353,12 @@ def test_uploaded_nonempty_import_is_bound_and_candidate_bytes_are_released(
                 .one()
             )
             assert row["candidate_bytes"] is None and row["clear_reason"] == reason
+            assert (
+                conn.execute(
+                    text("SELECT count(*) FROM offerloom.portable_preview_chunks")
+                ).scalar_one()
+                == 0
+            )
             if operation != "dispatch":
                 assert set(
                     conn.execute(text("SELECT id FROM offerloom.applications")).scalars()
@@ -361,9 +368,14 @@ def test_uploaded_nonempty_import_is_bound_and_candidate_bytes_are_released(
 @pytest.mark.postgres
 def test_upload_backpressure_precedes_buffering_and_disconnect_releases_slot(
     catalog: SourceContext,
+    parser: ImportParserClient,
+    renderer_spool: Path,
+    tmp_path: Path,
 ) -> None:
+    settings = _eligible_policy_checkpoint(catalog, parser, renderer_spool, tmp_path)
+
     async def exercise() -> None:
-        app = create_app(catalog.identity.settings)
+        app = create_app(settings)
         entered = asyncio.Event()
         stalled = asyncio.Event()
 
@@ -396,11 +408,11 @@ def test_upload_backpressure_precedes_buffering_and_disconnect_releases_slot(
                 with pytest.raises(asyncio.CancelledError):
                     await first
                 admitted = await client.post(
-                    "/api/v1/portable-previews/import", content=b"Not configured", headers=headers
+                    "/api/v1/portable-previews/import", content=b"Invalid ZIP", headers=headers
                 )
                 assert (
-                    admitted.status_code == 409
-                    and admitted.json()["code"] == "backup_not_configured"
+                    admitted.status_code == 422
+                    and admitted.json()["code"] == "invalid_portable_archive"
                 )
         finally:
             app.state.db.close()

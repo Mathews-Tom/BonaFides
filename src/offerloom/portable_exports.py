@@ -7,16 +7,20 @@ import hashlib
 import json
 import os
 import signal
+import stat
 import time
+from collections.abc import Iterator
 from pathlib import Path
 from threading import Event, Thread
-from typing import Annotated, Literal, cast
+from typing import Annotated, BinaryIO, Literal, cast
 from uuid import UUID, uuid4
 
 from fastapi import APIRouter, Depends, Request, Response
 from pydantic import BaseModel, ConfigDict
 from sqlalchemy import Connection, text
 from sqlalchemy.exc import DBAPIError
+from starlette.responses import StreamingResponse
+from starlette.types import Receive, Scope, Send
 
 from offerloom.approvals import consume_action_approval
 from offerloom.auth import Owner, require_owner
@@ -31,13 +35,14 @@ from offerloom.config import ConfigurationError, Settings
 from offerloom.db import Database
 from offerloom.installation_control import InstallationMaintenance, assert_control, begin_control
 from offerloom.maintenance import finish_activity, start_cleanup_activity
-from offerloom.portable_archive import MAX_ARCHIVE_BYTES, ArchiveError, encode_archive
+from offerloom.portable_archive import MAX_ARCHIVE_BYTES, ArchiveError, encode_archive, hash_stream
 from offerloom.portable_data import collect_controlled_owner_data
 from offerloom.portable_erasure import delete_controlled_owner_data
 from offerloom.portable_import import import_controlled_owner_data
 from offerloom.portable_previews import checked_plan, expire_previews
+from offerloom.portable_uploads import load_candidate, temporary_archive
 from offerloom.problems import Problem
-from offerloom.storage import atomic_file, directory, read_file, subdirectory
+from offerloom.storage import atomic_stream, directory, subdirectory
 from offerloom.workflows import (
     Claim,
     assert_fence,
@@ -191,61 +196,61 @@ class LifecycleWorker:
                 assert plan is not None
                 if task.kind == "portable_import":
                     assert checkpoint is not None
-                    with self.db.transaction() as conn:
-                        assert_control(conn, control)
-                        payload = conn.execute(
-                            text("""SELECT candidate_bytes FROM offerloom.portable_previews
-                            WHERE owner_id=:owner AND workflow_run_id=:id AND cleared_at IS NULL"""),
-                            {"owner": task.owner_id, "id": task.id},
-                        ).scalar_one()
-                    if payload is None:
-                        raise Problem(409, "portable_preview_unavailable")
-                    result = import_controlled_owner_data(
-                        self.db,
-                        self.settings,
-                        control,
-                        bytes(payload),
-                        expected_source_owner=UUID(str(plan["source_owner_id"])),
-                        checkpoint_id=checkpoint.generation_id,
-                        runtime_pins=checkpoint.runtime_pins,
-                    )
+                    with temporary_archive(self.settings) as payload:
+                        with self.db.transaction() as conn:
+                            assert_control(conn, control)
+                            load_candidate(conn, task.owner_id, task.id, payload)
+                        result = import_controlled_owner_data(
+                            self.db,
+                            self.settings,
+                            control,
+                            payload,
+                            expected_source_owner=UUID(str(plan["source_owner_id"])),
+                            checkpoint_id=checkpoint.generation_id,
+                            runtime_pins=checkpoint.runtime_pins,
+                        )
                 else:
                     result = delete_controlled_owner_data(self.db, self.settings, control)
                 maintenance.finish(result)
                 return True
             try:
                 with (
-                    self.db.engine.connect().execution_options(
-                        isolation_level="REPEATABLE READ"
-                    ) as conn,
-                    conn.begin(),
-                ):
-                    archive = collect_controlled_owner_data(conn, self.settings, control)
-                    payload = encode_archive(archive.manifest, archive.blobs)
-                digest = hashlib.sha256(payload).hexdigest()
-                with self.db.transaction() as conn:
-                    assert_control(conn, control)
-                    expires = conn.execute(
-                        text("""INSERT INTO offerloom.portable_exports
-                        (owner_id,workflow_run_id,namespace_id,maintenance_epoch,
-                         archive_sha256,manifest_sha256,byte_length)
-                        VALUES(:owner,:id,:namespace,:epoch,:sha,:manifest,:length)
-                        RETURNING expires_at"""),
-                        {
-                            "owner": control.owner_id,
-                            "id": control.id,
-                            "namespace": control.namespace_id,
-                            "epoch": control.maintenance_epoch,
-                            "sha": digest,
-                            "manifest": archive.manifest.manifest_sha256,
-                            "length": len(payload),
-                        },
-                    ).scalar_one()
-                with (
                     directory(_root(self.settings), create=True) as root,
                     subdirectory(root, str(control.owner_id), create=True) as folder,
+                    atomic_stream(
+                        folder, str(control.id) + ".zip", staging_id=control.id
+                    ) as output,
                 ):
-                    atomic_file(folder, str(control.id) + ".zip", payload, staging_id=control.id)
+                    with (
+                        self.db.engine.connect().execution_options(
+                            isolation_level="REPEATABLE READ"
+                        ) as conn,
+                        conn.begin(),
+                    ):
+                        archive = collect_controlled_owner_data(conn, self.settings, control)
+                        encode_archive(archive.manifest, archive.blobs, output)
+                    length = output.tell()
+                    output.flush()
+                    output.seek(0)
+                    digest, _ = hash_stream(output, limit=MAX_ARCHIVE_BYTES)
+                    with self.db.transaction() as conn:
+                        assert_control(conn, control)
+                        expires = conn.execute(
+                            text("""INSERT INTO offerloom.portable_exports
+                            (owner_id,workflow_run_id,namespace_id,maintenance_epoch,
+                             archive_sha256,manifest_sha256,byte_length)
+                            VALUES(:owner,:id,:namespace,:epoch,:sha,:manifest,:length)
+                            RETURNING expires_at"""),
+                            {
+                                "owner": control.owner_id,
+                                "id": control.id,
+                                "namespace": control.namespace_id,
+                                "epoch": control.maintenance_epoch,
+                                "sha": digest,
+                                "manifest": archive.manifest.manifest_sha256,
+                                "length": length,
+                            },
+                        ).scalar_one()
                 with self.db.transaction() as conn:
                     assert_control(conn, control)
                     conn.execute(
@@ -258,7 +263,7 @@ class LifecycleWorker:
                         "export_id": str(control.id),
                         "archive_sha256": digest,
                         "manifest_sha256": archive.manifest.manifest_sha256,
-                        "byte_length": len(payload),
+                        "byte_length": length,
                         "expires_at": expires.isoformat(),
                         "record_count": sum(
                             len(rows) for rows in archive.manifest.records.values()
@@ -327,6 +332,34 @@ class LifecycleWorker:
                 code = error.code if isinstance(error, Problem) else "lifecycle_operation_failed"
                 print(json.dumps({"event": "lifecycle_unavailable", "code": code}), flush=True)
             self.stopping.wait(2)
+
+
+class _ArchiveResponse(StreamingResponse):
+    """Serve the same verified descriptor, including across unlink/disconnect."""
+
+    def __init__(self, source: BinaryIO, length: int, digest: str) -> None:
+        self.source = source
+        super().__init__(
+            self._chunks(),
+            media_type="application/zip",
+            headers={
+                "Content-Disposition": 'attachment; filename="offerloom-owner-data.zip"',
+                "Content-Length": str(length),
+                "Cache-Control": "private, no-store",
+                "X-Content-Type-Options": "nosniff",
+                "X-Content-SHA256": digest,
+            },
+        )
+
+    def _chunks(self) -> Iterator[bytes]:
+        while chunk := self.source.read(1024 * 1024):
+            yield chunk
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        try:
+            await super().__call__(scope, receive, send)
+        finally:
+            self.source.close()
 
 
 def build_router(db: Database, settings: Settings) -> APIRouter:
@@ -437,28 +470,33 @@ def build_router(db: Database, settings: Settings) -> APIRouter:
                 raise Problem(410, "portable_export_expired")
             if row["state"] != "ready":
                 raise Problem(409, "portable_export_unavailable")
-            try:
-                with (
-                    directory(_root(settings)) as root,
-                    subdirectory(root, str(owner.id)) as folder,
-                ):
-                    payload = read_file(folder, str(export_id) + ".zip", MAX_ARCHIVE_BYTES)
-            except (OSError, ValueError) as error:
-                raise Problem(409, "portable_export_unavailable") from error
-            if (
-                len(payload) != row["byte_length"]
-                or hashlib.sha256(payload).hexdigest() != row["archive_sha256"]
+        source = None
+        try:
+            with (
+                directory(_root(settings)) as root,
+                subdirectory(root, str(owner.id)) as folder,
             ):
+                descriptor = os.open(
+                    str(export_id) + ".zip",
+                    os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK,
+                    dir_fd=folder,
+                )
+                source = cast(BinaryIO, os.fdopen(descriptor, "rb"))
+            info = os.fstat(source.fileno())
+            if not stat.S_ISREG(info.st_mode) or not 0 < info.st_size <= MAX_ARCHIVE_BYTES:
+                raise ValueError("invalid_stored_file")
+            digest, length = hash_stream(source, limit=MAX_ARCHIVE_BYTES)
+            if length != row["byte_length"] or digest != row["archive_sha256"]:
                 raise Problem(409, "portable_export_integrity_failed")
-        return Response(
-            payload,
-            media_type="application/zip",
-            headers={
-                "Content-Disposition": 'attachment; filename="offerloom-owner-data.zip"',
-                "Cache-Control": "private, no-store",
-                "X-Content-Type-Options": "nosniff",
-                "X-Content-SHA256": row["archive_sha256"],
-            },
-        )
+            source.seek(0)
+            return _ArchiveResponse(source, row["byte_length"], row["archive_sha256"])
+        except (OSError, ValueError) as error:
+            if source is not None:
+                source.close()
+            raise Problem(409, "portable_export_unavailable") from error
+        except BaseException:
+            if source is not None:
+                source.close()
+            raise
 
     return router

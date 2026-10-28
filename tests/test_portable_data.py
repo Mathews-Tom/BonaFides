@@ -1,9 +1,10 @@
 # SPDX-License-Identifier: MIT OR Apache-2.0
 from __future__ import annotations
 
+import io
 from copy import deepcopy
 from typing import cast
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
 from pydantic import JsonValue
@@ -19,16 +20,21 @@ from offerloom.portable_archive import (
     ArchiveError,
     PortableArchive,
     decode_archive,
+    encode_archive,
     manifest_digest,
 )
-from offerloom.portable_data import export_owner_data, quarantine_records
+from offerloom.portable_data import collect_owner_data, export_owner_data, quarantine_records
 from offerloom.profiles import content_hash
 from offerloom.storage import BlobStore
 
 
 def _export(context: SourceContext) -> PortableArchive:
-    payload = export_owner_data(context.runtime, context.identity.settings, context.owner_id)
-    return decode_archive(payload, expected_source_owner=context.owner_id)
+    output = io.BytesIO()
+    manifest = export_owner_data(
+        context.runtime, context.identity.settings, context.owner_id, output
+    )
+    assert manifest.format_version == 2
+    return decode_archive(output, expected_source_owner=context.owner_id)
 
 
 def _digest(archive: PortableArchive) -> PortableArchive:
@@ -52,7 +58,7 @@ def _snapshot(context: SourceContext) -> object:
 
 @pytest.mark.postgres
 def test_nonempty_document_evidence_and_blob_survive_byte_and_relational_validation(
-    catalog: SourceContext,
+    catalog: SourceContext, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     document = _base(catalog, _profile(catalog))
     body = deepcopy(document["current_revision"]["body"])
@@ -111,6 +117,36 @@ def test_nonempty_document_evidence_and_blob_survive_byte_and_relational_validat
             },
         )
     before = _snapshot(catalog)
+    reads: list[str] = []
+    original_read = BlobStore.read
+
+    def read_blob(
+        store: BlobStore, owner_id: UUID, storage_key: str, digest: str, size: int
+    ) -> bytes:
+        reads.append(digest)
+        return original_read(store, owner_id, storage_key, digest, size)
+
+    with monkeypatch.context() as patch:
+        patch.setattr(BlobStore, "read", read_blob)
+        with (
+            catalog.runtime.engine.connect().execution_options(
+                isolation_level="REPEATABLE READ"
+            ) as conn,
+            conn.begin(),
+        ):
+            collected = collect_owner_data(conn, catalog.identity.settings, catalog.owner_id)
+            assert reads == []
+            encode_archive(collected.manifest, collected.blobs, io.BytesIO())
+            assert reads == [stored.sha256]
+
+            def missing_blob(
+                store: BlobStore, owner_id: UUID, storage_key: str, digest: str, size: int
+            ) -> bytes:
+                raise FileNotFoundError
+
+            patch.setattr(BlobStore, "read", missing_blob)
+            with pytest.raises(ArchiveError, match="portable_blob_unavailable"):
+                encode_archive(collected.manifest, collected.blobs, io.BytesIO())
     archive = _export(catalog)
     with catalog.runtime.transaction() as conn:
         quarantine_records(conn, archive)
@@ -146,11 +182,11 @@ def test_nonempty_document_evidence_and_blob_survive_byte_and_relational_validat
             {"owner": catalog.owner_id},
         ).scalar_one()
     assert session_hash not in canonical_json(archive.manifest.model_dump(mode="json"))
-    missing_blob = _digest(
+    missing_archive = _digest(
         PortableArchive(archive.manifest.model_copy(update={"blob_manifest": []}), {})
     )
     with catalog.runtime.transaction() as conn, pytest.raises(ArchiveError):
-        quarantine_records(conn, missing_blob)
+        quarantine_records(conn, missing_archive)
     assert _snapshot(catalog) == before
 
 
@@ -174,7 +210,7 @@ def test_invalid_archive_rejects_without_changing_live_rows_or_sessions(
     catalog: SourceContext, damage: str
 ) -> None:
     _base(catalog, _profile(catalog))
-    archive = deepcopy(_export(catalog))
+    archive = _export(catalog)
     records = archive.manifest.records
     if damage == "owner":
         records["profile_revisions"][0]["owner_id"] = str(uuid4())
@@ -224,7 +260,7 @@ def test_foreign_source_archive_validates_without_granting_authority_to_its_owne
     catalog: SourceContext,
 ) -> None:
     _base(catalog, _profile(catalog))
-    archive = deepcopy(_export(catalog))
+    archive = _export(catalog)
     source_owner = uuid4()
     for rows in archive.manifest.records.values():
         for row in rows:

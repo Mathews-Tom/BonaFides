@@ -7,10 +7,11 @@ import hashlib
 from typing import Annotated, Literal, cast
 from uuid import UUID, uuid4
 
-from fastapi import APIRouter, Body, Depends, Header, Request
+from fastapi import APIRouter, Depends, Header, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 from sqlalchemy import Connection, text
+from starlette.concurrency import run_in_threadpool
 
 from offerloom.auth import Owner, require_owner
 from offerloom.backup_archive import BackupError
@@ -26,6 +27,12 @@ from offerloom.config import ConfigurationError, Settings
 from offerloom.db import Database
 from offerloom.portable_archive import MAX_ARCHIVE_BYTES, ArchiveError, decode_archive
 from offerloom.portable_data import quarantine_records
+from offerloom.portable_uploads import (
+    UPLOAD_CHUNK_BYTES,
+    CandidateUpload,
+    retain_candidate,
+    temporary_archive,
+)
 from offerloom.problems import Problem
 from offerloom.workflows import cancel_workflow, enqueue, get_workflow
 
@@ -243,7 +250,7 @@ def _prepare(
     settings: Settings,
     owner: Owner,
     *,
-    payload: bytes | None,
+    payload: CandidateUpload | None,
     deletion: DeletionRequest | None,
     expected_source_owner: UUID | None,
     checkpoint: VerifiedCheckpoint | None,
@@ -288,10 +295,10 @@ def _prepare(
     scope: dict[str, object]
     if replacing:
         assert payload is not None and expected_source_owner is not None and checkpoint is not None
-        archive = decode_archive(payload, expected_source_owner=expected_source_owner)
-        quarantine_records(conn, archive)
-        recheck_verified_checkpoint(conn, owner.id, checkpoint)
-        scope = {"replacement_sha256": hashlib.sha256(payload).hexdigest()}
+        with decode_archive(payload.stream, expected_source_owner=expected_source_owner) as archive:
+            quarantine_records(conn, archive)
+            recheck_verified_checkpoint(conn, owner.id, checkpoint)
+        scope = {"replacement_sha256": payload.sha256}
         plan.update(
             source_owner_id=str(expected_source_owner),
             source_namespace=str(archive.manifest.source_namespace),
@@ -299,13 +306,12 @@ def _prepare(
             manifest_sha256=archive.manifest.manifest_sha256,
             record_counts={key: len(rows) for key, rows in archive.manifest.records.items()},
             blob_count=len(archive.manifest.blob_manifest),
-            byte_length=len(payload),
+            byte_length=payload.byte_length,
             checkpoint_id=str(checkpoint.generation_id),
             runtime_pins=checkpoint.runtime_pins,
             credential_policy="excluded_from_portable_archive",
         )
-        # Do not retain decoded blobs/records while binding the bounded bytea upload.
-        del archive
+        payload.stream.seek(0)
     else:
         assert deletion is not None
         application = deletion.application_id
@@ -342,10 +348,12 @@ def _prepare(
             "kind": action,
             "plan": canonical_json(plan),
             "sha": digest,
-            "bytes": payload,
+            "bytes": payload.stream.read(UPLOAD_CHUNK_BYTES) if payload is not None else None,
             "expiry": expiry,
         },
     )
+    if payload is not None:
+        retain_candidate(conn, owner.id, identifier, payload.stream)
     binding = cast(dict[str, object], plan["binding"])
     prepare_action_approval(
         conn,
@@ -440,52 +448,72 @@ def build_router(db: Database, settings: Settings) -> APIRouter:
         return JSONResponse(result, status_code=status, headers={"ETag": f'"{result["version"]}"'})
 
     @router.post("/import")
-    def import_preview(
+    async def import_preview(
         request: Request,
         owner: Annotated[Owner, Depends(require_owner)],
-        payload: Annotated[bytes, Body(media_type="application/zip")],
         source_owner: Annotated[UUID | None, Header(alias="X-Source-Owner")] = None,
     ) -> JSONResponse:
-        if not 0 < len(payload) <= MAX_ARCHIVE_BYTES:
-            raise Problem(413, "body_too_large")
-        with db.transaction() as conn:
-            lock_installation(conn)
-            require_recent_authentication(conn, owner)
-        checkpoint = _checkpoint(db, settings, owner.id)
-        expected_source = owner.id if source_owner is None else source_owner
-        try:
+        def preflight() -> VerifiedCheckpoint:
             with db.transaction() as conn:
                 lock_installation(conn)
                 require_recent_authentication(conn, owner)
-                status, result = command(
-                    conn,
-                    owner.id,
-                    "POST",
-                    "/portable-previews/import",
-                    {},
-                    {
-                        "archive_sha256": hashlib.sha256(payload).hexdigest(),
-                        "byte_length": len(payload),
-                        "expected_source_owner": str(expected_source),
-                    },
-                    request.headers.get("if-match"),
-                    request.headers.get("idempotency-key"),
-                    "workspace",
-                    owner.id,
-                    lambda active: _prepare(
-                        active,
-                        settings,
-                        owner,
-                        payload=payload,
-                        deletion=None,
-                        expected_source_owner=expected_source,
-                        checkpoint=checkpoint,
-                    ),
-                    workspace_change=False,
-                )
-        except ArchiveError as error:
-            raise Problem(422, str(error)) from error
-        return JSONResponse(result, status_code=status, headers={"ETag": f'"{result["version"]}"'})
+            return _checkpoint(db, settings, owner.id)
+
+        checkpoint = await run_in_threadpool(preflight)
+        expected_source = owner.id if source_owner is None else source_owner
+
+        def prepare(payload: CandidateUpload) -> JSONResponse:
+            try:
+                with db.transaction() as conn:
+                    lock_installation(conn)
+                    require_recent_authentication(conn, owner)
+                    status, result = command(
+                        conn,
+                        owner.id,
+                        "POST",
+                        "/portable-previews/import",
+                        {},
+                        {
+                            "archive_sha256": payload.sha256,
+                            "byte_length": payload.byte_length,
+                            "expected_source_owner": str(expected_source),
+                        },
+                        request.headers.get("if-match"),
+                        request.headers.get("idempotency-key"),
+                        "workspace",
+                        owner.id,
+                        lambda active: _prepare(
+                            active,
+                            settings,
+                            owner,
+                            payload=payload,
+                            deletion=None,
+                            expected_source_owner=expected_source,
+                            checkpoint=checkpoint,
+                        ),
+                        workspace_change=False,
+                    )
+            except ArchiveError as error:
+                raise Problem(422, str(error)) from error
+            return JSONResponse(
+                result, status_code=status, headers={"ETag": f'"{result["version"]}"'}
+            )
+
+        with temporary_archive(settings) as stream:
+            total = 0
+            digest = hashlib.sha256()
+            async for chunk in request.stream():
+                total += len(chunk)
+                if total > MAX_ARCHIVE_BYTES:
+                    raise Problem(413, "body_too_large")
+                digest.update(chunk)
+                await run_in_threadpool(stream.write, chunk)
+            if not total:
+                raise Problem(413, "body_too_large")
+            stream.seek(0)
+            return await run_in_threadpool(
+                prepare, CandidateUpload(stream, total, digest.hexdigest())
+            )
 
     @router.post("/{identifier}/cancel")
     def cancel(

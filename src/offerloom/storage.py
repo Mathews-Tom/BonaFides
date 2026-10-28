@@ -15,6 +15,7 @@ from collections.abc import Iterator
 from contextlib import contextmanager, suppress
 from dataclasses import dataclass
 from pathlib import Path
+from typing import BinaryIO, cast
 from uuid import UUID, uuid4
 
 MAX_PDF_BYTES = 64 * 1024 * 1024
@@ -92,31 +93,31 @@ def read_file(fd: int, name: str, limit: int) -> bytes:
         os.close(source)
 
 
-def atomic_file(fd: int, name: str, data: bytes, *, staging_id: UUID | None = None) -> None:
-    if "/" in name or name in (".", ".."):
+@contextmanager
+def atomic_stream(fd: int, name: str, *, staging_id: UUID | None = None) -> Iterator[BinaryIO]:
+    """Publish a seekable private file only after its complete writer succeeds."""
+    if not name or "/" in name or name in (".", ".."):
         raise ValueError("invalid_storage_key")
     temporary = f".staging-{(staging_id or uuid4()).hex}"
     target = os.open(
-        temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600, dir_fd=fd
+        temporary, os.O_RDWR | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600, dir_fd=fd
     )
     try:
-        view = memoryview(data)
-        while view:
-            written = os.write(target, view)
-            if written <= 0:
-                raise OSError("short_storage_write")
-            view = view[written:]
-        os.fsync(target)
-        os.close(target)
-        target = -1
+        with os.fdopen(target, "w+b") as stream:
+            yield cast(BinaryIO, stream)
+            stream.flush()
+            os.fsync(stream.fileno())
         # rename replaces a symlink itself; it never follows its target.
         os.rename(temporary, name, src_dir_fd=fd, dst_dir_fd=fd)
         os.fsync(fd)
     finally:
-        if target >= 0:
-            os.close(target)
         with suppress(FileNotFoundError):
             os.unlink(temporary, dir_fd=fd)
+
+
+def atomic_file(fd: int, name: str, data: bytes, *, staging_id: UUID | None = None) -> None:
+    with atomic_stream(fd, name, staging_id=staging_id) as stream:
+        stream.write(data)
 
 
 class BlobStore:

@@ -4,8 +4,9 @@
 from __future__ import annotations
 
 import hashlib
+from collections.abc import Iterator, Mapping
 from datetime import UTC, datetime
-from typing import cast
+from typing import BinaryIO, cast
 from uuid import UUID, uuid4
 
 from pydantic import JsonValue, ValidationError
@@ -20,7 +21,7 @@ from offerloom.documents import parse_body
 from offerloom.installation_control import Control
 from offerloom.portable_archive import (
     EXCLUSIONS,
-    MAX_ARCHIVE_BYTES,
+    MAX_BLOBS,
     MAX_MANIFEST_BYTES,
     MAX_RECORDS,
     ArchiveError,
@@ -36,7 +37,29 @@ from offerloom.storage import BlobStore
 
 JsonRow = dict[str, JsonValue]
 _BLOB_REFERENCES = ("evidence_revisions", "application_attachments", "document_artifacts")
-_SOURCE_SCHEMAS = frozenset({13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26})
+_SOURCE_SCHEMAS = frozenset({13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27})
+
+
+class _CollectedBlobs(Mapping[str, bytes]):
+    def __init__(
+        self, store: BlobStore, owner_id: UUID, members: Mapping[str, tuple[str, int]]
+    ) -> None:
+        self._store = store
+        self._owner_id = owner_id
+        self._members = members
+
+    def __iter__(self) -> Iterator[str]:
+        return iter(self._members)
+
+    def __len__(self) -> int:
+        return len(self._members)
+
+    def __getitem__(self, digest: str) -> bytes:
+        key, size = self._members[digest]
+        try:
+            return self._store.read(self._owner_id, key, digest, size)
+        except (OSError, ValueError) as exc:
+            raise ArchiveError("portable_blob_unavailable") from exc
 
 
 def _relation(name: str) -> str:
@@ -182,10 +205,10 @@ def _collect_owner_data(conn: Connection, settings: Settings, owner_id: UUID) ->
         for row in records[name]
         if row["blob_id"] is not None
     }
-    blobs: dict[str, bytes] = {}
+    if len(blob_ids) > MAX_BLOBS:
+        raise ArchiveError("portable_blob_limit")
+    locations: dict[str, tuple[str, int]] = {}
     members: list[BlobMember] = []
-    store = BlobStore(settings.blob_root)
-    total = 0
     for identifier in sorted(blob_ids):
         blob_row = (
             conn.execute(
@@ -198,13 +221,9 @@ def _collect_owner_data(conn: Connection, settings: Settings, owner_id: UUID) ->
         )
         if blob_row["state"] != "ready":
             raise ArchiveError("portable_blob_unavailable")
-        payload = store.read(
-            owner_id, blob_row["storage_key"], blob_row["sha256"], blob_row["byte_length"]
-        )
-        total += len(payload)
-        # Leave room for the manifest and ZIP headers; encode checks exact size.
-        if total + MAX_MANIFEST_BYTES > MAX_ARCHIVE_BYTES:
-            raise ArchiveError("archive_size_limit")
+        # Blob bytes are read and verified only when encode_archive writes them,
+        # while the caller still holds the deletion barrier / controlled snapshot.
+        locations[blob_row["sha256"]] = (blob_row["storage_key"], blob_row["byte_length"])
         members.append(
             BlobMember(
                 blob_id=blob_row["id"],
@@ -214,10 +233,9 @@ def _collect_owner_data(conn: Connection, settings: Settings, owner_id: UUID) ->
                 archive_member=f"blobs/{blob_row['sha256']}",
             )
         )
-        blobs[blob_row["sha256"]] = payload
     manifest = Manifest(
         format="offerloom-portable",
-        format_version=1,
+        format_version=2,
         source_schema_version=schema,
         created_at=datetime.now(UTC),
         source_namespace=namespace,
@@ -229,16 +247,21 @@ def _collect_owner_data(conn: Connection, settings: Settings, owner_id: UUID) ->
         exclusions=list(EXCLUSIONS),
     )
     manifest = manifest.model_copy(update={"manifest_sha256": manifest_digest(manifest)})
-    return PortableArchive(manifest, blobs)
+    return PortableArchive(
+        manifest, _CollectedBlobs(BlobStore(settings.blob_root), owner_id, locations)
+    )
 
 
-def export_owner_data(db: Database, settings: Settings, owner_id: UUID) -> bytes:
+def export_owner_data(
+    db: Database, settings: Settings, owner_id: UUID, output: BinaryIO
+) -> Manifest:
     with (
         db.engine.connect().execution_options(isolation_level="REPEATABLE READ") as conn,
         conn.begin(),
     ):
         archive = collect_owner_data(conn, settings, owner_id)
-        return encode_archive(archive.manifest, archive.blobs)
+        encode_archive(archive.manifest, archive.blobs, output)
+        return archive.manifest
 
 
 def _native_types(conn: Connection, relation: str) -> dict[str, str]:
@@ -453,7 +476,7 @@ def quarantine_records(conn: Connection, archive: PortableArchive) -> None:
                     if parent in {"owners", "workflow_runs"}:
                         continue
                     if parent == "portable_model_history":
-                        # Portable v1 uses original model IDs and the separately
+                        # Portable records use original model IDs and the separately
                         # validated historical family, never live history columns.
                         if (
                             name
