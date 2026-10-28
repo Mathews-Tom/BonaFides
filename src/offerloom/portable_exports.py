@@ -158,6 +158,13 @@ class LifecycleWorker:
             if task.kind in {"portable_import", "privacy_delete"}:
                 plan, checkpoint = self._destructive_preflight(task)
             with self.db.transaction() as conn:
+                # Maintenance upgrades admission to exclusive. Acquire that lock
+                # before the workflow row so admitted task readers can finish.
+                conn.execute(
+                    text(
+                        "SELECT singleton FROM offerloom.installation_state WHERE singleton FOR UPDATE"
+                    )
+                )
                 assert_fence(conn, task)
                 if plan is not None:
                     plan = checked_plan(conn, self.settings, task.owner_id, task.id)

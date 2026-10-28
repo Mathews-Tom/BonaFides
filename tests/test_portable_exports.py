@@ -8,6 +8,7 @@ import json
 import subprocess
 import sys
 import time
+from concurrent.futures import ThreadPoolExecutor
 from copy import deepcopy
 from dataclasses import replace
 from pathlib import Path
@@ -24,7 +25,8 @@ from test_sources import SourceContext
 from test_sources import catalog as catalog
 from test_suitability import _profile
 
-from offerloom.commands import canonical_json
+from offerloom.approvals import get_action_approval
+from offerloom.commands import canonical_json, lock_installation
 from offerloom.import_parser import ImportParserClient
 from offerloom.portable_exports import LifecycleWorker, expire_exports
 from offerloom.profiles import content_hash
@@ -273,6 +275,42 @@ def test_export_api_requires_owner_csrf_precondition_and_bounded_single_pending(
         assert catalog.client.get(f"{path}/{task['id']}/download").status_code == 401
     finally:
         catalog.client.cookies.update(cookies)
+
+
+@pytest.mark.postgres
+def test_export_can_begin_while_a_workflow_reader_holds_admission(
+    catalog: SourceContext, parser: ImportParserClient, renderer_spool: Path
+) -> None:
+    queued = _queue(catalog)
+    identifier = UUID(str(queued["id"]))
+    worker = _worker(catalog, parser, renderer_spool)
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        with catalog.runtime.transaction() as reader:
+            lock_installation(reader)
+            reader_pid = reader.execute(text("SELECT pg_backend_pid()")).scalar_one()
+            running = executor.submit(worker.run_once)
+            deadline = time.monotonic() + 10
+            while True:
+                with catalog.identity.admin.transaction() as monitor:
+                    blocked = monitor.execute(
+                        text("""SELECT EXISTS(SELECT 1 FROM pg_stat_activity
+                        WHERE :reader=ANY(pg_blocking_pids(pid)))"""),
+                        {"reader": reader_pid},
+                    ).scalar_one()
+                if blocked:
+                    break
+                if running.done():
+                    running.result()
+                    pytest.fail("Lifecycle worker did not wait for the admitted reader")
+                assert time.monotonic() < deadline, "Lifecycle worker did not reach admission"
+                time.sleep(0.01)
+            # This is the workflow row lock acquired by an ordinary task read.
+            # It must finish without cycling against maintenance admission.
+            assert get_action_approval(reader, catalog.owner_id, identifier, optional=True) is None
+        assert running.result(timeout=10)
+    result = catalog.client.get(f"/api/v1/workflows/{identifier}").json()
+    assert result["state"] == "succeeded", result
+    assert catalog.client.get(f"/api/v1/portable-exports/{identifier}/download").status_code == 200
 
 
 @pytest.mark.postgres
