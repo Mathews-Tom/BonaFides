@@ -279,16 +279,12 @@ def _prepare(
         "portable_import" if replacing else "privacy_delete",
         {"preview_id": str(identifier)},
     )
-    expiry = conn.execute(
-        text("SELECT clock_timestamp()+make_interval(secs=>:ttl)"), {"ttl": PREVIEW_TTL_SECONDS}
-    ).scalar_one()
     plan: dict[str, object] = {
         "schema_version": 1,
         "id": str(identifier),
         "workflow_run_id": str(workflow),
         "action_kind": action,
         "binding": _bindings(conn, owner.id, owner.session_id, settings),
-        "expires_at": expiry.isoformat(),
         "remaining_copies": ["downloaded_exports", "encrypted_backups", "external_copies"],
         "connections_after_operation": "disabled_reauthorization_and_review_required",
     }
@@ -336,6 +332,10 @@ def _prepare(
             local_login_retained=True,
         )
     plan["payload"] = scope
+    expiry = conn.execute(
+        text("SELECT clock_timestamp()+make_interval(secs=>:ttl)"), {"ttl": PREVIEW_TTL_SECONDS}
+    ).scalar_one()
+    plan["expires_at"] = expiry.isoformat()
     digest = _sha(plan)
     conn.execute(
         text("""INSERT INTO offerloom.portable_previews

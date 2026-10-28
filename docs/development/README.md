@@ -19,6 +19,8 @@ Issue #4 removes the former 112 MiB stored-file export ceiling. New `offerloom-p
 
 Append-only migration 027 raises the export-store bound and retains replacement candidates as bounded 1 MiB PostgreSQL chunks, preserving existing uploads. Cancellation, expiry, erasure and native recovery clear all chunks through the existing preview lifecycle. Applied migrations 001–026 remain unchanged. Encrypted-backup format and limits are unchanged.
 
+Archive validation completes before assigning preview expiry. Replacement uploads have no fixed browser wall-clock abort; lifecycle cancellation still releases the active request, and ordinary bounded API reads keep their existing timeouts.
+
 ## Observed final M1 engineering checkpoint — 2026-10-26
 
 Final image `offerloom:m1-final-r`, index identity `sha256:d3a1a773607a07cd5d49d3473da48def9012add60daedfb00ef28e2c6c8788bd`, passed the complete schema-25 nonempty native drill: encrypted matched capture, independent `backup-restore` and `backup-verify` clean targets, table-content/relationship/blob comparisons, origin-bound credential decryption with exact encryption-use increments, pre-DDL negative validation, closed authority followed by supported offline opening, and actual fresh-owner profile/posting/tracking/PDF/portable-export consumers on both targets. Current persisted Compact/Letter/concise defaults survived capture and both restores. The source and both targets retain all volumes, ciphertexts, keys and evidence; owned services are stopped. These are synthetic same-host technical observations, not off-host custody or human qualification.

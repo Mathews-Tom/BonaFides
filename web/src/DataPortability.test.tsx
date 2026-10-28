@@ -238,6 +238,26 @@ describe('replacement source and browser-buffer safety', () => {
     expect(screen.getByLabelText('Expected original owner UUID (optional)')).toHaveValue('');
   });
 
+  it('keeps a slow replacement upload alive beyond two minutes and accepts its eventual preview', async () => {
+    const user = userEvent.setup(); const { api, state } = server(preview(true));
+    let complete!: (value: PortablePreview) => void;
+    const upload = vi.spyOn(api, 'uploadPortable').mockImplementation((_file, _version, _key, _owner, signal) => new Promise((resolve, reject) => {
+      complete = resolve;
+      signal?.addEventListener('abort', () => reject(new DOMException('Upload stopped', 'AbortError')));
+    }));
+    render(<Controls api={api} />);
+    await user.upload(await screen.findByLabelText('Owner-data ZIP'), new File(['raw'], 'owner.zip', { type: 'application/zip' }));
+    vi.useFakeTimers();
+    await act(async () => { fireEvent.submit(screen.getByRole('button', { name: 'Upload ZIP and prepare replacement preview' }).closest('form')!); });
+    expect(upload).toHaveBeenCalledTimes(1);
+    await act(async () => { await vi.advanceTimersByTimeAsync(180000); });
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Upload ZIP and prepare replacement preview' })).toBeDisabled();
+    await act(async () => { complete(state.preview); });
+    expect(screen.getByRole('heading', { name: 'Preview preview-one' })).toBeVisible();
+    expect(screen.getByRole('list', { name: 'Exact server record counts' })).toHaveTextContent('application_notes: 2');
+  });
+
   it('requires another explicit action and a new key when a retry detects changed workspace context', async () => {
     const user = userEvent.setup(); const { api, state } = server(preview(true));
     const upload = vi.spyOn(api, 'uploadPortable').mockRejectedValueOnce(new TypeError('offline')).mockResolvedValue(state.preview);

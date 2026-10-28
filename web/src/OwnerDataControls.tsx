@@ -168,11 +168,10 @@ export function OwnerDataControls({ api, active, disabled, onBusyChange }: {
       let value: PortablePreview;
       if (replacement && chosenFile) {
         const controller = new AbortController(); controllers.current.add(controller);
-        const timeout = window.setTimeout(() => controller.abort(), 120000);
         try {
           value = await api.uploadPortable(chosenFile, current.workspace_version, key, expectedOwner || undefined, controller.signal);
           if (!mounted.current || controller.signal.aborted) throw new DOMException('Upload stopped', 'AbortError');
-        } finally { clearTimeout(timeout); controllers.current.delete(controller); }
+        } finally { controllers.current.delete(controller); }
       } else value = await request<PortablePreview>('/portable-previews/deletion', 'POST', body, current.workspace_version, key);
       preparation.current = null; accept(value);
       setNotice('Server preview saved. No destructive approval has been sent. Inspect every scope, count, retained copy and binding before confirming.');

@@ -39,7 +39,7 @@ from offerloom.api import create_app
 from offerloom.backup_configuration import capture_runtime_pins
 from offerloom.config import Settings
 from offerloom.import_parser import ImportParserClient
-from offerloom.portable_data import export_owner_data
+from offerloom.portable_data import export_owner_data, quarantine_records
 from offerloom.portable_exports import LifecycleWorker
 from offerloom.portable_previews import expire_previews
 from offerloom.portable_uploads import load_candidate
@@ -241,6 +241,62 @@ def _eligible_policy_checkpoint(
             },
         )
     return settings
+
+
+@pytest.mark.postgres
+def test_long_archive_validation_does_not_expire_the_new_preview(
+    catalog: SourceContext,
+    parser: ImportParserClient,
+    renderer_spool: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from datetime import UTC, datetime, timedelta
+
+    from sqlalchemy import Connection
+
+    from offerloom import portable_previews
+
+    output = io.BytesIO()
+    export_owner_data(catalog.runtime, catalog.identity.settings, catalog.owner_id, output)
+    settings = _eligible_policy_checkpoint(catalog, parser, renderer_spool, tmp_path)
+    validated = False
+    execute = Connection.execute
+
+    def validation(conn: Connection, archive: Any) -> None:
+        nonlocal validated
+        quarantine_records(conn, archive)
+        validated = True
+
+    def clock(
+        conn: Connection, statement: Any, parameters: Any = None, *args: Any, **kwargs: Any
+    ) -> Any:
+        if str(statement) == "SELECT clock_timestamp()+make_interval(secs=>:ttl)":
+            # Model a validation begun 601 seconds ago, completed at the real
+            # database clock. No sleep or timing-sensitive database mutation.
+            instant = datetime.now(UTC) - timedelta(seconds=0 if validated else 601)
+            return execute(
+                conn,
+                text("SELECT CAST(:instant AS timestamptz)+make_interval(secs=>:ttl)"),
+                {"instant": instant, "ttl": parameters["ttl"]},
+            )
+        return execute(conn, statement, parameters, *args, **kwargs)
+
+    monkeypatch.setattr(portable_previews, "quarantine_records", validation)
+    monkeypatch.setattr(Connection, "execute", clock)
+    with TestClient(create_app(settings), base_url=settings.origin) as client:
+        assert _login(catalog.identity, client).status_code == 201
+        context = replace(
+            catalog, client=client, csrf=client.get("/api/v1/session").json()["csrf_token"]
+        )
+        response = client.post(
+            "/api/v1/portable-previews/import",
+            content=output.getvalue(),
+            headers={**context.headers(_version(context)), "Content-Type": "application/zip"},
+        )
+        assert response.status_code == 201, response.text
+        expires = datetime.fromisoformat(response.json()["plan"]["expires_at"])
+        assert expires > datetime.now(UTC) + timedelta(seconds=590)
 
 
 @pytest.mark.postgres
