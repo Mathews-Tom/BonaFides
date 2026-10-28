@@ -21,7 +21,9 @@ Append-only migration 027 raises the export-store bound and retains replacement 
 
 Archive validation and complete candidate retention finish before the ten-minute review lifetime starts. A one-time privileged finalizer binds the ready candidate's expiry and digest without granting runtime writes to saved plans; incomplete candidates and already-finalized plans cannot use it. Replacement uploads have no fixed browser wall-clock abort; lifecycle cancellation still releases the active request, and ordinary bounded API reads keep their existing timeouts.
 
-Lifecycle workers acquire exclusive installation admission before locking their workflow row. This lets admitted task readers finish instead of deadlocking against maintenance admission.
+Lifecycle workers acquire exclusive installation admission before committing a workflow claim. Queue selection and destructive preflight remain provisional; unavailable admission defers the operation without a lease, attempt charge or consumed approval. The admitted transaction reclaims that exact eligible workflow, revalidates its plan/checkpoint and consumes approval only when starting maintenance. This preserves installation-before-workflow lock order and does not retry destructive execution.
+
+The raw API ingress relay uses a shared, connection-wide 24-hour inactivity limit, refreshed by successfully forwarded bytes in either direction, with no absolute lifetime for an active connection. This also applies to reused HTTP connections: a quiet client does not terminate an active download. The 64-connection cap and bounded connect, write-drain and close operations remain. A silent API peer can occupy a slot for up to 24 hours; continuing traffic can retain it longer. With no forwarded traffic, pre-response archive verification must finish within that window (about 7.41 MiB/s at the archive ceiling). External reverse proxies need compatible budgets. The database relay retains its existing 60-second idle and 300-second session limits.
 
 ## Observed final M1 engineering checkpoint — 2026-10-26
 
