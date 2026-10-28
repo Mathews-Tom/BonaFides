@@ -69,7 +69,7 @@ export interface InstallationBackups {
   key_custody: string; offhost_copy: string;
   generations: { id: string; captured_at: string; restore_verified_at: string | null; byte_length: number }[];
 }
-export const MAX_PORTABLE_BYTES = 128 * 1024 * 1024;
+export const MAX_PORTABLE_BYTES = 10_000 * 64 * 1024 * 1024 + 20 * 1024 * 1024;
 export interface Workflow {
   id: string; version: number; state: WorkflowState; attempt: number; kind?: string; mode?: 'deterministic_base' | 'tailored_ai' | 'section_regeneration';
   max_attempts: number; next_attempt_at: string | null; last_error_code: string | null;

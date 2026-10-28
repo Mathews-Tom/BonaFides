@@ -58,27 +58,14 @@ export function DataPortability({ api, profile, disabled, onBusyChange }: {
       setError(errorText(failure));
     } finally { setBusy(false); }
   }
-  async function download(copy: ExportCopy) {
+  function download(copy: ExportCopy) {
     if (unavailable) return;
-    setBusy(true); setError(''); setNotice('');
-    try {
-      const response = await fetch(`/api/v1/portable-exports/${encodeURIComponent(copy.id)}/download`, {
-        credentials: 'same-origin', cache: 'no-store', headers: { Accept: 'application/zip' },
-      });
-      if (!response.ok) throw new ApiError(response.status, response.status === 410 ? 'portable_export_expired' : 'portable_export_download_failed');
-      const bytes = await response.arrayBuffer();
-      const digest = Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', bytes)), value => value.toString(16).padStart(2, '0')).join('');
-      if (bytes.byteLength !== copy.byte_length || digest !== copy.archive_sha256) throw new ApiError(409, 'portable_export_integrity_failed');
-      const url = URL.createObjectURL(new Blob([bytes], { type: 'application/zip' }));
-      const link = document.createElement('a');
-      link.href = url; link.download = 'offerloom-owner-data.zip'; link.click();
-      setTimeout(() => URL.revokeObjectURL(url), 1000);
-      setNotice('Verified owner-data download requested. Protect this unencrypted personal-data file; it is not an installation backup.');
-    } catch (failure) {
-      if (!(failure instanceof ApiError) || failure.status === 401 || failure.status === 503) api.onUnavailable?.(failure);
-      setError(errorText(failure));
-    }
-    finally { setBusy(false); }
+    setError('');
+    const link = document.createElement('a');
+    link.href = `/api/v1/portable-exports/${encodeURIComponent(copy.id)}/download`;
+    link.download = 'offerloom-owner-data.zip';
+    link.click();
+    setNotice('Owner-data download requested. The server verifies the stored archive before streaming it; check browser downloads for completion or failure. Protect this unencrypted personal-data file; it is not an installation backup.');
   }
   const unavailable = disabled || busy || controlsBusy || !!maintenance?.maintenance_active;
   return <details id="owner-data-portability" className="panel" onToggle={event => setOpen(event.currentTarget.open)}>

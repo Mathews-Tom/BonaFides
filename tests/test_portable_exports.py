@@ -24,7 +24,8 @@ from test_sources import SourceContext
 from test_sources import catalog as catalog
 from test_suitability import _profile
 
-from offerloom.commands import canonical_json
+from offerloom.approvals import get_action_approval
+from offerloom.commands import canonical_json, lock_installation
 from offerloom.import_parser import ImportParserClient
 from offerloom.portable_exports import LifecycleWorker, expire_exports
 from offerloom.profiles import content_hash
@@ -273,6 +274,36 @@ def test_export_api_requires_owner_csrf_precondition_and_bounded_single_pending(
         assert catalog.client.get(f"{path}/{task['id']}/download").status_code == 401
     finally:
         catalog.client.cookies.update(cookies)
+
+
+@pytest.mark.postgres
+def test_export_can_begin_while_a_workflow_reader_holds_admission(
+    catalog: SourceContext, parser: ImportParserClient, renderer_spool: Path
+) -> None:
+    queued = _queue(catalog)
+    identifier = UUID(str(queued["id"]))
+    worker = _worker(catalog, parser, renderer_spool)
+    with catalog.runtime.transaction() as reader:
+        lock_installation(reader)
+        assert worker.run_once() is False
+        # The admitted reader can still acquire the workflow row before it
+        # releases admission; maintenance must not invert those locks.
+        assert get_action_approval(reader, catalog.owner_id, identifier, optional=True) is None
+        assert worker.run_once() is False
+        row = (
+            reader.execute(
+                text("""SELECT state,attempt,lease_holder FROM offerloom.workflow_runs
+            WHERE owner_id=:owner AND id=:id"""),
+                {"owner": catalog.owner_id, "id": identifier},
+            )
+            .mappings()
+            .one()
+        )
+        assert dict(row) == {"state": "pending", "attempt": 0, "lease_holder": None}
+    assert worker.run_once()
+    result = catalog.client.get(f"/api/v1/workflows/{identifier}").json()
+    assert result["state"] == "succeeded", result
+    assert catalog.client.get(f"/api/v1/portable-exports/{identifier}/download").status_code == 200
 
 
 @pytest.mark.postgres

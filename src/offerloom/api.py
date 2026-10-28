@@ -319,6 +319,32 @@ class BrowserBoundary:
             if length < 0 or length > body_limit:
                 await reject(Problem(413, "body_too_large"))
                 return
+        if is_portable_import:
+            # Authenticate/admit before reading large personal-data uploads.
+            # The endpoint spools each bounded chunk into an unlinked data-volume
+            # file; never concatenate the archive in the ASGI boundary.
+            received = 0
+
+            async def portable_receive() -> Message:
+                nonlocal received
+                message = await receive()
+                if message["type"] == "http.request":
+                    received += len(message.get("body", b""))
+                    if received > body_limit:
+                        raise Problem(413, "body_too_large")
+                return message
+
+            try:
+                await self.app(scope, portable_receive, secured_send)
+            except Problem as problem:
+                if started:
+                    raise
+                await reject(problem)
+            except Exception:
+                if started:
+                    raise
+                await reject(Problem(500, "internal_error"))
+            return
         # Bound all received chunks; Content-Length alone is not an admission check.
         chunks: list[bytes] = []
         total = 0

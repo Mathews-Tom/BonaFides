@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import hashlib
-from copy import deepcopy
+import io
 from datetime import timedelta
 from pathlib import Path
 from typing import cast
@@ -18,6 +18,7 @@ from test_identity import _login
 from test_identity import identity as identity
 from test_import_parser import parser as parser
 from test_installation_control import renderer_spool as renderer_spool
+from test_portable_archive import _encoded
 from test_portable_data import _digest, _export, _historical_model, _historical_proposal
 from test_portable_erasure import _checkpoint
 from test_sources import SourceContext
@@ -28,7 +29,7 @@ from offerloom.approvals import consume_action_approval, prepare_action_approval
 from offerloom.commands import canonical_json
 from offerloom.import_parser import ImportParserClient
 from offerloom.installation_control import InstallationMaintenance, begin_control
-from offerloom.portable_archive import ArchiveError, BlobMember, PortableArchive, encode_archive
+from offerloom.portable_archive import ArchiveError, BlobMember, PortableArchive
 from offerloom.portable_import import import_controlled_owner_data
 from offerloom.storage import BlobStore
 from offerloom.workflows import claim_control
@@ -36,7 +37,7 @@ from offerloom.workflows import claim_control
 
 def _source(context: SourceContext) -> tuple[PortableArchive, bytes]:
     _base(context, _profile(context))
-    original = deepcopy(_export(context))
+    original = _export(context)
     source_owner = uuid4()
     for rows in original.manifest.records.values():
         for row in rows:
@@ -44,8 +45,9 @@ def _source(context: SourceContext) -> tuple[PortableArchive, bytes]:
                 row["owner_id"] = str(source_owner)
             if "acknowledged_by_owner_id" in row:
                 row["acknowledged_by_owner_id"] = str(source_owner)
+    blobs = dict(original.blobs)
     archive = PortableArchive(
-        original.manifest.model_copy(update={"source_owner_id": source_owner}), original.blobs
+        original.manifest.model_copy(update={"source_owner_id": source_owner}), blobs
     )
     observation = _historical_model(archive)
     archive.manifest.records["model_run_provenance"].append(observation)
@@ -63,9 +65,9 @@ def _source(context: SourceContext) -> tuple[PortableArchive, bytes]:
     )
     archive.manifest.records["evidence_revisions"][0]["blob_id"] = str(blob.blob_id)
     archive.manifest.blob_manifest.append(blob)
-    archive.blobs[digest] = payload
+    blobs[digest] = payload
     archive = _digest(archive)
-    return archive, encode_archive(archive.manifest, archive.blobs)
+    return archive, _encoded(archive.manifest, archive.blobs)
 
 
 def _approved_import(context: SourceContext, payload: bytes) -> Prepared:
@@ -133,7 +135,7 @@ def test_foreign_historical_import_preserves_native_rows_and_bytes_without_autho
             archive.blobs,
         )
     )
-    changed_payload = encode_archive(changed.manifest, changed.blobs)
+    changed_payload = _encoded(changed.manifest, changed.blobs)
     # The old workspace and replacement share the same physical CAS object.
     # Metadata is erased/reinserted atomically; cleanup must retain its live bytes.
     shared = archive.manifest.blob_manifest[0]
@@ -189,15 +191,17 @@ def test_foreign_historical_import_preserves_native_rows_and_bytes_without_autho
                 checkpoint_id=checkpoint_id,
                 runtime_pins=runtime_pins,
             )
+        source = io.BytesIO(payload)
         result = import_controlled_owner_data(
             catalog.runtime,
             catalog.identity.settings,
             control,
-            payload,
+            source,
             expected_source_owner=archive.manifest.source_owner_id,
             checkpoint_id=checkpoint_id,
             runtime_pins=runtime_pins,
         )
+        assert not source.closed
         with pytest.raises(DBAPIError, match="fresh verified checkpoint"):
             import_controlled_owner_data(
                 catalog.runtime,
