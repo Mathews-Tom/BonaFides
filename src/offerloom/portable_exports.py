@@ -11,7 +11,7 @@ import stat
 import time
 from collections.abc import Iterator
 from pathlib import Path
-from threading import Event, Thread
+from threading import Event
 from typing import Annotated, BinaryIO, Literal, cast
 from uuid import UUID, uuid4
 
@@ -50,7 +50,6 @@ from offerloom.workflows import (
     enqueue,
     fail,
     get_workflow,
-    heartbeat,
 )
 
 
@@ -114,87 +113,92 @@ class LifecycleWorker:
         self,
         task: Claim,
     ) -> tuple[dict[str, object], VerifiedCheckpoint | None]:
-        stopped, lost = Event(), Event()
-
-        def pulse() -> None:
-            while not stopped.wait(2):
-                try:
-                    with self.db.transaction() as conn:
-                        if not heartbeat(conn, task):
-                            lost.set()
-                            return
-                except (DBAPIError, Problem):
-                    lost.set()
-                    return
-
-        thread = Thread(target=pulse, name="offerloom-preview-preflight-heartbeat")
-        thread.start()
-        try:
-            with self.db.transaction() as conn:
-                assert_fence(conn, task)
-                plan = checked_plan(conn, self.settings, task.owner_id, task.id)
-            checkpoint = None
-            if task.kind == "portable_import":
-                checkpoint = verified_checkpoint(
-                    self.db, self.settings, task.owner_id, UUID(str(plan["checkpoint_id"]))
-                )
-                if checkpoint.runtime_pins != plan["runtime_pins"]:
-                    raise Problem(409, "portable_checkpoint_changed")
-            if lost.is_set():
-                raise Problem(409, "workflow_lease_lost")
-            return plan, checkpoint
-        finally:
-            stopped.set()
-            thread.join()
+        # Selection is provisional: no lease or destructive attempt is committed
+        # until exclusive installation admission and the exact re-claim succeed.
+        with self.db.transaction() as conn:
+            plan = checked_plan(conn, self.settings, task.owner_id, task.id)
+        checkpoint = None
+        if task.kind == "portable_import":
+            checkpoint = verified_checkpoint(
+                self.db, self.settings, task.owner_id, UUID(str(plan["checkpoint_id"]))
+            )
+            if checkpoint.runtime_pins != plan["runtime_pins"]:
+                raise Problem(409, "portable_checkpoint_changed")
+        return plan, checkpoint
 
     def run_once(self) -> bool:
         with self.db.transaction() as conn:
-            task = claim_control(conn, self.id)
-            if task is None:
-                return False
+            candidate = claim_control(conn, self.id)
+            # Reuse the queue's eligibility/ordering without consuming an attempt
+            # or leaving a running lease while ordinary readers hold admission.
+            conn.rollback()
+        if candidate is None:
+            return False
         plan: dict[str, object] | None = None
         checkpoint: VerifiedCheckpoint | None = None
+        preflight_code: str | None = None
         try:
-            if task.kind in {"portable_import", "privacy_delete"}:
-                plan, checkpoint = self._destructive_preflight(task)
-            with self.db.transaction() as conn:
-                # Maintenance upgrades admission to exclusive. Acquire that lock
-                # before the workflow row so admitted task readers can finish.
-                conn.execute(
-                    text(
-                        "SELECT singleton FROM offerloom.installation_state WHERE singleton FOR UPDATE"
-                    )
-                )
-                assert_fence(conn, task)
-                if plan is not None:
-                    plan = checked_plan(conn, self.settings, task.owner_id, task.id)
-                    if checkpoint is not None:
-                        recheck_verified_checkpoint(conn, task.owner_id, checkpoint)
-                    binding = cast(dict[str, object], plan["binding"])
-                    consume_action_approval(
-                        conn,
-                        task,
-                        action_kind=cast(
-                            Literal["privacy_delete", "replace_workspace"], plan["action_kind"]
-                        ),
-                        destination={"namespace_id": binding["namespace_id"]},
-                        payload={
-                            **cast(dict[str, object], plan["payload"]),
-                            "preview_sha256": hashlib.sha256(
-                                canonical_json(plan).encode()
-                            ).hexdigest(),
-                        },
-                        target_version=cast(int, binding["workspace_version"]),
-                    )
-                elif task.kind != "portable_export":
-                    fail(conn, task, "unsupported_lifecycle_operation", False)
-                    return True
-                control = begin_control(conn, task)
+            if candidate.kind in {"portable_import", "privacy_delete"}:
+                plan, checkpoint = self._destructive_preflight(candidate)
         except (BackupError, ConfigurationError, Problem, OSError, ValueError) as error:
-            code = error.code if isinstance(error, Problem) else "portable_preflight_failed"
-            with self.db.transaction() as conn:
+            preflight_code = (
+                error.code if isinstance(error, Problem) else "portable_preflight_failed"
+            )
+        with self.db.transaction() as conn:
+            # Never lock a workflow row while waiting to upgrade admission: an
+            # admitted reader may need that row before releasing its shared lock.
+            admitted = conn.execute(
+                text("""SELECT singleton FROM offerloom.installation_state
+                WHERE singleton FOR UPDATE SKIP LOCKED""")
+            ).scalar_one_or_none()
+            if admitted is None:
+                return False
+            task = claim_control(conn, self.id, workflow_id=candidate.id)
+            if task is None:
+                return False
+            if (task.owner_id, task.kind, task.input) != (
+                candidate.owner_id,
+                candidate.kind,
+                candidate.input,
+            ):
+                conn.rollback()
+                return False
+            if preflight_code is not None:
+                fail(conn, task, preflight_code, False)
+                return True
+            try:
+                # Roll back any approval consumption if admission validation
+                # fails, while retaining the actual claim for explicit failure.
+                with conn.begin_nested():
+                    assert_fence(conn, task)
+                    if plan is not None:
+                        plan = checked_plan(conn, self.settings, task.owner_id, task.id)
+                        if checkpoint is not None:
+                            recheck_verified_checkpoint(conn, task.owner_id, checkpoint)
+                        binding = cast(dict[str, object], plan["binding"])
+                        consume_action_approval(
+                            conn,
+                            task,
+                            action_kind=cast(
+                                Literal["privacy_delete", "replace_workspace"], plan["action_kind"]
+                            ),
+                            destination={"namespace_id": binding["namespace_id"]},
+                            payload={
+                                **cast(dict[str, object], plan["payload"]),
+                                "preview_sha256": hashlib.sha256(
+                                    canonical_json(plan).encode()
+                                ).hexdigest(),
+                            },
+                            target_version=cast(int, binding["workspace_version"]),
+                        )
+                    elif task.kind != "portable_export":
+                        fail(conn, task, "unsupported_lifecycle_operation", False)
+                        return True
+                    control = begin_control(conn, task)
+            except (BackupError, ConfigurationError, Problem, OSError, ValueError) as error:
+                code = error.code if isinstance(error, Problem) else "portable_preflight_failed"
                 fail(conn, task, code, False)
-            return True
+                return True
         maintenance = InstallationMaintenance(
             self.db, control, self.settings.import_spool, self.settings.renderer_spool
         )

@@ -21,7 +21,7 @@ import httpx
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import Connection, text
-from sqlalchemy.exc import DBAPIError
+from sqlalchemy.exc import DBAPIError, OperationalError
 from test_backup_configuration import _configuration
 from test_document_generation import _base
 from test_identity import _login
@@ -36,14 +36,18 @@ from test_suitability import _profile
 from test_tracking import _application
 
 from offerloom.api import create_app
+from offerloom.approvals import get_action_approval
 from offerloom.backup_configuration import capture_runtime_pins
+from offerloom.commands import lock_installation
 from offerloom.config import Settings
 from offerloom.import_parser import ImportParserClient
 from offerloom.portable_data import export_owner_data, quarantine_records
 from offerloom.portable_exports import LifecycleWorker
 from offerloom.portable_previews import expire_previews
 from offerloom.portable_uploads import load_candidate, retain_candidate
+from offerloom.problems import Problem
 from offerloom.storage import BlobStore
+from offerloom.workflows import Claim, claim_control, reap
 
 
 def _version(context: SourceContext) -> int:
@@ -67,6 +71,220 @@ def _approve(context: SourceContext, preview: dict[str, Any], phrase: str | None
         },
         headers=context.headers(preview["version"]),
     )
+
+
+def _approved_application_deletion(
+    context: SourceContext,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    selected = _application(context, title="Synthetic admission contention target")
+    response = context.client.post(
+        "/api/v1/portable-previews/deletion",
+        json={
+            "scope": "application",
+            "application_id": selected["id"],
+            "application_version": selected["version"],
+        },
+        headers=context.headers(_version(context)),
+    )
+    assert response.status_code == 201, response.text
+    preview = response.json()
+    approved = _approve(context, preview, preview["approval"]["confirmation_phrase"])
+    assert approved.status_code == 200 and approved.json()["state"] == "pending", approved.text
+    return selected, preview
+
+
+@pytest.mark.postgres
+def test_unavailable_admission_does_not_consume_the_sole_destructive_attempt(
+    catalog: SourceContext, parser: ImportParserClient, renderer_spool: Path
+) -> None:
+    selected, preview = _approved_application_deletion(catalog)
+    identifier = UUID(preview["workflow_run_id"])
+    worker = _worker(catalog, parser, renderer_spool)
+    with catalog.runtime.transaction() as reader:
+        lock_installation(reader)
+        for _ in range(2):
+            assert worker.run_once() is False
+            with catalog.runtime.transaction() as conn:
+                row = (
+                    conn.execute(
+                        text("""SELECT state,attempt,max_attempts,lease_holder,lease_expires_at
+                    FROM offerloom.workflow_runs WHERE id=:id"""),
+                        {"id": identifier},
+                    )
+                    .mappings()
+                    .one()
+                )
+                assert dict(row) == {
+                    "state": "pending",
+                    "attempt": 0,
+                    "max_attempts": 1,
+                    "lease_holder": None,
+                    "lease_expires_at": None,
+                }
+                assert reap(conn) == 0
+                assert conn.execute(
+                    text("""SELECT consumed_at IS NULL FROM offerloom.action_approvals
+                    WHERE workflow_run_id=:id"""),
+                    {"id": identifier},
+                ).scalar_one()
+                assert (
+                    conn.execute(
+                        text("SELECT count(*) FROM offerloom.installation_controls")
+                    ).scalar_one()
+                    == 0
+                )
+                assert conn.execute(
+                    text("SELECT EXISTS(SELECT 1 FROM offerloom.applications WHERE id=:id)"),
+                    {"id": UUID(selected["id"])},
+                ).scalar_one()
+                assert (
+                    conn.execute(
+                        text("""SELECT count(*) FROM offerloom.workflow_attempt_events
+                    WHERE workflow_run_id=:id AND event='claimed'"""),
+                        {"id": identifier},
+                    ).scalar_one()
+                    == 0
+                )
+        assert get_action_approval(reader, catalog.owner_id, identifier) is not None
+        assert worker.run_once() is False
+    assert worker.run_once()
+    with catalog.runtime.transaction() as conn:
+        row = (
+            conn.execute(
+                text("SELECT state,attempt,max_attempts FROM offerloom.workflow_runs WHERE id=:id"),
+                {"id": identifier},
+            )
+            .mappings()
+            .one()
+        )
+        assert dict(row) == {"state": "succeeded", "attempt": 1, "max_attempts": 1}
+        assert conn.execute(
+            text("""SELECT consumed_at IS NOT NULL FROM offerloom.action_approvals
+            WHERE workflow_run_id=:id"""),
+            {"id": identifier},
+        ).scalar_one()
+        assert (
+            conn.execute(
+                text("SELECT count(*) FROM offerloom.applications WHERE id=:id"),
+                {"id": UUID(selected["id"])},
+            ).scalar_one()
+            == 0
+        )
+
+
+@pytest.mark.postgres
+@pytest.mark.parametrize("phase", ["preflight", "admission"])
+@pytest.mark.parametrize("database_error", [False, True])
+def test_admission_preserves_explicit_preflight_failure_and_database_errors(
+    catalog: SourceContext,
+    monkeypatch: pytest.MonkeyPatch,
+    phase: str,
+    database_error: bool,
+) -> None:
+    from offerloom import portable_exports
+
+    selected, preview = _approved_application_deletion(catalog)
+    identifier = UUID(preview["workflow_run_id"])
+    worker = LifecycleWorker(catalog.runtime, catalog.identity.settings)
+
+    def reject(conn: Connection, task: Claim) -> None:
+        if database_error:
+            conn.execute(text("SET LOCAL statement_timeout='1ms'"))
+            conn.execute(text("SELECT pg_sleep(1)"))
+        raise Problem(409, "portable_preview_stale")
+
+    if phase == "preflight":
+
+        def reject_preflight(task: Claim) -> tuple[dict[str, object], None]:
+            with catalog.runtime.transaction() as conn:
+                reject(conn, task)
+            raise AssertionError("preflight unexpectedly returned")
+
+        monkeypatch.setattr(worker, "_destructive_preflight", reject_preflight)
+    else:
+        monkeypatch.setattr(portable_exports, "begin_control", reject)
+    if database_error:
+        with pytest.raises(OperationalError) as unavailable:
+            worker.run_once()
+        assert getattr(unavailable.value.orig, "sqlstate", None) == "57014"
+    else:
+        assert worker.run_once()
+    with catalog.runtime.transaction() as conn:
+        row = (
+            conn.execute(
+                text("""SELECT state,attempt,last_error_code,lease_holder
+            FROM offerloom.workflow_runs WHERE id=:id"""),
+                {"id": identifier},
+            )
+            .mappings()
+            .one()
+        )
+        assert dict(row) == {
+            "state": "pending" if database_error else "permanent_failure",
+            "attempt": 0 if database_error else 1,
+            "last_error_code": None if database_error else "portable_preview_stale",
+            "lease_holder": None,
+        }
+        assert conn.execute(
+            text("""SELECT consumed_at IS NULL FROM offerloom.action_approvals
+            WHERE workflow_run_id=:id"""),
+            {"id": identifier},
+        ).scalar_one()
+        assert (
+            conn.execute(text("SELECT count(*) FROM offerloom.installation_controls")).scalar_one()
+            == 0
+        )
+        assert conn.execute(
+            text("SELECT EXISTS(SELECT 1 FROM offerloom.applications WHERE id=:id)"),
+            {"id": UUID(selected["id"])},
+        ).scalar_one()
+
+
+@pytest.mark.postgres
+def test_admission_does_not_steal_a_candidate_claimed_during_preflight(
+    catalog: SourceContext, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _, preview = _approved_application_deletion(catalog)
+    identifier = UUID(preview["workflow_run_id"])
+    worker = LifecycleWorker(catalog.runtime, catalog.identity.settings)
+    preflight = worker._destructive_preflight
+    other_holder = uuid4()
+
+    def claimed_elsewhere(task: Claim) -> tuple[dict[str, object], None]:
+        plan, checkpoint = preflight(task)
+        assert checkpoint is None
+        with catalog.runtime.transaction() as conn:
+            other = claim_control(conn, other_holder, workflow_id=task.id)
+            assert other is not None
+        return plan, None
+
+    monkeypatch.setattr(worker, "_destructive_preflight", claimed_elsewhere)
+    assert worker.run_once() is False
+    with catalog.runtime.transaction() as conn:
+        row = (
+            conn.execute(
+                text("""SELECT state,attempt,max_attempts,lease_holder
+            FROM offerloom.workflow_runs WHERE id=:id"""),
+                {"id": identifier},
+            )
+            .mappings()
+            .one()
+        )
+        assert dict(row) == {
+            "state": "running",
+            "attempt": 1,
+            "max_attempts": 1,
+            "lease_holder": other_holder,
+        }
+        assert conn.execute(
+            text("""SELECT consumed_at IS NULL FROM offerloom.action_approvals
+            WHERE workflow_run_id=:id"""),
+            {"id": identifier},
+        ).scalar_one()
+        assert (
+            conn.execute(text("SELECT count(*) FROM offerloom.installation_controls")).scalar_one()
+            == 0
+        )
 
 
 @pytest.mark.postgres
