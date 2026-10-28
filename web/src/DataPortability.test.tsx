@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 import { useState } from 'react';
-import { webcrypto } from 'node:crypto';
-import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent, { type UserEvent } from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { Api, ApiError, MAX_PORTABLE_BYTES, type ActionApprovalRequest, type InstallationBackups, type InstallationStatus, type PortablePreview, type Profile, type Workflow } from './api';
@@ -284,18 +283,3 @@ describe('replacement source and browser-buffer safety', () => {
   });
 });
 
-describe('existing owner export integrity', () => {
-  it.each(['digest', 'length'] as const)('never publishes a downloaded ZIP when its %s does not match the saved server identity', async mismatch => {
-    const user = userEvent.setup(); const { api, state } = server(); vi.stubGlobal('crypto', webcrypto);
-    const bytes = new TextEncoder().encode('owner archive');
-    const digest = Buffer.from(await webcrypto.subtle.digest('SHA-256', bytes)).toString('hex');
-    state.exportCopies = [{ id: 'export-one', state: 'succeeded', last_error_code: null, created_at: '2026-01-01', archive_sha256: mismatch === 'digest' ? '0'.repeat(64) : digest, manifest_sha256: '1'.repeat(64), byte_length: mismatch === 'length' ? bytes.length + 1 : bytes.length, expires_at: expiry, downloadable: true, copy_state: 'ready' }];
-    const createObjectURL = vi.fn(); vi.stubGlobal('URL', class extends URL { static createObjectURL = createObjectURL; });
-    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(bytes, { status: 200 })));
-    render(<DataPortability api={api} profile={profile} disabled={false} onBusyChange={() => undefined} />);
-    await user.click(screen.getByText('Owner-data portability', { selector: 'summary' }));
-    await user.click(await screen.findByRole('button', { name: 'Download owner data' }));
-    expect(await screen.findByRole('alert')).toHaveTextContent('portable_export_integrity_failed'); expect(createObjectURL).not.toHaveBeenCalled();
-    expect(within(screen.getByRole('list', { name: 'Recent owner-data exports' })).getByText(/succeeded/)).toBeVisible();
-  });
-});

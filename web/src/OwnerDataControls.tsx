@@ -148,7 +148,7 @@ export function OwnerDataControls({ api, active, disabled, onBusyChange }: {
   }
   async function prepare(event: FormEvent<HTMLFormElement>, replacement: boolean) {
     event.preventDefault();
-    if (replacement && (!file || file.size === 0 || file.size > MAX_PORTABLE_BYTES)) { setError('Choose a nonempty owner-data ZIP no larger than 128 MiB.'); return; }
+    if (replacement && (!file || file.size === 0 || file.size > MAX_PORTABLE_BYTES)) { setError('Choose a nonempty owner-data ZIP no larger than 625 GiB + 20 MiB.'); return; }
     if (replacement && sourceOwner && !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(sourceOwner)) { setError('Expected original owner must be a UUID obtained independently of this archive.'); return; }
     if (!replacement && scope === 'application' && !applications.some(item => item.id === applicationId)) { setError('Choose a saved application from the loaded list.'); return; }
     const chosenFile = file; const expectedOwner = sourceOwner; const session = api.csrf;
@@ -250,8 +250,8 @@ export function OwnerDataControls({ api, active, disabled, onBusyChange }: {
       <fieldset disabled={busy}><legend>Prepare workspace replacement</legend>
         <label>Owner-data ZIP<input type="file" accept=".zip,application/zip" onChange={event => { setFile(event.target.files?.[0] ?? null); preparation.current = null; }} /></label>
         <label>Expected original owner UUID (optional)<input value={sourceOwner} maxLength={36} autoComplete="off" spellCheck={false} onChange={event => { setSourceOwner(event.target.value); preparation.current = null; }} /></label>
-        <p className="hint">Leave blank to require the current installation owner. For a different original owner, obtain the UUID independently; never copy an untrusted archive’s claim as proof. The server validates the raw ZIP (maximum 128 MiB), schema, records, files and restore-verified checkpoint. Credentials are excluded; connections require reauthorization and review.</p>
-        {file && <p>Selected in memory: {file.name} · {file.size.toLocaleString()} bytes. Your file remains available after a failed request.</p>}
+        <p className="hint">Leave blank to require the current installation owner. For a different original owner, obtain the UUID independently; never copy an untrusted archive’s claim as proof. The server streams the raw ZIP (maximum 625 GiB + 20 MiB) into private quarantine and validates its schema, records, files and restore-verified checkpoint. Credentials are excluded; connections require reauthorization and review.</p>
+        {file && <p>Selected file: {file.name} · {file.size.toLocaleString()} bytes. Your file remains available after a failed request.</p>}
         <button type="submit" disabled={blocked || !file || file.size === 0 || file.size > MAX_PORTABLE_BYTES}>Upload ZIP and prepare replacement preview</button>
       </fieldset>
     </form>
