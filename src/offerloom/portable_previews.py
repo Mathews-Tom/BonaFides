@@ -339,8 +339,9 @@ def _prepare(
     digest = _sha(plan)
     conn.execute(
         text("""INSERT INTO offerloom.portable_previews
-        (owner_id,id,workflow_run_id,action_kind,plan,preview_sha256,candidate_bytes,expires_at)
-        VALUES(:owner,:id,:workflow,:kind,CAST(:plan AS jsonb),:sha,:bytes,:expiry)"""),
+        (owner_id,id,workflow_run_id,action_kind,plan,preview_sha256,candidate_bytes,expires_at,retained_at)
+        VALUES(:owner,:id,:workflow,:kind,CAST(:plan AS jsonb),:sha,:bytes,:expiry,
+        CASE WHEN :replacing THEN NULL ELSE clock_timestamp() END)"""),
         {
             "owner": owner.id,
             "id": identifier,
@@ -350,10 +351,27 @@ def _prepare(
             "sha": digest,
             "bytes": payload.stream.read(UPLOAD_CHUNK_BYTES) if payload is not None else None,
             "expiry": expiry,
+            "replacing": replacing,
         },
     )
     if payload is not None:
         retain_candidate(conn, owner.id, identifier, payload.stream)
+        expiry = conn.execute(
+            text("SELECT clock_timestamp()+make_interval(secs=>:ttl)"), {"ttl": PREVIEW_TTL_SECONDS}
+        ).scalar_one()
+        plan["expires_at"] = expiry.isoformat()
+        digest = _sha(plan)
+        conn.execute(
+            text("""SELECT offerloom.finalize_portable_preview(
+            :owner,:id,CAST(:plan AS jsonb),:sha,:expiry)"""),
+            {
+                "owner": owner.id,
+                "id": identifier,
+                "plan": canonical_json(plan),
+                "sha": digest,
+                "expiry": expiry,
+            },
+        )
     binding = cast(dict[str, object], plan["binding"])
     prepare_action_approval(
         conn,

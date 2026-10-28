@@ -33,6 +33,44 @@ ALTER TABLE portable_previews DROP CONSTRAINT portable_previews_candidate_bytes_
 ALTER TABLE portable_previews ADD CONSTRAINT portable_previews_candidate_bytes_check
  CHECK(octet_length(candidate_bytes) BETWEEN 1 AND 1048576);
 
+-- Replacement review starts only after every candidate chunk is retained.
+-- Existing previews and deletion plans are already finalized.
+ALTER TABLE portable_previews ADD COLUMN retained_at timestamptz DEFAULT clock_timestamp();
+
+CREATE FUNCTION finalize_portable_preview(
+ p_owner uuid,p_id uuid,p_plan jsonb,p_sha text,p_expiry timestamptz
+) RETURNS void LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog,offerloom AS $$
+DECLARE p offerloom.portable_previews%ROWTYPE; ready_at timestamptz;
+ candidate_length bigint; chunk_count bigint; expected bigint;
+BEGIN
+ SELECT * INTO STRICT p FROM offerloom.portable_previews
+ WHERE owner_id=p_owner AND id=p_id FOR UPDATE;
+ ready_at=clock_timestamp();
+ expected=(p.plan->>'byte_length')::bigint;
+ SELECT COALESCE(sum(octet_length(payload)),0)+octet_length(p.candidate_bytes),count(*)
+ INTO candidate_length,chunk_count FROM offerloom.portable_preview_chunks
+ WHERE owner_id=p_owner AND preview_id=p_id;
+ IF p.action_kind<>'replace_workspace' OR p.cleared_at IS NOT NULL
+ OR p.candidate_bytes IS NULL OR p.retained_at IS NOT NULL
+ OR (p_plan-'expires_at') IS DISTINCT FROM (p.plan-'expires_at')
+ OR p_expiry IS NULL OR (p_plan->>'expires_at')::timestamptz IS DISTINCT FROM p_expiry
+ OR p_expiry<=ready_at OR p_expiry>ready_at+interval '10 minutes'
+ OR p_sha IS NULL OR p_sha!~'^[0-9a-f]{64}$'
+ OR candidate_length IS DISTINCT FROM expected OR chunk_count<>(expected-1)/1048576
+ OR NOT EXISTS(SELECT 1 FROM offerloom.workflow_runs
+  WHERE owner_id=p_owner AND id=p.workflow_run_id AND state='pending')
+ OR EXISTS(SELECT 1 FROM offerloom.action_approvals
+  WHERE owner_id=p_owner AND workflow_run_id=p.workflow_run_id) THEN
+  RAISE EXCEPTION 'portable preview finalization refused' USING ERRCODE='23514';
+ END IF;
+ UPDATE offerloom.portable_previews SET plan=p_plan,preview_sha256=p_sha,
+  created_at=ready_at,expires_at=p_expiry,retained_at=ready_at
+ WHERE owner_id=p_owner AND id=p_id;
+END $$;
+REVOKE ALL ON FUNCTION finalize_portable_preview(uuid,uuid,jsonb,text,timestamptz) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION finalize_portable_preview(uuid,uuid,jsonb,text,timestamptz)
+ TO offerloom_runtime;
+
 CREATE FUNCTION guard_portable_preview_chunk() RETURNS trigger
 LANGUAGE plpgsql SET search_path=pg_catalog,offerloom AS $$
 DECLARE p offerloom.portable_previews%ROWTYPE; next_chunk integer; expected bigint;

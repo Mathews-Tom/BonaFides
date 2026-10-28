@@ -14,13 +14,13 @@ import io
 from collections.abc import AsyncIterator
 from dataclasses import replace
 from pathlib import Path
-from typing import Any
+from typing import Any, BinaryIO
 from uuid import UUID, uuid4
 
 import httpx
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import text
+from sqlalchemy import Connection, text
 from sqlalchemy.exc import DBAPIError
 from test_backup_configuration import _configuration
 from test_document_generation import _base
@@ -42,7 +42,7 @@ from offerloom.import_parser import ImportParserClient
 from offerloom.portable_data import export_owner_data, quarantine_records
 from offerloom.portable_exports import LifecycleWorker
 from offerloom.portable_previews import expire_previews
-from offerloom.portable_uploads import load_candidate
+from offerloom.portable_uploads import load_candidate, retain_candidate
 from offerloom.storage import BlobStore
 
 
@@ -297,6 +297,64 @@ def test_long_archive_validation_does_not_expire_the_new_preview(
         assert response.status_code == 201, response.text
         expires = datetime.fromisoformat(response.json()["plan"]["expires_at"])
         assert expires > datetime.now(UTC) + timedelta(seconds=590)
+
+
+@pytest.mark.postgres
+def test_candidate_retention_cannot_consume_the_reviewed_preview_lifetime(
+    catalog: SourceContext,
+    parser: ImportParserClient,
+    renderer_spool: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from offerloom import portable_previews
+
+    original = _application(catalog, title="Synthetic retained replacement")
+    _attachment(catalog, original, b"Synthetic retained bytes\n" * 60_000)
+    output = io.BytesIO()
+    export_owner_data(catalog.runtime, catalog.identity.settings, catalog.owner_id, output)
+    settings = _eligible_policy_checkpoint(catalog, parser, renderer_spool, tmp_path)
+    finalize = text("""SELECT offerloom.finalize_portable_preview(
+        owner_id,id,plan,preview_sha256,expires_at)
+        FROM offerloom.portable_previews WHERE owner_id=:owner AND id=:id""")
+
+    def slow_retention(conn: Connection, owner: UUID, identifier: UUID, stream: BinaryIO) -> None:
+        # An incomplete candidate cannot become an approvable replacement.
+        with pytest.raises(DBAPIError, match="finalization refused"), conn.begin_nested():
+            conn.execute(finalize, {"owner": owner, "id": identifier})
+        retain_candidate(conn, owner, identifier, stream)
+        # Let PostgreSQL's actual provisional deadline pass, without a guessed
+        # sleep or a long archive. The final reviewed lifetime remains 600s.
+        conn.execute(
+            text("""SELECT pg_sleep(GREATEST(0,
+            extract(epoch FROM expires_at-clock_timestamp())+0.01))
+            FROM offerloom.portable_previews WHERE owner_id=:owner AND id=:id"""),
+            {"owner": owner, "id": identifier},
+        )
+        monkeypatch.setattr(portable_previews, "PREVIEW_TTL_SECONDS", 600)
+
+    monkeypatch.setattr(portable_previews, "PREVIEW_TTL_SECONDS", 2)
+    monkeypatch.setattr(portable_previews, "retain_candidate", slow_retention)
+    with TestClient(create_app(settings), base_url=settings.origin) as client:
+        assert _login(catalog.identity, client).status_code == 201
+        context = replace(
+            catalog, client=client, csrf=client.get("/api/v1/session").json()["csrf_token"]
+        )
+        response = client.post(
+            "/api/v1/portable-previews/import",
+            content=output.getvalue(),
+            headers={**context.headers(_version(context)), "Content-Type": "application/zip"},
+        )
+        assert response.status_code == 201, response.text
+        preview = response.json()
+        approved = _approve(context, preview, preview["approval"]["confirmation_phrase"])
+        assert approved.status_code == 200, approved.text
+        # Even this narrow initializer cannot mutate a reviewed/approved plan.
+        with (
+            pytest.raises(DBAPIError, match="finalization refused"),
+            catalog.runtime.transaction() as conn,
+        ):
+            conn.execute(finalize, {"owner": context.owner_id, "id": UUID(str(preview["id"]))})
 
 
 @pytest.mark.postgres

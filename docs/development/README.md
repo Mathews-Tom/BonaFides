@@ -19,7 +19,9 @@ Issue #4 removes the former 112 MiB stored-file export ceiling. New `offerloom-p
 
 Append-only migration 027 raises the export-store bound and retains replacement candidates as bounded 1 MiB PostgreSQL chunks, preserving existing uploads. Cancellation, expiry, erasure and native recovery clear all chunks through the existing preview lifecycle. Applied migrations 001–026 remain unchanged. Encrypted-backup format and limits are unchanged.
 
-Archive validation completes before assigning preview expiry. Replacement uploads have no fixed browser wall-clock abort; lifecycle cancellation still releases the active request, and ordinary bounded API reads keep their existing timeouts.
+Archive validation and complete candidate retention finish before the ten-minute review lifetime starts. A one-time privileged finalizer binds the ready candidate's expiry and digest without granting runtime writes to saved plans; incomplete candidates and already-finalized plans cannot use it. Replacement uploads have no fixed browser wall-clock abort; lifecycle cancellation still releases the active request, and ordinary bounded API reads keep their existing timeouts.
+
+Lifecycle workers acquire exclusive installation admission before locking their workflow row. This lets admitted task readers finish instead of deadlocking against maintenance admission.
 
 ## Observed final M1 engineering checkpoint — 2026-10-26
 
