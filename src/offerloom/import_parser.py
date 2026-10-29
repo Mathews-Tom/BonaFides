@@ -468,6 +468,7 @@ class _PdfLayout:
         resource: DictionaryObject | None,
         size: float,
     ) -> None:
+        from pypdf.errors import LimitReachedError
         from pypdf.generic._font import Font
 
         literal = text.strip()
@@ -489,27 +490,41 @@ class _PdfLayout:
         if a <= 0 or d <= 0 or abs(b) > 1e-6 or abs(c) > 1e-6 or size <= 0:
             self.ambiguous = True
             return
-        identity = id(resource)
-        if identity not in self.fonts:
-            # pypdf is pinned: its font metrics handle embedded/CID fonts as well as
-            # core fonts. Widths are keyed by source glyphs, not decoded Unicode.
-            font = Font.from_font_resource(resource)
-            inverse = {
-                value: key
-                for key, value in font.character_map.items()
-                if isinstance(key, str) and isinstance(value, str)
-            }
-            self.fonts[identity] = font, inverse
-        font, inverse = self.fonts[identity]
+        try:
+            identity = id(resource)
+            if identity not in self.fonts:
+                # pypdf is pinned: its font metrics handle embedded/CID fonts as well as
+                # core fonts. Widths are keyed by source glyphs, not decoded Unicode.
+                font = Font.from_font_resource(resource)
+                inverse = {
+                    value: key
+                    for key, value in font.character_map.items()
+                    if isinstance(key, str) and isinstance(value, str)
+                }
+                self.fonts[identity] = font, inverse
+            font, inverse = self.fonts[identity]
+            width = (
+                font.get_text_width("".join(inverse.get(char, char) for char in literal))
+                * size
+                * a
+                / 1000
+            )
+            bold = "bold" in font.name.casefold()
+        except (LimitReachedError, MemoryError, RecursionError):
+            raise
+        except Exception:
+            # Metrics are optional, unlike plain extraction. Discard reconstruction
+            # for the entire page, including any fragments already collected.
+            self.ambiguous = True
+            return
         x = tm[4] * cm[0] + tm[5] * cm[2] + cm[4]
         y = tm[4] * cm[1] + tm[5] * cm[3] + cm[5]
-        width = font.get_text_width("".join(inverse.get(char, char) for char in literal))
-        end = x + width * size * a / 1000
+        end = x + width
         height = size * d
         if not all(math.isfinite(value) for value in (x, y, end, height)) or height <= 0:
             self.ambiguous = True
             return
-        self.fragments.append(_PdfLine(literal, x, y, end, height, "bold" in font.name.casefold()))
+        self.fragments.append(_PdfLine(literal, x, y, end, height, bold))
 
     def reconstruct(self, original: str) -> tuple[str, bool]:
         if self.ambiguous:
