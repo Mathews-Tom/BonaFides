@@ -879,6 +879,8 @@ class Proof:
             page.get_by_label("Password", exact=True).fill(self.password)
             page.get_by_role("button", name="Sign in", exact=True).click()
             page.get_by_role("link", name="Profile", exact=True).click()
+            expect(page.get_by_label("Display name", exact=True)).to_be_visible()
+            expect(page.get_by_label("Professional headline", exact=True)).to_be_visible()
             expect(page.get_by_label("Display name", exact=True)).to_have_value(
                 snapshot["display_name"]
             )
@@ -895,6 +897,8 @@ class Proof:
                 "browser_secure_session_missing",
             )
             page.reload()
+            expect(page.get_by_label("Display name", exact=True)).to_be_visible()
+            expect(page.get_by_label("Professional headline", exact=True)).to_be_visible()
             expect(page.get_by_label("Display name", exact=True)).to_have_value(
                 snapshot["display_name"]
             )
