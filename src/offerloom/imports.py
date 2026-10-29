@@ -632,6 +632,7 @@ def stage_parsed(
     )
     assert_fence(conn, task)
     proposals, warnings = extract_proposals(parsed)
+    project_entries(parsed.text, parsed.source_sha256, proposals)
     batch = _batch_for_task(conn, task)
     if batch["parsed_text"] is not None:
         raise Problem(409, "import_already_staged")

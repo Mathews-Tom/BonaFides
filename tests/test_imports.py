@@ -677,6 +677,79 @@ def test_target_kind_archival_and_duplicate_target_are_checked(importing: Import
 
 
 @pytest.mark.postgres
+def test_skill_splitting_over_source_limit_fails_before_staging(
+    importing: ImportContext,
+) -> None:
+    original = importing.profile()
+    before = _counts(importing)
+    source = "Skills\n" + "|".join(["a"] * 1001) + "\n"
+    response = importing.upload(source)
+    assert response.status_code == 202, response.text
+    identifier = response.json()["import_id"]
+    importing.run()
+
+    failed = importing.batch(identifier)
+    assert failed["state"] == "permanent_failure"
+    assert failed["error_code"] == "import_source_limit"
+    assert failed["text"] is None and failed["source_sha256"] is None
+    assert failed["entries"] == [] and failed["warnings"] == []
+    with importing.identity.admin.transaction() as conn:
+        staged = (
+            conn.execute(
+                text("""SELECT parsed_text,source_sha256,proposals,warnings,review,
+                review_expires_at,reviewed_at,merged_profile_revision_id
+                FROM offerloom.import_batches WHERE owner_id=:owner AND id=:id"""),
+                {"owner": importing.owner_id, "id": UUID(identifier)},
+            )
+            .mappings()
+            .one()
+        )
+        assert dict(staged) == {
+            "parsed_text": None,
+            "source_sha256": None,
+            "proposals": [],
+            "warnings": [],
+            "review": None,
+            "review_expires_at": None,
+            "reviewed_at": None,
+            "merged_profile_revision_id": None,
+        }
+    assert importing.profile() == original
+    assert _counts(importing) == before
+    with importing.runtime.transaction() as conn:
+        assert claim(conn, uuid4()) is None
+
+
+@pytest.mark.postgres
+def test_skill_splitting_at_source_limit_stages_readable_immutable_evidence(
+    importing: ImportContext,
+) -> None:
+    original = importing.profile()
+    before = _counts(importing)
+    source = "Skills\n" + "|".join(["a"] * 1000) + "\n"
+    batch = importing.staged(source)
+    assert batch["text"] == source
+    assert batch["source_sha256"] == hashlib.sha256(source.encode()).hexdigest()
+    assert batch["error_code"] is None
+    assert len(batch["entries"]) == 1000
+    parts = [part for entry in batch["entries"] for part in entry["sources"]]
+    assert len(parts) == 1000
+    assert len({part["source_id"] for part in parts}) == 1000
+    assert all(source[part["start"] : part["end"]] == part["quote"] == "a" for part in parts)
+    with importing.identity.admin.transaction() as conn:
+        proposals = conn.execute(
+            text("SELECT proposals FROM offerloom.import_batches WHERE owner_id=:owner AND id=:id"),
+            {"owner": importing.owner_id, "id": UUID(batch["id"])},
+        ).scalar_one()
+    expected, _ = imports.extract_proposals(_parsed(source))
+    assert len(proposals) == 1
+    assert proposals == [proposal.model_dump(mode="json") for proposal in expected]
+    assert importing.batch(batch["id"]) == batch
+    assert importing.profile() == original
+    assert _counts(importing) == before
+
+
+@pytest.mark.postgres
 def test_parser_failure_and_publication_rollback_never_partially_mutate_profile(
     importing: ImportContext, monkeypatch: pytest.MonkeyPatch
 ) -> None:
