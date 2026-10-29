@@ -57,6 +57,8 @@ _VALIDATION_FIELDS = frozenset(
         "import_id",
         "decisions",
         "proposal_id",
+        "source_ids",
+        "identity_field",
         "action",
         "mode",
         "replace_all_confirmed",

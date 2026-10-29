@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { Api, errorText, type ClaimKind, type ClaimPayload, type ClaimRecord, type EvidenceLink, type EvidenceRecord, type EvidenceRevision, type PinnedClaim, type Profile, type ProfileRevision, type ProfileRevisionSummary, type RevisionPage } from './api';
+import './ProfileEntries.css';
 
 const kinds: { value: ClaimKind; label: string }[] = [
   { value: 'skill', label: 'Skills' }, { value: 'experience', label: 'Work experience' },
@@ -33,6 +34,7 @@ export function ProfileEntries({ api, profile, disabled, onProfile, onDirtyChang
   onDirtyChange: (value: boolean) => void; onBusyChange: (value: boolean) => void;
 }) {
   const [claim, setClaim] = useState<ClaimDraft | null>(null);
+  const [section, setSection] = useState<ClaimKind | 'sources' | 'history'>('skill');
   const [evidence, setEvidence] = useState<EvidenceDraft | null>(null);
   const [archive, setArchive] = useState<ArchiveChoice | null>(null);
   const [busy, setBusy] = useState(false);
@@ -56,16 +58,6 @@ export function ProfileEntries({ api, profile, disabled, onProfile, onDirtyChang
   useEffect(() => { onDirtyChange(dirty); }, [dirty, onDirtyChange]);
   useEffect(() => { onBusyChange(busy); }, [busy, onBusyChange]);
   useEffect(() => { if (error) errorRef.current?.focus(); }, [error]);
-  useEffect(() => {
-    const focusSection = () => {
-      const id = window.location.hash.slice(1);
-      if (!kinds.some(kind => id === `profile-${kind.value}`) && !['profile-evidence-title', 'profile-history-title'].includes(id)) return;
-      document.getElementById(id)?.focus();
-    };
-    focusSection();
-    window.addEventListener('hashchange', focusSection);
-    return () => window.removeEventListener('hashchange', focusSection);
-  }, [profile.id]);
   useEffect(() => {
     if (!dirty) return;
     const prevent = (event: BeforeUnloadEvent) => { event.preventDefault(); };
@@ -133,9 +125,23 @@ export function ProfileEntries({ api, profile, disabled, onProfile, onDirtyChang
   for (const item of claim?.pinnedEvidence ?? []) sources.set(item.id, item);
   const currentClaims = profile.current_revision.claims;
   return <>
-    <section className="panel" aria-labelledby="profile-entries-title"><h2 id="profile-entries-title">Profile entries</h2>
+    <section className="panel profile-entries" aria-labelledby="profile-entries-title"><h2 id="profile-entries-title">Profile entries</h2>
       <p>Record only facts you supply. Every saved entry pins an exact source revision or explicit owner attestation. Source links and owner authorship are not independent verification.</p>
-      <nav aria-label="Profile sections" className="actions">{kinds.map(kind => <a key={kind.value} href={`#profile-${kind.value}`}>{kind.label}</a>)}<a href="#profile-evidence-title">Sources</a><a href="#profile-history-title">History</a></nav>
+      <nav aria-label="Profile sections" className="profile-section-selector">
+        {[...kinds, { value: 'sources' as const, label: 'Sources' }, { value: 'history' as const, label: 'History' }].map(item => {
+          const count = item.value === 'sources' ? profile.evidence.length : item.value === 'history' ? null : currentClaims.filter(entry => entry.kind === item.value).length;
+          return <button key={item.value} type="button" className="secondary" aria-pressed={section === item.value}
+            aria-describedby={count === null ? undefined : `profile-section-count-${item.value}`}
+            disabled={busy || (dirty && section !== item.value)} onClick={() => setSection(item.value)}>
+            {item.label}{count !== null && <span className="profile-section-count" aria-hidden="true">{count}</span>}
+          </button>;
+        })}
+      </nav>
+      <div className="profile-section-counts">
+        {kinds.map(item => <span key={item.value} id={`profile-section-count-${item.value}`}>{currentClaims.filter(entry => entry.kind === item.value).length} saved entries</span>)}
+        <span id="profile-section-count-sources">{profile.evidence.length} saved sources</span>
+      </div>
+      {dirty && <p className="profile-buffer-notice" role="status">An entry, source or archive confirmation is open. Save or discard changes, or keep the active record, before switching sections.</p>}
       {disabled && <p className="hint">Save or discard identity changes before editing entries or sources.</p>}
       <div className="error" ref={errorRef} tabIndex={-1} role="alert" hidden={!error}>{error}</div><p role="status">{notice}</p>
       {error && <button className="secondary" disabled={locked} onClick={() => { void read(async () => { setComparison(await api.request<Profile>('/profile')); }); }}>Load latest profile for comparison</button>}
@@ -146,7 +152,7 @@ export function ProfileEntries({ api, profile, disabled, onProfile, onDirtyChang
         <p>Your open editor remains unchanged. Rebasing changes the save precondition, not the entry text. Archived entries cannot be revived by saving an old editor.</p>
         <button className="secondary" disabled={locked} onClick={() => { onProfile(comparison); setComparison(null); setNotice('Latest version selected explicitly. Review your retained text before saving.'); }}>Use latest version and retain my editor</button>
       </div>}
-      {kinds.map(kind => {
+      {kinds.filter(kind => kind.value === section).map(kind => {
         const entries = currentClaims.filter(item => item.kind === kind.value);
         return <section key={kind.value} aria-labelledby={`profile-${kind.value}`}><h3 id={`profile-${kind.value}`} tabIndex={-1}>{kind.label}</h3>
           {kind.value === 'experience' && <p className="hint">Owner-supplied closed dates cover {profile.experience_coverage.minimum_days}–{profile.experience_coverage.maximum_days} calendar days, with overlaps counted once. This is a conservative date range, not verified employment or a qualification. {profile.experience_coverage.undated_or_open_entries} open or undated entries are excluded; no present date is assumed.</p>}
@@ -159,7 +165,7 @@ export function ProfileEntries({ api, profile, disabled, onProfile, onDirtyChang
           <button className="secondary" disabled={locked || dirty || profile.evidence.length === 0} onClick={() => { setError(''); setClaim({ kind: kind.value, payload: { text: '' }, evidence_links: [], pinnedEvidence: [] }); }}>Add {kind.label.toLowerCase()} entry</button>
         </section>;
       })}
-      {profile.evidence.length === 0 && <p className="hint">Add a source or explicit owner attestation below before adding an entry.</p>}
+      {profile.evidence.length === 0 && section !== 'sources' && section !== 'history' && <p className="hint">Choose Sources and add a source or explicit owner attestation before adding an entry.</p>}
       {claim && <form onSubmit={submitClaim}><fieldset disabled={locked}><legend>{claim.id ? 'Edit saved entry' : 'New entry'}</legend>
         <p>Kind: {kinds.find(kind => kind.value === claim.kind)?.label}. Entry kind cannot change after creation.</p>
         <label>Entry statement<textarea ref={claimInput} required maxLength={4000} value={claim.payload.text} onChange={event => payloadField('text', event.target.value)} /></label>
@@ -182,8 +188,11 @@ export function ProfileEntries({ api, profile, disabled, onProfile, onDirtyChang
         <button type="button" className="secondary" disabled={claim.evidence_links.length >= 16} onClick={() => setClaim({ ...claim, evidence_links: [...claim.evidence_links, { evidence_revision_id: '', support_kind: 'user_asserted', excerpt: '' }] })}>Add evidence link</button>
         <div className="actions"><button disabled={claim.evidence_links.length === 0}>Save entry revision</button><button type="button" className="secondary" onClick={() => { setClaim(null); setComparison(null); setError(''); }}>Discard entry changes</button></div>
       </fieldset></form>}
+      {archive && <div className="comparison"><h3>Confirm archive</h3><p>{archive.text}</p><p>This removes the {archive.kind} from the active profile. Historical revisions and their source links remain readable. Only an explicit historical restore can reactivate archived records.</p>
+        <button disabled={locked} onClick={() => { void mutate(`/${archive.kind === 'claim' ? 'claims' : 'evidence'}/${encodeURIComponent(archive.id)}`, 'DELETE'); }}>Confirm archive</button><button className="secondary" disabled={locked} onClick={() => setArchive(null)}>Keep active record</button>
+      </div>}
     </section>
-    <section className="panel" aria-labelledby="profile-evidence-title"><h2 id="profile-evidence-title" tabIndex={-1}>Sources and owner attestations</h2>
+    <section className="panel" hidden={section !== 'sources'} aria-labelledby="profile-evidence-title"><h2 id="profile-evidence-title">Sources and owner attestations</h2>
       <p>Manual, versioned source text only. No file import, external verification or provider calls. Archiving removes a source from the active editor, not from immutable historical links.</p>
       {profile.evidence.length === 0 ? <p>No saved sources.</p> : <ul>{profile.evidence.map((item, index) => <li key={item.id}><h3>{item.revision.payload.source}</h3><p>{item.revision.payload.text}</p>
         <small>Revision {item.revision.revision_no} · {item.revision.id} · {item.revision.created_at} · owner {item.revision.author_owner_id}</small>
@@ -196,11 +205,8 @@ export function ProfileEntries({ api, profile, disabled, onProfile, onDirtyChang
         <label>Source reference<input required={!evidence.attestation} disabled={evidence.attestation} maxLength={500} value={evidence.attestation ? 'Owner attestation' : evidence.source} onChange={event => setEvidence({ ...evidence, source: event.target.value })} /></label>
         <div className="actions"><button>Save source revision</button><button type="button" className="secondary" onClick={() => { setEvidence(null); setComparison(null); setError(''); }}>Discard source changes</button></div>
       </fieldset></form>}
-      {archive && <div className="comparison"><h3>Confirm archive</h3><p>{archive.text}</p><p>This removes the {archive.kind} from the active profile. Historical revisions and their source links remain readable. Only an explicit historical restore can reactivate archived records.</p>
-        <button disabled={locked} onClick={() => { void mutate(`/${archive.kind === 'claim' ? 'claims' : 'evidence'}/${encodeURIComponent(archive.id)}`, 'DELETE'); }}>Confirm archive</button><button className="secondary" disabled={locked} onClick={() => setArchive(null)}>Keep active record</button>
-      </div>}
     </section>
-    <section className="panel" aria-labelledby="profile-history-title"><h2 id="profile-history-title" tabIndex={-1}>Immutable profile history</h2>
+    <section className="panel" hidden={section !== 'history'} aria-labelledby="profile-history-title"><h2 id="profile-history-title">Immutable profile history</h2>
       <p>Preview exact saved statements, evidence and owner authorship. Restore appends a new revision; it never overwrites history or existing documents.</p>
       <button className="secondary" disabled={locked} onClick={() => { void loadHistory(); }}>Load profile history</button>
       {history && <><ol>{history.map(item => <li key={item.id}><button className="secondary" disabled={locked} onClick={() => { void read(async () => { setPreview(await api.request<ProfileRevision>(`/profile/revisions/${encodeURIComponent(item.id)}`)); setRestoreConfirmed(false); }); }}>Preview profile revision {item.revision_no}</button><p>{item.reason} · {item.created_at} · owner {item.author_owner_id}</p></li>)}</ol>

@@ -136,7 +136,11 @@ function Harness({ api, disabled = false }: { api: Api; disabled?: boolean }) {
   const [dirty, setDirty] = useState(false); const [busy, setBusy] = useState(false);
   return <><button disabled={dirty || busy}>Sign out guard</button><JobSources api={api} disabled={disabled} onDirtyChange={setDirty} onBusyChange={setBusy} /></>;
 }
+function showSection(name: 'Posting catalog' | 'Add a manual posting' | 'Manage job sources' | 'Refresh tasks') {
+  fireEvent.click(screen.getByRole('button', { name }));
+}
 function fillManual() {
+  showSection('Add a manual posting');
   fireEvent.change(screen.getByLabelText('Job title'), { target: { value: savedPosting.title } });
   fireEvent.change(screen.getByLabelText('Employer'), { target: { value: savedPosting.company } });
   fireEvent.change(screen.getByLabelText('Location'), { target: { value: savedPosting.location_text } });
@@ -147,12 +151,49 @@ beforeEach(() => { window.history.replaceState(null, '', '/'); });
 afterEach(() => { window.history.replaceState(null, '', '/'); vi.useRealTimers(); vi.restoreAllMocks(); });
 
 describe('manual postings and retained source history', () => {
+  it('opens on the catalog and keeps manual and board buffers across sections without starting a board read', async () => {
+    const user = userEvent.setup(); const { api, state } = server();
+    const view = render(<Harness api={api} />);
+    await screen.findByRole('button', { name: 'Read Fictional engineer at Fictional North' });
+    expect(screen.getByRole('button', { name: 'Posting catalog' })).toHaveAttribute('aria-pressed', 'true');
+    expect(screen.queryByRole('group', { name: 'Add a manual posting' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Add a Greenhouse board' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Load saved source refresh tasks' })).not.toBeInTheDocument();
+    fillManual();
+    await user.click(screen.getByRole('button', { name: 'Posting catalog' }));
+    expect(screen.getByText(/Unsaved work is kept when you switch sections:/)).toHaveTextContent('manual posting');
+    await user.click(screen.getByRole('button', { name: 'Manage job sources' }));
+    expect(screen.getByRole('button', { name: 'Review or edit Fictional North board' })).toBeDisabled();
+    await user.click(screen.getByRole('button', { name: 'Refresh tasks' }));
+    expect(screen.getByRole('button', { name: 'Load saved source refresh tasks' })).toBeVisible();
+    await user.click(screen.getByRole('button', { name: 'Add a manual posting' }));
+    expect(screen.getByLabelText('Job title')).toHaveValue(savedPosting.title);
+    expect(screen.getByLabelText('Complete original posting text')).toHaveValue(text);
+    await user.click(screen.getByRole('button', { name: 'Discard manual buffer' }));
+    await user.click(screen.getByRole('button', { name: 'Manage job sources' }));
+    await user.click(screen.getByRole('button', { name: 'Review or edit Fictional North board' }));
+    fireEvent.change(await screen.findByLabelText('Board employer'), { target: { value: 'Buffered fictional employer' } });
+    await user.click(screen.getByLabelText('I reviewed these exact board-specific terms and policy and acknowledge permission for this configured board'));
+    await user.click(screen.getByRole('button', { name: 'Posting catalog' }));
+    await user.click(screen.getByRole('button', { name: 'Add a manual posting' }));
+    expect(screen.getByRole('button', { name: 'Save manual posting' })).toBeDisabled();
+    await user.click(screen.getByRole('button', { name: 'Manage job sources' }));
+    expect(screen.getByLabelText('Board employer')).toHaveValue('Buffered fictional employer');
+    expect(screen.getByLabelText('I reviewed these exact board-specific terms and policy and acknowledge permission for this configured board')).toBeChecked();
+    view.rerender(<Harness api={api} disabled />);
+    expect(screen.getByRole('button', { name: 'Posting catalog' })).toBeDisabled();
+    expect(screen.getByLabelText('Board employer')).toHaveValue('Buffered fictional employer');
+    expect(state.submissions).toHaveLength(0);
+  });
+
   it('retains the full manual buffer and retry identity, then exposes inert text and exact attribution without a profile precondition', async () => {
     const user = userEvent.setup(); const { api, state } = server(); state.postings = []; state.postingFailures.push(new TypeError('offline'));
     const { container } = render(<Harness api={api} />);
     await screen.findByText(/^No retained postings/);
     fillManual(); expect(screen.getByRole('button', { name: 'Sign out guard' })).toBeDisabled();
+    showSection('Manage job sources');
     expect(screen.getByRole('button', { name: 'Review or edit Fictional North board' })).toBeDisabled();
+    showSection('Add a manual posting');
     await user.click(screen.getByRole('button', { name: 'Save manual posting' }));
     expect(await screen.findByRole('alert')).toHaveTextContent('server could not be reached');
     expect(screen.getByLabelText('Complete original posting text')).toHaveValue(text);
@@ -189,10 +230,12 @@ describe('manual postings and retained source history', () => {
     expect(screen.queryByRole('alert')).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Retry retained posting decision' })).not.toBeInTheDocument();
     expect(screen.getByLabelText('Complete original posting text')).toHaveValue('');
+    showSection('Add a manual posting');
     expect(screen.getByRole('button', { name: 'Discard manual buffer' })).toBeDisabled();
     expect(screen.getByRole('button', { name: 'Sign out guard' })).toBeEnabled();
     expect(state.submissions).toHaveLength(1);
     expect(screen.getByText(/Manual posting saved with an attributable observation/)).toBeVisible();
+    showSection('Posting catalog');
     state.catalogWaitsForAbort = false;
     await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Reload posting catalog' })); });
     expect(screen.getByRole('button', { name: 'Read Fictional engineer at Fictional North' })).toBeVisible();
@@ -321,6 +364,7 @@ describe('durable filtered catalog and reviewed decisions', () => {
     const user = userEvent.setup(); const { api, state } = server();
     render(<Harness api={api} />); await screen.findByLabelText('Loaded catalog filters');
     fillManual(); state.catalogFailure = new ApiError(503, 'catalog_offline');
+    showSection('Posting catalog');
     fireEvent.change(screen.getByLabelText('Search posting text'), { target: { value: 'not confirmed' } });
     await user.click(screen.getByRole('button', { name: 'Apply catalog filters' }));
     expect(await screen.findByText(/Earlier loaded postings remain visible/)).toHaveTextContent('not the failed request');
@@ -499,11 +543,14 @@ describe('durable filtered catalog and reviewed decisions', () => {
     const user = userEvent.setup(); const { api, state } = server(); state.retireFailures.push(new TypeError('offline'));
     state.postings = [{ ...savedPosting, source_config_id: 'source-one', source_kind: 'greenhouse', disposition: 'saved' }];
     render(<Harness api={api} />);
+    showSection('Manage job sources');
     await user.click(await screen.findByRole('button', { name: 'Retire Fictional North board' }));
     expect(state.submissions).toHaveLength(0);
     await user.click(screen.getByRole('button', { name: 'Confirm retirement and retain history' }));
     expect(await screen.findByRole('alert')).toHaveTextContent('server could not be reached');
+    showSection('Posting catalog');
     expect(screen.getByRole('button', { name: 'Read Fictional engineer at Fictional North' })).toBeVisible();
+    showSection('Manage job sources');
     await user.click(screen.getByRole('button', { name: 'Confirm retirement and retain history' }));
     expect(await screen.findByText('Retired source', { selector: 'strong' })).toBeVisible();
     expect(state.submissions[1]?.key).toBe(state.submissions[0]?.key);
@@ -514,6 +561,7 @@ describe('durable filtered catalog and reviewed decisions', () => {
     expect(screen.getByRole('button', { name: 'Review or edit Fictional North board' })).toBeDisabled();
     expect(screen.getByRole('button', { name: 'Retire Fictional North board' })).toBeDisabled();
     expect(screen.queryByRole('button', { name: 'Retire Manual entries board' })).not.toBeInTheDocument();
+    showSection('Posting catalog');
     await user.selectOptions(screen.getByLabelText('Filter source'), 'source-one');
     await user.click(screen.getByRole('button', { name: 'Apply catalog filters' }));
     await user.click(screen.getByRole('button', { name: 'Read Fictional engineer at Fictional North' }));
@@ -525,6 +573,7 @@ describe('durable filtered catalog and reviewed decisions', () => {
   it('requires a source action comparison and new explicit precondition before retrying retirement after a conflict', async () => {
     const user = userEvent.setup(); const { api, state } = server(); state.retireFailures.push(new ApiError(412, 'stale_version'));
     render(<Harness api={api} />);
+    showSection('Manage job sources');
     await user.click(await screen.findByRole('button', { name: 'Retire Fictional North board' }));
     await user.click(screen.getByRole('button', { name: 'Confirm retirement and retain history' }));
     expect(await screen.findByRole('alert')).toHaveTextContent('newer revision');
@@ -549,6 +598,7 @@ describe('durable filtered catalog and reviewed decisions', () => {
     expect(screen.getByRole('button', { name: 'Load current URL context' })).toBeDisabled();
     expect(screen.getByLabelText('Loaded catalog filters')).toHaveTextContent('All retained postings');
     await user.click(screen.getByRole('button', { name: 'Discard manual buffer' }));
+    showSection('Posting catalog');
     await user.click(screen.getByRole('button', { name: 'Load current URL context' }));
     expect(await screen.findByText(/^No postings match these filters/)).toBeVisible();
     expect(await screen.findByRole('heading', { level: 3, name: savedPosting.title })).toBeVisible();
@@ -558,6 +608,7 @@ describe('durable filtered catalog and reviewed decisions', () => {
   it('holds a stale source refresh behind explicit latest-policy comparison before authorizing its retry', async () => {
     const user = userEvent.setup(); const { api, state } = server(); state.refreshFailures.push(new ApiError(412, 'stale_version'));
     render(<Harness api={api} />);
+    showSection('Manage job sources');
     await user.click(await screen.findByRole('button', { name: 'Refresh Fictional North board' }));
     expect(await screen.findByRole('alert')).toHaveTextContent('newer revision');
     expect(screen.getByRole('button', { name: 'Retry source refresh' })).toBeDisabled();
@@ -568,6 +619,7 @@ describe('durable filtered catalog and reviewed decisions', () => {
     await user.click(screen.getByRole('button', { name: 'Use current source version and retain my action' }));
     expect(state.submissions).toHaveLength(1);
     await user.click(screen.getByRole('button', { name: 'Retry source refresh' }));
+    showSection('Refresh tasks');
     expect(await screen.findByRole('heading', { name: 'Source refresh task source-task-one' })).toBeVisible();
     expect(state.submissions[1]?.version).toBe(12);
     expect(state.submissions[1]?.key).not.toBe(state.submissions[0]?.key);
@@ -578,6 +630,7 @@ describe('board-specific policy review and source conflicts', () => {
   it('creates a disabled board without collecting, then requires exact terms acknowledgement before enabling and refreshing', async () => {
     const user = userEvent.setup(); const { api, state } = server(); state.sourceExists = false;
     render(<Harness api={api} />);
+    showSection('Manage job sources');
     await screen.findByText(/No Greenhouse boards configured/);
     await user.click(screen.getByRole('button', { name: 'Add a Greenhouse board' }));
     fireEvent.change(screen.getByLabelText('Board employer'), { target: { value: 'Fictional North' } });
@@ -600,6 +653,7 @@ describe('board-specific policy review and source conflicts', () => {
     expect((state.submissions[1]?.body as SourceWrite).terms_review_acknowledged).toBe(true);
     expect(screen.getByText(/Provider quota: unknown. Your own request limit: 1 per minute/)).toBeVisible();
     await user.click(screen.getByRole('button', { name: 'Refresh Fictional North board' }));
+    showSection('Refresh tasks');
     await screen.findByRole('heading', { name: 'Source refresh task source-task-one' });
     expect(state.submissions[2]?.path).toBe('/sources/source-one/refresh'); expect(state.submissions[2]?.version).toBe(5);
     expect(screen.getByRole('button', { name: 'Sign out guard' })).toBeDisabled();
@@ -608,6 +662,7 @@ describe('board-specific policy review and source conflicts', () => {
   it('retains a conflicting board buffer until explicit comparison and rebase, then requires renewed review', async () => {
     const user = userEvent.setup(); const { api, state } = server();
     render(<Harness api={api} />);
+    showSection('Manage job sources');
     await user.click(await screen.findByRole('button', { name: 'Review or edit Fictional North board' }));
     fireEvent.change(await screen.findByLabelText('Board employer'), { target: { value: 'Edited fictional employer' } });
     await user.click(screen.getByLabelText('I reviewed these exact board-specific terms and policy and acknowledge permission for this configured board'));
@@ -634,11 +689,14 @@ describe('board-specific policy review and source conflicts', () => {
   it('honors Retry-After as a minimum while retaining catalog and retry identity', async () => {
     const { api, state } = server(); state.refreshFailures.push(new ApiError(429, 'source_rate_limited', [], 120));
     render(<Harness api={api} />);
+    showSection('Manage job sources');
     const refresh = await screen.findByRole('button', { name: 'Refresh Fictional North board' });
     vi.useFakeTimers(); vi.setSystemTime(new Date('2026-01-01T12:00:00Z'));
     await act(async () => { fireEvent.click(refresh); });
     expect(screen.getByRole('alert')).toHaveTextContent('source_rate_limited'); expect(refresh).toBeDisabled();
+    showSection('Posting catalog');
     expect(screen.getByRole('button', { name: 'Read Fictional engineer at Fictional North' })).toBeVisible();
+    showSection('Manage job sources');
     await act(async () => { await vi.advanceTimersByTimeAsync(119_000); }); expect(refresh).toBeDisabled();
     expect(state.submissions).toHaveLength(1);
     await act(async () => { await vi.advanceTimersByTimeAsync(1000); }); expect(refresh).toBeEnabled();
@@ -652,6 +710,7 @@ describe('board-specific policy review and source conflicts', () => {
     const start = Date.parse('2026-01-01T12:00:00Z'); vi.setSystemTime(start);
     const { api, state } = server(); state.source.next_allowed_at = new Date(start + 1000).toISOString();
     render(<Harness api={api} />);
+    showSection('Manage job sources');
     vi.setSystemTime(start + 1001);
     await act(async () => { await Promise.resolve(); });
     const refresh = screen.getByRole('button', { name: 'Refresh Fictional North board' });
@@ -664,6 +723,7 @@ describe('board-specific policy review and source conflicts', () => {
     const user = userEvent.setup(); const { api, state } = server();
     state.refreshFailures.push(new ApiError(429, 'source_rate_limited', [], 1e100));
     render(<Harness api={api} />);
+    showSection('Manage job sources');
     const refresh = await screen.findByRole('button', { name: 'Refresh Fictional North board' });
     state.source = { ...state.source, version: 4, health: 'rate_limited', next_allowed_at: null };
     await user.click(refresh);
@@ -672,6 +732,7 @@ describe('board-specific policy review and source conflicts', () => {
     await user.click(screen.getByRole('button', { name: 'Reload sources' }));
     expect(refresh).toBeDisabled();
     expect(state.submissions.filter(item => item.path.endsWith('/refresh'))).toHaveLength(1);
+    showSection('Posting catalog');
     expect(screen.getByRole('button', { name: 'Read Fictional engineer at Fictional North' })).toBeVisible();
   });
 });
@@ -680,9 +741,11 @@ describe('bounded durable refresh observation and cancellation', () => {
   it('pauses while hidden, bounds visible polling, and cancels with the actual workflow version and stable retry identity', async () => {
     const { api, state } = server();
     render(<Harness api={api} />);
+    showSection('Manage job sources');
     const refresh = await screen.findByRole('button', { name: 'Refresh Fictional North board' });
     vi.useFakeTimers();
     await act(async () => { fireEvent.click(refresh); });
+    showSection('Refresh tasks');
     vi.spyOn(document, 'hidden', 'get').mockReturnValue(true);
     act(() => document.dispatchEvent(new Event('visibilitychange')));
     await act(async () => { await vi.advanceTimersByTimeAsync(30_000); }); expect(state.workflowReads).toBe(0);
@@ -701,21 +764,27 @@ describe('bounded durable refresh observation and cancellation', () => {
     const cancellations = state.submissions.filter(item => item.path.endsWith('/cancel'));
     expect(cancellations).toHaveLength(2); expect(cancellations[0]?.version).toBe(7); expect(cancellations[1]?.version).toBe(7);
     expect(cancellations[1]?.key).toBe(cancellations[0]?.key);
+    showSection('Posting catalog');
     expect(screen.getByRole('button', { name: 'Read Fictional engineer at Fictional North' })).toBeVisible();
   });
 
   it('reconciles a successful read into retained postings and distinguishes excluded prospects from normal published jobs', async () => {
     const user = userEvent.setup(); const { api, state } = server();
     render(<Harness api={api} />);
+    showSection('Manage job sources');
     await user.click(await screen.findByRole('button', { name: 'Refresh Fictional North board' }));
+    showSection('Refresh tasks');
     state.postings = [savedPosting, { ...savedPosting, id: 'imported-posting', title: 'Published fictional designer', source_kind: 'greenhouse', source_config_id: 'source-one', external_id: 'greenhouse-42' }];
     state.workflow = { ...state.workflow, version: 8, state: 'succeeded', result: { source_id: 'source-one', policy_version: 2, fetched_at: '2026-01-02T12:00:00Z', posting_count: 1, new_posting_count: 1, changed_posting_count: 0, unchanged_posting_count: 0, excluded_prospect_count: 2, freshness: 'current' } };
     state.source = { ...state.source, last_success_at: '2026-01-02T12:00:00Z' };
     await user.click(screen.getByRole('button', { name: 'Check refresh task status' }));
+    showSection('Posting catalog');
     expect(await screen.findByRole('button', { name: 'Read Published fictional designer at Fictional North' })).toBeVisible();
     expect(screen.getByRole('button', { name: 'Read Fictional engineer at Fictional North' })).toBeVisible();
+    showSection('Refresh tasks');
     expect(screen.getByText(/Excluded prospect posts: 2/)).toBeVisible();
     expect(screen.getByText(/Published normal jobs: 1; new 1, changed 0, unchanged 0/)).toBeVisible();
+    showSection('Manage job sources');
     expect(screen.getByText(/Last successful read: 2026-01-02T12:00:00Z/)).toBeVisible();
     await waitFor(() => expect(screen.getByRole('button', { name: 'Sign out guard' })).toBeEnabled());
   });
@@ -725,6 +794,7 @@ describe('bounded durable refresh observation and cancellation', () => {
     state.workflow = { ...state.workflow, state: 'permanent_failure', last_error_code: 'upstream_forbidden', result: { source_id: 'source-one', policy_version: 2, error_code: 'upstream_forbidden' } };
     render(<Harness api={api} />);
     await screen.findByRole('button', { name: 'Read Fictional engineer at Fictional North' });
+    showSection('Refresh tasks');
     await user.click(screen.getByRole('button', { name: 'Load saved source refresh tasks' }));
     expect(screen.queryByRole('button', { name: 'Open source refresh task unrelated-task' })).toBeNull();
     state.catalogFailure = new ApiError(503, 'temporarily_unavailable');
@@ -732,16 +802,20 @@ describe('bounded durable refresh observation and cancellation', () => {
     await user.click(await screen.findByRole('button', { name: 'Open source refresh task source-task-one' }));
     expect(await screen.findByText(/Task ended, but the latest catalog or source health could not be loaded/)).toBeVisible();
     expect(screen.getByText(/Source task failure: upstream_forbidden/)).toBeVisible();
+    showSection('Manage job sources');
     expect(screen.getByText(/Health: degraded/)).toBeVisible();
+    showSection('Posting catalog');
     expect(screen.getByRole('button', { name: 'Read Fictional engineer at Fictional North' })).toBeVisible();
     expect(screen.queryByText(/^No retained postings/)).toBeNull();
   });
 
   it('disables the source immediately without deleting its catalog, and disabled parent controls retain the manual buffer', async () => {
     const user = userEvent.setup(); const { api, state } = server(); const { rerender } = render(<Harness api={api} />);
+    showSection('Manage job sources');
     await user.click(await screen.findByRole('button', { name: 'Disable Fictional North board' }));
     await waitFor(() => expect(screen.getByRole('button', { name: 'Refresh Fictional North board' })).toBeDisabled());
     expect(state.submissions[0]?.version).toBe(3); expect((state.submissions[0]?.body as SourceWrite).enabled).toBe(false);
+    showSection('Posting catalog');
     expect(screen.getByRole('button', { name: 'Read Fictional engineer at Fictional North' })).toBeVisible();
     fillManual(); rerender(<Harness api={api} disabled />);
     expect(screen.getByRole('button', { name: 'Save manual posting' })).toBeDisabled();

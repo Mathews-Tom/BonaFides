@@ -39,6 +39,7 @@ MAX_BATCHES = 100
 MAX_IMPORT_BYTES = 64 * 1024 * 1024
 MAX_ACTIVE_IMPORTS = 4
 MAX_PROPOSALS = 100
+MAX_IMPORT_SOURCES = 1000
 
 _HEADINGS: dict[str, ClaimKind] = {
     "experience": "experience",
@@ -97,18 +98,38 @@ class ImportProposal(StrictModel):
     quote: str = Field(min_length=1, max_length=4000)
 
 
+class ImportSource(StrictModel):
+    source_id: UUID
+    start: int = Field(ge=0)
+    end: int = Field(gt=0)
+    quote: str = Field(min_length=1, max_length=4000)
+
+
+IdentityField = Literal["display_name", "headline"]
+
+
+class ImportEntry(StrictModel):
+    entry_id: UUID
+    kind: ClaimKind | None
+    identity_field: IdentityField | None = None
+    payload: ClaimPayload
+    sources: list[ImportSource] = Field(min_length=1, max_length=MAX_IMPORT_SOURCES)
+    issues: list[str] = Field(default_factory=list)
+
+
 class ImportDecision(StrictModel):
-    proposal_id: UUID
+    source_ids: list[UUID] = Field(min_length=1, max_length=MAX_IMPORT_SOURCES)
     action: Literal["skip", "add", "replace"]
     claim_id: UUID | None = None
-    kind: ClaimKind
+    kind: ClaimKind | None
+    identity_field: IdentityField | None = None
     payload: ClaimPayload
 
 
 class ImportReview(StrictModel):
     mode: Literal["merge", "replace_all"]
     replace_all_confirmed: bool = Field(strict=True)
-    decisions: list[ImportDecision] = Field(min_length=1, max_length=MAX_PROPOSALS)
+    decisions: list[ImportDecision] = Field(min_length=1, max_length=MAX_IMPORT_SOURCES)
 
 
 def extract_proposals(parsed: ParsedImport) -> tuple[list[ImportProposal], list[str]]:
@@ -186,6 +207,244 @@ def extract_proposals(parsed: ParsedImport) -> tuple[list[ImportProposal], list[
     return result, warnings
 
 
+_REVIEW_HEADINGS: dict[str, ClaimKind | IdentityField] = {
+    **_HEADINGS,
+    "core competencies": "skill",
+    "technical competencies": "skill",
+    "areas of expertise": "skill",
+    "key skills": "skill",
+    "professional skills": "skill",
+    "technical proficiencies": "skill",
+    "certifications & training": "certification",
+    "summary": "headline",
+    "professional summary": "headline",
+    "profile": "headline",
+    "objective": "headline",
+    "notes": "other",
+    "additional notes": "other",
+}
+_SKILL_SEPARATOR = re.compile(r"[|;,•·●]|\s+/\s+")
+_BULLET = re.compile(r"^\s*[-*•·●]\s+")
+_DATE_RANGE = re.compile(
+    r"(?P<start>[0-9]{4}(?:-[0-9]{2}(?:-[0-9]{2})?)?|[0-9]{2}/[0-9]{4})\s*[-–—]\s*"
+    r"(?P<end>[0-9]{4}(?:-[0-9]{2}(?:-[0-9]{2})?)?|[0-9]{2}/[0-9]{4}|present|current)\Z",
+    re.IGNORECASE,
+)
+
+
+def project_entries(
+    source: str, source_sha256: str, proposals: list[ImportProposal]
+) -> list[ImportEntry]:
+    """Read-only, bounded projection of immutable literal fragments, never a reparse."""
+    if (
+        len(source) > MAX_TEXT_SCALARS
+        or len(source.encode("utf-8")) > MAX_TEXT_BYTES
+        or hashlib.sha256(source.encode("utf-8")).hexdigest() != source_sha256
+    ):
+        raise Problem(422, "invalid_import_source")
+    entries: list[ImportEntry] = []
+    section: ClaimKind | IdentityField | None = None
+    section_seen = 0
+    previous_end = 0
+    for index, proposal in enumerate(proposals):
+        start, end = proposal.source_start, proposal.source_end
+        if (
+            start < previous_end
+            or end <= start
+            or end > len(source)
+            or source[start:end] != proposal.quote
+        ):
+            raise Problem(422, "invalid_import_source")
+        gap = source[previous_end:start]
+        section_changed = False
+        for line in gap.splitlines():
+            heading = line.strip("# \t:").casefold()
+            if heading in _REVIEW_HEADINGS:
+                section, section_changed, section_seen = _REVIEW_HEADINGS[heading], True, 0
+        heading = proposal.quote.strip("# \t:").casefold()
+        # Newly recognized structural headings can exist in older raw fragment JSON.
+        # Keep that JSON untouched, exactly as with headings excluded by extraction.
+        if heading in _REVIEW_HEADINGS:
+            section = _REVIEW_HEADINGS[heading]
+            section_seen = 0
+            previous_end = end
+            continue
+        if proposal.quote.endswith(":"):
+            section = None
+        kind: ClaimKind | None = (
+            cast(ClaimKind, section) if section not in (None, "headline", "other") else None
+        )
+        if section is None and proposal.kind != "other":
+            kind = proposal.kind
+        if (
+            kind == "project"
+            and not _BULLET.match(proposal.quote)
+            and not proposal.quote.casefold().startswith("project:")
+            and index + 1 < len(proposals)
+            and _BULLET.match(proposals[index + 1].quote)
+            and re.search(r"\s[–—-]\s", proposals[index + 1].quote)
+        ):
+            kind = None
+        identity_field: IdentityField | None = None
+        if index == 0 and section is None and _name_like(proposal.quote):
+            kind, identity_field = "identity", "display_name"
+        elif section == "headline" and section_seen == 0 and len(proposal.quote) <= 300:
+            # Only a single literal line in a bounded summary is a clear headline.
+            following = proposals[index + 1] if index + 1 < len(proposals) else None
+            boundary = source[end : following.source_start] if following else "\n\n"
+            if following is None or any(
+                line.strip("# \t:").casefold() in _REVIEW_HEADINGS for line in boundary.splitlines()
+            ):
+                kind, identity_field = "identity", "headline"
+        spans: list[tuple[int, int]] = [(start, end)]
+        if kind == "skill" and (
+            _SKILL_SEPARATOR.search(proposal.quote) or _BULLET.match(proposal.quote)
+        ):
+            spans = []
+            bullet = _BULLET.match(proposal.quote)
+            offset = bullet.end() if bullet else 0
+            label_end = proposal.quote.find(":", offset) if bullet else -1
+            if 0 < label_end - offset <= 120:
+                offset = label_end + 1
+            for separator in [*_SKILL_SEPARATOR.finditer(proposal.quote, offset), None]:
+                stop = separator.start() if separator else len(proposal.quote)
+                fragment = proposal.quote[offset:stop]
+                if fragment.strip():
+                    left = start + offset + len(fragment) - len(fragment.lstrip())
+                    spans.append((left, left + len(fragment.strip())))
+                offset = separator.end() if separator else stop
+            if not spans:
+                spans = [(start, end)]
+        for left, right in spans:
+            literal = source[left:right]
+            part = ImportSource(
+                source_id=uuid5(NAMESPACE_URL, f"offerloom:source:{source_sha256}:{left}:{right}"),
+                start=left,
+                end=right,
+                quote=literal,
+            )
+            payload = ClaimPayload(text=literal)
+            if kind in {"experience", "education", "project"}:
+                payload = _literal_fields(literal, kind)
+            issues = ["needs_placement"] if kind is None else []
+            entry = ImportEntry(
+                entry_id=uuid5(NAMESPACE_URL, f"offerloom:entry:{part.source_id}"),
+                kind=kind,
+                identity_field=identity_field,
+                payload=payload,
+                sources=[part],
+                issues=issues,
+            )
+            if (
+                entries
+                and kind in {"experience", "education", "project"}
+                and entries[-1].kind == kind
+                and not section_changed
+                and not re.search(r"\n[ \t]*\n", gap)
+                and _can_group(
+                    entries[-1],
+                    literal,
+                    (
+                        proposals[index + 1].quote
+                        if index + 1 < len(proposals)
+                        and not re.search(
+                            r"\n[ \t]*\n", source[end : proposals[index + 1].source_start]
+                        )
+                        else None
+                    ),
+                )
+                and len(entries[-1].payload.text) + len(literal) + 1 <= 4000
+            ):
+                previous = entries[-1]
+                combined = previous.payload.text + "\n" + literal
+                previous.sources.append(part)
+                fields = previous.payload.model_dump()
+                fields.update(
+                    {
+                        key: value
+                        for key, value in payload.model_dump().items()
+                        if value is not None and key != "text"
+                    }
+                )
+                fields["text"] = combined
+                previous.payload = ClaimPayload.model_validate(fields)
+                previous.entry_id = uuid5(
+                    NAMESPACE_URL,
+                    "offerloom:entry:" + ":".join(str(item.source_id) for item in previous.sources),
+                )
+            else:
+                entries.append(entry)
+        section_seen += 1
+        previous_end = end
+    if sum(len(entry.sources) for entry in entries) > MAX_IMPORT_SOURCES:
+        raise Problem(422, "import_source_limit")
+    return entries
+
+
+def _name_like(value: str) -> bool:
+    words = value.split()
+    return (
+        len(value) <= 120
+        and 2 <= len(words) <= 5
+        and all(
+            word[0].isupper()
+            and all(character.isalpha() or character in "'’-." for character in word)
+            for word in words
+        )
+    )
+
+
+def _literal_fields(value: str, kind: ClaimKind) -> ClaimPayload:
+    fields: dict[str, str] = {"text": value}
+    parts = [part.strip() for part in _BULLET.sub("", value, count=1).split("|")]
+    date_text = parts[-1]
+    dates = _DATE_RANGE.fullmatch(date_text)
+    if dates:
+        fields["start_date"] = dates["start"]
+        if dates["end"].casefold() not in {"present", "current"}:
+            fields["end_date"] = dates["end"]
+        for field in ("start_date", "end_date"):
+            date = fields.get(field)
+            if date is not None and "/" in date:
+                month, year = date.split("/")
+                fields[field] = f"{year}-{month}"
+    if len(parts) in {2, 3} and kind in {"experience", "education"}:
+        labels = parts[:-1] if dates else parts
+        if len(labels) == 2 and all(0 < len(label) <= 200 for label in labels):
+            fields.update(role=labels[0], organization=labels[1])
+    # Invalid or ambiguous dates remain literal; never normalize precision or invent a date.
+    try:
+        return ClaimPayload.model_validate(fields)
+    except ValueError:
+        return ClaimPayload(text=value)
+
+
+def _can_group(entry: ImportEntry, literal: str, following: str | None) -> bool:
+    """Only attach an explicit date or bullet continuation, not adjacent jobs."""
+    if literal.casefold().startswith("project:"):
+        return False
+    if _BULLET.match(literal) and (
+        entry.kind == "project"
+        and re.search(r"\s[–—-]\s", literal)
+        or entry.kind == "education"
+        and "|" in literal
+    ):
+        return False
+    if entry.kind == "project" and entry.payload.text.casefold().startswith("project:"):
+        return True
+    if _BULLET.match(literal):
+        return entry.payload.start_date is not None or entry.kind == "project"
+    if _DATE_RANGE.fullmatch(literal):
+        return entry.payload.start_date is None and len(entry.sources) <= 2
+    if following is not None and _DATE_RANGE.fullmatch(following):
+        return entry.payload.start_date is None and len(entry.sources) == 1
+    return (
+        entry.payload.start_date is not None
+        and "|" not in literal
+        and literal.endswith((".", "!", "?"))
+    )
+
+
 def get_batch(conn: Connection, owner_id: UUID, import_id: UUID) -> dict[str, object]:
     row = (
         conn.execute(
@@ -209,7 +468,18 @@ def get_batch(conn: Connection, owner_id: UUID, import_id: UUID) -> dict[str, ob
         "created_at": row["created_at"].isoformat(),
         "source_sha256": row["source_sha256"],
         "text": row["parsed_text"],
-        "proposals": row["proposals"],
+        "entries": [
+            entry.model_dump(mode="json")
+            for entry in (
+                project_entries(
+                    row["parsed_text"],
+                    row["source_sha256"],
+                    [ImportProposal.model_validate(value) for value in row["proposals"]],
+                )
+                if row["parsed_text"] is not None
+                else []
+            )
+        ],
         "warnings": row["warnings"],
         "profile_version": int(row["profile_version"]),
         "error_code": row["last_error_code"],
@@ -238,10 +508,14 @@ def _validate_review(
     batch: RowMapping,
     review: ImportReview,
 ) -> dict[UUID, RowMapping]:
-    proposals = [ImportProposal.model_validate(value) for value in batch["proposals"]]
-    expected = {item.proposal_id for item in proposals}
-    received = [item.proposal_id for item in review.decisions]
-    if len(set(received)) != len(received) or set(received) != expected:
+    entries = project_entries(
+        batch["parsed_text"],
+        batch["source_sha256"],
+        [ImportProposal.model_validate(value) for value in batch["proposals"]],
+    )
+    sources = {part.source_id: part for entry in entries for part in entry.sources}
+    received = [source_id for item in review.decisions for source_id in item.source_ids]
+    if len(set(received)) != len(received) or set(received) != set(sources):
         raise Problem(422, "invalid_import_decisions")
     accepted = [item for item in review.decisions if item.action != "skip"]
     if not accepted:
@@ -251,12 +525,46 @@ def _validate_review(
     replacements: dict[UUID, RowMapping] = {}
     snapshot = _snapshot(conn, owner_id)
     current_ids = set(snapshot.claim_revision_ids)
+    identity_fields: set[IdentityField] = set()
     for decision in review.decisions:
+        if decision.identity_field is not None and decision.kind != "identity":
+            raise Problem(422, "import_destination_invalid")
+        if decision.action == "skip":
+            if decision.claim_id is not None:
+                raise Problem(422, "import_target_invalid")
+            continue
+        if decision.kind is None:
+            raise Problem(422, "import_destination_required")
+        original = "\n".join(
+            part.quote
+            for part in sorted(
+                (sources[source_id] for source_id in decision.source_ids),
+                key=lambda part: part.start,
+            )
+        )
+        if len(original) > 4000:
+            raise Problem(422, "import_source_too_long")
+        if decision.kind == "identity":
+            field = decision.identity_field
+            if field is None or field in identity_fields or decision.claim_id is not None:
+                raise Problem(422, "import_identity_invalid")
+            if any(
+                value is not None
+                for key, value in decision.payload.model_dump().items()
+                if key != "text"
+            ):
+                raise Problem(422, "import_identity_invalid")
+            limit = 120 if field == "display_name" else 300
+            if len(decision.payload.text) > limit:
+                raise Problem(422, "import_identity_invalid")
+            populated = bool(getattr(snapshot, field))
+            if decision.action != ("replace" if populated else "add"):
+                raise Problem(422, "import_identity_overwrite_required")
+            identity_fields.add(field)
+            continue
         if decision.action != "replace":
             if decision.claim_id is not None:
                 raise Problem(422, "import_target_invalid")
-            if decision.action == "add" and decision.kind == "identity":
-                raise Problem(422, "import_identity_preserved")
             continue
         if decision.claim_id is None or decision.claim_id in replacements:
             raise Problem(422, "import_target_invalid")
@@ -295,10 +603,15 @@ def _validate_review(
         SELECT 1 FROM offerloom.claim_evidence_links l JOIN offerloom.professional_claims c
         ON c.owner_id=l.owner_id AND c.current_revision_id=l.claim_revision_id
         JOIN offerloom.evidence_revisions r ON r.owner_id=l.owner_id AND r.id=l.evidence_revision_id
-        WHERE c.owner_id=e.owner_id AND c.archived_at IS NULL AND c.kind='identity' AND r.evidence_id=e.id))"""),
+        WHERE c.owner_id=e.owner_id AND c.archived_at IS NULL AND c.kind='identity' AND r.evidence_id=e.id)
+        OR EXISTS(SELECT 1 FROM offerloom.evidence_revisions r WHERE r.owner_id=e.owner_id
+        AND r.id=e.current_revision_id AND r.payload->>'identity_field' IN ('display_name','headline')))"""),
         {"owner": owner_id, "replace_all": review.mode == "replace_all"},
     ).scalar_one()
-    if claim_count + sum(item.action == "add" for item in accepted) > 100:
+    if (
+        claim_count + sum(item.action == "add" and item.kind != "identity" for item in accepted)
+        > 100
+    ):
         raise Problem(422, "claim_limit")
     if evidence_count + len(accepted) > 200:
         raise Problem(422, "evidence_limit")
@@ -319,6 +632,7 @@ def stage_parsed(
     )
     assert_fence(conn, task)
     proposals, warnings = extract_proposals(parsed)
+    project_entries(parsed.text, parsed.source_sha256, proposals)
     batch = _batch_for_task(conn, task)
     if batch["parsed_text"] is not None:
         raise Problem(409, "import_already_staged")
@@ -384,12 +698,18 @@ def merge_reviewed(conn: Connection, task: Claim) -> dict[str, object]:
         raise Problem(412, "profile_version_conflict")
     review = ImportReview.model_validate(batch["review"])
     replacements = _validate_review(conn, task.owner_id, batch, review)
-    proposals = {
-        item.proposal_id: item
-        for item in (ImportProposal.model_validate(value) for value in batch["proposals"])
+    sources = {
+        part.source_id: part
+        for entry in project_entries(
+            batch["parsed_text"],
+            batch["source_sha256"],
+            [ImportProposal.model_validate(value) for value in batch["proposals"]],
+        )
+        for part in entry.sources
     }
     snapshot = _snapshot(conn, task.owner_id)
     claim_ids = list(snapshot.claim_revision_ids)
+    identity_updates: dict[str, object] = {}
     if review.mode == "replace_all":
         conn.execute(
             text("""UPDATE offerloom.professional_claims SET archived_at=clock_timestamp(),version=version+1
@@ -411,25 +731,30 @@ def merge_reviewed(conn: Connection, task: Claim) -> dict[str, object]:
             SELECT 1 FROM offerloom.claim_evidence_links l JOIN offerloom.professional_claims c
             ON c.owner_id=l.owner_id AND c.current_revision_id=l.claim_revision_id
             JOIN offerloom.evidence_revisions r ON r.owner_id=l.owner_id AND r.id=l.evidence_revision_id
-            WHERE c.owner_id=e.owner_id AND c.archived_at IS NULL AND c.kind='identity' AND r.evidence_id=e.id)"""),
+            WHERE c.owner_id=e.owner_id AND c.archived_at IS NULL AND c.kind='identity' AND r.evidence_id=e.id)
+            AND NOT EXISTS(SELECT 1 FROM offerloom.evidence_revisions r WHERE r.owner_id=e.owner_id
+            AND r.id=e.current_revision_id AND r.payload->>'identity_field' IN ('display_name','headline'))"""),
             {"owner": task.owner_id},
         )
     for decision in review.decisions:
         if decision.action == "skip":
             continue
-        proposal = proposals[decision.proposal_id]
+        parts = sorted(
+            (sources[source_id] for source_id in decision.source_ids), key=lambda part: part.start
+        )
+        original = "\n".join(part.quote for part in parts)
         evidence_id, evidence_revision_id, claim_revision_id = uuid4(), uuid4(), uuid4()
         source_payload: dict[str, object] = {
-            "text": proposal.quote,
+            "text": original,
             "source": "Owner-reviewed local literal import",
             "import_id": str(batch["id"]),
-            "proposal_id": str(proposal.proposal_id),
+            "sources": [part.model_dump(mode="json") for part in parts],
             "source_sha256": batch["source_sha256"],
-            "source_start": proposal.source_start,
-            "source_end": proposal.source_end,
             "extraction": "deterministic_literal",
             "assertion": "owner_asserted_not_independently_verified",
         }
+        if decision.kind == "identity":
+            source_payload["identity_field"] = decision.identity_field
         conn.execute(
             text(
                 "INSERT INTO offerloom.evidence_records(owner_id,id,current_revision_id) VALUES(:owner,:id,:revision)"
@@ -449,6 +774,9 @@ def merge_reviewed(conn: Connection, task: Claim) -> dict[str, object]:
                 "sha": content_hash(source_payload),
             },
         )
+        if decision.kind == "identity":
+            identity_updates[str(decision.identity_field)] = decision.payload.text
+            continue
         if decision.action == "replace":
             if decision.claim_id is None:
                 raise Problem(422, "import_target_invalid")
@@ -490,7 +818,7 @@ def merge_reviewed(conn: Connection, task: Claim) -> dict[str, object]:
                 "owner": task.owner_id,
                 "claim": claim_revision_id,
                 "evidence": evidence_revision_id,
-                "quote": proposal.quote,
+                "quote": original,
             },
         )
         conn.execute(
@@ -512,7 +840,7 @@ def merge_reviewed(conn: Connection, task: Claim) -> dict[str, object]:
     result = _save(
         conn,
         task.owner_id,
-        snapshot.model_copy(update={"claim_revision_ids": claim_ids}),
+        snapshot.model_copy(update={"claim_revision_ids": claim_ids, **identity_updates}),
         "import_reviewed_merge",
     )
     if conn.execute(

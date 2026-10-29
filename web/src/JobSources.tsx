@@ -2,6 +2,7 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react';
 import { Api, ApiError, errorText, terminal, type DuplicateCandidate, type DuplicateDecision, type DuplicatePage, type ObservationDetail, type ObservationPage, type ObservationSummary, type PostingDetail, type PostingDisposition, type PostingFilters, type PostingPage, type PostingSummary, type PostingWrite, type Profile, type Source, type SourcePage, type SourceRefreshAccepted, type SourceWrite, type Workflow } from './api';
 import { Suitability } from './Suitability';
+import './JobSources.css';
 
 export interface JobSourcesProps {
   api: Api; currentProfile?: Profile | null; onProfileChange?: (value: Profile) => void; disabled?: boolean; onDirtyChange?: (dirty: boolean) => void; onBusyChange?: (busy: boolean) => void;
@@ -87,6 +88,7 @@ function SourceFacts({ source }: { source: Source }) {
 }
 
 export function JobSources({ api, currentProfile, onProfileChange, disabled = false, onDirtyChange, onBusyChange }: JobSourcesProps) {
+  const [section, setSection] = useState<'catalog' | 'manual' | 'sources' | 'tasks'>('catalog');
   const [posting, setPosting] = useState<PostingWrite>(emptyPosting);
   const [postings, setPostings] = useState<PostingSummary[] | null>(null);
   const [postingCursor, setPostingCursor] = useState<string | null>(null);
@@ -248,6 +250,7 @@ export function JobSources({ api, currentProfile, onProfileChange, disabled = fa
       detailRead.current += 1;
       const value = await request<PostingDetail>(signal, '/postings', 'POST', body, undefined, keyFor('posting', '/postings', body));
       mutationKeys.current.delete('posting'); setPosting(emptyPosting()); setDetail(value); setObservations(null); setObservation(null); setObservationCursor(null); setDuplicates(null); setDuplicateCursor(null); setUndo(null);
+      setSection('catalog');
       retainContext(desiredFilters.current, value.id);
       setNotice('Manual posting saved with an attributable observation. No reference URL was fetched.');
       try { await reloadCatalog(signal); } catch { /* Creation succeeded; a failed catalog reload is shown separately without losing the receipt. */ }
@@ -467,13 +470,23 @@ export function JobSources({ api, currentProfile, onProfileChange, disabled = fa
   }
   const source = editor?.draft;
   const reviewReady = !!source && !!source.company.trim() && /^[A-Za-z0-9_-]{1,120}$/.test(source.board_token) && !!reference(source.terms_url) && !!source.terms_revision?.trim();
-  return <section className="panel job-sources" aria-labelledby="job-sources-title"><h2 id="job-sources-title">Opportunities and job sources</h2>
-    <p>Keep complete posting text and attributable source history. Manual entries never fetch a URL. Board reads require your specific terms review; public API access is not permission to collect content.</p>
+  return <section className="panel job-sources" aria-labelledby="job-sources-title"><h2 id="job-sources-title">Posting workspace</h2>
+    <p className="hint">Browse retained opportunities and their original source history. Nothing here sends an application or fetches a board automatically.</p>
     {disabled && <p className="hint">Finish the other open operation before changing job postings or sources. Your buffers remain here.</p>}
     <div className="error" role="alert" tabIndex={-1} ref={errorRef} hidden={!error}>{error}</div><p role="status">{notice}</p>
     {urlContextPending && <p className="disclosure">The address bar has a different catalog context. <button className="secondary" disabled={locked || dirty} onClick={() => { void restoreUrlContext(); }}>Load current URL context</button></p>}
     {operation && <p role="status">Waiting for the server. Your existing catalog and buffers stay visible.</p>}
     {completionPending && <p role="status">Reconciling the retained catalog and source health after the task ended…</p>}
+    <nav className="opportunity-sections" aria-label="Opportunity sections">
+      <button type="button" className="secondary" aria-pressed={section === 'catalog'} aria-controls="opportunity-catalog" disabled={locked} onClick={() => setSection('catalog')}>Posting catalog</button>
+      <button type="button" className="secondary" aria-pressed={section === 'manual'} aria-controls="opportunity-manual" disabled={locked} onClick={() => setSection('manual')}>Add a manual posting</button>
+      <button type="button" className="secondary" aria-pressed={section === 'sources'} aria-controls="opportunity-sources" disabled={locked} onClick={() => setSection('sources')}>Manage job sources</button>
+      <button type="button" className="secondary" aria-pressed={section === 'tasks'} aria-controls="opportunity-tasks" disabled={locked} onClick={() => setSection('tasks')}>Refresh tasks</button>
+    </nav>
+    {(manualDirty || sourceDirty || suitabilityDirty || postingCommand || sourceCommand) && <p className="opportunity-buffer" role="status">Unsaved work is kept when you switch sections: {[manualDirty && 'manual posting', sourceDirty && 'board configuration', suitabilityDirty && 'requirements review', postingCommand && 'posting decision', sourceCommand && 'source action'].filter(Boolean).join(', ')}. Return to that section to save or explicitly discard it.</p>}
+    {run && section !== 'tasks' && <p className="opportunity-buffer">Source refresh task {run.id}: {run.workflow?.state.replaceAll('_', ' ') ?? 'accepted; status not loaded'}. <button type="button" className="secondary" disabled={locked} onClick={() => setSection('tasks')}>Inspect current refresh task</button></p>}
+    <section id="opportunity-manual" aria-label="Manual posting entry" hidden={section !== 'manual'}>
+    <p>Paste the complete original text. Manual entries never fetch the reference URL.</p>
     <form onSubmit={event => { void createPosting(event); }}><fieldset disabled={locked || sourceDirty || !!postingCommand || !!sourceCommand || suitabilityDirty}><legend>Add a manual posting</legend>
       <label>Job title<input required maxLength={500} value={posting.title} onChange={event => { const value = event.target.value; setPosting(existing => ({ ...existing, title: value })); }} /></label>
       <label>Employer<input required maxLength={500} value={posting.company} onChange={event => { const value = event.target.value; setPosting(existing => ({ ...existing, company: value })); }} /></label>
@@ -483,7 +496,8 @@ export function JobSources({ api, currentProfile, onProfileChange, disabled = fa
       <p className="hint">Plain text only. Saving starts no model request or application action. Review requirements manually or explicitly request a separate extraction proposal from the saved posting detail.</p>
       <div className="actions"><button>Save manual posting</button><button type="button" className="secondary" disabled={!manualDirty} onClick={() => { setPosting(emptyPosting()); mutationKeys.current.delete('posting'); }}>Discard manual buffer</button></div>
     </fieldset></form>
-    <section aria-labelledby="catalog-title"><h3 id="catalog-title">Retained posting catalog</h3>
+    </section>
+    <section id="opportunity-catalog" aria-labelledby="catalog-title" hidden={section !== 'catalog'}><h3 id="catalog-title">Retained posting catalog</h3>
       <form onSubmit={event => { event.preventDefault(); void applyFilters({ ...filters }); }}><fieldset disabled={locked}><legend>Find retained postings</legend>
         <div className="catalog-filters">
           <label>Search posting text<input type="search" maxLength={300} value={filters.q} onChange={event => setFilters(existing => ({ ...existing, q: event.target.value }))} /></label>
@@ -500,7 +514,7 @@ export function JobSources({ api, currentProfile, onProfileChange, disabled = fa
       {resultFilters && <p role="status" aria-label="Loaded catalog filters"><strong>Loaded results:</strong> {filterSummary(resultFilters)}</p>}
       {catalogMetadata && <p className="hint">Newest retained entries first · {postings?.length} loaded (total unavailable) · query {catalogMetadata.elapsed.toFixed(2)} ms · cutoff {catalogMetadata.asOf}. New entries appear on a fresh query; edits or removals can change membership between pages.</p>}
       {catalogError && <p className="error" role="status">{catalogError} {postings !== null ? 'Earlier loaded postings remain visible; this list may be stale. The loaded-filter summary describes those earlier results, not the failed request.' : 'Catalog is unavailable, not known to be empty.'}</p>}
-      {postings === null ? <p role="status">{catalogError ? 'Load the catalog again when the server is available.' : 'Loading posting catalog…'}</p> : postings.length === 0 ? <p>{catalogError ? 'The earlier successful result contained no rows; the latest request is unavailable, not confirmed empty.' : resultFilters && filterKeys.some(key => resultFilters[key]) ? 'No postings match these filters. Clear catalog filters to return to all retained postings.' : 'No retained postings. Paste a manual posting above or explicitly refresh a reviewed source below.'}</p> : <ul>{postings.map(item => <li key={item.id}><button className="secondary" disabled={locked || !!postingCommand || suitabilityDirty} onClick={() => { void openPosting(item.id); }}>Read {item.title} at {item.company}</button><PostingFacts posting={item} /></li>)}</ul>}
+      {postings === null ? <p role="status">{catalogError ? 'Load the catalog again when the server is available.' : 'Loading posting catalog…'}</p> : postings.length === 0 ? <p>{catalogError ? 'The earlier successful result contained no rows; the latest request is unavailable, not confirmed empty.' : resultFilters && filterKeys.some(key => resultFilters[key]) ? 'No postings match these filters. Clear catalog filters to return to all retained postings.' : 'No retained postings. Choose Add a manual posting to paste a role, or Manage job sources to explicitly refresh a reviewed board.'}</p> : <ul className="opportunity-list">{postings.map(item => <li key={item.id}><button className="secondary" disabled={locked || !!postingCommand || suitabilityDirty} onClick={() => { void openPosting(item.id); }}>Read {item.title} at {item.company}</button><PostingFacts posting={item} /></li>)}</ul>}
       {postingCursor && <button className="secondary" disabled={locked} onClick={() => { void nextPostings(); }}>Load more postings</button>}
       {detail && <article className="comparison" aria-labelledby="posting-detail-title"><h3 id="posting-detail-title">{detail.title}</h3><p>{detail.company}</p><PostingFacts posting={detail} />
         <p><strong>Your disposition: {detail.disposition ?? 'unmarked'}</strong>. Saving, dismissing or archiving does not create an application, change its stage, delete text or merge records.</p>
@@ -534,7 +548,7 @@ export function JobSources({ api, currentProfile, onProfileChange, disabled = fa
         {observation && <section aria-labelledby="observation-detail-title"><h4 id="observation-detail-title">Exact retained observation {observation.id}</h4><p>Source {observation.source_config_id} · board {observation.board_token ?? 'Manual owner entry'} · external ID {observation.external_id} · policy {observation.policy_version} · fetched {observation.fetched_at} · retained {observation.created_at}</p><Reference value={observation.source_url} label="Observation source reference" /><p>SHA-256 <code>{observation.content_sha256}</code></p><pre className="import-source">{JSON.stringify(observation.snapshot, null, 2)}</pre></section>}
       </article>}
     </section>
-    <section aria-labelledby="board-sources-title"><h3 id="board-sources-title">Configured Greenhouse boards</h3>
+    <section id="opportunity-sources" aria-labelledby="board-sources-title" hidden={section !== 'sources'}><h3 id="board-sources-title">Configured Greenhouse boards</h3>
       <p>Only the exact configured board is read. Missing posts, an outage, or disabling a source never removes retained history. Provider quota is unknown; your own request policy is separate.</p>
       <div className="actions"><button className="secondary" disabled={locked} onClick={() => { void perform(reloadSources); }}>Reload sources</button><button className="secondary" disabled={locked || dirty} onClick={() => { const draft: SourceWrite = { source_kind: 'greenhouse', board_token: '', company: '', terms_url: null, terms_revision: null, terms_review_acknowledged: false, enabled: false, request_limit_per_minute: 1 }; setEditor({ draft, baseline: JSON.stringify(draft) }); setConflict(false); setComparison(null); }}>Add a Greenhouse board</button></div>
       {sourceError && <p className="error" role="status">{sourceError} {sources !== null ? 'Earlier source health remains visible and may be stale.' : 'Source list is unavailable, not known to be empty.'}</p>}
@@ -581,7 +595,7 @@ export function JobSources({ api, currentProfile, onProfileChange, disabled = fa
         </section>}
       </form>}
     </section>
-    <section className="saved-tasks" aria-labelledby="source-tasks-title"><h3 id="source-tasks-title">Durable source refresh tasks</h3>
+    <section id="opportunity-tasks" className="saved-tasks" aria-labelledby="source-tasks-title" hidden={section !== 'tasks'}><h3 id="source-tasks-title">Durable source refresh tasks</h3>
       <button className="secondary" disabled={locked} onClick={() => { void perform(async signal => { const page = await request<{ items: Workflow[] }>(signal, '/workflows'); setSavedRuns(page.items.filter(item => item.kind === 'source_refresh')); }); }}>Load saved source refresh tasks</button>
       {savedRuns && (savedRuns.length ? <ul>{savedRuns.map(item => <li key={item.id}><button className="secondary" disabled={locked || completionPending || (activeRun && run?.id !== item.id)} onClick={() => { void perform(async signal => { const workflow = await request<Workflow>(signal, `/workflows/${encodeURIComponent(item.id)}`); setRun({ id: workflow.id, sourceId: workflow.result?.source_id ?? null, workflow }); setPollPaused(false); setPollGeneration(value => value + 1); }); }}>Open source refresh task {item.id}</button><p>{item.state.replaceAll('_', ' ')}</p></li>)}</ul> : <p>No source refresh tasks in the returned saved-task page.</p>)}
       {run && <div className="task" aria-live="polite"><h4>Source refresh task {run.id}</h4><p>Source: {run.sourceId ?? 'Source attribution is not present in this task response'}.</p>

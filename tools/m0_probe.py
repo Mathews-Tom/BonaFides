@@ -865,18 +865,28 @@ class Proof:
         self.checked("persistent_auth_throttle_restart_and_forwarded_header_rejection")
 
     def browser(self) -> None:
-        from playwright.sync_api import sync_playwright
+        from playwright.sync_api import expect, sync_playwright
+
+        saved, _, _ = self.api.request("GET", "/api/v1/profile")
+        snapshot = saved["current_revision"]["snapshot"]
 
         with sync_playwright() as playwright:
             browser = playwright.chromium.launch(headless=True)
             context = browser.new_context(base_url=self.origin)
             page = context.new_page()
             page.goto(self.origin)
-            page.get_by_role("heading", name="A dossier built on evidence.").wait_for()
             page.get_by_label("Login name", exact=True).fill(self.login)
             page.get_by_label("Password", exact=True).fill(self.password)
             page.get_by_role("button", name="Sign in", exact=True).click()
-            page.get_by_role("heading", name="Facts you can stand behind").wait_for()
+            page.get_by_role("link", name="Profile", exact=True).click()
+            expect(page.get_by_label("Display name", exact=True)).to_be_visible()
+            expect(page.get_by_label("Professional headline", exact=True)).to_be_visible()
+            expect(page.get_by_label("Display name", exact=True)).to_have_value(
+                snapshot["display_name"]
+            )
+            expect(page.get_by_label("Professional headline", exact=True)).to_have_value(
+                snapshot["headline"]
+            )
             require(
                 any(
                     cookie["name"] == "__Host-offerloom_session"
@@ -887,7 +897,14 @@ class Proof:
                 "browser_secure_session_missing",
             )
             page.reload()
-            page.get_by_role("heading", name="Facts you can stand behind").wait_for()
+            expect(page.get_by_label("Display name", exact=True)).to_be_visible()
+            expect(page.get_by_label("Professional headline", exact=True)).to_be_visible()
+            expect(page.get_by_label("Display name", exact=True)).to_have_value(
+                snapshot["display_name"]
+            )
+            expect(page.get_by_label("Professional headline", exact=True)).to_have_value(
+                snapshot["headline"]
+            )
             browser.close()
         self.checked("actual_chromium_secure_localhost_login_and_reload")
 

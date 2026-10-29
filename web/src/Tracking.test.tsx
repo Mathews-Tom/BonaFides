@@ -40,7 +40,7 @@ function connected(overrides?: Handler, items = [application()]) {
 }
 async function openFirst() { fireEvent.click(await screen.findByRole('button', { name: 'Open Engineer at Synthetic North' })); await screen.findByRole('heading', { name: 'Engineer at Synthetic North · attempt 1' }); }
 function deferred<T>() { let resolve!: (value: T) => void; const promise = new Promise<T>(done => { resolve = done; }); return { promise, resolve }; }
-afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks(); });
+afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks(); window.history.replaceState(null, '', '/'); });
 
 describe('manual application buffers and selection boundaries', () => {
   it('retains an offline private note, fences selection and reuses only unchanged payload/version keys', async () => {
@@ -49,7 +49,7 @@ describe('manual application buffers and selection boundaries', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Edit private note 1' }));
     fireEvent.change(screen.getByLabelText(/Private note text/), { target: { value: 'Fictional retained draft <script>literal</script>' } });
     fireEvent.click(screen.getByRole('button', { name: 'Save manual tracking change' }));
-    const alert = await screen.findByRole('alert'); expect(alert).toHaveFocus(); expect(alert).toHaveTextContent('server could not be reached');
+    const alert = await screen.findByRole('alert'); await waitFor(() => expect(alert).toHaveFocus()); expect(alert).toHaveTextContent('server could not be reached');
     expect(screen.getByLabelText(/Private note text/)).toHaveValue('Fictional retained draft <script>literal</script>'); expect(dirty).toHaveBeenLastCalledWith(true);
     fireEvent.click(screen.getByRole('button', { name: 'Save manual tracking change' }));
     await waitFor(() => expect(request.mock.calls.filter(call => call[1] === 'PUT')).toHaveLength(2));
@@ -123,6 +123,7 @@ describe('manual application buffers and selection boundaries', () => {
   });
 
   it('fences authenticated sign out and preserves a note across theme changes until explicit discard', async () => {
+    window.history.replaceState(null, '', '/#/applications');
     const { api, request } = connected(async (path, method) => {
       if (path === '/maintenance') return { namespace_id: 'tracking-test-namespace', maintenance_epoch: 0, workspace_version: 1, maintenance_active: false, recovery_required: false, operation: null, drain: { active_calls: 0, provider_executions: 0 } };
       if (path === '/session') return { owner_id: 'synthetic-owner', login_name: 'mira', csrf_token: 'csrf', expires_at: timestamp };

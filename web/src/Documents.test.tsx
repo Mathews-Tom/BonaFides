@@ -71,6 +71,12 @@ describe('remembered document defaults and current operation isolation', () => {
       return stored;
     });
     const view = render(<Documents api={api} profile={profile} />); const input = await ready();
+    const defaultsDisclosure = screen.getByText('Remembered defaults and retention').closest('details');
+    expect(defaultsDisclosure).not.toHaveAttribute('open');
+    expect(screen.getByLabelText('Document state')).toHaveTextContent('Saved · review required');
+    expect(screen.getByRole('button', { name: 'Accept this exact revision' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Render reviewed PDF' })).toBeDisabled();
+    await user.click(screen.getByText('Remembered defaults and retention'));
     expect(screen.getByLabelText('Built-in presentation')).toHaveValue('offerloom-evidence-letter-v1');
     expect(screen.getByLabelText('Remembered writing tone')).toHaveValue('concise');
     expect(within(screen.getByLabelText('Built-in presentation')).getByRole('option', { name: 'Evidence · English · Letter' })).toBeInTheDocument();
@@ -85,6 +91,7 @@ describe('remembered document defaults and current operation isolation', () => {
     expect(screen.getByLabelText('Built-in presentation')).toHaveValue('offerloom-evidence-letter-v1');
     expect(request.mock.calls.some(call => call[1] === 'PUT' || call[0].startsWith('/documents/'))).toBe(false);
     view.unmount(); render(<Documents api={api} profile={profile} />); await ready();
+    await user.click(screen.getByText('Remembered defaults and retention'));
     expect(screen.getByLabelText('Built-in presentation')).toHaveValue('offerloom-compact-letter-v1');
     expect(screen.getByLabelText('Block text: b-1')).toHaveValue(saved.current_revision.body.sections[0]!.blocks[0]!.text);
     await openTailored(user);
@@ -107,7 +114,9 @@ describe('remembered document defaults and current operation isolation', () => {
       return { ...remembered, template_version: 'offerloom-evidence-letter-v1', tone: 'concise' };
     });
     render(<Documents api={api} profile={profile} />); const input = await ready();
-    expect(await screen.findByText(/Remembered defaults could not be loaded/)).toBeInTheDocument();
+    expect(await screen.findByText(/Remembered defaults could not be loaded/)).toBeVisible();
+    expect(screen.getByText('Remembered defaults and retention').closest('details')).not.toHaveAttribute('open');
+    await user.click(screen.getByText('Remembered defaults and retention'));
     expect(screen.getByLabelText('Built-in presentation')).toHaveValue('');
     expect(screen.queryByRole('button', { name: 'Save remembered defaults' })).not.toBeInTheDocument();
     await user.selectOptions(screen.getByLabelText('Built-in presentation'), 'offerloom-compact-v1');
@@ -130,6 +139,7 @@ describe('remembered document defaults and current operation isolation', () => {
       return stored;
     });
     render(<Documents api={api} profile={profile} />); await ready();
+    await user.click(screen.getByText('Remembered defaults and retention'));
     await user.selectOptions(screen.getByLabelText('Remembered built-in presentation'), 'offerloom-compact-letter-v1');
     await user.click(screen.getByRole('button', { name: 'Save remembered defaults' }));
     await screen.findByText(/The saved version changed/);
@@ -157,6 +167,7 @@ describe('remembered document defaults and current operation isolation', () => {
       return remembered;
     });
     render(<Documents api={api} profile={profile} />); await ready();
+    await user.click(screen.getByText('Remembered defaults and retention'));
     await user.selectOptions(screen.getByLabelText('Remembered writing tone'), 'concise');
     await user.click(screen.getByRole('button', { name: 'Save remembered defaults' }));
     await screen.findByText(/Remembered defaults were not confirmed saved/);

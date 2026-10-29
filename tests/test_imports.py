@@ -97,6 +97,146 @@ def test_extraction_refuses_empty_or_excess_instead_of_truncation(source: str, c
     assert error.value.code == code
 
 
+def _entries(source: str) -> list[imports.ImportEntry]:
+    parsed = _parsed(source)
+    raw, _ = imports.extract_proposals(parsed)
+    return imports.project_entries(parsed.text, parsed.source_sha256, raw)
+
+
+def test_structured_projection_groups_bounded_entries_and_preserves_raw_evidence() -> None:
+    source = (
+        "Mira Example\nSummary\nLocal systems engineer\n"
+        "Experience\nEngineer | Fictional Works | 2020-02 – 2022\n"
+        "- Maintained synthetic services\n- Wrote fictional runbooks\n\n"
+        "Analyst | Example Labs | 2023 – Present\n- Investigated synthetic incidents\n"
+        "Education\nDegree | Fictional University | 2015 – 2019\n"
+        "Projects\nLocal Tool\n- Built a synthetic utility\n"
+        "Mystery:\nUnplaced literal text\n"
+    )
+    parsed = _parsed(source)
+    raw, _ = imports.extract_proposals(parsed)
+    before = [item.model_dump(mode="json") for item in raw]
+    entries = imports.project_entries(parsed.text, parsed.source_sha256, raw)
+    assert [entry.kind for entry in entries] == [
+        "identity",
+        "identity",
+        "experience",
+        "experience",
+        "education",
+        "project",
+        None,
+        None,
+    ]
+    assert [entry.identity_field for entry in entries[:2]] == ["display_name", "headline"]
+    assert len(entries[2].sources) == 3 and len(entries[3].sources) == 2
+    assert entries[2].payload.organization == "Fictional Works"
+    assert entries[2].payload.role == "Engineer"
+    assert entries[2].payload.start_date == "2020-02"
+    assert entries[2].payload.end_date == "2022"
+    assert entries[3].payload.start_date == "2023" and entries[3].payload.end_date is None
+    assert entries[4].payload.organization == "Fictional University"
+    assert len(entries[5].sources) == 2
+    assert [item.model_dump(mode="json") for item in raw] == before
+    assert entries == imports.project_entries(parsed.text, parsed.source_sha256, raw)
+    for entry in entries:
+        assert entry.payload.text == "\n".join(part.quote for part in entry.sources)
+        for part in entry.sources:
+            assert parsed.text[part.start : part.end] == part.quote
+
+
+def test_structured_projection_splits_multiword_skills_without_deduplicating() -> None:
+    source = "Core Competencies\nSystems design | SQL; Systems design • Incident response / C/C++\n"
+    entries = _entries(source)
+    assert [entry.payload.text for entry in entries] == [
+        "Systems design",
+        "SQL",
+        "Systems design",
+        "Incident response",
+        "C/C++",
+    ]
+    assert all(entry.kind == "skill" for entry in entries)
+    sources = [entry.sources[0] for entry in entries]
+    assert len({part.source_id for part in sources}) == 5
+    assert sources[0].source_id != sources[2].source_id
+    assert all(source[part.start : part.end] == part.quote for part in sources)
+
+
+def test_structured_projection_keeps_uncertain_summaries_unplaced_and_bounds_groups() -> None:
+    entries = _entries(
+        "Summary\nFirst ambiguous sentence\nSecond ambiguous sentence\nSkills\nSQL\n"
+    )
+    assert [entry.kind for entry in entries] == [None, None, "skill"]
+    long = "x" * 3990
+    entries = _entries(f"Projects\n{long}\n- A separate literal continuation\n")
+    assert len(entries) == 2
+    assert sum(len(entry.sources) for entry in entries) == 2
+    with pytest.raises(Problem) as error:
+        _entries("Skills\n" + "a|" * 1001 + "a\n")
+    assert error.value.code == "import_source_limit"
+
+
+@pytest.mark.parametrize("heading", ["Additional Notes", "Unclassified section:"])
+def test_unplaced_sections_do_not_inherit_preceding_project_destination(heading: str) -> None:
+    entries = _entries(
+        f"Projects\nProject: Known\n- A literal project description.\n\n{heading}\n"
+        "An unclassified fragment.\n"
+    )
+    assert entries[0].kind == "project"
+    assert entries[-1].payload.text == "An unclassified fragment."
+    assert entries[-1].kind is None
+    assert entries[-1].issues == ["needs_placement"]
+
+
+def test_numeric_month_dates_and_solid_bullets_form_separate_complete_jobs() -> None:
+    entries = _entries(
+        "Work experience\nPlatform Engineer, Example Lab\n03/2020 – 06/2023\n"
+        "● Maintained fictional services.\n● Documented fictional runbooks.\n"
+        "Senior Engineer, Example Studio\n07/2023 – Present\n● Built fictional tools.\n"
+    )
+    assert [entry.kind for entry in entries] == ["experience", "experience"]
+    assert [len(entry.sources) for entry in entries] == [4, 3]
+    assert entries[0].payload.start_date == "2020-03"
+    assert entries[0].payload.end_date == "2023-06"
+    assert entries[1].payload.start_date == "2023-07"
+    assert entries[1].payload.end_date is None
+
+
+def test_named_bullet_projects_qualifications_and_explicit_skill_categories_stay_distinct() -> None:
+    source = (
+        "Projects\n● Aster – A fictional service dashboard.\n"
+        "● Birch – A fictional command-line tool.\n"
+        "Education\n● BSc Computing | Example University | 2018\n"
+        "● MSc Computing | Example Institute | 2020\n"
+        "CERTIFICATIONS & TRAINING\nExample certification\n"
+        "TECHNICAL PROFICIENCIES\n● Tooling: SQL, Systems design, C/C++\n"
+    )
+    entries = _entries(source)
+    assert [entry.kind for entry in entries] == [
+        "project",
+        "project",
+        "education",
+        "education",
+        "certification",
+        "skill",
+        "skill",
+        "skill",
+    ]
+    assert [entry.payload.text for entry in entries[-3:]] == ["SQL", "Systems design", "C/C++"]
+    assert all(
+        source[part.start : part.end] == part.quote for entry in entries for part in entry.sources
+    )
+
+
+def test_project_subheadings_and_explicit_notes_require_placement() -> None:
+    entries = _entries(
+        "Projects\nPortfolio prototypes\n● Aster – A fictional service dashboard.\n"
+        "Additional Notes\nAdditional public examples are available separately.\n"
+    )
+    assert [entry.kind for entry in entries] == [None, "project", None]
+    assert all(entry.issues == ["needs_placement"] for entry in (entries[0], entries[2]))
+    assert sum(len(entry.sources) for entry in entries) == 3
+
+
 @dataclass
 class ImportContext:
     identity: IdentityContext
@@ -199,12 +339,13 @@ def _review(batch: dict[str, Any], mode: str = "merge") -> dict[str, object]:
         "replace_all_confirmed": mode == "replace_all",
         "decisions": [
             {
-                "proposal_id": proposal["proposal_id"],
+                "source_ids": [source["source_id"] for source in entry["sources"]],
                 "action": "add",
-                "kind": proposal["kind"],
-                "payload": proposal["payload"],
+                "kind": entry["kind"],
+                "identity_field": entry["identity_field"],
+                "payload": entry["payload"],
             }
-            for proposal in batch["proposals"]
+            for entry in batch["entries"]
         ],
     }
 
@@ -247,7 +388,7 @@ def test_upload_stages_without_canonical_mutation_and_atomic_review_is_idempoten
     replay = importing.upload(version=original["version"], key=upload_key)
     assert replay.status_code == 202 and replay.json() == ids
     pending = importing.batch(ids["import_id"])
-    assert pending["state"] == "pending" and pending["text"] is None and pending["proposals"] == []
+    assert pending["state"] == "pending" and pending["text"] is None and pending["entries"] == []
     assert _counts(importing) == before
     importing.run()
     batch = importing.batch(ids["import_id"])
@@ -286,8 +427,10 @@ def test_upload_stages_without_canonical_mutation_and_atomic_review_is_idempoten
         link = claim_row["revision"]["evidence_links"][0]
         source = link["evidence"]["payload"]
         assert link["support_kind"] == "user_asserted"
-        assert link["excerpt"] == batch["proposals"][index]["quote"]
-        assert batch["text"][source["source_start"] : source["source_end"]] == source["text"]
+        assert link["excerpt"] == batch["entries"][index]["sources"][0]["quote"]
+        assert source["sources"] == batch["entries"][index]["sources"]
+        for part in source["sources"]:
+            assert batch["text"][part["start"] : part["end"]] == part["quote"]
         assert source["source_sha256"] == batch["source_sha256"]
         assert source["assertion"] == "owner_asserted_not_independently_verified"
     replay = importing.approve(batch, reviewed, version=original["version"], key=key)
@@ -364,9 +507,9 @@ def test_review_requires_complete_explicit_valid_decisions(
     if invalid == "missing":
         decisions.pop()
     elif invalid == "duplicate":
-        decisions[1]["proposal_id"] = decisions[0]["proposal_id"]
+        decisions[1]["source_ids"] = decisions[0]["source_ids"]
     elif invalid == "forged":
-        decisions[0]["proposal_id"] = str(uuid4())
+        decisions[0]["source_ids"] = [str(uuid4())]
     elif invalid == "all_skip":
         for decision in decisions:
             decision["action"] = "skip"
@@ -409,7 +552,7 @@ def test_replace_appends_history_and_merge_preserves_unrelated_sources(
     assert old.json()["claims"][0]["revision"]["payload"] == skill["revision"]["payload"]
     assert (
         old.json()["claims"][0]["revision"]["evidence_links"][0]["evidence"]["payload"]["text"]
-        == first["proposals"][0]["quote"]
+        == first["entries"][0]["sources"][0]["quote"]
     )
 
 
@@ -531,6 +674,79 @@ def test_target_kind_archival_and_duplicate_target_are_checked(importing: Import
     _decisions(review)[1].update(action="skip")
     _decisions(review)[1].pop("claim_id")
     assert importing.approve(other, review).status_code == 422
+
+
+@pytest.mark.postgres
+def test_skill_splitting_over_source_limit_fails_before_staging(
+    importing: ImportContext,
+) -> None:
+    original = importing.profile()
+    before = _counts(importing)
+    source = "Skills\n" + "|".join(["a"] * 1001) + "\n"
+    response = importing.upload(source)
+    assert response.status_code == 202, response.text
+    identifier = response.json()["import_id"]
+    importing.run()
+
+    failed = importing.batch(identifier)
+    assert failed["state"] == "permanent_failure"
+    assert failed["error_code"] == "import_source_limit"
+    assert failed["text"] is None and failed["source_sha256"] is None
+    assert failed["entries"] == [] and failed["warnings"] == []
+    with importing.identity.admin.transaction() as conn:
+        staged = (
+            conn.execute(
+                text("""SELECT parsed_text,source_sha256,proposals,warnings,review,
+                review_expires_at,reviewed_at,merged_profile_revision_id
+                FROM offerloom.import_batches WHERE owner_id=:owner AND id=:id"""),
+                {"owner": importing.owner_id, "id": UUID(identifier)},
+            )
+            .mappings()
+            .one()
+        )
+        assert dict(staged) == {
+            "parsed_text": None,
+            "source_sha256": None,
+            "proposals": [],
+            "warnings": [],
+            "review": None,
+            "review_expires_at": None,
+            "reviewed_at": None,
+            "merged_profile_revision_id": None,
+        }
+    assert importing.profile() == original
+    assert _counts(importing) == before
+    with importing.runtime.transaction() as conn:
+        assert claim(conn, uuid4()) is None
+
+
+@pytest.mark.postgres
+def test_skill_splitting_at_source_limit_stages_readable_immutable_evidence(
+    importing: ImportContext,
+) -> None:
+    original = importing.profile()
+    before = _counts(importing)
+    source = "Skills\n" + "|".join(["a"] * 1000) + "\n"
+    batch = importing.staged(source)
+    assert batch["text"] == source
+    assert batch["source_sha256"] == hashlib.sha256(source.encode()).hexdigest()
+    assert batch["error_code"] is None
+    assert len(batch["entries"]) == 1000
+    parts = [part for entry in batch["entries"] for part in entry["sources"]]
+    assert len(parts) == 1000
+    assert len({part["source_id"] for part in parts}) == 1000
+    assert all(source[part["start"] : part["end"]] == part["quote"] == "a" for part in parts)
+    with importing.identity.admin.transaction() as conn:
+        proposals = conn.execute(
+            text("SELECT proposals FROM offerloom.import_batches WHERE owner_id=:owner AND id=:id"),
+            {"owner": importing.owner_id, "id": UUID(batch["id"])},
+        ).scalar_one()
+    expected, _ = imports.extract_proposals(_parsed(source))
+    assert len(proposals) == 1
+    assert proposals == [proposal.model_dump(mode="json") for proposal in expected]
+    assert importing.batch(batch["id"]) == batch
+    assert importing.profile() == original
+    assert _counts(importing) == before
 
 
 @pytest.mark.postgres
@@ -834,3 +1050,230 @@ def test_third_parse_attempt_can_resume_without_resetting_fixed_attempt_or_budge
     assert merge_task.attempt == 4
     assert importing.batch(batch["id"])["state"] == "succeeded"
     assert _counts(importing) == (2, 1, 1, 1)
+
+
+@pytest.mark.postgres
+def test_staged_projection_is_read_only_and_user_grouping_and_splitting_keep_all_sources(
+    importing: ImportContext,
+) -> None:
+    batch = importing.staged(
+        "Experience\nEngineer | Fictional Works | 2020 – 2022\n"
+        "- Maintained synthetic services\n- Wrote fictional runbooks\n"
+        "Skills\nSystems design | SQL; Systems design\n"
+    )
+    query = text("""SELECT b.proposals,b.source_sha256,b.parsed_text,b.review,w.version,
+        w.state,b.profile_version FROM offerloom.import_batches b JOIN offerloom.workflow_runs w
+        ON w.owner_id=b.owner_id AND w.id=b.workflow_run_id WHERE b.owner_id=:owner AND b.id=:id""")
+    params = {"owner": importing.owner_id, "id": UUID(batch["id"])}
+    with importing.identity.admin.transaction() as conn:
+        before = conn.execute(query, params).one()
+    assert importing.batch(batch["id"]) == batch
+    assert "proposals" not in batch
+    with importing.identity.admin.transaction() as conn:
+        assert conn.execute(query, params).one() == before
+    work, first_skill, second_skill, repeated_skill = batch["entries"]
+    assert len(work["sources"]) == 3
+    review = {
+        "mode": "merge",
+        "replace_all_confirmed": False,
+        "decisions": [
+            {
+                "source_ids": [work["sources"][0]["source_id"]],
+                "action": "add",
+                "kind": "experience",
+                "payload": {"text": "Owner-reviewed employment header"},
+            },
+            {
+                "source_ids": [part["source_id"] for part in work["sources"][1:]],
+                "action": "add",
+                "kind": "experience",
+                "payload": {"text": "Owner combined responsibilities"},
+            },
+            {
+                "source_ids": [
+                    second_skill["sources"][0]["source_id"],
+                    first_skill["sources"][0]["source_id"],
+                ],
+                "action": "add",
+                "kind": "skill",
+                "payload": {"text": "Owner combined two skills"},
+            },
+            {
+                "source_ids": [repeated_skill["sources"][0]["source_id"]],
+                "action": "skip",
+                "kind": None,
+                "payload": repeated_skill["payload"],
+            },
+        ],
+    }
+    assert importing.approve(batch, review).status_code == 202
+    importing.run()
+    profile = importing.profile()
+    claims = profile["current_revision"]["claims"]
+    assert len(claims) == 3
+    evidence = [row["revision"]["evidence_links"][0]["evidence"]["payload"] for row in claims]
+    assert [len(payload["sources"]) for payload in evidence] == [1, 2, 2]
+    assert evidence[-1]["sources"] == [first_skill["sources"][0], second_skill["sources"][0]]
+    expected_ids = {
+        part["source_id"] for entry in batch["entries"][:3] for part in entry["sources"]
+    }
+    assert {
+        part["source_id"] for payload in evidence for part in payload["sources"]
+    } == expected_ids
+    for payload in evidence:
+        assert payload["text"] == "\n".join(part["quote"] for part in payload["sources"])
+        for part in payload["sources"]:
+            assert batch["text"][part["start"] : part["end"]] == part["quote"]
+
+
+@pytest.mark.postgres
+@pytest.mark.parametrize(
+    "invalid",
+    [
+        "unplaced",
+        "identity_missing_field",
+        "identity_wrong_field",
+        "identity_metadata",
+        "identity_duplicate_field",
+        "identity_too_long",
+        "forged_quote",
+        "duplicate_inside",
+        "unknown_inside",
+        "empty_sources",
+        "overlong_original",
+    ],
+)
+def test_structured_review_refuses_unplaced_or_tampered_publication(
+    importing: ImportContext, invalid: str
+) -> None:
+    source = "Skills\nFirst synthetic skill\nSecond synthetic skill\n"
+    if invalid == "overlong_original":
+        source = "Skills\n" + "a" * 2500 + "\n" + "b" * 2500 + "\n"
+    batch = importing.staged(source)
+    review = _review(batch)
+    decisions = _decisions(review)
+    if invalid == "unplaced":
+        decisions[0]["kind"] = None
+    elif invalid == "identity_missing_field":
+        decisions[0]["kind"] = "identity"
+    elif invalid == "identity_wrong_field":
+        decisions[0]["identity_field"] = "display_name"
+    elif invalid == "identity_metadata":
+        decisions[0].update(kind="identity", identity_field="display_name")
+        decisions[0]["payload"] = {"text": "Mira Example", "organization": "Hidden field"}
+    elif invalid == "identity_duplicate_field":
+        for decision in decisions:
+            decision.update(kind="identity", identity_field="display_name")
+    elif invalid == "identity_too_long":
+        decisions[0].update(kind="identity", identity_field="display_name")
+        decisions[0]["payload"] = {"text": "a" * 121}
+    elif invalid == "forged_quote":
+        decisions[0]["sources"] = [{"source_id": decisions[0]["source_ids"][0], "quote": "Forged"}]
+    elif invalid == "duplicate_inside":
+        decisions[0]["source_ids"] *= 2
+    elif invalid == "unknown_inside":
+        decisions[0]["source_ids"].append(str(uuid4()))
+    elif invalid == "empty_sources":
+        decisions[0]["source_ids"] = []
+    elif invalid == "overlong_original":
+        decisions[0]["source_ids"] += decisions.pop()["source_ids"]
+        decisions[0]["payload"] = {"text": "Short edited text cannot truncate source evidence"}
+    before = importing.profile()
+    counts = _counts(importing)
+    response = importing.approve(batch, review)
+    assert response.status_code == 422, response.text
+    assert importing.profile() == before and _counts(importing) == counts
+    assert importing.batch(batch["id"])["state"] == "waiting_for_approval"
+
+
+@pytest.mark.postgres
+def test_identity_only_import_updates_canonical_fields_without_claims_and_preserves_contact(
+    importing: ImportContext,
+) -> None:
+    first = importing.staged("Skills\nUnrelated original synthetic skill\n")
+    assert importing.approve(first).status_code == 202
+    importing.run()
+    original = importing.profile()
+    snapshot = original["current_revision"]["snapshot"]
+    contact = {"email": "mira@example.test", "phone": "555 0101", "location": "Fictional city"}
+    updated = importing.client.put(
+        "/api/v1/profile",
+        json={
+            **snapshot,
+            "display_name": "Prior Fictional Name",
+            "headline": "Existing headline",
+            "contact": contact,
+        },
+        headers=importing.headers(original["version"]),
+    )
+    assert updated.status_code == 200, updated.text
+    original = importing.profile()
+    batch = importing.staged("Mira Example\nSummary\nLocal systems engineer\n")
+    review = _review(batch)
+    for decision in _decisions(review):
+        decision["action"] = "replace"
+    wrong_action = _review(batch)
+    assert importing.approve(batch, wrong_action).status_code == 422
+    counts = _counts(importing)
+    assert importing.approve(batch, review).status_code == 202
+    assert importing.profile() == original
+    importing.run()
+    profile = importing.profile()
+    saved = profile["current_revision"]["snapshot"]
+    assert saved["display_name"] == "Mira Example"
+    assert saved["headline"] == "Local systems engineer"
+    assert saved["contact"] == original["current_revision"]["snapshot"]["contact"]
+    assert profile["current_revision"]["claims"] == original["current_revision"]["claims"]
+    assert _counts(importing) == (counts[0] + 1, counts[1], counts[2] + 2, counts[3])
+    sources = [
+        row
+        for row in profile["evidence"]
+        if row["id"] not in {item["id"] for item in original["evidence"]}
+    ]
+    assert {row["revision"]["payload"]["identity_field"] for row in sources} == {
+        "display_name",
+        "headline",
+    }
+    # Later explicit replace-all must not discard provenance for preserved personal fields.
+    replacement = importing.staged("Skills\nNew synthetic skill\n")
+    assert importing.approve(replacement, _review(replacement, "replace_all")).status_code == 202
+    importing.run()
+    current = importing.profile()
+    assert current["current_revision"]["snapshot"]["contact"] == saved["contact"]
+    assert current["current_revision"]["snapshot"]["display_name"] == "Mira Example"
+    assert {row["id"] for row in sources} <= {row["id"] for row in current["evidence"]}
+
+
+@pytest.mark.postgres
+def test_personal_only_empty_profile_and_excluded_unplaced_text(
+    importing: ImportContext,
+) -> None:
+    batch = importing.staged("Mira Example\nMystery:\nNever save this excluded text\n")
+    review = _review(batch)
+    for decision in _decisions(review)[1:]:
+        decision.update(action="skip", kind=None, identity_field=None)
+    assert importing.approve(batch, review).status_code == 202
+    importing.run()
+    profile = importing.profile()
+    assert profile["current_revision"]["snapshot"]["display_name"] == "Mira Example"
+    assert profile["current_revision"]["claims"] == []
+    assert _counts(importing) == (2, 0, 1, 0)
+    assert len(profile["evidence"]) == 1
+    assert profile["evidence"][0]["revision"]["payload"]["text"] == "Mira Example"
+
+
+def test_projection_groups_plain_date_headers_without_guessing_labels_or_crossing_jobs() -> None:
+    entries = _entries(
+        "Experience\nFictional Works\nEngineer\n2020-02 – 2022\n"
+        "- Maintained synthetic services\n"
+        "Example Labs\nAnalyst\n2023 – Present\n- Investigated synthetic incidents\n"
+        "Projects\nProject: Alpha\nA fictional bounded project body\n"
+        "Project: Beta\nAnother fictional bounded project body\n"
+    )
+    assert len(entries) == 4
+    assert [len(entry.sources) for entry in entries] == [4, 4, 2, 2]
+    assert entries[0].payload.organization is None and entries[0].payload.role is None
+    assert entries[0].payload.start_date == "2020-02" and entries[0].payload.end_date == "2022"
+    assert entries[1].payload.start_date == "2023" and entries[1].payload.end_date is None
+    assert entries[2].payload.text.startswith("Project: Alpha\n")
+    assert entries[3].payload.text.startswith("Project: Beta\n")

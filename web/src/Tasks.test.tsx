@@ -261,7 +261,6 @@ describe('exact action review and privacy', () => {
     state.approval = prepared({ action_kind: actionKind, applicable: true, capability_available: true, confirmation_phrase: actionKind === 'privacy_delete' ? 'DELETE ALL WORKSPACE DATA' : 'REPLACE WORKSPACE' });
     show(api, initial); await openPrepared(user);
     expect(screen.getByRole('region', { name: 'Reviewed prepared action' })).toBeVisible();
-    expect(screen.getByRole('link', { name: /Owner-data portability/ })).toHaveAttribute('href', '#owner-data-portability');
     expect(screen.queryByLabelText(/Type the exact task confirmation phrase/)).not.toBeInTheDocument();
     expect(approvalCheckbox()).toBeDisabled(); expect(approvalButton()).toBeDisabled();
     fireEvent.click(approvalCheckbox()); fireEvent.click(approvalButton());

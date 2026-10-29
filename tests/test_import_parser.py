@@ -11,10 +11,12 @@ import time
 from collections.abc import Callable, Iterator
 from pathlib import Path
 from typing import Any
+from unittest.mock import Mock
 from uuid import uuid4
 
 import pytest
-from pypdf import PdfWriter
+from pypdf import PdfReader, PdfWriter
+from pypdf.errors import LimitReachedError, PdfReadError
 from pypdf.generic import (
     ArrayObject,
     DecodedStreamObject,
@@ -22,6 +24,7 @@ from pypdf.generic import (
     NameObject,
     NumberObject,
 )
+from pypdf.generic._font import Font
 
 from offerloom import import_parser
 from offerloom.import_parser import (
@@ -131,6 +134,7 @@ def _pdf(
     text: bytes = b"Built fictional local services.",
     *,
     pages: int = 1,
+    font: str = "/Helvetica",
     content: bytes | None = None,
     encrypted: bool = False,
     javascript: bool = False,
@@ -146,7 +150,7 @@ def _pdf(
                             {
                                 NameObject("/Type"): NameObject("/Font"),
                                 NameObject("/Subtype"): NameObject("/Type1"),
-                                NameObject("/BaseFont"): NameObject("/Helvetica"),
+                                NameObject("/BaseFont"): NameObject(font),
                                 NameObject("/Encoding"): NameObject("/WinAnsiEncoding"),
                             }
                         )
@@ -167,6 +171,32 @@ def _pdf(
     writer.write(output)
     writer.close()
     return output.getvalue()
+
+
+def _positioned_pdf(lines: list[str], *, pages: int = 1) -> bytes:
+    """Synthetic glyph-positioned PDF; never use a personal résumé as a fixture."""
+    content: list[bytes] = [b"q 0.75 0 0 -0.75 0 792 cm"]
+    for index, line in enumerate(lines):
+        x, y = 72.0, 96.0 + index * 16
+        for character in line:
+            # Explicit positions, missing space glyphs and mixed font sizes reproduce
+            # common browser/office PDF generators without depending on their output.
+            size = 14 if x == 72 and index == 0 else 10
+            if not character.isspace():
+                escaped = (
+                    character.encode("cp1252")
+                    .replace(b"\\", b"\\\\")
+                    .replace(b"(", b"\\(")
+                    .replace(b")", b"\\)")
+                )
+                content.append(
+                    f"BT /F1 {size} Tf 1 0 0 -1 {x:.3f} {y:.3f} Tm (".encode()
+                    + escaped
+                    + b") Tj ET"
+                )
+            x += size * 0.6
+    content.append(b"Q")
+    return _pdf(content=b"\n".join(content), pages=pages, font="/Courier")
 
 
 def _publish(spool: Path, data: bytes = b"fictional text", *, job_id: str = "a" * 64) -> str:
@@ -200,6 +230,252 @@ def test_real_pdf_extraction_and_normalized_source_digest(parser: ImportParserCl
     assert result.text.count("Fictional Caf\u00e9 Engineer") == 2
     assert result.source_sha256 == hashlib.sha256(result.text.encode()).hexdigest()
     assert result.warnings == []
+
+
+def test_positioned_pdf_reconstructs_wrapped_quotes_before_proposal_limits(
+    parser: ImportParserClient,
+) -> None:
+    from offerloom.imports import extract_proposals
+
+    lines = ["Skills"]
+    expected = []
+    for index in range(12):
+        first = f"- Maintained fictional service {index:02d} with careful local"
+        second = "checks and exact source provenance."
+        lines.extend([first, second])
+        expected.append(f"{first} {second}")
+    result = parser.parse(_positioned_pdf(lines, pages=5), "application/pdf")
+    proposals, _ = extract_proposals(result)
+    assert [proposal.quote for proposal in proposals] == expected * 5
+    assert all(proposal.kind == "skill" for proposal in proposals)
+    for proposal in proposals:
+        assert result.text[proposal.source_start : proposal.source_end] == proposal.quote
+        assert proposal.payload.text == proposal.quote
+    assert result.source_sha256 == hashlib.sha256(result.text.encode()).hexdigest()
+
+
+def test_positioned_pdf_does_not_coalesce_distinct_bullets_to_escape_limits(
+    parser: ImportParserClient,
+) -> None:
+    from offerloom.imports import extract_proposals
+    from offerloom.problems import Problem
+
+    # Two pages preserve duplicate statements rather than silently deduplicating.
+    accepted = parser.parse(
+        _positioned_pdf(["Skills", *[f"- Fictional skill {i:02d}" for i in range(50)]], pages=2),
+        "application/pdf",
+    )
+    proposals, _ = extract_proposals(accepted)
+    expected = [f"- Fictional skill {i:02d}" for i in range(50)] * 2
+    assert [proposal.quote for proposal in proposals] == expected
+    assert len({proposal.proposal_id for proposal in proposals}) == 100
+    refused = parser.parse(
+        _positioned_pdf(["Skills", *[f"- Fictional skill {i:02d}" for i in range(51)]], pages=2),
+        "application/pdf",
+    )
+    with pytest.raises(Problem) as error:
+        extract_proposals(refused)
+    assert error.value.code == "import_proposal_limit"
+
+
+def test_positioned_pdf_preserves_short_lines_and_section_boundaries(
+    parser: ImportParserClient,
+) -> None:
+    lines = ["Skills", "Python", "SQL", "Project:", "- Separate bullet", "- Another bullet"]
+    result = parser.parse(_positioned_pdf(lines), "application/pdf")
+    assert result.text.splitlines() == lines
+
+
+@pytest.mark.parametrize("right", [400, 1_000_000_000])
+def test_pdf_columns_never_become_one_fact_or_coordinate_sized_padding(
+    parser: ImportParserClient,
+    right: int,
+) -> None:
+    result = parser.parse(
+        _pdf(
+            content=(
+                b"BT /F1 12 Tf 1 0 0 1 72 720 Tm (Left statement) Tj ET\n"
+                + f"BT /F1 12 Tf 1 0 0 1 {right} 720 Tm (Right statement) Tj ET".encode()
+            )
+        ),
+        "application/pdf",
+    )
+    assert result.text == "Left statement\nRight statement"
+
+
+def test_pdf_explicit_line_breaks_remain_distinct(
+    parser: ImportParserClient,
+) -> None:
+    from pypdf import PdfReader
+
+    data = _pdf(
+        content=(
+            b"BT /F1 12 Tf 72 720 Td 14 TL (Skills) Tj T* "
+            b"(First independent statement) Tj T* (Second independent statement) Tj ET"
+        )
+    )
+    reader = PdfReader(io.BytesIO(data), strict=True)
+    expected = reader.pages[0].extract_text()
+    reader.close()
+    result = parser.parse(data, "application/pdf")
+    assert result.text == expected
+
+
+def test_pdf_reconstruction_never_reorders_source_characters(
+    parser: ImportParserClient,
+) -> None:
+    from pypdf import PdfReader
+
+    data = _pdf(
+        content=(
+            b"BT /F1 12 Tf 1 0 0 1 400 720 Tm (Right first) Tj ET\n"
+            b"BT /F1 12 Tf 1 0 0 1 72 720 Tm (Left second) Tj ET"
+        )
+    )
+    reader = PdfReader(io.BytesIO(data), strict=True)
+    expected = reader.pages[0].extract_text()
+    reader.close()
+    result = parser.parse(data, "application/pdf")
+    assert result.text == expected
+    assert "pdf_layout_requires_review" in result.warnings
+
+
+@pytest.fixture
+def failing_pdf_metrics(
+    monkeypatch: pytest.MonkeyPatch,
+) -> Callable[[str, type[Exception]], tuple[bytes, str]]:
+    """Fail only optional metrics, after one real fragment has been collected."""
+    original_visit = import_parser._PdfLayout.visit
+    original_font = Font.from_font_resource
+
+    def arrange(operation: str, error: type[Exception]) -> tuple[bytes, str]:
+        writer = PdfWriter(
+            clone_from=io.BytesIO(
+                _pdf(
+                    content=(
+                        b"BT /F1 12 Tf 72 720 Td (First fictional statement.) Tj ET\n"
+                        b"BT /F2 12 Tf 72 700 Td (Second fictional statement.) Tj ET\n"
+                        b"BT /F1 12 Tf 72 680 Td (Final fictional statement.) Tj ET"
+                    )
+                )
+            )
+        )
+        resources = writer.pages[0]["/Resources"]
+        assert isinstance(resources, DictionaryObject)
+        fonts = resources["/Font"]
+        assert isinstance(fonts, DictionaryObject)
+        first_font = fonts["/F1"]
+        assert isinstance(first_font, DictionaryObject)
+        fonts[NameObject("/F2")] = DictionaryObject(first_font)
+        output = io.BytesIO()
+        writer.write(output)
+        writer.close()
+        data = output.getvalue()
+        reader = PdfReader(io.BytesIO(data), strict=True)
+        expected = reader.pages[0].extract_text(extraction_mode="plain")
+        reader.close()
+        visits = 0
+
+        def fail(*_args: object) -> Any:
+            raise error("synthetic optional metric failure")
+
+        def metric_font(resource: DictionaryObject) -> Font:
+            if operation == "construction":
+                fail()
+            font = original_font(resource)
+            if operation == "map":
+                font.character_map = Mock(items=fail)
+            elif operation == "width":
+                font.get_text_width = Mock(side_effect=fail)  # type: ignore[method-assign]
+            elif operation == "name":
+                font.name = Mock(casefold=fail)
+            return font
+
+        def visit(
+            layout: import_parser._PdfLayout,
+            text: str,
+            cm: list[float],
+            tm: list[float],
+            resource: DictionaryObject | None,
+            size: float,
+        ) -> None:
+            nonlocal visits
+            if text.strip():
+                visits += 1
+            with monkeypatch.context() as metrics:
+                if text.strip() and visits == 2:
+                    # The second font is uncached. Plain pypdf extraction uses its
+                    # own metrics outside this callback and remains unmodified.
+                    metrics.setattr(Font, "from_font_resource", metric_font)
+                original_visit(layout, text, cm, tm, resource, size)
+
+        monkeypatch.setattr(import_parser._PdfLayout, "visit", visit)
+        return data, expected
+
+    return arrange
+
+
+@pytest.mark.parametrize(
+    ("operation", "error"),
+    [
+        ("construction", TypeError),
+        ("map", KeyError),
+        ("width", PdfReadError),
+        ("name", AttributeError),
+    ],
+)
+def test_pdf_optional_metric_failure_preserves_complete_plain_order(
+    failing_pdf_metrics: Callable[[str, type[Exception]], tuple[bytes, str]],
+    operation: str,
+    error: type[Exception],
+) -> None:
+    data, expected = failing_pdf_metrics(operation, error)
+    text, warnings = import_parser._pdf_text(data)
+    assert expected == (
+        "First fictional statement.\nSecond fictional statement.\nFinal fictional statement."
+    )
+    assert text == expected
+    assert warnings == ["pdf_layout_requires_review"]
+
+
+@pytest.mark.parametrize(
+    ("operation", "error"),
+    [
+        ("construction", LimitReachedError),
+        ("width", MemoryError),
+        ("name", RecursionError),
+    ],
+)
+def test_pdf_optional_metric_resource_failure_still_refuses_import(
+    failing_pdf_metrics: Callable[[str, type[Exception]], tuple[bytes, str]],
+    operation: str,
+    error: type[Exception],
+) -> None:
+    data, _ = failing_pdf_metrics(operation, error)
+    with pytest.raises(ImportFailure, match="^import_content_limit$"):
+        import_parser._pdf_text(data)
+
+
+@pytest.mark.parametrize(
+    ("error", "code"),
+    [
+        (PdfReadError, "import_invalid_pdf"),
+        (LimitReachedError, "import_content_limit"),
+        (MemoryError, "import_content_limit"),
+        (RecursionError, "import_content_limit"),
+    ],
+)
+def test_pdf_plain_extraction_metric_failure_is_not_optional(
+    monkeypatch: pytest.MonkeyPatch,
+    error: type[Exception],
+    code: str,
+) -> None:
+    data = _pdf()
+    # The pinned plain extractor also uses Font. Its failures must not be
+    # mistaken for failures in our optional visitor's reconstruction.
+    monkeypatch.setattr(Font, "from_font_resource", Mock(side_effect=error("synthetic extraction")))
+    with pytest.raises(ImportFailure, match=f"^{code}$"):
+        import_parser._pdf_text(data)
 
 
 def test_embedded_instructions_and_markup_stay_inert(
