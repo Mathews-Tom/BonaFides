@@ -17,7 +17,8 @@ export function App({ api = defaultApi }: { api?: Api }) {
   const [page, setPage] = useState<WorkspacePage>(readWorkspacePage);
   useEffect(() => {
     const change = () => {
-      if (!window.location.hash.startsWith('#/')) return;
+      const hash = window.location.hash;
+      if (hash && hash !== '#' && !hash.startsWith('#/')) return;
       setPage(readWorkspacePage());
       document.getElementById('workspace-page-title')?.focus();
       document.getElementById('workspace-page-title')?.scrollIntoView({ block: 'start' });

@@ -564,6 +564,22 @@ describe('dedicated workspace navigation', () => {
     expect(request.mock.calls.some(call => call[1] === 'PUT' || call[1] === 'POST')).toBe(false);
   });
 
+  it('returns to overview at the root hash while retaining the profile draft', async () => {
+    window.history.replaceState(null, '', '/');
+    const user = userEvent.setup(); const { api, request } = connectedApi();
+    render(<App api={api} />);
+    await screen.findByRole('heading', { level: 1, name: 'Overview' });
+    await goTo(user, 'Profile');
+    fireEvent.change(screen.getByLabelText('Professional headline'), { target: { value: 'Retained through root navigation' } });
+    window.history.replaceState(null, '', '/');
+    fireEvent(window, new HashChangeEvent('hashchange'));
+    expect(await screen.findByRole('heading', { level: 1, name: 'Overview' })).toBeVisible();
+    expect(screen.queryByRole('button', { name: 'Save profile' })).not.toBeInTheDocument();
+    await goTo(user, 'Profile');
+    expect(screen.getByLabelText('Professional headline')).toHaveValue('Retained through root navigation');
+    expect(request.mock.calls.some(call => call[1] === 'PUT' || call[1] === 'POST')).toBe(false);
+  });
+
   it('opens imports directly by URL without exposing unrelated panels', async () => {
     window.history.replaceState(null, '', '/#/profile/imports');
     const { api } = connectedApi(); render(<App api={api} />);

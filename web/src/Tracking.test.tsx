@@ -49,7 +49,7 @@ describe('manual application buffers and selection boundaries', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Edit private note 1' }));
     fireEvent.change(screen.getByLabelText(/Private note text/), { target: { value: 'Fictional retained draft <script>literal</script>' } });
     fireEvent.click(screen.getByRole('button', { name: 'Save manual tracking change' }));
-    const alert = await screen.findByRole('alert'); expect(alert).toHaveFocus(); expect(alert).toHaveTextContent('server could not be reached');
+    const alert = await screen.findByRole('alert'); await waitFor(() => expect(alert).toHaveFocus()); expect(alert).toHaveTextContent('server could not be reached');
     expect(screen.getByLabelText(/Private note text/)).toHaveValue('Fictional retained draft <script>literal</script>'); expect(dirty).toHaveBeenLastCalledWith(true);
     fireEvent.click(screen.getByRole('button', { name: 'Save manual tracking change' }));
     await waitFor(() => expect(request.mock.calls.filter(call => call[1] === 'PUT')).toHaveLength(2));
