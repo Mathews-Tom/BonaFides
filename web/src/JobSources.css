@@ -1,0 +1,53 @@
+/* SPDX-License-Identifier: MIT OR Apache-2.0 */
+.job-sources .opportunity-sections {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin: 1.25rem 0;
+  padding-bottom: 1rem;
+  border-bottom: 1px solid var(--line);
+}
+
+.job-sources .opportunity-sections button[aria-pressed='true'] {
+  color: var(--on-action);
+  background: var(--action);
+  border-color: var(--action);
+}
+
+.job-sources .opportunity-buffer {
+  padding: 0.75rem 1rem;
+  border-left: 3px solid var(--action);
+  background: var(--soft);
+  color: var(--ink);
+}
+
+.job-sources .opportunity-list {
+  list-style: none;
+  padding: 0;
+}
+
+.job-sources .opportunity-list > li {
+  padding: 1rem 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.job-sources .opportunity-list > li p {
+  margin: 0.5rem 0 0;
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+
+.job-sources .opportunity-sections button:focus-visible {
+  outline: 3px solid var(--focus);
+  outline-offset: 3px;
+}
+
+.job-sources > section[hidden] {
+  display: none;
+}
+
+@media (max-width: 40rem) {
+  .job-sources .opportunity-sections button {
+    flex: 1 1 calc(50% - 0.5rem);
+  }
+}

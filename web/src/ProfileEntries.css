@@ -1,0 +1,43 @@
+/* SPDX-License-Identifier: MIT OR Apache-2.0 */
+.profile-section-selector {
+  display: flex;
+  flex-wrap: wrap;
+  gap: .5rem;
+  padding-block: .75rem;
+  border-block: 1px solid var(--line);
+  margin-block: 1rem;
+}
+.profile-section-selector button {
+  display: inline-flex;
+  align-items: center;
+  gap: .6rem;
+}
+.profile-section-selector button[aria-pressed="true"] {
+  background: var(--action);
+  color: var(--on-action);
+  border-color: var(--action);
+}
+.profile-section-selector button:focus-visible {
+  outline: 3px solid var(--focus);
+  outline-offset: 3px;
+}
+.profile-section-count {
+  font-size: .8em;
+  font-variant-numeric: tabular-nums;
+  min-width: 1.2em;
+  text-align: center;
+}
+.profile-section-counts {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+.profile-buffer-notice {
+  padding: .75rem 1rem;
+  border-inline-start: 3px solid var(--warn);
+  background: var(--warn-bg);
+  color: var(--ink);
+}

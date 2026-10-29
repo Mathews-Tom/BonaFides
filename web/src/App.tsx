@@ -10,9 +10,21 @@ import { Documents } from './Documents';
 import { Tasks } from './Tasks';
 import { DataPortability } from './DataPortability';
 import { ConnectionPanel } from './ConnectionPanel';
+import { navigateWorkspace, readWorkspacePage, workspacePages, WorkspaceNavigation, WorkspaceOverview, type WorkspacePage } from './Workspace';
 const emptyContact: ProfileContact = { email: '', phone: '', location: '', postal_address: '' };
 
 export function App({ api = defaultApi }: { api?: Api }) {
+  const [page, setPage] = useState<WorkspacePage>(readWorkspacePage);
+  useEffect(() => {
+    const change = () => {
+      if (!window.location.hash.startsWith('#/')) return;
+      setPage(readWorkspacePage());
+      document.getElementById('workspace-page-title')?.focus();
+      document.getElementById('workspace-page-title')?.scrollIntoView({ block: 'start' });
+    };
+    window.addEventListener('hashchange', change);
+    return () => window.removeEventListener('hashchange', change);
+  }, []);
   const [session, setSession] = useState<Session | null>(null);
   const [challenge, setChallenge] = useState<Challenge | null>(null);
   const [ready, setReady] = useState(false);
@@ -101,8 +113,15 @@ export function App({ api = defaultApi }: { api?: Api }) {
   async function authenticate(event: FormEvent<HTMLFormElement>) {
     event.preventDefault(); const form = event.currentTarget; const values = new FormData(form);
     await act(async () => {
-      const body = { login_name: String(values.get('login_name')), password: String(values.get('password')), ...(challenge?.bootstrap_available ? { bootstrap_token: String(values.get('bootstrap_token')) } : {}) };
-      const value = await api.request<Session>(challenge?.bootstrap_available ? '/bootstrap' : '/session', 'POST', body);
+      const creatingAccount = challenge?.bootstrap_available === true;
+      const fresh = await api.request<Challenge>('/auth/challenge');
+      api.csrf = fresh.csrf_token; setChallenge(fresh);
+      if (fresh.bootstrap_available !== creatingAccount) {
+        setNotice('Account setup availability changed. Review the updated form and submit again.');
+        return;
+      }
+      const body = { login_name: String(values.get('login_name')), password: String(values.get('password')), ...(creatingAccount ? { bootstrap_token: String(values.get('bootstrap_token')) } : {}) };
+      const value = await api.request<Session>(creatingAccount ? '/bootstrap' : '/session', 'POST', body);
       api.csrf = value.csrf_token;
       const status = await api.request<InstallationStatus>('/maintenance');
       setInitialStatus(status); setSession(value); form.reset(); await loadProfile(); setNotice('Signed in.');
@@ -170,6 +189,7 @@ export function App({ api = defaultApi }: { api?: Api }) {
   const openTaskDocument = useCallback((id: string, key: string) => {
     if (resultGuard.current) { setNotice('The saved task result is available. Save or discard current workspace edits and finish active work before opening it; no editor was replaced.'); return; }
     setDocumentRequest({ id, key });
+    navigateWorkspace('documents');
   }, []);
   const observeTask = useCallback((value: Workflow) => {
     if (syntheticTask.current?.id !== value.id) return;
@@ -182,17 +202,44 @@ export function App({ api = defaultApi }: { api?: Api }) {
   async function benchmarkAction(action: () => Promise<void>) {
     await act(async () => { try { await action(); } catch (failure) { if (failure instanceof ApiError && failure.status === 404) { setBenchmark(false); setNotice('Benchmark controls are unavailable on this installation. No synthetic task was started.'); } else throw failure; } });
   }
-  return <>
-    <a className="skip" href="#main">Skip to workspace</a>
-    <header><div className="brand"><svg aria-hidden="true" viewBox="0 0 32 36"><path d="M6 2v32M16 2v32M26 2v32M2 10h28M2 26h28M6 10l20 16M26 10 6 26" /></svg><span>Offerloom</span></div><span className="edition">Private career workspace</span><ThemePreference />{session && <button className="secondary" disabled={profileLocked || jobsDirty || jobsBusy || trackingDirty || trackingBusy || !!(workflow && !terminal(workflow.state))} onClick={() => { void signOut(); }}>Sign out</button>}</header>
-    <main id="main"><aside className="disclosure"><strong>Private prototype workspace.</strong> Evidence-linked profiles, reviewed local résumé import, catalog decisions, owner-reviewed requirements/evidence coverage and manual activity tracking remain available. A base résumé needs no model or application; tailored generation requires reviewed requirements and an explicitly authorized, qualified local route. None is enabled by default. Source/structural checks do not prove semantic meaning or independently verify credentials. Real-model and human factual qualification remain outstanding. Greenhouse reads require board-specific terms review and authorization. Tracking Applied is not proof of delivery. No hosted fallback, automatic rejection, submission or sending authority.</aside>
+  const drafts: WorkspacePage[] = [];
+  if (identityDirty || entriesDirty) drafts.push('profile');
+  if (importDirty) drafts.push('profile/imports');
+  if (jobsDirty) drafts.push('opportunities');
+  if (trackingDirty) drafts.push('applications');
+  if (documentsDirty) drafts.push('documents');
+  const pageInfo = workspacePages.find(item => item.id === (page === 'profile/imports' ? 'profile' : page));
+  const pageTitle = page === 'activity' ? 'Activity & reviews' : page === 'profile/imports' ? 'Résumé imports' : pageInfo?.label ?? 'Page not found';
+  useEffect(() => { document.title = session ? `${pageTitle} · Offerloom` : challenge?.bootstrap_available ? 'Offerloom · Create account' : 'Offerloom · Sign in'; }, [pageTitle, session, challenge?.bootstrap_available]);
+  return <div className={`app-shell${session ? ' authenticated' : ''}`}>
+    <a className="skip" href="#main" onClick={event => { event.preventDefault(); document.getElementById('main')?.focus(); }}>Skip to workspace</a>
+    {session && <WorkspaceNavigation page={page} drafts={drafts} />}
+    <header className="app-header"><div className="brand"><svg aria-hidden="true" viewBox="0 0 32 36"><path d="M6 2v32M16 2v32M26 2v32M2 10h28M2 26h28M6 10l20 16M26 10 6 26" /></svg><span>Offerloom</span></div><span className="edition">{session ? 'Private career workspace' : 'Your career, grounded in evidence'}</span><ThemePreference />{session && <button className="secondary compact" disabled={profileLocked || jobsDirty || jobsBusy || trackingDirty || trackingBusy || !!(workflow && !terminal(workflow.state))} onClick={() => { void signOut(); }}>Sign out</button>}</header>
+    <main id="main" tabIndex={-1}>
       <div ref={errorRef} className="error" role="alert" tabIndex={-1} hidden={!error}>{error}</div><p role="status" className="status">{notice}</p>
       {startupProblem && !session && <section className="panel" aria-label="Installation unavailable"><h2>Installation unavailable</h2><p role="status">{startupProblem}</p><button className="secondary" disabled={!ready || busy} onClick={() => { setError(''); setReady(false); setStartupGeneration(value => value + 1); }}>Check installation again</button></section>}
-      {session && initialStatus && <ConnectionPanel api={api} session={session} profile={profile} initialStatus={initialStatus} reloadDisabled={busy || entriesBusy || importBusy || jobsBusy || trackingBusy || documentsBusy} onSession={setSession} onReload={reloadWorkspace} onPaused={setConnectionPaused} />}
-      {!ready ? <p role="status">Connecting to your installation…</p> : !session ? <section className="access"><div><h1>A dossier built on evidence.</h1><p>Keep the statement, its source and your review together. This proof starts with a secure owner session.</p></div><form onSubmit={event => { void authenticate(event); }}><h2>{challenge?.bootstrap_available ? 'Set up the installation owner' : 'Sign in'}</h2>{challenge?.bootstrap_available && <label>One-use bootstrap token<input name="bootstrap_token" type="password" autoComplete="off" required /></label>}<label>Login name<input name="login_name" autoComplete="username" required maxLength={128} /></label><label>Password<input name="password" type="password" autoComplete={challenge?.bootstrap_available ? 'new-password' : 'current-password'} minLength={15} maxLength={128} required /></label><p className="hint">15–128 characters. Credentials stay in this form until sent to your installation; no browser token storage.</p><button disabled={busy || !challenge}>{busy ? 'Connecting…' : challenge?.bootstrap_available ? 'Create owner account' : 'Sign in'}</button></form></section> : <div key={workspaceGeneration}>
-      <div className="workspace-heading"><div><h1>Facts you can stand behind</h1><p>Signed in as {session.login_name}. Work from a saved, immutable profile revision.</p></div>{profile && <span className="revision">Profile revision {profile.current_revision.revision_no}</span>}</div>
-      <Tracking api={api} disabled={busy || documentsDirty || documentsBusy} onDirtyChange={setTrackingDirty} onBusyChange={setTrackingBusy} />
-      <div className="workspace"><div><section className="panel"><h2>Your profile</h2>{profile ? <form onSubmit={event => { void saveProfile(event); }}>
+      {session && initialStatus && <details className={`connection-details${connectionPaused ? ' needs-attention' : ''}`} open={connectionPaused}><summary>{connectionPaused ? 'Workspace connection needs attention' : 'Connected to your installation'}</summary><ConnectionPanel api={api} session={session} profile={profile} initialStatus={initialStatus} reloadDisabled={busy || entriesBusy || importBusy || jobsBusy || trackingBusy || documentsBusy} onSession={setSession} onReload={reloadWorkspace} onPaused={setConnectionPaused} /></details>}
+      {!ready ? <p role="status">Connecting to your installation…</p> : !session ? <section className="access">
+        <div><h1>Your career, your workspace.</h1><p>Create your personal account, import your résumé and review the facts before building your next application.</p></div>
+        <form onSubmit={event => { void authenticate(event); }}>
+          <h2>{challenge?.bootstrap_available ? 'Create your account' : 'Sign in'}</h2>
+          {challenge?.bootstrap_available && <>
+            <p>Choose your own login name and password. This private installation has one account; account creation closes after setup.</p>
+            <label>One-time setup code<input name="bootstrap_token" type="password" autoComplete="off" minLength={40} maxLength={128} required /></label>
+            <p className="hint">Use the private setup code from your installation. It expires 15 minutes after setup is enabled and can be used only once.</p>
+          </>}
+          <label>Login name<input name="login_name" autoComplete="username" required maxLength={128} /></label>
+          <label>Password<input name="password" type="password" autoComplete={challenge?.bootstrap_available ? 'new-password' : 'current-password'} minLength={15} maxLength={128} required /></label>
+          <p className="hint">15–128 characters. Credentials stay in this form until sent to your installation; no browser token storage.</p>
+          <button disabled={busy || !challenge}>{busy ? 'Connecting…' : challenge?.bootstrap_available ? 'Create account' : 'Sign in'}</button>
+        </form>
+      </section> : <div key={workspaceGeneration}>
+      <div className="workspace-heading"><div><p className="workspace-breadcrumb">Workspace / {pageTitle}</p><h1 id="workspace-page-title" tabIndex={-1}>{pageTitle}</h1><p>{page === 'profile/imports' ? 'Bring your history into focus. Nothing becomes a profile fact without your review.' : page === 'activity' ? 'Follow saved work, inspect checkpoints and return to pending reviews.' : pageInfo?.description}</p></div>{profile && <span className="revision">Profile revision {profile.current_revision.revision_no}</span>}</div>
+      {drafts.length > 0 && <aside className="draft-banner" aria-label="Retained workspace drafts"><strong>Unsaved changes are retained.</strong><span>Return to finish editing or explicitly discard them.</span>{drafts.map(draft => <a key={draft} href={`#/${draft}`}>{draft === 'profile/imports' ? 'Résumé import' : workspacePages.find(item => item.id === draft)?.label}</a>)}</aside>}
+      {(page === 'profile' || page === 'profile/imports') && <nav className="page-tabs" aria-label="Profile workspace"><a href="#/profile" aria-current={page === 'profile' ? 'page' : undefined}>Profile details</a><a href="#/profile/imports" aria-current={page === 'profile/imports' ? 'page' : undefined}>Résumé imports</a></nav>}
+      <div hidden={page !== 'overview'} data-workspace-screen="overview"><WorkspaceOverview api={api} profile={profile} active={page === 'overview'} /></div>
+      <div hidden={page !== 'applications'} data-workspace-screen="applications"><Tracking api={api} disabled={busy || documentsDirty || documentsBusy} onDirtyChange={setTrackingDirty} onBusyChange={setTrackingBusy} /></div>
+      <div hidden={page !== 'profile'} data-workspace-screen="profile"><section className="panel identity-panel"><div className="section-heading"><div><h2>Personal details</h2><p className="hint">The identity and printable contact details on your documents.</p></div></div>{profile ? <form onSubmit={event => { void saveProfile(event); }}>
         <fieldset disabled={busy || entriesBusy || entriesDirty || importBusy || importDirty || documentsDirty || documentsBusy}><legend>Profile identity</legend>
           <label>Display name<input value={name} onChange={event => { identityEpoch.current++; setName(event.target.value); }} maxLength={120} required /></label>
           <label>Professional headline<input value={headline} onChange={event => { identityEpoch.current++; setHeadline(event.target.value); }} maxLength={300} /></label>
@@ -210,12 +257,16 @@ export function App({ api = defaultApi }: { api?: Api }) {
           {profile.quality_warnings.length > 0 && <ul>{profile.quality_warnings.map((warning, index) => <li key={index}>{warning}</li>)}</ul>}
         </fieldset></form> : <><p>Profile has not loaded. No sample data is being shown.</p><button disabled={busy} onClick={() => { void act(loadProfile); }}>Load profile</button></>}</section>
       {profile && <ProfileEntries api={api} profile={profile} disabled={busy || identityDirty || importBusy || importDirty || documentsDirty || documentsBusy} onProfile={acceptEditorProfile} onDirtyChange={setEntriesDirty} onBusyChange={setEntriesBusy} />}
-      {profile && <ResumeImport api={api} profile={profile} disabled={busy || identityDirty || entriesBusy || entriesDirty || documentsDirty || documentsBusy} onProfile={acceptEditorProfile} onDirtyChange={setImportDirty} onBusyChange={setImportBusy} />}
-      <JobSources api={api} currentProfile={profile} onProfileChange={observeProfile} disabled={busy || documentsDirty || documentsBusy} onDirtyChange={setJobsDirty} onBusyChange={setJobsBusy} />
+      </div>
+      <div hidden={page !== 'profile/imports'} data-workspace-screen="profile/imports">{profile && <ResumeImport api={api} profile={profile} disabled={busy || identityDirty || entriesBusy || entriesDirty || documentsDirty || documentsBusy} onProfile={acceptEditorProfile} onDirtyChange={setImportDirty} onBusyChange={setImportBusy} />}</div>
+      <div hidden={page !== 'opportunities'} data-workspace-screen="opportunities"><JobSources api={api} currentProfile={profile} onProfileChange={observeProfile} disabled={busy || documentsDirty || documentsBusy} onDirtyChange={setJobsDirty} onBusyChange={setJobsBusy} /></div>
+      <div hidden={page !== 'activity'} data-workspace-screen="activity"><Tasks api={api} session={session} requestedTask={workflow} disabled={taskResultBlocked} resultDisabled={taskResultBlocked} onSession={setSession} onWorkflowChange={observeTask} onOpenDocument={openTaskDocument} onBusyChange={setTasksBusy} /></div>
+      <div hidden={page !== 'settings'} data-workspace-screen="settings"><section className="panel workspace-principles"><h2>Your workspace, your authority</h2><p>Local résumé import and base documents need no model. Tailoring requires an explicitly authorized and qualified route. Imported facts are owner assertions, not independently verified credentials. No hosted fallback, automatic rejection, application submission or sending authority is enabled.</p><details><summary>Development and review boundaries</summary><p>This is a private prototype. Structural checks do not prove semantic meaning or independently verify credentials. Real-model and human factual qualification remain outstanding. Greenhouse reads require board-specific terms review and authorization. Tracking Applied is not proof of delivery.</p></details></section>
+      <details className="panel"><summary>Privacy, backup and portable data</summary><DataPortability api={api} profile={profile} disabled={taskResultBlocked || !!(workflow && !terminal(workflow.state))} onBusyChange={setPortabilityBusy} /></details>
+      <details className="advanced-tools"><summary>Advanced diagnostic tools</summary>
       <section className="panel"><h2>Evidence proof</h2><p>Explicitly load SYN-CORE: fictional Mira Vale, Linux and SQL evidence. This replaces the saved proof profile; it is not imported personal history. Benchmark tasks are synthetic mechanisms, separate from production composition.</p>{benchmark ? <><button className="secondary" disabled={profileLocked || !profile || !!(workflow && !terminal(workflow.state))} onClick={() => { if (profile) void benchmarkAction(async () => { acceptProfile(await api.request<Profile>('/benchmarks/profile', 'POST', { fixture: 'SYN-CORE' }, profile.version, true)); setNotice('SYN-CORE saved by the server.'); }); }}>Load SYN-CORE benchmark evidence</button><label>Proof scenario<select value={scenario} disabled={profileLocked} onChange={event => setScenario(event.target.value)}><option value="normal">Normal task</option><option value="slow">Slow task (cancellation proof)</option><option value="poison">Poison task (bounded failure proof)</option><option value="stage_pause">Stage pause (restart proof)</option></select></label><button disabled={profileLocked || !profile || profile.current_revision.snapshot.claim_revision_ids.length === 0 || !!(workflow && !terminal(workflow.state))} onClick={() => { if (profile) void benchmarkAction(async () => { const value = await api.request<Workflow>('/benchmarks/tasks', 'POST', { profile_revision_id: profile.current_revision.id, scenario, delay_seconds: scenario === 'normal' ? 0 : 15 }, profile.version, true); setWorkflow(value); }); }}>Start synthetic proof task</button></> : <p className="hint">Benchmark endpoints are disabled here. No synthetic task was started.</p>}
       </section>
-      <Tasks api={api} session={session} requestedTask={workflow} disabled={taskResultBlocked} resultDisabled={taskResultBlocked} onSession={setSession} onWorkflowChange={observeTask} onOpenDocument={openTaskDocument} onBusyChange={setTasksBusy} />
-      <DataPortability api={api} profile={profile} disabled={taskResultBlocked || !!(workflow && !terminal(workflow.state))} onBusyChange={setPortabilityBusy} />
+      </details>
       <details className="panel"><summary>Confirm owner identity</summary>
         <p>Confirm your password before creating a destructive preview. Confirmation rotates this browser’s session and invalidates approvals tied to its previous session. It does not approve, replace or delete data; unsaved editors remain here.</p>
         <form onSubmit={event => { void reauthenticate(event); }}>
@@ -224,8 +275,9 @@ export function App({ api = defaultApi }: { api?: Api }) {
         </form>
       </details>
       <details className="panel"><summary>Change password</summary><form onSubmit={event => { event.preventDefault(); const form = event.currentTarget; const values = new FormData(form); void act(async () => { const value = await api.request<Session>('/session/password', 'POST', { current_password: String(values.get('current_password')), new_password: String(values.get('new_password')) }); api.csrf = value.csrf_token; setSession(value); form.reset(); setNotice('Password changed. This session has been rotated.'); }); }}><label>Current password<input type="password" name="current_password" autoComplete="current-password" required maxLength={128} /></label><label>New password<input type="password" name="new_password" autoComplete="new-password" minLength={15} maxLength={128} required /></label><button disabled={connectionPaused || busy}>Change password</button></form></details></div>
-      <Documents api={api} profile={profile} disabled={busy || identityDirty || entriesDirty || entriesBusy || importDirty || importBusy || jobsDirty || jobsBusy || trackingDirty || trackingBusy || !!(workflow && !terminal(workflow.state))} externalDocumentId={documentRequest?.id ?? null} externalRequestKey={documentRequest?.key ?? null} onDirtyChange={setDocumentsDirty} onBusyChange={setDocumentsBusy} /></div></div>}
-    </main><footer>Offerloom · Private prototype · Manual tracking and PDF export, not delivery · No sending authority</footer>
-  </>;
+      <div hidden={page !== 'documents'} data-workspace-screen="documents"><Documents api={api} profile={profile} disabled={busy || identityDirty || entriesDirty || entriesBusy || importDirty || importBusy || jobsDirty || jobsBusy || trackingDirty || trackingBusy || !!(workflow && !terminal(workflow.state))} externalDocumentId={documentRequest?.id ?? null} externalRequestKey={documentRequest?.key ?? null} onDirtyChange={setDocumentsDirty} onBusyChange={setDocumentsBusy} /></div>
+      {page === 'not-found' && <section className="panel"><h2>This workspace page does not exist</h2><a href="#/overview">Return to overview</a></section>}</div>}
+    </main><footer>Offerloom · Private workspace · Review before export · No sending authority</footer>
+  </div>;
 }
 const defaultApi = new Api();
