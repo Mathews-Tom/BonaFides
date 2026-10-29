@@ -131,6 +131,7 @@ def _pdf(
     text: bytes = b"Built fictional local services.",
     *,
     pages: int = 1,
+    font: str = "/Helvetica",
     content: bytes | None = None,
     encrypted: bool = False,
     javascript: bool = False,
@@ -146,7 +147,7 @@ def _pdf(
                             {
                                 NameObject("/Type"): NameObject("/Font"),
                                 NameObject("/Subtype"): NameObject("/Type1"),
-                                NameObject("/BaseFont"): NameObject("/Helvetica"),
+                                NameObject("/BaseFont"): NameObject(font),
                                 NameObject("/Encoding"): NameObject("/WinAnsiEncoding"),
                             }
                         )
@@ -167,6 +168,32 @@ def _pdf(
     writer.write(output)
     writer.close()
     return output.getvalue()
+
+
+def _positioned_pdf(lines: list[str], *, pages: int = 1) -> bytes:
+    """Synthetic glyph-positioned PDF; never use a personal résumé as a fixture."""
+    content: list[bytes] = [b"q 0.75 0 0 -0.75 0 792 cm"]
+    for index, line in enumerate(lines):
+        x, y = 72.0, 96.0 + index * 16
+        for character in line:
+            # Explicit positions, missing space glyphs and mixed font sizes reproduce
+            # common browser/office PDF generators without depending on their output.
+            size = 14 if x == 72 and index == 0 else 10
+            if not character.isspace():
+                escaped = (
+                    character.encode("cp1252")
+                    .replace(b"\\", b"\\\\")
+                    .replace(b"(", b"\\(")
+                    .replace(b")", b"\\)")
+                )
+                content.append(
+                    f"BT /F1 {size} Tf 1 0 0 -1 {x:.3f} {y:.3f} Tm (".encode()
+                    + escaped
+                    + b") Tj ET"
+                )
+            x += size * 0.6
+    content.append(b"Q")
+    return _pdf(content=b"\n".join(content), pages=pages, font="/Courier")
 
 
 def _publish(spool: Path, data: bytes = b"fictional text", *, job_id: str = "a" * 64) -> str:
@@ -200,6 +227,114 @@ def test_real_pdf_extraction_and_normalized_source_digest(parser: ImportParserCl
     assert result.text.count("Fictional Caf\u00e9 Engineer") == 2
     assert result.source_sha256 == hashlib.sha256(result.text.encode()).hexdigest()
     assert result.warnings == []
+
+
+def test_positioned_pdf_reconstructs_wrapped_quotes_before_proposal_limits(
+    parser: ImportParserClient,
+) -> None:
+    from offerloom.imports import extract_proposals
+
+    lines = ["Skills"]
+    expected = []
+    for index in range(12):
+        first = f"- Maintained fictional service {index:02d} with careful local"
+        second = "checks and exact source provenance."
+        lines.extend([first, second])
+        expected.append(f"{first} {second}")
+    result = parser.parse(_positioned_pdf(lines, pages=5), "application/pdf")
+    proposals, _ = extract_proposals(result)
+    assert [proposal.quote for proposal in proposals] == expected * 5
+    assert all(proposal.kind == "skill" for proposal in proposals)
+    for proposal in proposals:
+        assert result.text[proposal.source_start : proposal.source_end] == proposal.quote
+        assert proposal.payload.text == proposal.quote
+    assert result.source_sha256 == hashlib.sha256(result.text.encode()).hexdigest()
+
+
+def test_positioned_pdf_does_not_coalesce_distinct_bullets_to_escape_limits(
+    parser: ImportParserClient,
+) -> None:
+    from offerloom.imports import extract_proposals
+    from offerloom.problems import Problem
+
+    # Two pages preserve duplicate statements rather than silently deduplicating.
+    accepted = parser.parse(
+        _positioned_pdf(["Skills", *[f"- Fictional skill {i:02d}" for i in range(50)]], pages=2),
+        "application/pdf",
+    )
+    proposals, _ = extract_proposals(accepted)
+    expected = [f"- Fictional skill {i:02d}" for i in range(50)] * 2
+    assert [proposal.quote for proposal in proposals] == expected
+    assert len({proposal.proposal_id for proposal in proposals}) == 100
+    refused = parser.parse(
+        _positioned_pdf(["Skills", *[f"- Fictional skill {i:02d}" for i in range(51)]], pages=2),
+        "application/pdf",
+    )
+    with pytest.raises(Problem) as error:
+        extract_proposals(refused)
+    assert error.value.code == "import_proposal_limit"
+
+
+def test_positioned_pdf_preserves_short_lines_and_section_boundaries(
+    parser: ImportParserClient,
+) -> None:
+    lines = ["Skills", "Python", "SQL", "Project:", "- Separate bullet", "- Another bullet"]
+    result = parser.parse(_positioned_pdf(lines), "application/pdf")
+    assert result.text.splitlines() == lines
+
+
+@pytest.mark.parametrize("right", [400, 1_000_000_000])
+def test_pdf_columns_never_become_one_fact_or_coordinate_sized_padding(
+    parser: ImportParserClient,
+    right: int,
+) -> None:
+    result = parser.parse(
+        _pdf(
+            content=(
+                b"BT /F1 12 Tf 1 0 0 1 72 720 Tm (Left statement) Tj ET\n"
+                + f"BT /F1 12 Tf 1 0 0 1 {right} 720 Tm (Right statement) Tj ET".encode()
+            )
+        ),
+        "application/pdf",
+    )
+    assert result.text == "Left statement\nRight statement"
+
+
+def test_pdf_explicit_line_breaks_remain_distinct(
+    parser: ImportParserClient,
+) -> None:
+    from pypdf import PdfReader
+
+    data = _pdf(
+        content=(
+            b"BT /F1 12 Tf 72 720 Td 14 TL (Skills) Tj T* "
+            b"(First independent statement) Tj T* (Second independent statement) Tj ET"
+        )
+    )
+    reader = PdfReader(io.BytesIO(data), strict=True)
+    expected = reader.pages[0].extract_text()
+    reader.close()
+    result = parser.parse(data, "application/pdf")
+    assert result.text == expected
+
+
+def test_pdf_reconstruction_never_reorders_source_characters(
+    parser: ImportParserClient,
+) -> None:
+    from pypdf import PdfReader
+
+    data = _pdf(
+        content=(
+            b"BT /F1 12 Tf 1 0 0 1 400 720 Tm (Right first) Tj ET\n"
+            b"BT /F1 12 Tf 1 0 0 1 72 720 Tm (Left second) Tj ET"
+        )
+    )
+    reader = PdfReader(io.BytesIO(data), strict=True)
+    expected = reader.pages[0].extract_text()
+    reader.close()
+    result = parser.parse(data, "application/pdf")
+    assert result.text == expected
+    assert "pdf_layout_requires_review" in result.warnings
 
 
 def test_embedded_instructions_and_markup_stay_inert(

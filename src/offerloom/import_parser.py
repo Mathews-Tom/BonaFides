@@ -17,6 +17,7 @@ import fcntl
 import hashlib
 import io
 import logging
+import math
 import os
 import re
 import signal
@@ -40,6 +41,7 @@ from offerloom.storage import atomic_file, directory, read_file
 
 if TYPE_CHECKING:
     from pypdf.generic import DictionaryObject
+    from pypdf.generic._font import Font
 
 MAX_UPLOAD_BYTES = 10 * 1024 * 1024
 MAX_TEXT_SCALARS = 80_000
@@ -100,7 +102,7 @@ _ERRORS: frozenset[str] = frozenset(
         "import_failed",
     )
 )
-WarningCode = Literal["pdf_pages_without_selectable_text"]
+WarningCode = Literal["pdf_pages_without_selectable_text", "pdf_layout_requires_review"]
 Digest = Annotated[str, Field(pattern=r"^[0-9a-f]{64}$")]
 
 
@@ -137,7 +139,7 @@ class _Receipt(_StrictModel):
     output_sha256: Digest | None
     output_bytes: Annotated[int, Field(ge=0, le=MAX_TEXT_BYTES)]
     output_scalars: Annotated[int, Field(ge=0, le=MAX_TEXT_SCALARS)]
-    warnings: list[WarningCode] = Field(max_length=1)
+    warnings: list[WarningCode] = Field(max_length=2)
     error_code: ErrorCode | None
 
     @model_validator(mode="after")
@@ -439,6 +441,150 @@ def _form_contents(
             _form_contents(nested_resources, budget, seen, ancestors | {identity})
 
 
+@dataclass(slots=True)
+class _PdfLine:
+    text: str
+    x: float
+    y: float
+    end: float
+    size: float
+    bold: bool
+    joinable: bool = True
+
+
+class _PdfLayout:
+    """Recover bounded text flow, never coordinate-sized whitespace or guessed facts."""
+
+    def __init__(self) -> None:
+        self.fragments: list[_PdfLine] = []
+        self.fonts: dict[int, tuple[Font, dict[str, str]]] = {}
+        self.ambiguous = False
+
+    def visit(
+        self,
+        text: str,
+        cm: list[float],
+        tm: list[float],
+        resource: DictionaryObject | None,
+        size: float,
+    ) -> None:
+        from pypdf.generic._font import Font
+
+        literal = text.strip()
+        if not literal:
+            return
+        # A visitor can report opaque multiline/form text or unsupported transforms.
+        # Preserve plain extraction with an explicit warning instead of flattening it.
+        if (
+            resource is None
+            or len(literal.splitlines()) != 1
+            or not all(math.isfinite(value) for value in (*cm, *tm, size))
+        ):
+            self.ambiguous = True
+            return
+        a = cm[0] * tm[0] + cm[2] * tm[1]
+        b = cm[1] * tm[0] + cm[3] * tm[1]
+        c = cm[0] * tm[2] + cm[2] * tm[3]
+        d = cm[1] * tm[2] + cm[3] * tm[3]
+        if a <= 0 or d <= 0 or abs(b) > 1e-6 or abs(c) > 1e-6 or size <= 0:
+            self.ambiguous = True
+            return
+        identity = id(resource)
+        if identity not in self.fonts:
+            # pypdf is pinned: its font metrics handle embedded/CID fonts as well as
+            # core fonts. Widths are keyed by source glyphs, not decoded Unicode.
+            font = Font.from_font_resource(resource)
+            inverse = {
+                value: key
+                for key, value in font.character_map.items()
+                if isinstance(key, str) and isinstance(value, str)
+            }
+            self.fonts[identity] = font, inverse
+        font, inverse = self.fonts[identity]
+        x = tm[4] * cm[0] + tm[5] * cm[2] + cm[4]
+        y = tm[4] * cm[1] + tm[5] * cm[3] + cm[5]
+        width = font.get_text_width("".join(inverse.get(char, char) for char in literal))
+        end = x + width * size * a / 1000
+        height = size * d
+        if not all(math.isfinite(value) for value in (x, y, end, height)) or height <= 0:
+            self.ambiguous = True
+            return
+        self.fragments.append(_PdfLine(literal, x, y, end, height, "bold" in font.name.casefold()))
+
+    def reconstruct(self, original: str) -> tuple[str, bool]:
+        if self.ambiguous:
+            return original, True
+        groups: list[list[_PdfLine]] = []
+        for fragment in self.fragments:
+            if not groups or abs(groups[-1][0].y - fragment.y) > (
+                min(groups[-1][0].size, fragment.size) * 0.25
+            ):
+                groups.append([])
+            groups[-1].append(fragment)
+        lines: list[_PdfLine] = []
+        for group in groups:
+            group.sort(key=lambda fragment: fragment.x)
+            first = group[0]
+            line = _PdfLine(first.text, first.x, first.y, first.end, first.size, first.bold)
+            for fragment in group[1:]:
+                scale = min(line.size, fragment.size)
+                gap = fragment.x - line.end
+                if gap > 4 * scale:
+                    # Separate columns/cells, not one phrase with giant padding.
+                    line.joinable = False
+                    lines.append(line)
+                    line = _PdfLine(
+                        fragment.text,
+                        fragment.x,
+                        fragment.y,
+                        fragment.end,
+                        fragment.size,
+                        fragment.bold,
+                        False,
+                    )
+                    continue
+                if gap < -0.25 * scale:
+                    line.joinable = False
+                line.text += (" " if gap > 0.12 * scale else "") + fragment.text
+                line.end = max(line.end, fragment.end)
+                line.size = max(line.size, fragment.size)
+                line.bold = line.bold and fragment.bold
+            lines.append(line)
+        # Sorting/visitors must never lose, duplicate or reorder source characters.
+        # Only whitespace reconstruction is permitted, including for nested forms.
+        source = "".join(character for character in original if not character.isspace())
+        rebuilt = "".join(
+            character for line in lines for character in line.text if not character.isspace()
+        )
+        if rebuilt != source:
+            return original, True
+        right = max((line.end for line in lines), default=0)
+        paragraphs: list[str] = []
+        previous: _PdfLine | None = None
+        for line in lines:
+            scale = min(previous.size, line.size) if previous is not None else 0
+            wraps = (
+                previous is not None
+                and previous.joinable
+                and line.joinable
+                and 0 < previous.y - line.y < 1.8 * scale
+                and max(previous.size, line.size) < 1.35 * scale
+                and abs(previous.x - line.x) < 2 * scale
+                and previous.end - previous.x >= 20 * scale
+                and previous.end >= right - 4 * scale
+                and not previous.bold
+                and not line.bold
+                and not previous.text.endswith(":")
+                and re.match(r"^(?:[•●▪◦*\-]|[0-9]+[.)])\s*", line.text) is None
+            )
+            if wraps:
+                paragraphs[-1] += " " + line.text
+            else:
+                paragraphs.append(line.text)
+            previous = line
+        return "\n".join(paragraphs), False
+
+
 def _pdf_text(data: bytes) -> tuple[str, list[WarningCode]]:
     from pypdf import PdfReader, apply_configuration
     from pypdf.errors import FileNotDecryptedError, LimitReachedError
@@ -452,14 +598,22 @@ def _pdf_text(data: bytes) -> tuple[str, list[WarningCode]]:
     budget = _ContentBudget()
     fragments = 0
 
-    def visit(text: str, cm: object, tm: object, font: object, size: object) -> None:
+    layout = _PdfLayout()
+
+    def visit(
+        text: str,
+        cm: list[float],
+        tm: list[float],
+        font: DictionaryObject | None,
+        size: float,
+    ) -> None:
         nonlocal fragments
-        del cm, tm, font, size
         fragments += len(text)
         # NFC can compose canonical sequences, so the final exact limit is checked
         # after normalization. This larger early bound limits extraction allocation.
         if fragments > MAX_TEXT_SCALARS * 4:
             raise ImportFailure("import_text_limit")
+        layout.visit(text, cm, tm, font, size)
 
     try:
         if not data.startswith(b"%PDF-"):
@@ -492,6 +646,7 @@ def _pdf_text(data: bytes) -> tuple[str, list[WarningCode]]:
                     raise ImportFailure("import_page_limit")
                 pages: list[str] = []
                 empty_pages = False
+                uncertain_layout = False
                 seen_forms: set[int] = set()
                 for page in reader.pages:
                     content = page.get_contents()
@@ -503,15 +658,23 @@ def _pdf_text(data: bytes) -> tuple[str, list[WarningCode]]:
                         if not isinstance(resolved, DictionaryObject):
                             raise ImportFailure("import_invalid_pdf")
                         _form_contents(resolved, budget, seen_forms, set())
+                    layout = _PdfLayout()
                     text = page.extract_text(visitor_text=visit, extraction_mode="plain")
                     if diagnostics.failed:
                         # pypdf sometimes reports skipped malformed forms as warnings.
                         # Never turn partial/truncated extraction into silent success.
                         raise ImportFailure("import_invalid_pdf")
                     empty_pages = empty_pages or not text.strip()
+                    text, uncertain = layout.reconstruct(text)
+                    uncertain_layout = uncertain_layout or uncertain
                     pages.append(text)
                 result = _normalized("\n".join(pages), empty_code="import_no_selectable_text")
-                return result, ["pdf_pages_without_selectable_text"] if empty_pages else []
+                warnings: list[WarningCode] = []
+                if empty_pages:
+                    warnings.append("pdf_pages_without_selectable_text")
+                if uncertain_layout:
+                    warnings.append("pdf_layout_requires_review")
+                return result, warnings
             finally:
                 reader.close()
     except ImportFailure:
