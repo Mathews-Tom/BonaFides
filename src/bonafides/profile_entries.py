@@ -371,6 +371,55 @@ def write_evidence(
     return result
 
 
+def append_claim_revision(
+    conn: Connection,
+    owner_id: UUID,
+    entity_id: UUID,
+    payload: dict[str, object],
+    evidence_links: Sequence[EvidenceLink],
+    *,
+    increment: int,
+) -> UUID:
+    """Append an immutable claim revision with its evidence links and make it current."""
+    revision_id = uuid4()
+    conn.execute(
+        text("""INSERT INTO bonafides.claim_revisions(owner_id,id,claim_id,revision_no,payload,content_sha256)
+        SELECT :owner,:revision,:id,COALESCE(max(revision_no),0)+1,CAST(:payload AS jsonb),:sha
+        FROM bonafides.claim_revisions WHERE owner_id=:owner AND claim_id=:id"""),
+        {
+            "owner": owner_id,
+            "revision": revision_id,
+            "id": entity_id,
+            "payload": canonical(payload),
+            "sha": content_hash(payload),
+        },
+    )
+    for link in evidence_links:
+        conn.execute(
+            text("""INSERT INTO bonafides.claim_evidence_links(owner_id,claim_revision_id,evidence_revision_id,support_kind,excerpt)
+            VALUES(:owner,:claim,:evidence,:support,:excerpt)"""),
+            {
+                "owner": owner_id,
+                "claim": revision_id,
+                "evidence": link.evidence_revision_id,
+                "support": link.support_kind,
+                "excerpt": link.excerpt,
+            },
+        )
+    conn.execute(
+        text(
+            "UPDATE bonafides.professional_claims SET current_revision_id=:revision,version=version+:increment WHERE owner_id=:owner AND id=:id"
+        ),
+        {
+            "owner": owner_id,
+            "id": entity_id,
+            "revision": revision_id,
+            "increment": increment,
+        },
+    )
+    return revision_id
+
+
 def write_claim(
     conn: Connection, owner_id: UUID, body: ClaimWrite, entity_id: UUID | None
 ) -> dict[str, object]:
@@ -409,42 +458,13 @@ def write_claim(
         if current["kind"] != body.kind:
             raise Problem(422, "claim_kind_immutable")
         previous = current["current_revision_id"]
-    revision_id = uuid4()
-    payload = body.payload.model_dump(mode="json", exclude_none=True)
-    conn.execute(
-        text("""INSERT INTO bonafides.claim_revisions(owner_id,id,claim_id,revision_no,payload,content_sha256)
-        SELECT :owner,:revision,:id,COALESCE(max(revision_no),0)+1,CAST(:payload AS jsonb),:sha
-        FROM bonafides.claim_revisions WHERE owner_id=:owner AND claim_id=:id"""),
-        {
-            "owner": owner_id,
-            "revision": revision_id,
-            "id": entity_id,
-            "payload": canonical(payload),
-            "sha": content_hash(payload),
-        },
-    )
-    for link in body.evidence_links:
-        conn.execute(
-            text("""INSERT INTO bonafides.claim_evidence_links(owner_id,claim_revision_id,evidence_revision_id,support_kind,excerpt)
-            VALUES(:owner,:claim,:evidence,:support,:excerpt)"""),
-            {
-                "owner": owner_id,
-                "claim": revision_id,
-                "evidence": link.evidence_revision_id,
-                "support": link.support_kind,
-                "excerpt": link.excerpt,
-            },
-        )
-    conn.execute(
-        text(
-            "UPDATE bonafides.professional_claims SET current_revision_id=:revision,version=version+:increment WHERE owner_id=:owner AND id=:id"
-        ),
-        {
-            "owner": owner_id,
-            "id": entity_id,
-            "revision": revision_id,
-            "increment": 0 if creating else 1,
-        },
+    revision_id = append_claim_revision(
+        conn,
+        owner_id,
+        entity_id,
+        body.payload.model_dump(mode="json", exclude_none=True),
+        body.evidence_links,
+        increment=0 if creating else 1,
     )
     ids = [revision_id if item == previous else item for item in snapshot.claim_revision_ids]
     if revision_id not in ids:
