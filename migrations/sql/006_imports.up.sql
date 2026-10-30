@@ -1,5 +1,5 @@
 -- SPDX-License-Identifier: MIT OR Apache-2.0
--- OL-006 stages bounded private imports independently from canonical profile history.
+-- reviewed résumé import stages bounded private imports independently from canonical profile history.
 SET LOCAL search_path=bonafides,pg_catalog;
 CREATE TABLE import_batches (
  owner_id uuid NOT NULL REFERENCES owners(id) ON DELETE CASCADE,

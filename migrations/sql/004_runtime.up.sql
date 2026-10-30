@@ -1,5 +1,5 @@
 -- SPDX-License-Identifier: MIT OR Apache-2.0
--- Additive M0 security15/session and workflow14 observability requirements.
+-- Additive runtime security, session and workflow observability requirements.
 SET LOCAL search_path=bonafides,pg_catalog;
 ALTER TABLE installation_state ADD COLUMN bootstrap_expires_at timestamptz;
 ALTER TABLE installation_state ADD COLUMN auth_epoch bigint NOT NULL DEFAULT 1 CHECK(auth_epoch>0);

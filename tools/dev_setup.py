@@ -61,7 +61,7 @@ def main() -> int:
     parser.add_argument(
         "--benchmark",
         action="store_true",
-        help="enable synthetic M0 proof endpoints, never real integrations",
+        help="enable synthetic benchmark endpoints, never real integrations",
     )
     parser.add_argument(
         "--show-bootstrap-token",

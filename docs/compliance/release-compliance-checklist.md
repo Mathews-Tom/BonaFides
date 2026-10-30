@@ -4,7 +4,7 @@ Status: **not executed; no public release authorized by this design session**. E
 
 The owner separately authorized the [identified source-only review PR](licensing-policy.md#scoped-source-publication-authorization) on 2026-10-26. That scoped sequencing exception permits its branch push and PR creation without claiming the independent reviews below have occurred. It authorizes no merge, tag, binary/image/package release or broader public-distribution clearance. All checkboxes retain their actual unexecuted/pending status; actual rights, notices and confidentiality obligations are not waived.
 
-## M0 — repository initialization
+## Architecture proof — repository initialization
 
 - [ ] Full canonical MIT and Apache-2.0 texts, NOTICE, CONTRIBUTING, SECURITY, canonical ADR and six compliance policies present.
 - [ ] All applicable original-source and package/publication declarations say `MIT OR Apache-2.0`; third-party headers remain intact.
@@ -12,7 +12,7 @@ The owner separately authorized the [identified source-only review PR](licensing
 - [ ] Provenance ledger and dependency/asset inventory started; locked versions and scan/report formats defined.
 - [ ] Secret scanning and license/notice checks configured and demonstrated failing on synthetic violations.
 
-## M1 — private usable alpha
+## Private alpha — private usable alpha
 
 - [ ] Direct and transitive Python/frontend dependencies, native libraries, OS/base images and build dependencies reviewed for exact deployed platform.
 - [ ] Runtime/source/font/dictionary attribution and source/relink conditions demonstrably satisfied, including psycopg and renderer chains.
@@ -20,7 +20,7 @@ The owner separately authorized the [identified source-only review PR](licensing
 - [ ] Data egress/source terms recorded per configured employer board and model; no weights/data/assets assumed project-licensed.
 - [ ] Import/export and backup design prevent secrets/data leakage into release artifacts or evidence reports.
 
-## M2 — before any public beta or other public distribution
+## Public beta — before any public beta or other public distribution
 
 - [ ] SPDX/CycloneDX SBOM, license scan, transitive graph, vulnerability and secret reports bound to exact final artifacts.
 - [ ] Notices and full applicable license texts actually included in source/binary/images; corresponding source/relink obligations and retention are satisfied.
@@ -30,7 +30,7 @@ The owner separately authorized the [identified source-only review PR](licensing
 - [ ] Monitored private security reporting channel, supported-version statement and accountable responders established.
 - [ ] Release candidate privacy/security/a11y/restore/load gates completed; scan tooling is not claimed as a penetration test or legal certification.
 
-## M3 — stable self-hosted distribution
+## Stable distribution — stable self-hosted distribution
 
 - [ ] Repeat all public-distribution gates on final source, browser bundle and per-platform image digests, after any packaging change.
 - [ ] Reproducible build evidence, provenance attestation, checksums/signatures and verification instructions supplied; signing identity/trust policy documented.

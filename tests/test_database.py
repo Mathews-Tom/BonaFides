@@ -64,7 +64,7 @@ def pg_context() -> Iterator[PGContext]:
         )
         conn.execute(
             text(
-                "INSERT INTO bonafides.owners(id,login_name,password_hash) VALUES(:id,'m0-invariant-test','not-a-login-hash')"
+                "INSERT INTO bonafides.owners(id,login_name,password_hash) VALUES(:id,'foundation-invariant-test','not-a-login-hash')"
             ),
             {"id": owner_id},
         )

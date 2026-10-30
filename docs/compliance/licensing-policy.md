@@ -16,7 +16,7 @@ Distribute both full project license texts and an accurate NOTICE with source an
 
 Maintainers review inbound authorization, provenance and exact shipped obligations at incorporation; the release owner checks the release checklist; qualified legal review addresses independence, uncertain compatibility and public eligibility claims. Unknown license, unclear ownership, missing consent, or unsatisfied obligations blocks acceptance/distribution, not merely a warning. Exceptions need a written component/version/distribution-specific legal rationale, approver, conditions and expiry; no exception may purport to grant rights the project lacks.
 
-No license/dependency/secret scan or counsel approval is claimed by this design document. Automated implementation gates must begin at M0 and run again against each exact release artifact. A later license change requires a new ADR and rights review; it cannot silently revoke grants already made.
+No license/dependency/secret scan or counsel approval is claimed by this design document. Automated implementation gates must begin at architecture proof and run again against each exact release artifact. A later license change requires a new ADR and rights review; it cannot silently revoke grants already made.
 
 ### Scoped source publication authorization
 
@@ -24,7 +24,7 @@ On 2026-10-26, the repository owner, Mathews-Tom, explicitly authorized an owner
 
 The rationale is to permit public review of the owner's authorized original-source contribution under the existing `MIT OR Apache-2.0` grant while leaving independent provenance/legal review explicitly pending. Original and third-party license texts, notices, contribution disclosures and actual license obligations remain applicable. This authorization cannot grant missing rights, excuse known unauthorized material or bypass a demonstrated secret/security blocker.
 
-Only the source branch and PR are authorized. No merge, tag, binary/image/package release, private-data/evidence upload, model download, paid/hosted call or unqualified integration enablement is authorized. M1b human validation and actual-model/real-board qualification retain their existing dispositions. Binary/image/package distribution remains blocked. This authorization ends when that PR closes and does not cover unrelated branches or material implementation changes beyond the stated scope.
+Only the source branch and PR are authorized. No merge, tag, binary/image/package release, private-data/evidence upload, model download, paid/hosted call or unqualified integration enablement is authorized. Human-review stage human validation and actual-model/real-board qualification retain their existing dispositions. Binary/image/package distribution remains blocked. This authorization ends when that PR closes and does not cover unrelated branches or material implementation changes beyond the stated scope.
 
 
 Sources reviewed 2026-10-24: [MIT](https://spdx.org/licenses/MIT.html), [Apache-2.0](https://www.apache.org/licenses/LICENSE-2.0.txt).

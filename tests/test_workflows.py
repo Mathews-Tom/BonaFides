@@ -35,7 +35,7 @@ def test_normalized_canonical_request() -> None:
     assert canonical_json({"z": [True, None], "a": "Mira"}) == '{"a":"Mira","z":[true,null]}'
     assert canonical_json({"\ue000": 1, "\U00010000": 2}) == '{"\U00010000":2,"\ue000":1}'
     with pytest.raises(Problem):
-        canonical_json({"not_in_m0": float("nan")})
+        canonical_json({"not_in_contract": float("nan")})
 
 
 def _enqueue(pg: PGContext) -> UUID:

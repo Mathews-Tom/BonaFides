@@ -526,7 +526,7 @@ def restore_profile(conn: Connection, owner_id: UUID, revision_id: UUID) -> dict
     raw_snapshot = cast(dict[str, object], historical["snapshot"])
     evidence_ids = snapshot.evidence_revision_ids
     if "evidence_revision_ids" not in raw_snapshot:
-        # Old M0 snapshots predate evidence editor state; preserve their exact pins.
+        # Snapshots from before the evidence editor predate evidence editor state; preserve their exact pins.
         evidence_ids = list(
             conn.execute(
                 text("""SELECT DISTINCT ON(r.evidence_id) r.id

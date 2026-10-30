@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: MIT OR Apache-2.0
-"""Reviewed SQL 001–003 plus additive M0 runtime security contract."""
+"""Reviewed SQL 001–003 plus the additive runtime security contract."""
 
 import hashlib
 from pathlib import Path
@@ -7,7 +7,7 @@ from pathlib import Path
 from alembic import op
 from sqlalchemy import text
 
-revision = "0001_m0"
+revision = "0001_foundation"
 down_revision = None
 branch_labels = None
 depends_on = None
@@ -54,4 +54,6 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    raise RuntimeError("M0 downgrade is destructive; restore an explicitly verified backup instead")
+    raise RuntimeError(
+        "Foundation downgrade is destructive; restore an explicitly verified backup instead"
+    )

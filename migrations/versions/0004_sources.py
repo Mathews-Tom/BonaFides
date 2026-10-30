@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: MIT OR Apache-2.0
-"""Add OL-007 sources without rewriting applied SQL or observation history."""
+"""Add job sources sources without rewriting applied SQL or observation history."""
 
 import hashlib
 from pathlib import Path

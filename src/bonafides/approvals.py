@@ -2,7 +2,7 @@
 """Exact-bound approvals for trusted producers; hosted effects remain unavailable.
 
 All operations use the caller's transaction. Destructive execution is enabled
-only by a persisted OL014 owner preview, never arbitrary client intent input.
+only by a persisted data portability and erasure owner preview, never arbitrary client intent input.
 An authorization receipt is not evidence that an external effect happened.
 """
 
@@ -773,7 +773,7 @@ def verify_hosted_consent(
 
     The caller must commit this reservation, recheck cancellation at its transport
     boundary, and record actual/unknown usage. Reservation is never known-zero cost
-    or successful delivery. There is intentionally no hosted transport in OL013.
+    or successful delivery. There is intentionally no hosted transport in task and approval control.
     """
     if (
         type(reserved_tokens) is not int

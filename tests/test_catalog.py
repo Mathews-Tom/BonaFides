@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: MIT OR Apache-2.0
-"""OL-008 uses real PostgreSQL, authenticated HTTP and independent retained-row oracles."""
+"""job catalog uses real PostgreSQL, authenticated HTTP and independent retained-row oracles."""
 
 from __future__ import annotations
 

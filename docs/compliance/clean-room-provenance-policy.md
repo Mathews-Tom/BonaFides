@@ -6,7 +6,7 @@ Implement from approved source-neutral functional requirements, independently au
 
 ## Record each material decision
 
-At M0 create a provenance ledger. For each major module, algorithm, interface, schema, prompt, asset or generated artifact record: neutral requirement/story IDs; original author/reviewer and date; independently selected approach and alternatives; official research URLs and access dates; third-party material actually incorporated with license/version/digest; AI/tool assistance and human review; changed paths and commit/artifact identity when available; rights/uncertainty disposition. Record facts, not an invented author attestation. Preserve the design-stage package's own evidence boundary: it is not a legal opinion.
+At architecture proof create a provenance ledger. For each major module, algorithm, interface, schema, prompt, asset or generated artifact record: neutral requirement/story IDs; original author/reviewer and date; independently selected approach and alternatives; official research URLs and access dates; third-party material actually incorporated with license/version/digest; AI/tool assistance and human review; changed paths and commit/artifact identity when available; rights/uncertainty disposition. Record facts, not an invented author attestation. Preserve the design-stage package's own evidence boundary: it is not a legal opinion.
 
 Only synthetic profiles and data may enter examples/tests. Prefer fresh contracts and standard architectural patterns, justified by the new product. No raw confidential input paths or private origin details should be necessary to consume the portable package. Keep sensitive provenance/legal evidence in access-controlled records; public release summaries must not leak it.
 
