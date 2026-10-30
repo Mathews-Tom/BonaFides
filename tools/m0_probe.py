@@ -1429,6 +1429,11 @@ def main() -> int:
         proof.evidence["failure"] = (
             str(exc) if isinstance(exc, ProbeFailure) else type(exc).__name__
         )
+        trace = exc.__traceback__
+        while trace is not None:
+            if trace.tb_frame.f_code.co_filename == __file__:
+                proof.evidence["failure_line"] = trace.tb_lineno
+            trace = trace.tb_next
     if proof.created:
         receipt = proof.directory / "receipt.json"
         private_write(receipt, json.dumps(proof.evidence, indent=2))
