@@ -493,6 +493,54 @@ describe('task navigation and workspace edit boundaries', () => {
 });
 
 describe('maintenance and preserved-workspace reconnection', () => {
+  it('resumes writes after a transient aborted poll only when the workspace is unchanged', async () => {
+    const user = userEvent.setup(); const api = new Api(); let offline = false;
+    mockRequest(api, async path => {
+      if (path === '/session') return session;
+      if (path === '/profile') return profile;
+      throw new ApiError(404, 'not_found');
+    }, null, [], async () => { if (offline) throw new DOMException('Request stopped', 'AbortError'); return installation; });
+    render(<App api={api} />);
+    const input = await screen.findByLabelText('Highlight / tagline (optional)');
+    await waitFor(() => expect(api.writeBlock).toBeNull());
+    await user.clear(input); await user.type(input, 'Retained through a transient transport failure');
+    offline = true; fireEvent(document, new Event('visibilitychange'));
+    await screen.findByText('The installation could not be reached.');
+    expect(api.writeBlock).toBe('workspace_reconnect_required');
+    expect(screen.getByRole('button', { name: 'Save profile' })).toBeDisabled();
+    offline = false; fireEvent(document, new Event('visibilitychange'));
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Save profile' })).toBeEnabled());
+    expect(api.writeBlock).toBeNull();
+    expect(screen.getByRole('button', { name: 'Save profile' })).toBeEnabled();
+    expect(input).toHaveValue('Retained through a transient transport failure');
+    expect(screen.queryByRole('button', { name: 'Check connection and compare saved workspace' })).not.toBeInTheDocument();
+  });
+
+  it.each([
+    ['workspace version', { workspace_version: installation.workspace_version + 1 }],
+    ['namespace', { namespace_id: 'replacement-namespace' }],
+    ['maintenance epoch', { maintenance_epoch: installation.maintenance_epoch + 1 }],
+  ])('keeps writes closed after an offline poll when the %s changed', async (_label, changed) => {
+    const user = userEvent.setup(); const api = new Api(); let offline = false; let status = installation;
+    mockRequest(api, async path => {
+      if (path === '/session') return session;
+      if (path === '/profile') return profile;
+      throw new ApiError(404, 'not_found');
+    }, null, [], async () => { if (offline) throw new TypeError('Failed to fetch'); return status; });
+    render(<App api={api} />);
+    const input = await screen.findByLabelText('Highlight / tagline (optional)');
+    await waitFor(() => expect(api.writeBlock).toBeNull());
+    await user.clear(input); await user.type(input, 'Draft retained for explicit comparison');
+    offline = true; fireEvent(document, new Event('visibilitychange'));
+    await screen.findByText('The installation could not be reached.');
+    status = { ...installation, ...changed }; offline = false;
+    fireEvent(document, new Event('visibilitychange'));
+    await screen.findByText('Review the current workspace before resuming writes.');
+    expect(api.writeBlock).toBe('workspace_reconnect_required');
+    expect(screen.getByRole('button', { name: 'Save profile' })).toBeDisabled();
+    expect(input).toHaveValue('Draft retained for explicit comparison');
+  });
+
   it('keeps a draft through maintenance and resumes only after an explicit unchanged-workspace comparison', async () => {
     const user = userEvent.setup(); const api = new Api(); let status = installation;
     mockRequest(api, async path => {
