@@ -938,7 +938,7 @@ Private evidence under `.local/m1-autonomous-20261025/` includes `ol009-backend-
 
 Backend gates require a disposable PostgreSQL 18 database, distinct migration/runtime roles and tracked migrations. Never use a personal or production database. `.github/backend_gate.py` creates an isolated CI namespace, PostgreSQL test database `bonafides_test` and scoped credentials, then runs the following gates; it also needs a locally built `bonafides:local` image for its one-shot preparation helper:
 
-The synthetic runtime-proof regression tests launch real Chromium, so install the pinned browser before starting the backend gate, including when using a separately provisioned test database. On Linux, use `playwright install --with-deps chromium` if the browser's system libraries are not already installed.
+The synthetic runtime-proof regression tests launch real Chromium, so install the pinned browser before starting the backend gate, including when using a separately provisioned test database. On Linux, use `uv run --frozen playwright install --with-deps chromium` if the browser's system libraries are not already installed.
 
 ```sh
 uv run --frozen playwright install chromium

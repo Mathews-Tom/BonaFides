@@ -886,6 +886,7 @@ class Proof:
         self.checked("persistent_auth_throttle_restart_and_forwarded_header_rejection")
 
     def browser(self) -> None:
+        """Verify secure Chromium login, admitted profile saves, and reload persistence."""
         from playwright.sync_api import expect, sync_playwright
 
         saved, _, _ = self.api.request("GET", "/api/v1/profile")
