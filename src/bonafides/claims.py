@@ -315,13 +315,14 @@ def _date_quoted(value: str, excerpt: str) -> bool:
     name = rf"(?:{'|'.join({calendar.month_name[index], calendar.month_abbr[index]})})\.?"
     day = r"[0-9]{1,2}(?:st|nd|rd|th)?"
     # One date expression: "Mar 2021", "March 5, 2021", "5 March 2021", "2021-03(-05)",
-    # "3/2021" or "3/5/2021"; the month and the year must belong to the same date.
+    # "3/2021" or "3/5/2021"; the month and the year must belong to the same date, and a
+    # numeric month never starts inside another date component ("5/2021" in "3/5/2021").
     together = "|".join(
         (
             rf"\b{name}(?:\s+{day})?,?\s+{year}(?![0-9])",
             rf"\b{day}\s+{name},?\s+{year}(?![0-9])",
-            rf"\b{year}-{month}\b",
-            rf"\b0?{index}/(?:[0-9]{{1,2}}/)?{year}(?![0-9])",
+            rf"(?<![0-9-]){year}-{month}(?![0-9])",
+            rf"(?<![0-9/])0?{index}/(?:[0-9]{{1,2}}/)?{year}(?![0-9])",
         )
     )
     return re.search(together, excerpt, re.IGNORECASE) is not None
