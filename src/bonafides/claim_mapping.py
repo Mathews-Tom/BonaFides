@@ -35,6 +35,7 @@ UnparsedReason = Literal[
     "invalid_value",
     "unplaced_scope",
     "unquoted_rendering",
+    "compound_verb",
 ]
 
 # Declared normalization: case-insensitive whole-word prefixes, longest phrase first.
@@ -133,6 +134,7 @@ _VERB_PHRASES: dict[str, tuple[OwnershipVerb, MetricChange | None]] = {
 # Verbs that also mean "removed" or "shortened in scope" map only when a metric follows them
 # ("Cut costs by 20%", never "Cut the 2.0 release").
 _METRIC_ONLY = frozenset({"cut", "slashed", "trimmed"})
+_COMPOUND = re.compile(r"(?:and|&)\s+(?P<word>[A-Za-z]+)\b", re.IGNORECASE)
 _PHRASES = sorted(_VERB_PHRASES, key=lambda phrase: (-len(phrase), phrase))
 _BULLET = re.compile(r"^\s*(?:[-*•·●▪◦‣]\s+)?")
 _NUMBER = r"[0-9]{1,3}(?:,[0-9]{3})+(?:\.[0-9]{1,4})?|[0-9]{1,12}(?:\.[0-9]{1,4})?"
@@ -267,6 +269,11 @@ def _verb(line: str) -> tuple[str, OwnershipVerb, MetricChange | None, str] | No
     return None
 
 
+def _verb_word(word: str) -> bool:
+    folded = word.casefold()
+    return folded.endswith("ed") or any(phrase.split()[0] == folded for phrase in _VERB_PHRASES)
+
+
 def _unknown_verb(line: str, statement: str, unparsed: list[UnparsedPart]) -> ClaimMapping:
     first = statement.split(" ", 1)[0] if statement else line.strip()
     return ClaimMapping(
@@ -293,6 +300,19 @@ def map_line(line: str) -> ClaimMapping:
     if found is None:
         return _unknown_verb(line, statement, unparsed)
     phrase, verb, verb_change, body = found
+    # "Designed and implemented X" names two ownership acts; neither is folded into the subject.
+    compound = _COMPOUND.match(body)
+    if compound is not None and _verb_word(compound["word"]):
+        return ClaimMapping(
+            claim=None,
+            rendering=None,
+            unparsed=[
+                UnparsedPart(
+                    text=statement[: len(phrase)] + " " + compound[0], reason="compound_verb"
+                ),
+                *unparsed,
+            ],
+        )
     fields: dict[str, object] = {"schema_version": 1, "verb": verb}
     period = _PERIOD.search(body)
     if period is not None:

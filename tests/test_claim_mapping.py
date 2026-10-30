@@ -194,3 +194,16 @@ def test_a_scope_split_by_the_metric_is_flagged_not_joined() -> None:
     ]
     assert not mapping.representable
     assert not grounded(mapping.claim, line)
+
+
+@pytest.mark.parametrize(
+    ("line", "flagged"),
+    [
+        ("Designed and implemented a self-service onboarding flow", "Designed and implemented"),
+        ("Led and grew the platform team", "Led and grew"),
+    ],
+)
+def test_a_compound_verb_is_flagged_not_folded_into_the_subject(line: str, flagged: str) -> None:
+    mapping = map_line(line)
+    assert mapping.claim is None
+    assert [(part.text, part.reason) for part in mapping.unparsed] == [(flagged, "compound_verb")]

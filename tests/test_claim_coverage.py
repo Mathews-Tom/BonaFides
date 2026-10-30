@@ -22,7 +22,7 @@ def test_claims_coverage_committed_corpus_reports_its_measured_share(
     first = capsys.readouterr().out.splitlines()[0]
     report = coverage(CORPUS.read_text(encoding="utf-8"))
     assert report.total >= 200
-    assert first == "Representable: 228 of 305 bullets (74.7%)"
+    assert first == "Representable: 224 of 305 bullets (73.4%)"
 
 
 def test_claims_coverage_counts_non_blank_lines_and_lists_reasons(
