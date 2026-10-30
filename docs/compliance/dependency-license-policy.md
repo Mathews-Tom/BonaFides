@@ -26,3 +26,33 @@ At architecture proof define locked dependencies, license declaration/header che
 Psycopg's LGPLv3, WeasyPrint's native Pango libraries, Pyphen's alternative licenses and bundled dictionaries require specific review. Prefer system-linked replaceable libraries with complete source/license availability over opaque static bundles when practical, but do not claim this alone satisfies LGPL. A qualified fallback client/renderer may be selected only after contract, security and performance qualification. Record exact component reviews and unresolved obligations through the [release compliance checklist](release-compliance-checklist.md); private design notes do not confer distribution clearance.
 
 Sources reviewed 2026-10-24: [SPDX expressions](https://spdx.github.io/spdx-spec/v2.3/SPDX-license-expressions/), [Psycopg license](https://raw.githubusercontent.com/psycopg/psycopg/master/LICENSE.txt), [WeasyPrint dependencies](https://doc.courtbouillon.org/weasyprint/stable/first_steps.html), [Pyphen terms](https://pyphen.org/).
+
+## pypdf security update — 2026-10-31
+
+The runtime dependency is pinned to **pypdf 6.21.3** in `pyproject.toml` and
+`uv.lock`, replacing 6.21.2 to address CVE-2026-119206, CVE-2026-119207,
+CVE-2026-119208 and CVE-2026-119209. Package identity:
+`pkg:pypi/pypdf@6.21.3`; [official upstream](https://github.com/py-pdf/pypdf/tree/6.21.3),
+[license text](https://github.com/py-pdf/pypdf/blob/6.21.3/LICENSE).
+The upstream declaration is BSD-3-Clause, not an application dual-license grant.
+The locked wheel SHA-256 is
+`c8ca4d9a360dbd5d4b9bb7a8389e2a9ae6a106bee722b496f918040ba2daa17e`;
+the source archive SHA-256 is
+`11e1ca6d6cc8ca322558a3a974078d5ebc0f3a2104b8e673eee25621ee97abd8`.
+This update adds no dependency edges or local upstream modifications.
+Source/binary redistribution must retain the BSD copyright, conditions and
+disclaimer; exact-artifact notice reconciliation and concluded license review
+remain pending with the dependency reviewer, not approved by this security update.
+
+The [6.21.3 changelog](https://github.com/py-pdf/pypdf/blob/6.21.3/CHANGELOG.md)
+adds validated decrypted page counts, cross-reference stream entry limits and
+bounded error reporting. Import rejects encrypted PDFs and already maps
+`LimitReachedError` to its content-limit failure. The CID font indirect-width
+fix affects layout metrics used by `import_parser.py`; import and render PDF
+regressions cover that integration. Page-label, named-destination and outline
+performance changes do not change the import API. No parser adaptation is needed.
+
+The committed `compliance/locked-components.json` remains the historical
+exact-image collection, not a current 6.21.3 inventory. CI generates a fresh
+inventory under `artifacts/`; the historical image and its records are not
+rewritten by this source-only dependency update.
