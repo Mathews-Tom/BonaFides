@@ -4,7 +4,7 @@
 from __future__ import annotations
 
 import json
-from typing import Any
+from typing import Any, cast
 from uuid import UUID, uuid4
 
 import pytest
@@ -429,3 +429,30 @@ def test_base_resume_prints_the_profile_rendering_only_when_the_sentence_is_quot
             [block["text"] for block in blocks] == [rendering] == ["Reduced batch runtime by 30%"]
         )
         assert printed["unsupported_claims"] == []
+
+
+@pytest.mark.postgres
+def test_editor_vocabulary_and_preview_use_the_stored_renderer(
+    profile_owner: IdentityContext,
+) -> None:
+    with profile_owner.client() as client:
+        csrf = str(_json(_bootstrap(profile_owner, client))["csrf_token"])
+        vocabulary = _json(client.get("/api/v1/claims/vocabulary"))
+        assert [verb["key"] for verb in vocabulary["verbs"]] == list(OWNERSHIP_VERBS)
+        labels = {verb["key"]: verb["label"] for verb in vocabulary["verbs"]}
+        assert labels["contributed"] == "Contributed to"
+        assert vocabulary["rates"] == ["day", "week", "month", "quarter", "year"]
+        claim = cast(dict[str, Any], _structured_body("unused")["payload"])
+        headers = {"Origin": profile_owner.settings.origin, "X-CSRF-Token": csrf}
+        preview = client.post(
+            "/api/v1/claims/render", json={"claim": claim["claim"]}, headers=headers
+        )
+        assert preview.status_code == 200, preview.text
+        assert _json(preview) == {"language": "en", "rendering": "Reduced batch runtime by 30%"}
+        refused = client.post(
+            "/api/v1/claims/render",
+            json={"claim": {**claim["claim"], "verb": "spearheaded"}},
+            headers=headers,
+        )
+        assert refused.status_code == 422
+        assert _json(client.get("/api/v1/profile"))["version"] == 1

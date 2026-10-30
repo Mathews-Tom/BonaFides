@@ -16,10 +16,13 @@ from sqlalchemy.engine import RowMapping
 from bonafides.auth import Owner, StrictModel, require_owner
 from bonafides.claims import (
     STRUCTURED_KINDS,
+    RenderLanguage,
     StructuredClaim,
     claim_text,
     date_bounds,
     needs_attention,
+    render_claim,
+    vocabulary,
 )
 from bonafides.commands import command
 from bonafides.db import Database
@@ -169,6 +172,11 @@ class ClaimWrite(StrictModel):
 
 class EvidenceWrite(StrictModel):
     payload: EvidencePayload
+
+
+class RenderRequest(StrictModel):
+    claim: StructuredClaim
+    language: RenderLanguage = "en"
 
 
 class RestoreProfile(StrictModel):
@@ -602,6 +610,19 @@ def build_entry_router(db: Database) -> APIRouter:
         response.status_code = status
         response.headers["ETag"] = f'"{result["version"]}"'
         return result
+
+    @router.get("/claims/vocabulary")
+    def claim_vocabulary(
+        owner: Annotated[Owner, Depends(require_owner)], language: RenderLanguage = "en"
+    ) -> dict[str, object]:
+        return vocabulary(language)
+
+    @router.post("/claims/render")
+    def render(
+        body: RenderRequest, owner: Annotated[Owner, Depends(require_owner)]
+    ) -> dict[str, object]:
+        # Side-effect free preview; the stored claim is rendered by the same function on read.
+        return {"language": body.language, "rendering": render_claim(body.claim, body.language)}
 
     @router.get("/claims")
     def claims(owner: Annotated[Owner, Depends(require_owner)]) -> dict[str, object]:

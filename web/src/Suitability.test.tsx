@@ -11,8 +11,8 @@ const requirement: Requirement = { requirement_key: 'req-1', text: 'SQL', import
 const source = '😀 SQL and Kubernetes.\n<script>untrusted()</script>';
 function initialProfile(): Profile {
   return { id: 'profile-one', version: 1, current_revision: { ...metadata, id: 'profile-rev-one', reason: 'updated', snapshot: { display_name: 'Synthetic owner', headline: '', claim_revision_ids: ['claim-one'], evidence_revision_ids: ['evidence-one'] }, claims: [
-    { id: 'claim-record', kind: 'skill', version: 1, archived: false, current_revision_id: 'claim-one', revision: { ...metadata, id: 'claim-one', payload: { text: 'Maintained SQL queries on Linux.' }, evidence_links: [{ evidence_revision_id: 'evidence-one', support_kind: 'user_asserted', excerpt: 'SQL queries on Linux', evidence }] } },
-    { id: 'unselected-record', kind: 'skill', version: 1, archived: false, current_revision_id: 'unselected', revision: { ...metadata, id: 'unselected', payload: { text: 'Unselected Kubernetes claim' }, evidence_links: [] } },
+    { id: 'claim-record', kind: 'skill', version: 1, archived: false, current_revision_id: 'claim-one', rendering: 'Maintained SQL queries on Linux.', needs_attention: false, revision: { ...metadata, id: 'claim-one', payload: { text: 'Maintained SQL queries on Linux.' }, evidence_links: [{ evidence_revision_id: 'evidence-one', support_kind: 'user_asserted', excerpt: 'SQL queries on Linux', evidence }] } },
+    { id: 'unselected-record', kind: 'skill', version: 1, archived: false, current_revision_id: 'unselected', rendering: 'Unselected Kubernetes claim', needs_attention: false, revision: { ...metadata, id: 'unselected', payload: { text: 'Unselected Kubernetes claim' }, evidence_links: [] } },
   ] }, evidence: [{ id: 'evidence-record', version: 1, archived: false, current_revision_id: evidence.id, revision: evidence }], quality_warnings: [], experience_coverage: { minimum_days: 0, maximum_days: 0, undated_or_open_entries: 0 } };
 }
 function initialView(): RequirementsView {

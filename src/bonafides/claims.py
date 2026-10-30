@@ -233,6 +233,19 @@ def render_claim(claim: StructuredClaim, language: RenderLanguage = "en") -> str
     return RENDERERS[language](claim)
 
 
+def vocabulary(language: RenderLanguage = "en") -> dict[str, object]:
+    """Editor choices; verbs keep their ownership order and carry the language's wording."""
+    labels = {"en": _EN_VERBS}[language]
+    return {
+        "language": language,
+        "verbs": [{"key": verb, "label": labels[verb]} for verb in OWNERSHIP_VERBS],
+        "units": list(METRIC_UNITS),
+        "changes": list(get_args(MetricChange)),
+        "magnitudes": list(get_args(Magnitude)),
+        "rates": list(get_args(MetricRate)),
+    }
+
+
 def structured_claim(payload: Mapping[str, object]) -> StructuredClaim | None:
     value = payload.get("claim")
     return None if value is None else StructuredClaim.model_validate(value)

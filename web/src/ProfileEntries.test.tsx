@@ -12,7 +12,7 @@ const profile: Profile = {
   current_revision: {
     ...metadata, id: 'profile-revision', reason: 'Synthetic fixture',
     snapshot: { display_name: 'Synthetic Person', headline: '', claim_revision_ids: ['skill-revision'] },
-    claims: [{ id: 'skill', kind: 'skill', version: 1, archived: false, current_revision_id: 'skill-revision', revision: {
+    claims: [{ id: 'skill', kind: 'skill', version: 1, archived: false, current_revision_id: 'skill-revision', rendering: 'Synthetic workshop skill.', needs_attention: false, revision: {
       ...metadata, id: 'skill-revision', payload: { text: 'Synthetic workshop skill.' },
       evidence_links: [{ evidence_revision_id: source.revision.id, support_kind: 'user_asserted', excerpt: 'Synthetic workshop notes.', evidence: source.revision }],
     } }],
@@ -71,6 +71,57 @@ describe('focused profile sections', () => {
     expect(screen.getByRole('button', { name: 'Sources' })).toBeDisabled();
     await user.click(screen.getByRole('button', { name: 'Keep active record' }));
     expect(screen.getByRole('button', { name: 'Sources' })).toBeEnabled();
+  });
+
+  it('edits work experience through structured fields and previews the server rendering', async () => {
+    const user = userEvent.setup(); const api = new Api(); const onProfile = vi.fn();
+    const vocabulary = { language: 'en', verbs: [{ key: 'led', label: 'Led' }, { key: 'reduced', label: 'Reduced' }, { key: 'assisted', label: 'Assisted with' }], units: ['percent', 'usd'], changes: ['increase', 'decrease', 'saving'], magnitudes: ['thousand'], rates: ['week'] };
+    const request = vi.spyOn(api, 'request').mockImplementation(async <T,>(path: string, method = 'GET', body?: unknown) => {
+      if (path === '/claims/vocabulary') return vocabulary as T;
+      if (path === '/claims/render' && method === 'POST') {
+        const claim = (body as { claim: { verb: string; subject: string; metric?: { value: string } } }).claim;
+        return { language: 'en', rendering: `${claim.verb === 'reduced' ? 'Reduced' : 'Led'} ${claim.subject}${claim.metric ? ` by ${claim.metric.value}%` : ''}` } as T;
+      }
+      if (path === '/claims' && method === 'POST') return profile as T;
+      throw new ApiError(404, 'not_found');
+    });
+    render(<ProfileEntries api={api} profile={profile} disabled={false} onProfile={onProfile} onDirtyChange={vi.fn()} onBusyChange={vi.fn()} />);
+    await user.click(screen.getByRole('button', { name: 'Work experience' }));
+    await user.click(screen.getByRole('button', { name: 'Add work experience entry' }));
+    expect(screen.queryByLabelText('Entry statement')).not.toBeInTheDocument();
+    const verb = await screen.findByLabelText('Ownership verb');
+    expect(Array.from((verb as HTMLSelectElement).options).map(option => option.text)).toEqual(['1. Led', '2. Reduced', '3. Assisted with']);
+    await user.selectOptions(verb, 'reduced');
+    await user.type(screen.getByLabelText('Subject'), 'batch runtime');
+    await user.type(screen.getByLabelText('Metric value (optional)'), '30');
+    await user.selectOptions(screen.getByLabelText('Metric change'), 'decrease');
+    expect(await screen.findByText('Reduced batch runtime by 30%')).toBeVisible();
+    await user.click(screen.getByRole('button', { name: 'Add evidence link' }));
+    await user.selectOptions(screen.getByLabelText('Evidence revision 1'), 'source-revision');
+    await user.type(screen.getByLabelText('Source excerpt 1'), 'Synthetic workshop notes.');
+    await user.click(screen.getByRole('button', { name: 'Save entry revision' }));
+    const saved = request.mock.calls.find(call => call[0] === '/claims' && call[1] === 'POST');
+    expect(saved?.[2]).toEqual({ kind: 'experience', payload: { claim: { schema_version: 1, verb: 'reduced', subject: 'batch runtime', metric: { value: '30', unit: 'percent', change: 'decrease' } } },
+      evidence_links: [{ evidence_revision_id: 'source-revision', support_kind: 'user_asserted', excerpt: 'Synthetic workshop notes.' }] });
+    expect(onProfile).toHaveBeenCalledWith(profile);
+  });
+
+  it('flags a free-text experience entry as needing attention and offers structured fields to replace it', async () => {
+    const user = userEvent.setup(); const api = new Api();
+    vi.spyOn(api, 'request').mockImplementation(async <T,>(path: string) => {
+      if (path === '/claims/vocabulary') return { language: 'en', verbs: [{ key: 'built', label: 'Built' }], units: ['percent'], changes: [], magnitudes: [], rates: [] } as T;
+      throw new ApiError(404, 'not_found');
+    });
+    const legacy = { ...profile.current_revision.claims[0]!, id: 'work', kind: 'experience' as const, rendering: 'Did many synthetic things', needs_attention: true,
+      revision: { ...profile.current_revision.claims[0]!.revision, payload: { text: 'Did many synthetic things' } } };
+    const withLegacy: Profile = { ...profile, current_revision: { ...profile.current_revision, claims: [legacy] } };
+    render(<ProfileEntries api={api} profile={withLegacy} disabled={false} onProfile={vi.fn()} onDirtyChange={vi.fn()} onBusyChange={vi.fn()} />);
+    await user.click(screen.getByRole('button', { name: 'Work experience' }));
+    expect(screen.getByText(/Needs attention: this statement is still free text/)).toBeVisible();
+    await user.click(screen.getByRole('button', { name: 'Edit work experience entry 1' }));
+    expect(screen.getByText(/Saved free-text statement: “Did many synthetic things”/)).toBeVisible();
+    expect(await screen.findByLabelText('Ownership verb')).toHaveValue('built');
+    expect(screen.getByLabelText('Subject')).toHaveValue('');
   });
 
   it.each([undefined, 'Saved introduction.\nSecond paragraph.'])('previews and explicitly restores immutable profile text with description=%s', async description => {

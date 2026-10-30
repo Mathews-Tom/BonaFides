@@ -5,11 +5,25 @@ export interface ProfileContact { email: string; phone: string; location: string
 export interface Snapshot { display_name: string; headline: string; description?: string; claim_revision_ids: string[]; evidence_revision_ids?: string[]; contact?: ProfileContact | null }
 export type ClaimKind = 'identity' | 'experience' | 'education' | 'skill' | 'project' | 'certification' | 'preference' | 'other' | 'language';
 export interface ClaimPayload { text: string; organization?: string; role?: string; start_date?: string; end_date?: string; proficiency?: string; project_url?: string }
+export interface ClaimMetric { value: string; unit: string; magnitude?: string; change?: string; per?: string; measure?: string }
+export interface StructuredClaim { schema_version: 1; verb: string; subject: string; scope?: string; metric?: ClaimMetric; period?: { start: string; end: string } }
+export type StructuredClaimPayload = Omit<ClaimPayload, 'text'> & { claim: StructuredClaim };
+export type ProfileClaimPayload = ClaimPayload | StructuredClaimPayload;
+export interface ClaimVocabulary { language: string; verbs: { key: string; label: string }[]; units: string[]; changes: string[]; magnitudes: string[]; rates: string[] }
+export interface ClaimRendering { language: string; rendering: string }
+/** Literal view of a saved claim: structured statements contribute their rendering as text. */
+export function literalClaimPayload(claim: PinnedClaim): ClaimPayload {
+  const payload = claim.revision.payload;
+  if (!('claim' in payload)) return payload;
+  const context: Partial<StructuredClaimPayload> = { ...payload };
+  delete context.claim;
+  return { ...context, text: claim.rendering };
+}
 export interface RevisionMetadata { id: string; revision_no: number; content_sha256: string; created_at: string; author_owner_id: string }
 export interface EvidenceRevision extends RevisionMetadata { payload: { text: string; source: string } }
 export interface EvidenceLink { evidence_revision_id: string; support_kind: 'direct' | 'user_asserted' | 'context'; excerpt: string }
-export interface ClaimRevision extends RevisionMetadata { payload: ClaimPayload; evidence_links: (EvidenceLink & { evidence: EvidenceRevision })[] }
-export interface PinnedClaim { id: string; kind: ClaimKind; revision: ClaimRevision }
+export interface ClaimRevision extends RevisionMetadata { payload: ProfileClaimPayload; evidence_links: (EvidenceLink & { evidence: EvidenceRevision })[] }
+export interface PinnedClaim { id: string; kind: ClaimKind; revision: ClaimRevision; rendering: string; needs_attention: boolean }
 export interface ClaimRecord extends PinnedClaim { version: number; archived: boolean; current_revision_id: string }
 export interface PinnedEvidence { id: string; revision: EvidenceRevision }
 export interface EvidenceRecord extends PinnedEvidence { version: number; archived: boolean; current_revision_id: string }

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 import { useEffect, useRef, useState, type FormEvent } from 'react';
-import { Api, errorText, type ClaimKind, type ClaimPayload, type ClaimRecord, type EvidenceLink, type EvidenceRecord, type EvidenceRevision, type PinnedClaim, type Profile, type ProfileRevision, type ProfileRevisionSummary, type RevisionPage } from './api';
+import { Api, errorText, literalClaimPayload, type ClaimKind, type ClaimPayload, type ClaimRecord, type ClaimRendering, type ClaimVocabulary, type StructuredClaim, type EvidenceLink, type EvidenceRecord, type EvidenceRevision, type PinnedClaim, type Profile, type ProfileRevision, type ProfileRevisionSummary, type RevisionPage } from './api';
 import './ProfileEntries.css';
 
 const kinds: { value: ClaimKind; label: string }[] = [
@@ -10,13 +10,43 @@ const kinds: { value: ClaimKind; label: string }[] = [
   { value: 'identity', label: 'Identity facts' }, { value: 'preference', label: 'Preferences' },
   { value: 'other', label: 'Other facts' },
 ];
-interface ClaimDraft { id?: string; kind: ClaimKind; payload: ClaimPayload; evidence_links: EvidenceLink[]; pinnedEvidence: EvidenceRevision[] }
+interface StructuredDraft { verb: string; subject: string; scope: string; value: string; unit: string; magnitude: string; change: string; per: string; measure: string; start: string; end: string }
+interface ClaimDraft { id?: string; kind: ClaimKind; payload: ClaimPayload; structured: StructuredDraft | null; legacyText: string; evidence_links: EvidenceLink[]; pinnedEvidence: EvidenceRevision[] }
+const structuredKinds: ReadonlySet<ClaimKind> = new Set(['experience', 'project']);
+const emptyStructured: StructuredDraft = { verb: 'built', subject: '', scope: '', value: '', unit: 'percent', magnitude: '', change: '', per: '', measure: '', start: '', end: '' };
+
+function draftOf(claim: StructuredClaim): StructuredDraft {
+  const metric = claim.metric;
+  return { verb: claim.verb, subject: claim.subject, scope: claim.scope ?? '', value: metric?.value ?? '', unit: metric?.unit ?? 'percent',
+    magnitude: metric?.magnitude ?? '', change: metric?.change ?? '', per: metric?.per ?? '', measure: metric?.measure ?? '', start: claim.period?.start ?? '', end: claim.period?.end ?? '' };
+}
+
+/** Omitted optional parts stay absent; nothing is inferred to fill them. */
+function claimOf(draft: StructuredDraft): StructuredClaim {
+  const claim: StructuredClaim = { schema_version: 1, verb: draft.verb, subject: draft.subject };
+  if (draft.scope) claim.scope = draft.scope;
+  if (draft.value) {
+    claim.metric = { value: draft.value, unit: draft.unit };
+    if (draft.magnitude) claim.metric.magnitude = draft.magnitude;
+    if (draft.change) claim.metric.change = draft.change;
+    if (draft.per) claim.metric.per = draft.per;
+    if (draft.measure) claim.metric.measure = draft.measure;
+  }
+  if (draft.start) claim.period = { start: draft.start, end: draft.end || draft.start };
+  return claim;
+}
+
+function contextOf(payload: ClaimPayload): Omit<ClaimPayload, 'text'> {
+  const context: Partial<ClaimPayload> = { ...payload };
+  delete context.text;
+  return context;
+}
 interface EvidenceDraft { id?: string; text: string; source: string; attestation: boolean }
 interface ArchiveChoice { kind: 'claim' | 'evidence'; id: string; text: string }
 
 function ClaimWords({ claim }: { claim: PinnedClaim }) {
   const payload = claim.revision.payload;
-  return <><p>{payload.text}</p>{(payload.organization || payload.role) && <p>{[payload.role, payload.organization].filter(Boolean).join(' · ')}</p>}
+  return <><p>{claim.rendering}</p>{claim.needs_attention && <p className="hint">Needs attention: this statement is still free text. Edit the entry to restructure it as a claim.</p>}{(payload.organization || payload.role) && <p>{[payload.role, payload.organization].filter(Boolean).join(' · ')}</p>}
     {(payload.start_date || payload.end_date) && <p>{payload.start_date || 'Start not supplied'} — {payload.end_date || 'End not supplied'}</p>}
     {payload.proficiency && <p>Proficiency: {payload.proficiency}</p>}
     {payload.project_url && <p>Project reference (not fetched): <code>{payload.project_url}</code></p>}
@@ -48,10 +78,31 @@ export function ProfileEntries({ api, profile, disabled, onProfile, onDirtyChang
   const mutation = useRef<{ fingerprint: string; key: string } | null>(null);
   const errorRef = useRef<HTMLDivElement>(null);
   const claimInput = useRef<HTMLTextAreaElement>(null);
+  const subjectInput = useRef<HTMLInputElement>(null);
+  const [vocabulary, setVocabulary] = useState<ClaimVocabulary | null>(null);
+  const [rendering, setRendering] = useState<string | null>(null);
   const evidenceInput = useRef<HTMLTextAreaElement>(null);
   const claimOpen = claim !== null;
   const evidenceOpen = evidence !== null;
-  useEffect(() => { if (claimOpen) claimInput.current?.focus(); }, [claimOpen]);
+  useEffect(() => { if (claimOpen) (claimInput.current ?? subjectInput.current)?.focus(); }, [claimOpen]);
+  const structuredOpen = !!claim?.structured;
+  useEffect(() => {
+    if (!structuredOpen || vocabulary) return;
+    const controller = new AbortController();
+    api.request<ClaimVocabulary>('/claims/vocabulary', 'GET', undefined, undefined, false, controller.signal)
+      .then(setVocabulary, (failure: unknown) => { if (!controller.signal.aborted) setError(errorText(failure)); });
+    return () => controller.abort();
+  }, [api, structuredOpen, vocabulary]);
+  const renderable = claim?.structured?.subject.trim() ? JSON.stringify(claimOf(claim.structured)) : '';
+  useEffect(() => {
+    setRendering(null);
+    if (!renderable) return;
+    // The server renderer is the only renderer, so the preview matches the saved profile and PDF.
+    const controller = new AbortController();
+    api.request<ClaimRendering>('/claims/render', 'POST', { claim: JSON.parse(renderable) as StructuredClaim }, undefined, false, controller.signal)
+      .then(value => setRendering(value.rendering), () => { if (!controller.signal.aborted) setRendering(null); });
+    return () => controller.abort();
+  }, [api, renderable]);
   useEffect(() => { if (evidenceOpen) evidenceInput.current?.focus(); }, [evidenceOpen]);
   const dirty = !!(claim || evidence || archive);
   const locked = busy || disabled;
@@ -81,7 +132,9 @@ export function ProfileEntries({ api, profile, disabled, onProfile, onDirtyChang
     } catch (failure) { setError(errorText(failure)); } finally { setBusy(false); }
   }
   function editClaim(value: ClaimRecord) {
-    setError(''); setNotice(''); setClaim({ id: value.id, kind: value.kind, payload: { ...value.revision.payload },
+    const saved = value.revision.payload;
+    const structured = 'claim' in saved ? draftOf(saved.claim) : structuredKinds.has(value.kind) ? { ...emptyStructured } : null;
+    setError(''); setNotice(''); setClaim({ id: value.id, kind: value.kind, payload: literalClaimPayload(value), structured, legacyText: value.needs_attention ? value.rendering : '',
       evidence_links: value.revision.evidence_links.map(({ evidence_revision_id, support_kind, excerpt }) => ({ evidence_revision_id, support_kind, excerpt })),
       pinnedEvidence: value.revision.evidence_links.map(link => link.evidence) });
   }
@@ -94,13 +147,16 @@ export function ProfileEntries({ api, profile, disabled, onProfile, onDirtyChang
     if (field !== 'text' && !value) delete payload[field]; else payload[field] = value;
     setClaim({ ...claim, payload });
   }
+  function structuredField(field: keyof StructuredDraft, value: string) {
+    if (claim?.structured) setClaim({ ...claim, structured: { ...claim.structured, [field]: value } });
+  }
   function changeLink(index: number, update: Partial<EvidenceLink>) {
     if (claim) setClaim({ ...claim, evidence_links: claim.evidence_links.map((link, position) => position === index ? { ...link, ...update } : link) });
   }
   function submitClaim(event: FormEvent) {
     event.preventDefault(); if (!claim) return;
     void mutate(claim.id ? `/claims/${encodeURIComponent(claim.id)}` : '/claims', claim.id ? 'PUT' : 'POST', {
-      kind: claim.kind, payload: claim.payload, evidence_links: claim.evidence_links,
+      kind: claim.kind, payload: claim.structured ? { ...contextOf(claim.payload), claim: claimOf(claim.structured) } : claim.payload, evidence_links: claim.evidence_links,
     });
   }
   function submitEvidence(event: FormEvent) {
@@ -161,15 +217,33 @@ export function ProfileEntries({ api, profile, disabled, onProfile, onDirtyChang
             <div className="actions"><button className="secondary" disabled={locked || dirty} onClick={() => editClaim(item)}>Edit {kind.label.toLowerCase()} entry {index + 1}</button>
               <button className="secondary" disabled={locked || dirty || index === 0} onClick={() => move(item, entries[index - 1])}>Move {kind.label.toLowerCase()} entry {index + 1} up</button>
               <button className="secondary" disabled={locked || dirty || index === entries.length - 1} onClick={() => move(item, entries[index + 1])}>Move {kind.label.toLowerCase()} entry {index + 1} down</button>
-              <button className="secondary" disabled={locked || dirty} onClick={() => setArchive({ kind: 'claim', id: item.id, text: item.revision.payload.text })}>Archive {kind.label.toLowerCase()} entry {index + 1}</button></div>
+              <button className="secondary" disabled={locked || dirty} onClick={() => setArchive({ kind: 'claim', id: item.id, text: item.rendering })}>Archive {kind.label.toLowerCase()} entry {index + 1}</button></div>
           </li>)}</ol>}
-          <button className="secondary" disabled={locked || dirty || profile.evidence.length === 0} onClick={() => { setError(''); setClaim({ kind: kind.value, payload: { text: '' }, evidence_links: [], pinnedEvidence: [] }); }}>Add {kind.label.toLowerCase()} entry</button>
+          <button className="secondary" disabled={locked || dirty || profile.evidence.length === 0} onClick={() => { setError(''); setClaim({ kind: kind.value, payload: { text: '' }, structured: structuredKinds.has(kind.value) ? { ...emptyStructured } : null, legacyText: '', evidence_links: [], pinnedEvidence: [] }); }}>Add {kind.label.toLowerCase()} entry</button>
         </section>;
       })}
       {profile.evidence.length === 0 && section !== 'sources' && section !== 'history' && <p className="hint">Choose Sources and add a source or explicit owner attestation before adding an entry.</p>}
       {claim && <form onSubmit={submitClaim}><fieldset disabled={locked}><legend>{claim.id ? 'Edit saved entry' : 'New entry'}</legend>
         <p>Kind: {kinds.find(kind => kind.value === claim.kind)?.label}. Entry kind cannot change after creation.</p>
-        <label>Entry statement<textarea ref={claimInput} required maxLength={4000} value={claim.payload.text} onChange={event => payloadField('text', event.target.value)} /></label>
+        {claim.structured ? <fieldset><legend>Structured claim</legend>
+          {claim.legacyText && <p className="hint">Needs attention. Saved free-text statement: “{claim.legacyText}”. Saving stores the structured fields below instead of that sentence.</p>}
+          {vocabulary ? <label>Ownership verb<select required value={claim.structured.verb} onChange={event => structuredField('verb', event.target.value)}>{vocabulary.verbs.map((verb, index) => <option key={verb.key} value={verb.key}>{index + 1}. {verb.label}</option>)}</select></label> : <p>Loading the ownership vocabulary…</p>}
+          <p className="hint">Verbs run from strongest to weakest ownership. Choose the one your evidence supports.</p>
+          <label>Subject<input ref={subjectInput} required maxLength={300} value={claim.structured.subject} onChange={event => structuredField('subject', event.target.value)} /></label>
+          <label>Scope (optional)<input maxLength={200} value={claim.structured.scope} onChange={event => structuredField('scope', event.target.value)} /></label>
+          <label>Metric value (optional)<input inputMode="decimal" pattern="[0-9]{1,12}([.][0-9]{1,4})?" maxLength={17} value={claim.structured.value} onChange={event => structuredField('value', event.target.value)} /></label>
+          {vocabulary && claim.structured.value && <>
+            <label>Metric unit<select value={claim.structured.unit} onChange={event => structuredField('unit', event.target.value)}>{vocabulary.units.map(unit => <option key={unit} value={unit}>{unit}</option>)}</select></label>
+            <label>Metric magnitude<select value={claim.structured.magnitude} onChange={event => structuredField('magnitude', event.target.value)}><option value="">None</option>{vocabulary.magnitudes.map(value => <option key={value} value={value}>{value}</option>)}</select></label>
+            <label>Metric change<select value={claim.structured.change} onChange={event => structuredField('change', event.target.value)}><option value="">None</option>{vocabulary.changes.map(value => <option key={value} value={value}>{value}</option>)}</select></label>
+            <label>Metric rate<select value={claim.structured.per} onChange={event => structuredField('per', event.target.value)}><option value="">None</option>{vocabulary.rates.map(value => <option key={value} value={value}>per {value}</option>)}</select></label>
+            <label>Metric measure (optional)<input maxLength={200} value={claim.structured.measure} onChange={event => structuredField('measure', event.target.value)} /></label>
+          </>}
+          <label>Period start (optional)<input maxLength={7} placeholder="YYYY or YYYY-MM" value={claim.structured.start} onChange={event => structuredField('start', event.target.value)} /></label>
+          <label>Period end (optional)<input maxLength={7} placeholder="YYYY or YYYY-MM" value={claim.structured.end} onChange={event => structuredField('end', event.target.value)} /></label>
+          <p className="hint">Every subject, scope, measure, metric value and period year must appear in a linked source excerpt before documents can use the claim.</p>
+          <h4>Rendering (English)</h4><output aria-live="polite" aria-label="Claim rendering">{rendering ?? 'Complete the structured fields to preview the rendering.'}</output>
+        </fieldset> : <label>Entry statement<textarea ref={claimInput} required maxLength={4000} value={claim.payload.text} onChange={event => payloadField('text', event.target.value)} /></label>}
         <label>Organization<input maxLength={200} value={claim.payload.organization ?? ''} onChange={event => payloadField('organization', event.target.value)} /></label>
         <label>Role or qualification<input maxLength={200} value={claim.payload.role ?? ''} onChange={event => payloadField('role', event.target.value)} /></label>
         <p className="hint">Dates accept YYYY, YYYY-MM or YYYY-MM-DD. Omit unknown dates; precision is never invented. Impossible or definitely reversed intervals are rejected.</p>

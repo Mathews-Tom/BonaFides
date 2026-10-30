@@ -6,10 +6,11 @@ import { useCallback, useState } from 'react';
 import { ResumeImport } from './ResumeImport';
 import { Api, ApiError, MAX_IMPORT_BYTES, type ClaimRecord, type ImportBatch, type ImportEntry, type ImportMergeRequest, type Profile } from './api';
 
+const oldPayload = { text: 'Existing fictional work.', organization: 'Fictional North', role: 'Engineer', start_date: '2020', end_date: '2022' };
 const oldClaim: ClaimRecord = {
-  id: 'claim-work', kind: 'experience', archived: false, version: 1, current_revision_id: 'claim-r1',
+  id: 'claim-work', kind: 'experience', archived: false, version: 1, current_revision_id: 'claim-r1', rendering: oldPayload.text, needs_attention: true,
   revision: { id: 'claim-r1', revision_no: 1, content_sha256: 'c'.repeat(64), created_at: '2026-01-01', author_owner_id: 'owner',
-    payload: { text: 'Existing fictional work.', organization: 'Fictional North', role: 'Engineer', start_date: '2020', end_date: '2022' }, evidence_links: [] },
+    payload: oldPayload, evidence_links: [] },
 };
 const profile: Profile = {
   id: 'profile', version: 1, current_revision: { id: 'profile-r1', revision_no: 1, content_sha256: 'a'.repeat(64), created_at: '2026-01-01', author_owner_id: 'owner',
@@ -159,7 +160,7 @@ describe('structured résumé review', () => {
 
   it('retains exact uniquely matched claims without a per-entry review or new-source promise', async () => {
     const user = userEvent.setup(); const batch = staged();
-    batch.entries = [{ ...batch.entries[0]!, payload: { ...oldClaim.revision.payload }, comparison: { status: 'unchanged', target_claim_id: oldClaim.id, candidate_claim_ids: [oldClaim.id] } }];
+    batch.entries = [{ ...batch.entries[0]!, payload: { ...oldPayload }, comparison: { status: 'unchanged', target_claim_id: oldClaim.id, candidate_claim_ids: [oldClaim.id] } }];
     const { api, state } = server(batch); render(<Harness api={api} />); await open(user);
     expect(within(screen.getByRole('article', { name: 'Preview entry 1' })).getByText('Unchanged')).toBeVisible();
     expect(attest()).toBeEnabled(); expect(approve()).toHaveAccessibleName('Complete import without profile changes');
@@ -202,7 +203,7 @@ describe('structured résumé review', () => {
 
   it('invalidates an edited unchanged value immediately without requiring Keep after a valid correction', async () => {
     const user = userEvent.setup(); const batch = staged();
-    batch.entries = [{ ...batch.entries[0]!, payload: { ...oldClaim.revision.payload }, comparison: { status: 'unchanged', target_claim_id: oldClaim.id, candidate_claim_ids: [oldClaim.id] } }];
+    batch.entries = [{ ...batch.entries[0]!, payload: { ...oldPayload }, comparison: { status: 'unchanged', target_claim_id: oldClaim.id, candidate_claim_ids: [oldClaim.id] } }];
     const { api, state } = server(batch); render(<Harness api={api} />); await open(user);
     await user.click(attest()); await edit(user); await user.type(screen.getByLabelText('Description'), ' Corrected by owner.');
     expect(attest()).not.toBeChecked(); expect(attest()).toBeEnabled();
@@ -336,16 +337,16 @@ describe('local résumé source buffers', () => {
 describe('reviewed conflict resolution and durable completion', () => {
   it('preselects suggested targets, retains current preview fields until chosen and preserves typed edits through a 412 rebase', async () => {
     const user = userEvent.setup(); const batch = staged();
-    batch.entries[0] = { ...batch.entries[0]!, payload: { ...oldClaim.revision.payload, text: quote }, comparison: { status: 'conflict', target_claim_id: oldClaim.id, candidate_claim_ids: [oldClaim.id] } };
+    batch.entries[0] = { ...batch.entries[0]!, payload: { ...oldPayload, text: quote }, comparison: { status: 'conflict', target_claim_id: oldClaim.id, candidate_claim_ids: [oldClaim.id] } };
     const { api, state } = server(batch); const acceptedProfiles = vi.fn(); render(<Harness api={api} onProfile={acceptedProfiles} />);
     await open(user);
-    expect(within(screen.getByRole('article', { name: 'Preview entry 1' })).getByText(oldClaim.revision.payload.text)).toBeVisible();
+    expect(within(screen.getByRole('article', { name: 'Preview entry 1' })).getByText(oldPayload.text)).toBeVisible();
     expect(attest()).toBeDisabled(); await edit(user);
     expect(screen.getByLabelText('Replacement target')).toHaveValue(oldClaim.id);
     await user.clear(screen.getByLabelText('Description')); await user.type(screen.getByLabelText('Description'), 'My retained typed statement.');
     expect(attest()).toBeEnabled(); await user.click(attest()); state.failures.push(new ApiError(412, 'version_conflict')); await user.click(approve());
     expect(await screen.findByRole('alert')).toHaveTextContent('A newer revision exists');
-    const newerClaim = { ...oldClaim, revision: { ...oldClaim.revision, payload: { ...oldClaim.revision.payload, role: 'Senior engineer' } } };
+    const newerClaim = { ...oldClaim, revision: { ...oldClaim.revision, payload: { ...oldPayload, role: 'Senior engineer' } } };
     state.currentProfile = { ...profile, version: 2, current_revision: { ...profile.current_revision, id: 'profile-r2', revision_no: 2, claims: [newerClaim] } };
     state.batch = { ...state.batch, comparison_profile_version: 2 };
     await user.click(screen.getByRole('button', { name: 'Load current profile for comparison' }));
@@ -382,10 +383,10 @@ describe('reviewed conflict resolution and durable completion', () => {
 
   it('blocks stale comparison versions and invalidates previously unchanged targets after loading the latest profile', async () => {
     const user = userEvent.setup(); const batch = staged(); batch.comparison_profile_version = 2;
-    batch.entries = [{ ...batch.entries[0]!, payload: { ...oldClaim.revision.payload }, comparison: { status: 'unchanged', target_claim_id: oldClaim.id, candidate_claim_ids: [oldClaim.id] } }];
+    batch.entries = [{ ...batch.entries[0]!, payload: { ...oldPayload }, comparison: { status: 'unchanged', target_claim_id: oldClaim.id, candidate_claim_ids: [oldClaim.id] } }];
     const { api, state } = server(batch); render(<Harness api={api} />); await open(user);
     expect(attest()).toBeDisabled(); expect(approve()).toBeDisabled();
-    state.currentProfile = { ...profile, version: 2, current_revision: { ...profile.current_revision, revision_no: 2, claims: [{ ...oldClaim, revision: { ...oldClaim.revision, payload: { ...oldClaim.revision.payload, role: 'Changed saved role' } } }] } };
+    state.currentProfile = { ...profile, version: 2, current_revision: { ...profile.current_revision, revision_no: 2, claims: [{ ...oldClaim, revision: { ...oldClaim.revision, payload: { ...oldPayload, role: 'Changed saved role' } } }] } };
     state.batch = { ...batch, entries: [{ ...batch.entries[0]!, comparison: { status: 'conflict', target_claim_id: oldClaim.id, candidate_claim_ids: [oldClaim.id] } }] };
     await user.click(screen.getByRole('button', { name: 'Load current profile for comparison' })); await user.click(await screen.findByRole('button', { name: 'Use latest profile and retain review' }));
     expect(attest()).toBeDisabled(); await edit(user); expect(screen.getByLabelText('Existing profile entry')).toHaveValue('replace');
@@ -395,7 +396,7 @@ describe('reviewed conflict resolution and durable completion', () => {
 
   it('completes an all-unchanged import and releases other editors without requiring a new profile revision', async () => {
     const user = userEvent.setup(); const batch = staged();
-    batch.entries = [{ ...batch.entries[0]!, payload: { ...oldClaim.revision.payload }, comparison: { status: 'unchanged', target_claim_id: oldClaim.id, candidate_claim_ids: [oldClaim.id] } }];
+    batch.entries = [{ ...batch.entries[0]!, payload: { ...oldPayload }, comparison: { status: 'unchanged', target_claim_id: oldClaim.id, candidate_claim_ids: [oldClaim.id] } }];
     const { api, state } = server(batch); render(<Harness api={api} />); await open(user); await user.click(attest()); await user.click(approve());
     expect(screen.getByRole('button', { name: 'Other profile editor' })).toBeDisabled();
     state.batch = { ...state.batch, state: 'succeeded' };
