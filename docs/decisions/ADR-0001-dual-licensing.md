@@ -1,20 +1,20 @@
-# ADR-0001: Offer original Offerloom work under MIT OR Apache-2.0
+# ADR-0001: Offer original BonaFides work under MIT OR Apache-2.0
 
 - Status: Accepted as the project licensing direction required by the brief; distribution eligibility and legal review remain open release gates.
 - Date: 2026-10-24
-- Decision owner: Offerloom maintainers; this design records no stakeholder or counsel approval.
-- Scope: independently authored Offerloom code and documentation; third-party components, user data, model weights, datasets, and service terms remain separate.
+- Decision owner: BonaFides maintainers; this design records no stakeholder or counsel approval.
+- Scope: independently authored BonaFides code and documentation; third-party components, user data, model weights, datasets, and service terms remain separate.
 - Supersedes: none.
 
 ## Context
 
-Offerloom should support self-hosting, commercial use, modification, redistribution, and proprietary derivatives. Recipients need a familiar permissive choice while contributors need a clear inbound authorization. The product must be independently implemented from approved neutral specifications, not copied protected expression. Clean-room practices reduce risk but do not prove legal eligibility or eliminate patent, trademark, contract, privacy, or data-rights issues.
+BonaFides should support self-hosting, commercial use, modification, redistribution, and proprietary derivatives. Recipients need a familiar permissive choice while contributors need a clear inbound authorization. The product must be independently implemented from approved neutral specifications, not copied protected expression. Clean-room practices reduce risk but do not prove legal eligibility or eliminate patent, trademark, contract, privacy, or data-rights issues.
 
 The architecture proposes components with their own licenses, including weak-copyleft database client/native rendering dependencies. No lockfile, complete dependency graph, production image, bundled font collection, model, or dataset has been audited in this design session. A top-level permissive license cannot erase those obligations or confer rights the contributor does not own.
 
 ## Decision
 
-Offer independently authored Offerloom material under **`MIT OR Apache-2.0`**, so a recipient may choose either license. Include canonical `LICENSE-MIT` and `LICENSE-APACHE`, an accurate informational `NOTICE`, and consistent manifest/SPDX declarations. Do not use `MIT AND Apache-2.0` to describe recipient obligations.
+Offer independently authored BonaFides material under **`MIT OR Apache-2.0`**, so a recipient may choose either license. Include canonical `LICENSE-MIT` and `LICENSE-APACHE`, an accurate informational `NOTICE`, and consistent manifest/SPDX declarations. Do not use `MIT AND Apache-2.0` to describe recipient obligations.
 
 Require explicit authorization under both licenses, DCO 1.1 sign-offs, and provenance disclosure before accepting contributions. Do not require a CLA at this stage. A DCO certifies origin/authority under its actual terms; it is not a copyright assignment, broad relicensing grant, or replacement for the explicit dual-license authorization. Do not claim every inherited third-party contribution can be reissued under both licenses.
 

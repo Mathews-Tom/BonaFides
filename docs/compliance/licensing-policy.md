@@ -2,9 +2,9 @@
 
 ## Scope and authority
 
-Original, independently authored Offerloom code and documentation is offered as **`MIT OR Apache-2.0`**: recipients choose either license. [ADR-0001](../decisions/ADR-0001-dual-licensing.md) is canonical. The full texts are [LICENSE-MIT](../../LICENSE-MIT) and [LICENSE-APACHE](../../LICENSE-APACHE); neither is modified by this policy. The project does not use `MIT AND Apache-2.0` for recipient obligations.
+Original, independently authored BonaFides code and documentation is offered as **`MIT OR Apache-2.0`**: recipients choose either license. [ADR-0001](../decisions/ADR-0001-dual-licensing.md) is canonical. The full texts are [LICENSE-MIT](../../LICENSE-MIT) and [LICENSE-APACHE](../../LICENSE-APACHE); neither is modified by this policy. The project does not use `MIT AND Apache-2.0` for recipient obligations.
 
-This direction is binding, but legal eligibility is not certified. Contributors must actually own or be authorized to grant relevant rights. Third-party code/assets, user data, fonts, datasets, model weights and provider/service contracts do not become MIT/Apache merely because used by Offerloom. User résumés and generated personal documents are not automatically contributions or project-licensed content.
+This direction is binding, but legal eligibility is not certified. Contributors must actually own or be authorized to grant relevant rights. Third-party code/assets, user data, fonts, datasets, model weights and provider/service contracts do not become MIT/Apache merely because used by BonaFides. User résumés and generated personal documents are not automatically contributions or project-licensed content.
 
 ## Required declarations
 

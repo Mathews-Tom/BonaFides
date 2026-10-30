@@ -23,7 +23,7 @@ export function navigateWorkspace(page: WorkspacePage) { window.location.hash = 
 
 export function WorkspaceNavigation({ page, drafts }: { page: WorkspacePage; drafts: WorkspacePage[] }) {
   return <aside className="workspace-navigation">
-    <a className="brand" href="#/overview" aria-label="Offerloom overview"><svg aria-hidden="true" viewBox="0 0 32 36"><path d="M6 2v32M16 2v32M26 2v32M2 10h28M2 26h28M6 10l20 16M26 10 6 26" /></svg>Offerloom</a>
+    <a className="brand" href="#/overview" aria-label="BonaFides overview"><svg aria-hidden="true" viewBox="0 0 32 36"><path d="M6 2v32M16 2v32M26 2v32M2 10h28M2 26h28M6 10l20 16M26 10 6 26" /></svg>BonaFides</a>
     <p className="workspace-caption">Your career workspace</p>
     <nav aria-label="Workspace">{workspacePages.map(item => <a key={item.id} href={`#/${item.id}`} aria-current={page === item.id || (item.id === 'profile' && page === 'profile/imports') ? 'page' : undefined}>
       <svg viewBox="0 0 24 24" aria-hidden="true"><path d={item.icon} /></svg><span>{item.label}</span>{(drafts.includes(item.id) || (item.id === 'profile' && drafts.includes('profile/imports'))) && <span className="draft-dot" aria-label="Unsaved changes" />}
