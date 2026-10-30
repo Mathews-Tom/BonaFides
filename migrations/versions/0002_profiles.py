@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: MIT OR Apache-2.0
-"""Add evidence-linked profiles language claims; preserve all applied migration sources."""
+"""Add language claims for evidence-linked profiles; preserve all applied migration sources."""
 
 import hashlib
 from pathlib import Path

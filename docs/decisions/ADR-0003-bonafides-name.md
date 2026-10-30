@@ -37,7 +37,7 @@ Describe features, stages and migrations by what they do. Story codes become fea
 ## Consequences
 
 - An install from a clean checkout creates the `bonafides` database, roles, images and Compose project. Installations created under the old names are not upgraded; they keep running on their own images and are not migrated.
-- Historical evidence in `docs/` was rewritten with the new names. Image tags, Compose projects and `.local/` receipt paths recorded there had the `offerloom` prefix when they were observed; the receipts themselves were not renamed.
+- Historical evidence in `docs/` was rewritten with the new names. Image tags, Compose projects and `.local/` receipt paths recorded there had the `offerloom` prefix when they were observed; the receipts themselves were not renamed. Receipt files, image tags and review-revision labels (such as `R1`) that embed planning codes keep their original spelling as historical identifiers, not current terminology.
 - The bootstrap commit attestations keep their original wording because they certify exact historical commits.
 - Naming checks in review look for the previous name and for planning-code patterns. This record and the bootstrap attestations are the only expected matches for the previous name.
 

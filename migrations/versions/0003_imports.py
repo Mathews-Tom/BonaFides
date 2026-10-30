@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: MIT OR Apache-2.0
-"""Add durable reviewed résumé import local import review without modifying applied SQL."""
+"""Add durable local review for résumé import without modifying applied SQL."""
 
 import hashlib
 from pathlib import Path

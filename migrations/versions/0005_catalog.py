@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: MIT OR Apache-2.0
-"""Add job catalog catalog state without rewriting applied source history."""
+"""Add job catalog state without rewriting applied source history."""
 
 import hashlib
 from pathlib import Path

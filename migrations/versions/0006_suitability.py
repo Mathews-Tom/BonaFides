@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: MIT OR Apache-2.0
-"""Add immutable suitability review review without rewriting applied migration sources."""
+"""Add immutable suitability review without rewriting applied migration sources."""
 
 import hashlib
 from pathlib import Path
