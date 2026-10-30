@@ -35,6 +35,22 @@ from bonafides.claims import OWNERSHIP_VERBS, grounded
             "Improved test coverage by 25% through contract tests",
         ),
         ("Increased weekly active users by 12,000", "Increased weekly active users by 12,000"),
+        (
+            "- Closed $3.4M in new enterprise contracts in 2021",
+            "Delivered $3.4M in new enterprise contracts (2021)",
+        ),
+        (
+            "Achieved 99.95% uptime for the core API (2022)",
+            "Delivered 99.95% uptime for the core API (2022)",
+        ),
+        (
+            "Increased order throughput by 20% during peak season",
+            "Increased order throughput by 20% during peak season",
+        ),
+        (
+            "Hardened container images for the production cluster",
+            "Improved container images for the production cluster",
+        ),
     ],
 )
 def test_representable_lines_map_to_grounded_claims(line: str, rendering: str) -> None:
@@ -77,6 +93,9 @@ def test_reworded_proposals_need_attention_instead_of_claiming_grounding(line: s
             [("and increasing throughput by 2x", "additional_metric")],
         ),
         ("Led", [("Led", "missing_subject")]),
+        ("Managed a $2M annual marketing budget", [("$2M", "additional_metric")]),
+        ("Hired 5 engineers for the platform team", [("Hired", "unknown_verb")]),
+        ("Raised $75K for the food bank", [("$75K", "additional_metric")]),
     ],
 )
 def test_unplaced_parts_are_flagged_not_dropped(line: str, unparsed: list[tuple[str, str]]) -> None:

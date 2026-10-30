@@ -125,6 +125,10 @@ _VERB_PHRASES: dict[str, tuple[OwnershipVerb, MetricChange | None]] = {
     "assisted with": ("assisted", None),
     "assisted in": ("assisted", None),
     "assisted": ("assisted", None),
+    "hardened": ("improved", "improvement"),
+    "inspected": ("analyzed", None),
+    "prioritized": ("managed", None),
+    "responded to": ("supported", None),
     "helped": ("assisted", None),
     "helped to": ("assisted", None),
 }
@@ -166,7 +170,8 @@ _PERIOD = re.compile(
 )
 _SCOPE = re.compile(r"\s+(?=(?:across|for|within|spanning|serving)\s)", re.IGNORECASE)
 _TAIL = re.compile(
-    r"^(?:across|for|within|spanning|serving|through|via|using|with|in|at|over|on|by|while|from)\s",
+    r"^(?:across|for|within|spanning|serving|through|via|using|with|in|at|over|on|by|while|from"
+    r"|during|after|before|without)\s",
     re.IGNORECASE,
 )
 _RATE = re.compile(
@@ -247,6 +252,14 @@ def _leading_amount(value: str) -> tuple[re.Match[str], str] | None:
     return None if match is None else (match, value[match.end() :].strip())
 
 
+def _quantity(body: str) -> tuple[re.Match[str], str] | None:
+    """An amount opening the object counts the subject itself ("$3.4M in new contracts")."""
+    found = _leading_amount(body)
+    if found is None or found[0]["duration"] or not found[1]:
+        return None
+    return found
+
+
 def _verb(line: str) -> tuple[str, OwnershipVerb, MetricChange | None, str] | None:
     folded = line.casefold()
     for phrase in _PHRASES:
@@ -303,6 +316,9 @@ def map_line(line: str) -> ClaimMapping:
     elif by is not None and verb_change is not None and (amount := _leading_amount(by["amount"])):
         metric = {"change": verb_change}
         body = body[: by.start()].strip()
+    elif verb_change is None and (quantity := _quantity(body)) is not None:
+        metric = {"change": "quantity"}
+        amount, body = (quantity[0], ""), quantity[1]
     tail = ""
     if amount is not None:
         match, tail = amount

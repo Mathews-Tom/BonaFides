@@ -57,7 +57,7 @@ MetricUnit = Literal[
     "months",
 ]
 METRIC_UNITS: tuple[MetricUnit, ...] = get_args(MetricUnit)
-MetricChange = Literal["increase", "decrease", "improvement", "saving"]
+MetricChange = Literal["increase", "decrease", "improvement", "saving", "quantity"]
 Magnitude = Literal["thousand", "million", "billion"]
 MetricRate = Literal["day", "week", "month", "quarter", "year"]
 RenderLanguage = Literal["en"]
@@ -96,6 +96,13 @@ class ClaimMetric(StrictModel):
     @classmethod
     def single_line_measure(cls, value: str | None) -> str | None:
         return None if value is None else _phrase(value)
+
+    @model_validator(mode="after")
+    def quantity_without_measure(self) -> ClaimMetric:
+        # A quantity counts the subject itself, so a separate measure would be ambiguous.
+        if self.change == "quantity" and self.measure is not None:
+            raise ValueError("quantity_with_measure")
+        return self
 
 
 class ClaimPeriod(StrictModel):
@@ -207,13 +214,17 @@ def _render_en(claim: StructuredClaim) -> str:
         and metric.change is not None
         and _VERB_DIRECTION.get(claim.verb) == metric.change
     )
-    words = [_EN_VERBS[claim.verb], claim.subject]
+    leading = metric is not None and metric.change == "quantity"
+    words = [_EN_VERBS[claim.verb]]
+    if leading and metric is not None:
+        words.append(_en_amount(metric))
+    words.append(claim.subject)
     if inline and metric is not None:
         words.append(f"by {_en_amount(metric)}")
     if claim.scope:
         words.append(claim.scope)
     sentence = " ".join(words)
-    if metric is not None and not inline:
+    if metric is not None and not inline and not leading:
         amount = _en_amount(metric)
         if metric.change in _EN_PARTICIPLES:
             sentence += f", {_EN_PARTICIPLES[metric.change]} {metric.measure or 'it'} by {amount}"

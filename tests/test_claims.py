@@ -101,6 +101,19 @@ def test_ownership_vocabulary_is_ordered_strongest_first() -> None:
             },
             "Led the billing migration, reducing manual reconciliation by 6 hours per week",
         ),
+        (
+            {
+                "verb": "delivered",
+                "subject": "in new enterprise contracts",
+                "metric": {
+                    "value": "3.4",
+                    "unit": "usd",
+                    "magnitude": "million",
+                    "change": "quantity",
+                },
+            },
+            "Delivered $3.4M in new enterprise contracts",
+        ),
     ],
 )
 def test_english_rendering_is_deterministic(fields: dict[str, object], expected: str) -> None:
@@ -122,6 +135,7 @@ def test_english_rendering_is_deterministic(fields: dict[str, object], expected:
         {"period": {"start": "2022", "end": "2021"}},
         {"period": {"start": "2022-13", "end": "2023"}},
         {"sentence": "Led the billing migration"},
+        {"metric": {"value": "2", "unit": "usd", "change": "quantity", "measure": "budget"}},
     ],
 )
 def test_structured_claim_rejects_values_outside_the_schema(fields: dict[str, object]) -> None:

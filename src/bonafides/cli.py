@@ -45,7 +45,16 @@ def _healthcheck() -> int:
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(prog="bonafides")
+    arguments_list = sys.argv[1:] if argv is None else argv
+    if arguments_list[:1] == ["claims"]:
+        from bonafides.claim_coverage import main as claims_main
+
+        return claims_main(arguments_list[1:])
+    parser = argparse.ArgumentParser(
+        prog="bonafides",
+        epilog="bonafides claims coverage <file> reports the share of bullets in a local text "
+        "file that structured claims represent",
+    )
     parser.add_argument(
         "command",
         choices=(
@@ -77,7 +86,7 @@ def main(argv: list[str] | None = None) -> int:
         type=Path,
         help="protected backup, credential or offline maintenance configuration",
     )
-    arguments = parser.parse_args(argv)
+    arguments = parser.parse_args(arguments_list)
     try:
         if arguments.command == "credential-rotate":
             from bonafides.credential_rotation import run as rotation_run
