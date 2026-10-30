@@ -192,7 +192,7 @@ def _facts(conn: Connection, owner_id: UUID, profile_revision_id: UUID) -> tuple
 
 
 def unsupported_paths(body: DocumentBody, facts: tuple[Fact, ...]) -> list[str]:
-    """M0 permits exact saved facts only, not semantic inference from a citation."""
+    """Assembly permits exact saved facts only, not semantic inference from a citation."""
     unsupported: list[str] = []
     if body.title != "Base résumé":
         unsupported.append("/title")
@@ -310,7 +310,7 @@ def publish_document(
     }
     conn.execute(
         text("""INSERT INTO bonafides.document_revisions(owner_id,id,document_draft_id,revision_no,profile_revision_id,scope,body,posting_snapshot,provenance_snapshot,template_version,content_sha256,origin,reason)
-        VALUES(:owner,:id,:draft,:revision_no,:profile,'base',CAST(:body AS jsonb),NULL,CAST(:provenance AS jsonb),:template,:digest,'deterministic','M0 saved-evidence deterministic assembly')"""),
+        VALUES(:owner,:id,:draft,:revision_no,:profile,'base',CAST(:body AS jsonb),NULL,CAST(:provenance AS jsonb),:template,:digest,'deterministic','saved-evidence deterministic assembly')"""),
         {
             "owner": owner_id,
             "id": revision_id,

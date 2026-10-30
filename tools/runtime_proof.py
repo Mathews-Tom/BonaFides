@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: MIT OR Apache-2.0
-"""Destructive M0 proof confined to newly-created bonafides-proof-* Compose namespaces.
+"""Destructive runtime proof confined to newly-created bonafides-proof-* Compose namespaces.
 
 The command refuses existing projects/volumes. It never accepts a database DSN or
 restores over a running installation. Evidence excludes HTTP bodies and secrets.
@@ -1319,7 +1319,7 @@ with ExecutionGuard(Path('/data/blobs'), exclusive=True, create=False) as guard:
         )
         self.evidence["restore"] = {
             "project": target.project,
-            "scope": "Disposable plaintext M0 regression fixture, not an encrypted installation backup or OL015 drill",
+            "scope": "Disposable plaintext runtime-proof regression fixture, not an encrypted installation backup or encrypted backup and recovery drill",
             "target_guard_handoff": guard_handoff,
             "manifest": manifest,
             "authorization_counts": {
@@ -1439,9 +1439,9 @@ def main() -> int:
         private_write(receipt, json.dumps(proof.evidence, indent=2))
         print(f"Redacted receipt: {receipt}")
     print(
-        "M0 disposable proof passed"
+        "Disposable runtime proof passed"
         if proof.evidence["passed"]
-        else "M0 disposable proof failed; original resources retained for inspection"
+        else "Disposable runtime proof failed; original resources retained for inspection"
     )
     return 0 if proof.evidence["passed"] else 1
 

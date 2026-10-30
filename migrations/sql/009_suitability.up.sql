@@ -1,5 +1,5 @@
 -- SPDX-License-Identifier: MIT OR Apache-2.0
--- OL-009 immutable owner review, evidence coverage and bounded local inference.
+-- suitability review immutable owner review, evidence coverage and bounded local inference.
 SET LOCAL search_path=bonafides,pg_catalog;
 -- A changed source invalidates the mutable current projection, never its history.
 CREATE FUNCTION invalidate_posting_requirement_projection() RETURNS trigger

@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: MIT OR Apache-2.0
-"""OL-005 regressions against the authenticated API and real PostgreSQL only."""
+"""evidence-linked profiles regressions against the authenticated API and real PostgreSQL only."""
 
 from __future__ import annotations
 

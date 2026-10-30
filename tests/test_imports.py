@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: MIT OR Apache-2.0
-"""OL-006 real PostgreSQL/API invariants; parser transport is isolated in unit paths.
+"""reviewed résumé import real PostgreSQL/API invariants; parser transport is isolated in unit paths.
 
 The parent acceptance additionally exercises the real sealed parser/container. These
 transaction tests replace only parser transport, never SQL, fencing, API or merging.

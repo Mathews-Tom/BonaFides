@@ -123,7 +123,7 @@ class Worker:
                 elif mode in {"tailored_ai", "section_regeneration"}:
                     suitability.execute_model(self.db, self.settings, task, interrupted)
                 else:
-                    # Explicitly retained M0 protocol, never a production fallback.
+                    # Explicitly retained synthetic benchmark protocol, never a production fallback.
                     if self.settings.mode != "benchmark":
                         raise Problem(422, "unsupported_document_generation_mode")
                     profile_revision_id = UUID(str(task.input["profile_revision_id"]))

@@ -231,7 +231,7 @@ def _approve(
 
 
 def _trusted_dispatch(context: ApprovalContext, prepared: Prepared) -> Claim:
-    """Model OL014's future supported dispatcher, NOT a production executor/handler.
+    """Model data portability and erasure's future supported dispatcher, NOT a production executor/handler.
 
     The actual queue issues a fresh fence; no domain effects are simulated or
     reported successful. Remaining execution allowance and all budgets survive.

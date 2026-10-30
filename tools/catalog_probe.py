@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: MIT OR Apache-2.0
 """Measure the real catalog API only in a fresh disposable Compose namespace.
 
-This is a bounded catalog measurement, not the M2 mixed-workload/24-hour soak.
+This is a bounded catalog measurement, not the public-beta mixed-workload/24-hour soak.
 Raw requests, failures, hardware, dataset cardinalities and plans remain explicit.
 """
 
@@ -210,7 +210,7 @@ def main() -> int:
     proof = Proof(args.project, args.port, "linux/arm64", args.image, directory)
     proof.evidence.update(
         {
-            "protocol": "OL008 bounded retained-catalog HTTP load v2",
+            "protocol": "job catalog bounded retained-catalog HTTP load v2",
             "host": platform.platform(),
             "machine": platform.machine(),
             "dataset_seed": "bonafides-catalog-load:<1..N-1>",
@@ -220,7 +220,7 @@ def main() -> int:
                 "single-result seed conjunction, and checks GIN only for that probe"
             ),
             "queries": list(QUERIES),
-            "limits": "No model/source calls, no mixed-write contention or M2 soak claim",
+            "limits": "No model/source calls, no mixed-write contention or public-beta soak claim",
             "image": json.loads(run(["docker", "image", "inspect", args.image]))[0]["Id"],
             "docker": json.loads(run(["docker", "info", "--format", "{{json .}}"])),
         }

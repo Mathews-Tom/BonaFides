@@ -1,5 +1,5 @@
 -- SPDX-License-Identifier: MIT OR Apache-2.0
--- OL-008 keeps owner disposition and conservative review separate from identity.
+-- job catalog keeps owner disposition and conservative review separate from identity.
 SET LOCAL search_path=bonafides,pg_catalog;
 ALTER TABLE saved_opportunities DROP CONSTRAINT saved_opportunities_disposition_check;
 ALTER TABLE saved_opportunities ADD CONSTRAINT saved_opportunities_disposition_check

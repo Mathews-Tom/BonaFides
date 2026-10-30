@@ -1,5 +1,5 @@
 -- SPDX-License-Identifier: MIT OR Apache-2.0
--- OL-007 retains source policy evidence and attributable posting observations.
+-- job sources retains source policy evidence and attributable posting observations.
 SET LOCAL search_path=bonafides,pg_catalog;
 ALTER TABLE source_configs ADD COLUMN company text NOT NULL DEFAULT 'Unspecified employer'
  CHECK(length(company) BETWEEN 1 AND 500);
@@ -10,7 +10,7 @@ ALTER TABLE source_configs ADD COLUMN rate_limit_blocked boolean NOT NULL DEFAUL
 ALTER TABLE source_configs ADD COLUMN rate_limit_retry_after_seconds text
  CHECK(length(rate_limit_retry_after_seconds) BETWEEN 1 AND 4096
  AND rate_limit_retry_after_seconds ~ '^[0-9]+$');
--- Historical configurations were not reviewed under the board-specific OL-007 policy.
+-- Historical configurations were not reviewed under the board-specific job sources policy.
 UPDATE source_configs SET enabled=false WHERE source_kind='greenhouse';
 ALTER TABLE source_configs ADD CONSTRAINT source_board_shape CHECK(
  (source_kind='manual' AND board_token IS NULL) OR

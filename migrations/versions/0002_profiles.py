@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: MIT OR Apache-2.0
-"""Add OL-005 language claims; preserve all applied migration sources."""
+"""Add language claims for evidence-linked profiles; preserve all applied migration sources."""
 
 import hashlib
 from pathlib import Path
@@ -8,7 +8,7 @@ from alembic import op
 from sqlalchemy import text
 
 revision = "0002_profiles"
-down_revision = "0001_m0"
+down_revision = "0001_foundation"
 branch_labels = None
 depends_on = None
 

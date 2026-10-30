@@ -1,5 +1,5 @@
 -- SPDX-License-Identifier: MIT OR Apache-2.0
--- OL-005 adds an independently editable language section without changing old revisions.
+-- evidence-linked profiles adds an independently editable language section without changing old revisions.
 SET LOCAL search_path=bonafides,pg_catalog;
 ALTER TABLE professional_claims DROP CONSTRAINT professional_claims_kind_check;
 ALTER TABLE professional_claims ADD CONSTRAINT professional_claims_kind_check

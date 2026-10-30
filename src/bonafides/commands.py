@@ -14,7 +14,7 @@ from bonafides.problems import Problem
 
 
 def canonical_json(value: object) -> str:
-    """RFC 8785 for normalized API values (no floating point fields in M0)."""
+    """RFC 8785 for normalized API values (no API field uses floating point)."""
     if isinstance(value, str):
         try:
             value.encode("utf-8")
