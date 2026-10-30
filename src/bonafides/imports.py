@@ -432,30 +432,24 @@ def project_entries(
     return entries
 
 
-def _statement_line(quote: str) -> bool:
-    """Role, organization and date lines are entry context, not achievement statements."""
-    literal = _BULLET.sub("", quote, count=1)
-    return not (
-        "|" in literal
-        or literal.casefold().startswith("project:")
-        or _DATE_RANGE.fullmatch(literal.strip()) is not None
-    )
-
-
 def _claim_proposals(sources: list[ImportSource]) -> list[ClaimLineProposal]:
+    """Every line is proposed, headings included: approval saves exactly these lines.
+
+    A role, employer, date or project heading has no ownership verb, so it stays literal text
+    that needs attention rather than being dropped as context the fields may not capture.
+    """
     proposals: list[ClaimLineProposal] = []
     for part in sources:
-        if _statement_line(part.quote):
-            mapping = map_line(part.quote)
-            proposals.append(
-                ClaimLineProposal(
-                    source_id=part.source_id,
-                    quote=part.quote,
-                    claim=mapping.claim,
-                    rendering=mapping.rendering,
-                    unparsed=mapping.unparsed,
-                )
+        mapping = map_line(part.quote)
+        proposals.append(
+            ClaimLineProposal(
+                source_id=part.source_id,
+                quote=part.quote,
+                claim=mapping.claim,
+                rendering=mapping.rendering,
+                unparsed=mapping.unparsed,
             )
+        )
     return proposals
 
 
@@ -567,6 +561,11 @@ def _compare_entry(
             else "conflict"
         )
     same_kind = [claim for claim in saved if claim.kind == entry.kind]
+    split = _saved_statements(entry, entry.kind, entry.payload, same_kind)
+    if split:
+        return ImportComparison(
+            status="unchanged", target_claim_id=split[0], candidate_claim_ids=split
+        )
     exact = [claim.claim_id for claim in same_kind if claim.payload == entry.payload]
     if len(exact) == 1:
         return ImportComparison(
@@ -654,6 +653,34 @@ def _batch_for_task(conn: Connection, task: Claim) -> RowMapping:
     return row
 
 
+def _locked_target(
+    conn: Connection,
+    owner_id: UUID,
+    claim_id: UUID,
+    kind: ClaimKind | None,
+    current_ids: set[UUID],
+) -> RowMapping:
+    row = (
+        conn.execute(
+            text("""SELECT c.* FROM bonafides.professional_claims c JOIN bonafides.profiles p
+        ON p.owner_id=c.owner_id AND p.id=c.profile_id
+        WHERE c.owner_id=:owner AND c.id=:id FOR UPDATE OF c"""),
+            {"owner": owner_id, "id": claim_id},
+        )
+        .mappings()
+        .one_or_none()
+    )
+    if (
+        row is None
+        or row["archived_at"] is not None
+        or row["kind"] != kind
+        or row["kind"] == "identity"
+        or row["current_revision_id"] not in current_ids
+    ):
+        raise Problem(422, "import_target_invalid")
+    return row
+
+
 def _validate_review(
     conn: Connection,
     owner_id: UUID,
@@ -666,6 +693,7 @@ def _validate_review(
         [ImportProposal.model_validate(value) for value in batch["proposals"]],
     )
     sources = {part.source_id: part for entry in entries for part in entry.sources}
+    by_sources = {frozenset(part.source_id for part in entry.sources): entry for entry in entries}
     received = [source_id for item in review.decisions for source_id in item.source_ids]
     if len(set(received)) != len(received) or set(received) != set(sources):
         raise Problem(422, "invalid_import_decisions")
@@ -728,37 +756,32 @@ def _validate_review(
             and (decision.action != "unchanged" or decision.claim_id not in unchanged_targets)
         ):
             raise Problem(422, "import_target_invalid")
+        targets = [decision.claim_id]
         if decision.action == "unchanged":
             exact = [
                 claim.claim_id
                 for claim in saved
                 if claim.kind == decision.kind and claim.payload == decision.payload
             ]
+            # An entry approved earlier as one claim per line is unchanged as that whole set.
+            split = _saved_statements(
+                by_sources.get(frozenset(decision.source_ids)),
+                decision.kind,
+                decision.payload,
+                saved,
+            )
             if exact != [decision.claim_id]:
+                targets = split
+            if targets[:1] != [decision.claim_id]:
                 raise Problem(422, "import_unchanged_invalid")
             if decision.claim_id in unchanged_targets:
                 continue
-        row = (
-            conn.execute(
-                text("""SELECT c.* FROM bonafides.professional_claims c JOIN bonafides.profiles p
-            ON p.owner_id=c.owner_id AND p.id=c.profile_id
-            WHERE c.owner_id=:owner AND c.id=:id FOR UPDATE OF c"""),
-                {"owner": owner_id, "id": decision.claim_id},
+        for target in targets:
+            replacements[target] = _locked_target(
+                conn, owner_id, target, decision.kind, current_ids
             )
-            .mappings()
-            .one_or_none()
-        )
-        if (
-            row is None
-            or row["archived_at"] is not None
-            or row["kind"] != decision.kind
-            or row["kind"] == "identity"
-            or row["current_revision_id"] not in current_ids
-        ):
-            raise Problem(422, "import_target_invalid")
-        replacements[decision.claim_id] = row
-        if decision.action == "unchanged":
-            unchanged_targets.add(decision.claim_id)
+            if decision.action == "unchanged":
+                unchanged_targets.add(target)
     claim_count = conn.execute(
         text("""SELECT count(*) FROM bonafides.professional_claims
         WHERE owner_id=:owner AND archived_at IS NULL
@@ -787,10 +810,20 @@ def _validate_review(
             ],
         },
     ).scalar_one()
-    if (
-        claim_count + sum(item.action == "add" and item.kind != "identity" for item in accepted)
-        > 100
-    ):
+    # An unedited entry approved as one claim per line adds one claim per line.
+    added = sum(
+        max(
+            1,
+            len(
+                _statement_claims(
+                    by_sources.get(frozenset(item.source_ids)), item.kind, item.payload
+                )
+            ),
+        )
+        for item in accepted
+        if item.action == "add" and item.kind != "identity"
+    )
+    if claim_count + added > 100:
         raise Problem(422, "claim_limit")
     if evidence_count + sum(item.action != "unchanged" for item in accepted) > 200:
         raise Problem(422, "evidence_limit")
@@ -863,32 +896,60 @@ class _ClaimInsert:
 
 
 def _statement_claims(
-    entry: ImportEntry | None, decision: ImportDecision
+    entry: ImportEntry | None, kind: ClaimKind | None, payload: ClaimPayload
 ) -> list[tuple[dict[str, object], str]]:
-    """An unedited experience or project entry becomes one claim per statement line.
+    """An unedited experience or project entry becomes one claim per line.
 
-    Representable lines become structured claims; lines with unparsed parts stay literal and
-    therefore need attention. Role, organization and dates remain shared context.
+    Representable lines become structured claims; headings and lines with unparsed parts stay
+    literal and therefore need attention. The entry fields are copied to every claim as context.
     """
     if (
         entry is None
         or not entry.claim_proposals
-        or decision.kind != entry.kind
-        or decision.payload.text != entry.payload.text
+        or kind != entry.kind
+        or payload.text != entry.payload.text
     ):
         return []
-    context = decision.payload.model_dump(mode="json", exclude_none=True, exclude={"text"})
+    context = payload.model_dump(mode="json", exclude_none=True, exclude={"text"})
     statements: list[tuple[dict[str, object], str]] = []
     for proposal in entry.claim_proposals:
         # The bullet marker is layout, not part of the statement or its quoted excerpt.
         quote = statement_text(proposal.quote)
-        payload: StructuredClaimPayload | ClaimPayload
+        statement: StructuredClaimPayload | ClaimPayload
         if proposal.claim is not None and not proposal.unparsed:
-            payload = StructuredClaimPayload.model_validate({**context, "claim": proposal.claim})
+            statement = StructuredClaimPayload.model_validate({**context, "claim": proposal.claim})
         else:
-            payload = ClaimPayload.model_validate({**context, "text": quote})
-        statements.append((payload.model_dump(mode="json", exclude_none=True), quote))
+            statement = ClaimPayload.model_validate({**context, "text": quote})
+        statements.append((statement.model_dump(mode="json", exclude_none=True), quote))
     return statements
+
+
+def _saved_statements(
+    entry: ImportEntry | None,
+    kind: ClaimKind | None,
+    payload: ClaimPayload,
+    saved: list[_SavedClaim],
+) -> list[UUID]:
+    """The saved claims an earlier approval of this unedited entry produced, one per line.
+
+    Empty unless every line's claim is still saved with exactly the payload it would get now.
+    """
+    found: list[UUID] = []
+    for statement, _ in _statement_claims(entry, kind, payload):
+        match = next(
+            (
+                claim.claim_id
+                for claim in saved
+                if claim.kind == kind
+                and claim.claim_id not in found
+                and claim.payload.model_dump(mode="json", exclude_none=True) == statement
+            ),
+            None,
+        )
+        if match is None:
+            return []
+        found.append(match)
+    return found
 
 
 def _insert_claim(
@@ -982,13 +1043,17 @@ def merge_reviewed(conn: Connection, task: Claim) -> dict[str, object]:
             AND NOT(id=ANY(CAST(:targets AS uuid[])))"""),
             {"owner": task.owner_id, "targets": list(replacements)},
         )
-        claim_ids = list(
+        active = list(
             conn.execute(
                 text("""SELECT current_revision_id FROM bonafides.professional_claims
             WHERE owner_id=:owner AND archived_at IS NULL ORDER BY created_at,id"""),
                 {"owner": task.owner_id},
             ).scalars()
         )
+        # Kept claims keep their profile order; claims saved in one transaction share a
+        # creation time, so the identifier order would reshuffle an unchanged entry's lines.
+        claim_ids = [value for value in claim_ids if value in active]
+        claim_ids += [value for value in active if value not in claim_ids]
         # Preserve sources of unchanged targets and identity; archive genuinely displaced sources.
         conn.execute(
             text("""UPDATE bonafides.evidence_records e SET archived_at=clock_timestamp(),version=version+1
@@ -1056,7 +1121,9 @@ def merge_reviewed(conn: Connection, task: Claim) -> dict[str, object]:
             claim_id = decision.claim_id
         else:
             claim_id = uuid4()
-        statements = _statement_claims(entries.get(frozenset(decision.source_ids)), decision)
+        statements = _statement_claims(
+            entries.get(frozenset(decision.source_ids)), decision.kind, decision.payload
+        )
         if decision.action == "add" and statements:
             for statement, excerpt in statements:
                 claim_ids.append(

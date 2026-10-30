@@ -55,7 +55,8 @@ def experience_coverage(claims: Sequence[Mapping[str, object]]) -> dict[str, int
     """Conservative calendar-day bounds, not verified employment or seniority."""
     minimum: list[tuple[int, int]] = []
     maximum: list[tuple[int, int]] = []
-    unbounded = 0
+    # An entry approved as one claim per line shares its context; count entries, not lines.
+    unbounded: set[object] = set()
     for claim in claims:
         if claim["kind"] != "experience":
             continue
@@ -63,7 +64,8 @@ def experience_coverage(claims: Sequence[Mapping[str, object]]) -> dict[str, int
         payload = cast(Mapping[str, object], revision["payload"])
         start, end = payload.get("start_date"), payload.get("end_date")
         if not isinstance(start, str) or not isinstance(end, str):
-            unbounded += 1
+            context = tuple(payload.get(field) for field in ("organization", "role", "start_date"))
+            unbounded.add(context if any(context[:2]) else claim["id"])
             continue
         start_min, start_max = date_bounds(start)
         end_min, end_max = date_bounds(end)
@@ -72,7 +74,7 @@ def experience_coverage(claims: Sequence[Mapping[str, object]]) -> dict[str, int
     return {
         "minimum_days": _covered_days(minimum),
         "maximum_days": _covered_days(maximum),
-        "undated_or_open_entries": unbounded,
+        "undated_or_open_entries": len(unbounded),
     }
 
 
