@@ -8,7 +8,7 @@ from uuid import UUID
 from alembic import op
 from sqlalchemy import text
 
-from bonafides.claim_rewrite import restructure_free_text_claims
+from bonafides.frozen_migrations.structured_claims_v1 import restructure_free_text_claims
 
 revision = "0025_structured_claims"
 down_revision = "0024_streamed_portability"

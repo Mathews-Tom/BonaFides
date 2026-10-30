@@ -3,6 +3,8 @@
 
 from __future__ import annotations
 
+import ast
+from pathlib import Path
 from typing import Any
 from uuid import UUID
 
@@ -12,7 +14,12 @@ from test_identity import identity as identity
 from test_profiles import _json, _mutate
 from test_profiles import profile_owner as profile_owner
 
-from bonafides.claim_rewrite import RESTRUCTURE_REASON, restructure_free_text_claims
+from bonafides.frozen_migrations import structured_claims_v1
+from bonafides.frozen_migrations.structured_claims_v1 import (
+    RESTRUCTURE_REASON,
+    _restructurable,
+    restructure_free_text_claims,
+)
 
 MAPPABLE = "Reduced batch runtime by 30% across 3 warehouses"
 UNMAPPABLE = "Saved $90K in synthetic licensing costs"
@@ -101,3 +108,31 @@ def test_free_text_claims_are_rewritten_in_place_and_restore_brings_back_the_tex
         assert restored.status_code == 200, restored.text
         assert _summary(_json(restored)) == [(MAPPABLE, True), (UNMAPPABLE, True)]
         assert "text" in _json(restored)["current_revision"]["claims"][0]["revision"]["payload"]
+
+
+@pytest.mark.parametrize(
+    ("statement", "rewritten"),
+    [
+        ("Reduced batch runtime by 30% across 3 warehouses.", True),
+        ("Hired 4 engineers for the platform team", False),
+        ("Proposed a new on-call rotation", False),
+        ("Prioritized the quarterly roadmap", False),
+        ("Spearheaded vendor consolidation", False),
+        ("Led migration of 40 services to Kubernetes (2021-2022)", False),
+    ],
+)
+def test_a_free_text_claim_is_rewritten_only_when_its_rendering_is_its_own_text(
+    statement: str, rewritten: bool
+) -> None:
+    assert (_restructurable(statement) is not None) is rewritten
+
+
+def test_the_frozen_rewrite_imports_no_live_application_module() -> None:
+    source = Path(structured_claims_v1.__file__).read_text(encoding="utf-8")
+    imported = {
+        alias.name if isinstance(node, ast.Import) else str(node.module)
+        for node in ast.walk(ast.parse(source))
+        if isinstance(node, ast.Import | ast.ImportFrom)
+        for alias in node.names
+    }
+    assert not any(name.split(".")[0] == "bonafides" for name in imported), imported
