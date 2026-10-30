@@ -307,17 +307,16 @@ def _metric_quoted(metric: ClaimMetric, excerpt: str) -> bool:
 
 
 def _date_quoted(value: str, excerpt: str) -> bool:
-    """The excerpt names the year and, when the claim supplies one, the month."""
+    """The excerpt names the year and, when the claim supplies one, that month of that year."""
     year, _, month = value.partition("-")
-    if re.search(rf"(?<![0-9]){year}(?![0-9])", excerpt) is None:
-        return False
     if not month:
-        return True
+        return re.search(rf"(?<![0-9]){year}(?![0-9])", excerpt) is not None
     index = int(month)
-    names = {calendar.month_name[index].casefold(), calendar.month_abbr[index].casefold()}
-    if names & set(re.findall(r"[a-z]+", excerpt.casefold())):
-        return True
-    return re.search(rf"\b{year}-{month}\b|\b0?{index}/{year}\b", excerpt) is not None
+    names = "|".join({calendar.month_name[index], calendar.month_abbr[index]})
+    together = (
+        rf"\b(?:{names})\.?,?\s+{year}(?![0-9])|\b{year}-{month}\b|\b0?{index}/{year}(?![0-9])"
+    )
+    return re.search(together, excerpt, re.IGNORECASE) is not None
 
 
 def grounded(claim: StructuredClaim, excerpt: str) -> bool:

@@ -178,6 +178,8 @@ def test_grounding_checks_months_when_the_period_supplies_them() -> None:
     assert grounded(claim, "Led the billing migration (Mar 2021 – April 2022)") is True
     assert grounded(claim, "Led the billing migration (2021-03 to 2022-04)") is True
     assert grounded(claim, "Led the billing migration (May 2021 – Dec 2022)") is False
+    assert grounded(claim, "Led the billing migration (April 2021 – March 2022)") is False
+    assert grounded(claim, "Led the billing migration (3/2021 – 04/2022)") is True
     assert grounded(
         _claim(period={"start": "2021", "end": "2022"}), "Led the billing migration 2021-2022"
     )
