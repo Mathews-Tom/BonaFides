@@ -127,8 +127,6 @@ _VERB_PHRASES: dict[str, tuple[OwnershipVerb, MetricChange | None]] = {
     "assisted": ("assisted", None),
     "hardened": ("improved", "improvement"),
     "inspected": ("analyzed", None),
-    "prioritized": ("managed", None),
-    "responded to": ("supported", None),
     "helped": ("assisted", None),
     "helped to": ("assisted", None),
 }

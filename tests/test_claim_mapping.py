@@ -36,11 +36,11 @@ from bonafides.claims import OWNERSHIP_VERBS, grounded
         ),
         ("Increased weekly active users by 12,000", "Increased weekly active users by 12,000"),
         (
-            "- Closed $3.4M in new enterprise contracts in 2021",
+            "- Delivered $3.4M in new enterprise contracts in 2021",
             "Delivered $3.4M in new enterprise contracts (2021)",
         ),
         (
-            "Achieved 99.95% uptime for the core API (2022)",
+            "Shipped 99.95% uptime for the core API (2022)",
             "Delivered 99.95% uptime for the core API (2022)",
         ),
         (

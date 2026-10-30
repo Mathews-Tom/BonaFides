@@ -293,6 +293,7 @@ def _normalise_grounding(text: str) -> str:
     )
 
 
+
 def grounded(claim: StructuredClaim, excerpt: str) -> bool:
     """Require the complete English rendering verbatim within the evidence excerpt.
 
