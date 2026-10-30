@@ -170,6 +170,7 @@ def test_structured_projection_keeps_uncertain_summaries_unplaced_and_bounds_gro
     entries = _entries(f"Projects\n{long}\n- A separate literal continuation\n")
     assert len(entries) == 2
     assert sum(len(entry.sources) for entry in entries) == 2
+    assert all(entry.issues == ["source_group_too_long"] for entry in entries)
     with pytest.raises(Problem) as error:
         _entries("Skills\n" + "a|" * 1001 + "a\n")
     assert error.value.code == "import_source_limit"
@@ -373,6 +374,230 @@ def _counts(context: ImportContext) -> tuple[int, int, int, int]:
                 )
             ),
         )
+
+
+def _unchanged_review(batch: dict[str, Any], mode: str = "merge") -> dict[str, object]:
+    review = _review(batch, mode)
+    for decision, entry in zip(_decisions(review), batch["entries"], strict=True):
+        decision.update(
+            action="unchanged",
+            claim_id=entry["comparison"]["target_claim_id"],
+        )
+    return review
+
+
+@pytest.mark.postgres
+def test_preview_marks_unplaced_invalid_and_overlong_groups_for_attention(
+    importing: ImportContext,
+) -> None:
+    source = (
+        "Unclassified section:\nAn unplaced literal\nExperience\n"
+        "Engineer | Fictional Works | 2020-99 - 2022\n\n"
+        "Projects\n" + "x" * 3990 + "\n- An overlong group continuation\n"
+    )
+    batch = importing.staged(source)
+    assert {entry["comparison"]["status"] for entry in batch["entries"]} == {"needs_attention"}
+    assert _counts(importing) == (1, 0, 0, 0)
+
+
+@pytest.mark.postgres
+def test_repeat_import_unchanged_completes_without_profile_or_evidence_mutation(
+    importing: ImportContext,
+) -> None:
+    source = "Mira Example\nSummary\nLocal systems engineer\nSkills\nSQL\n"
+    first = importing.staged(source)
+    assert all(entry["comparison"]["status"] == "new" for entry in first["entries"])
+    assert importing.approve(first).status_code == 202
+    importing.run()
+    original = importing.profile()
+    before = _counts(importing)
+    repeated = importing.staged(source)
+    assert repeated["comparison_profile_version"] == original["version"]
+    assert all(entry["comparison"]["status"] == "unchanged" for entry in repeated["entries"])
+    assert importing.approve(repeated, _unchanged_review(repeated)).status_code == 202
+    importing.run()
+    assert importing.batch(repeated["id"])["state"] == "succeeded"
+    assert importing.profile() == original
+    assert _counts(importing) == before
+    with importing.identity.admin.transaction() as conn:
+        row = (
+            conn.execute(
+                text("""SELECT b.merged_profile_revision_id,b.parsed_text,o.byte_length
+            FROM offerloom.import_batches b JOIN offerloom.blobs o
+            ON o.owner_id=b.owner_id AND o.id=b.blob_id
+            WHERE b.owner_id=:owner AND b.id=:id"""),
+                {"owner": importing.owner_id, "id": UUID(repeated["id"])},
+            )
+            .mappings()
+            .one()
+        )
+        assert str(row["merged_profile_revision_id"]) == original["current_revision"]["id"]
+        assert row["parsed_text"] == source
+        assert row["byte_length"] == len(source.encode())
+
+
+@pytest.mark.postgres
+def test_repeated_sources_can_share_only_an_unchanged_target(importing: ImportContext) -> None:
+    first = importing.staged("Skills\nSQL\n")
+    assert importing.approve(first).status_code == 202
+    importing.run()
+    original = importing.profile()
+    before = _counts(importing)
+    repeated = importing.staged("Skills\nSQL\nSQL\n")
+    for index in (0, 1):
+        mixed = _unchanged_review(repeated)
+        _decisions(mixed)[index]["action"] = "replace"
+        assert importing.approve(repeated, mixed).status_code == 422
+    assert importing.approve(repeated, _unchanged_review(repeated)).status_code == 202
+    importing.run()
+    assert importing.batch(repeated["id"])["state"] == "succeeded"
+    assert importing.profile() == original
+    assert _counts(importing) == before
+
+
+@pytest.mark.postgres
+@pytest.mark.parametrize("source", ["Skills\nSQL\n", "Mira Example\nSkills\nSQL\n"])
+def test_forged_unchanged_payload_is_rejected(importing: ImportContext, source: str) -> None:
+    first = importing.staged(source)
+    assert importing.approve(first).status_code == 202
+    importing.run()
+    original = importing.profile()
+    before = _counts(importing)
+    repeated = importing.staged(source)
+    review = _unchanged_review(repeated)
+    _decisions(review)[0]["payload"] = {"text": "Not the saved value"}
+    assert importing.approve(repeated, review).status_code == 422
+    assert importing.profile() == original
+    assert _counts(importing) == before
+
+
+@pytest.mark.postgres
+def test_comparison_requires_unique_exact_match_and_conservative_job_dates(
+    importing: ImportContext,
+) -> None:
+    first = importing.staged(
+        "Skills\nSQL\nSQL\nExperience\nEngineer | Fictional Works | 2020 - 2022\n"
+    )
+    assert importing.approve(first).status_code == 202
+    importing.run()
+    preview = importing.staged(
+        "Skills\nSQL\nExperience\nEngineer | Fictional Works | 2020 - 2023\n\n"
+        "Engineer | Fictional Works | 2021 - 2023\n"
+    )
+    skill, changed_job, different_job = preview["entries"]
+    assert skill["comparison"]["status"] == "needs_attention"
+    assert len(skill["comparison"]["candidate_claim_ids"]) == 2
+    assert skill["comparison"]["target_claim_id"] is None
+    assert changed_job["comparison"]["status"] == "conflict"
+    assert changed_job["comparison"]["target_claim_id"] is not None
+    assert different_job["comparison"]["status"] == "new"
+    forged = _review(preview)
+    _decisions(forged)[0].update(
+        action="unchanged", claim_id=skill["comparison"]["candidate_claim_ids"][0]
+    )
+    assert importing.approve(preview, forged).status_code == 422
+
+
+@pytest.mark.postgres
+def test_replace_all_preserves_unchanged_claim_and_source_but_archives_displaced_values(
+    importing: ImportContext,
+) -> None:
+    first = importing.staged()
+    assert importing.approve(first).status_code == 202
+    importing.run()
+    original = importing.profile()
+    skill = original["current_revision"]["claims"][0]
+    retained_revision = skill["revision"]["evidence_links"][0]["evidence_revision_id"]
+    retained_evidence = next(
+        item["id"]
+        for item in original["evidence"]
+        if item["current_revision_id"] == retained_revision
+    )
+    displaced_evidence = next(
+        item["id"] for item in original["evidence"] if item["id"] != retained_evidence
+    )
+    replacement = importing.staged("Skills\nMaintained fictional Linux services\n")
+    assert (
+        importing.approve(replacement, _unchanged_review(replacement, "replace_all")).status_code
+        == 202
+    )
+    importing.run()
+    current = importing.profile()
+    assert current["version"] == original["version"] + 1
+    assert current["current_revision"]["claims"] == [skill]
+    assert [item["id"] for item in current["evidence"]] == [retained_evidence]
+    with importing.identity.admin.transaction() as conn:
+        assert (
+            conn.execute(
+                text("""SELECT archived_at IS NOT NULL FROM offerloom.evidence_records
+            WHERE owner_id=:owner AND id=:id"""),
+                {"owner": importing.owner_id, "id": UUID(displaced_evidence)},
+            ).scalar_one()
+            is True
+        )
+
+
+@pytest.mark.postgres
+def test_explicit_equal_replacement_adds_import_evidence_instead_of_becoming_noop(
+    importing: ImportContext,
+) -> None:
+    first = importing.staged("Skills\nSQL\n")
+    assert importing.approve(first).status_code == 202
+    importing.run()
+    original = importing.profile()
+    repeated = importing.staged("Skills\nSQL\n")
+    review = _review(repeated)
+    _decisions(review)[0].update(
+        action="replace", claim_id=repeated["entries"][0]["comparison"]["target_claim_id"]
+    )
+    assert importing.approve(repeated, review).status_code == 202
+    importing.run()
+    current = importing.profile()
+    assert current["version"] == original["version"] + 1
+    assert len(current["evidence"]) == 2
+    assert len(current["current_revision"]["claims"]) == 1
+    assert current["current_revision"]["claims"][0]["revision"]["revision_no"] == 2
+
+
+@pytest.mark.postgres
+@pytest.mark.parametrize("at_publish", [False, True])
+def test_unchanged_review_remains_bound_to_compared_profile_version(
+    importing: ImportContext, at_publish: bool
+) -> None:
+    first = importing.staged()
+    assert importing.approve(first).status_code == 202
+    importing.run()
+    repeated = importing.staged()
+    review = _unchanged_review(repeated)
+    if at_publish:
+        assert importing.approve(repeated, review).status_code == 202
+    profile = importing.profile()
+    updated = importing.client.put(
+        "/api/v1/profile",
+        json={
+            "display_name": "Updated Owner",
+            "headline": "",
+            "claim_revision_ids": profile["current_revision"]["snapshot"]["claim_revision_ids"],
+        },
+        headers=importing.headers(profile["version"]),
+    )
+    assert updated.status_code == 200
+    current = importing.profile()
+    before = _counts(importing)
+    if at_publish:
+        importing.run()
+        batch = importing.batch(repeated["id"])
+        assert batch["state"] == "permanent_failure"
+        assert batch["error_code"] == "profile_version_conflict"
+    else:
+        assert (
+            importing.approve(
+                repeated, review, version=repeated["comparison_profile_version"]
+            ).status_code
+            == 412
+        )
+    assert importing.profile() == current
+    assert _counts(importing) == before
 
 
 @pytest.mark.postgres

@@ -160,9 +160,10 @@ export interface DocumentRenderRequest { revision_id: string; content_sha256: st
 export const MAX_IMPORT_BYTES = 10 * 1024 * 1024;
 export type ImportMediaType = 'application/pdf' | 'text/plain';
 export interface ImportSource { source_id: string; start: number; end: number; quote: string }
-export interface ImportEntry { entry_id: string; kind: ClaimKind | null; identity_field: 'display_name' | 'headline' | null; payload: ClaimPayload; sources: ImportSource[]; issues: string[] }
-export interface ImportBatch { id: string; workflow_id: string; state: WorkflowState; version: number; media_type: ImportMediaType; byte_size: number; created_at: string; source_sha256: string | null; text: string | null; entries: ImportEntry[]; warnings: string[]; profile_version: number; error_code: string | null }
-export interface ImportDecision { source_ids: string[]; action: 'skip' | 'add' | 'replace'; claim_id?: string; kind: ClaimKind | null; identity_field: ImportEntry['identity_field']; payload: ClaimPayload }
+export interface ImportComparison { status: 'new' | 'unchanged' | 'conflict' | 'needs_attention'; target_claim_id: string | null; candidate_claim_ids: string[] }
+export interface ImportEntry { entry_id: string; kind: ClaimKind | null; identity_field: 'display_name' | 'headline' | null; payload: ClaimPayload; sources: ImportSource[]; issues: string[]; comparison: ImportComparison }
+export interface ImportBatch { id: string; workflow_id: string; state: WorkflowState; version: number; media_type: ImportMediaType; byte_size: number; created_at: string; source_sha256: string | null; text: string | null; entries: ImportEntry[]; warnings: string[]; profile_version: number; comparison_profile_version: number; error_code: string | null }
+export interface ImportDecision { source_ids: string[]; action: 'skip' | 'add' | 'replace' | 'unchanged'; claim_id?: string; kind: ClaimKind | null; identity_field: ImportEntry['identity_field']; payload: ClaimPayload }
 export interface ImportMergeRequest { mode: 'merge' | 'replace_all'; replace_all_confirmed: boolean; decisions: ImportDecision[] }
 export interface ImportAccepted { import_id: string; workflow_id: string }
 export type ImportSummary = Pick<ImportBatch, 'id' | 'media_type' | 'created_at' | 'state'>;
