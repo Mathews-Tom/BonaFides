@@ -32,7 +32,7 @@ function claimOf(draft: StructuredDraft): StructuredClaim {
     if (draft.per) claim.metric.per = draft.per;
     if (draft.measure) claim.metric.measure = draft.measure;
   }
-  if (draft.start) claim.period = { start: draft.start, end: draft.end || draft.start };
+  if (draft.start && draft.end) claim.period = { start: draft.start, end: draft.end };
   return claim;
 }
 
@@ -239,9 +239,9 @@ export function ProfileEntries({ api, profile, disabled, onProfile, onDirtyChang
             <label>Metric rate<select value={claim.structured.per} onChange={event => structuredField('per', event.target.value)}><option value="">None</option>{vocabulary.rates.map(value => <option key={value} value={value}>per {value}</option>)}</select></label>
             <label>Metric measure (optional)<input maxLength={200} value={claim.structured.measure} onChange={event => structuredField('measure', event.target.value)} /></label>
           </>}
-          <label>Period start (optional)<input maxLength={7} placeholder="YYYY or YYYY-MM" value={claim.structured.start} onChange={event => structuredField('start', event.target.value)} /></label>
-          <label>Period end (optional)<input maxLength={7} placeholder="YYYY or YYYY-MM" value={claim.structured.end} onChange={event => structuredField('end', event.target.value)} /></label>
-          <p className="hint">Every subject, scope and measure, the metric with its unit, magnitude and rate, and the period years (and months when given) must appear in a linked source excerpt before documents can use the claim.</p>
+          <label>Period start (optional)<input maxLength={7} placeholder="YYYY or YYYY-MM" required={claim.structured.end !== ''} value={claim.structured.start} onChange={event => structuredField('start', event.target.value)} /></label>
+          <label>Period end (optional)<input maxLength={7} placeholder="YYYY or YYYY-MM" required={claim.structured.start !== ''} value={claim.structured.end} onChange={event => structuredField('end', event.target.value)} /></label>
+          <p className="hint">A period needs both a start and an end. One sentence of a linked source excerpt must state the subject, scope and measure, this ownership verb or a stronger one, the metric with its unit, magnitude, rate and direction, and the period years (and months when given) before documents can use the claim.</p>
           <h4>Rendering (English)</h4><output aria-live="polite" aria-label="Claim rendering">{rendering ?? 'Complete the structured fields to preview the rendering.'}</output>
         </fieldset> : <label>Entry statement<textarea ref={claimInput} required maxLength={4000} value={claim.payload.text} onChange={event => payloadField('text', event.target.value)} /></label>}
         <label>Organization<input maxLength={200} value={claim.payload.organization ?? ''} onChange={event => payloadField('organization', event.target.value)} /></label>

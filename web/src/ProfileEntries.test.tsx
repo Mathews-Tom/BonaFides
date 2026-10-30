@@ -106,6 +106,38 @@ describe('focused profile sections', () => {
     expect(onProfile).toHaveBeenCalledWith(profile);
   });
 
+  it('saves a claim period only with both bounds and blocks a one-sided period', async () => {
+    const user = userEvent.setup(); const api = new Api();
+    const vocabulary = { language: 'en', verbs: [{ key: 'led', label: 'Led' }], units: ['percent'], changes: ['decrease'], magnitudes: [], rates: [] };
+    const request = vi.spyOn(api, 'request').mockImplementation(async <T,>(path: string, method = 'GET') => {
+      if (path === '/claims/vocabulary') return vocabulary as T;
+      if (path === '/claims/render' && method === 'POST') return { language: 'en', rendering: 'Led the billing migration' } as T;
+      if (path === '/claims' && method === 'POST') return profile as T;
+      throw new ApiError(404, 'not_found');
+    });
+    render(<ProfileEntries api={api} profile={profile} disabled={false} onProfile={vi.fn()} onDirtyChange={vi.fn()} onBusyChange={vi.fn()} />);
+    await user.click(screen.getByRole('button', { name: 'Work experience' }));
+    await user.click(screen.getByRole('button', { name: 'Add work experience entry' }));
+    await user.selectOptions(await screen.findByLabelText('Ownership verb'), 'led');
+    await user.type(screen.getByLabelText('Subject'), 'the billing migration');
+    await user.click(screen.getByRole('button', { name: 'Add evidence link' }));
+    await user.selectOptions(screen.getByLabelText('Evidence revision 1'), 'source-revision');
+    await user.type(screen.getByLabelText('Source excerpt 1'), 'Synthetic workshop notes.');
+    const start = screen.getByLabelText('Period start (optional)'); const end = screen.getByLabelText('Period end (optional)');
+    await user.type(start, '2021');
+    expect(end).toBeRequired();
+    await user.click(screen.getByRole('button', { name: 'Save entry revision' }));
+    expect(request.mock.calls.some(call => call[0] === '/claims' && call[1] === 'POST')).toBe(false);
+    await user.clear(start); await user.type(end, '2022');
+    expect(start).toBeRequired();
+    await user.click(screen.getByRole('button', { name: 'Save entry revision' }));
+    expect(request.mock.calls.some(call => call[0] === '/claims' && call[1] === 'POST')).toBe(false);
+    await user.type(start, '2021');
+    await user.click(screen.getByRole('button', { name: 'Save entry revision' }));
+    const saved = request.mock.calls.find(call => call[0] === '/claims' && call[1] === 'POST');
+    expect((saved?.[2] as { payload: { claim: { period?: unknown } } }).payload.claim.period).toEqual({ start: '2021', end: '2022' });
+  });
+
   it('flags a free-text experience entry as needing attention and offers structured fields to replace it', async () => {
     const user = userEvent.setup(); const api = new Api();
     vi.spyOn(api, 'request').mockImplementation(async <T,>(path: string) => {
