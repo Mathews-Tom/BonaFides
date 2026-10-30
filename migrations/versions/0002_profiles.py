@@ -20,7 +20,7 @@ def upgrade() -> None:
     )
     connection.exec_driver_sql(source, execution_options={"no_parameters": True})
     connection.execute(
-        text("UPDATE offerloom.schema_migrations SET source_sha256=:sha WHERE version=5"),
+        text("UPDATE bonafides.schema_migrations SET source_sha256=:sha WHERE version=5"),
         {"sha": hashlib.sha256(source.encode()).hexdigest()},
     )
 

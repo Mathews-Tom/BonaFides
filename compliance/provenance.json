@@ -8,7 +8,7 @@
     "approved_date": "2026-10-26",
     "approver": "Mathews-Tom",
     "authority": "Explicit repository-owner approval in the current session of the stated source-only publication policy change",
-    "repository": "Mathews-Tom/offerloom",
+    "repository": "Mathews-Tom/bonafides",
     "head_ref": "feat/job-search-and-application-workflows",
     "base_ref": "main",
     "implementation_head": "fc8a0685b3fee0a91c30dab3a4262b40bd0cdc51",
@@ -171,12 +171,12 @@
         "uv.lock",
         "ruff.toml",
         "README.md",
-        "src/offerloom/__init__.py",
-        "src/offerloom/__main__.py",
-        "src/offerloom/cli.py",
-        "src/offerloom/config.py",
-        "src/offerloom/api.py",
-        "src/offerloom/problems.py",
+        "src/bonafides/__init__.py",
+        "src/bonafides/__main__.py",
+        "src/bonafides/cli.py",
+        "src/bonafides/config.py",
+        "src/bonafides/api.py",
+        "src/bonafides/problems.py",
         "tests/test_config.py",
         "docs/development/README.md",
         "docs/architecture/README.md"
@@ -218,7 +218,7 @@
     {
       "id": "ol003-identity",
       "requirement_ids": ["OL-003"],
-      "paths": ["src/offerloom/auth.py", "src/offerloom/crypto.py", "tests/test_identity.py"],
+      "paths": ["src/bonafides/auth.py", "src/bonafides/crypto.py", "tests/test_identity.py"],
       "author": null,
       "author_role": "AI-assisted implementation contributor; human rights holder not attested",
       "reviewer": null,
@@ -259,10 +259,10 @@
         "migrations/sql/002_hosted_consent.up.sql",
         "migrations/sql/003_base_resume.up.sql",
         "migrations/sql/004_runtime.up.sql",
-        "src/offerloom/db.py",
-        "src/offerloom/commands.py",
-        "src/offerloom/workflows.py",
-        "src/offerloom/worker.py",
+        "src/bonafides/db.py",
+        "src/bonafides/commands.py",
+        "src/bonafides/workflows.py",
+        "src/bonafides/worker.py",
         "tests/test_database.py",
         "tests/test_workflows.py"
       ],
@@ -307,11 +307,11 @@
       "id": "m0-typed-pdf-minimal-vertical",
       "requirement_ids": ["OL-002", "OL-004", "SYN-CORE", "SYN-PDF", "SYN-UNSUPPORTED"],
       "paths": [
-        "src/offerloom/profiles.py",
-        "src/offerloom/documents.py",
-        "src/offerloom/storage.py",
-        "src/offerloom/render_service.py",
-        "src/offerloom/templates/base-v1.html",
+        "src/bonafides/profiles.py",
+        "src/bonafides/documents.py",
+        "src/bonafides/storage.py",
+        "src/bonafides/render_service.py",
+        "src/bonafides/templates/base-v1.html",
         "tests/test_documents.py",
         "tests/fixtures/syn-core.json"
       ],
@@ -447,7 +447,7 @@
           "attribution": "OWASP Foundation and OWASP ASVS contributors, Application Security Verification Standard 5.0.0",
           "license_url": "https://creativecommons.org/licenses/by-sa/4.0/",
           "provenance_record": "compliance/asvs-source.json",
-          "adaptation": "Offerloom applicability, responsibility and pending-evidence fields; register adaptation and accompanying register documentation retain CC-BY-SA-4.0. No endorsement implied."
+          "adaptation": "BonaFides applicability, responsibility and pending-evidence fields; register adaptation and accompanying register documentation retain CC-BY-SA-4.0. No endorsement implied."
         }
       ],
       "incorporated_material_scope": "Third-party documentation and its adaptation are explicitly incorporated and isolated; not copied implementation code and not original dual-licensed application material.",
@@ -472,9 +472,9 @@
         "deploy/images.json",
         "deploy/prepare.py",
         "deploy/init-db.sh",
-        "src/offerloom/relay.py",
+        "src/bonafides/relay.py",
         "tools/dev_setup.py",
-        "tools/m0_probe.py",
+        "tools/runtime_proof.py",
         ".github/backend_gate.py",
         ".github/compose.ci.yaml",
         ".github/check_contribution.py",
@@ -545,7 +545,7 @@
     {
       "id": "ol005-profile-history-theme",
       "requirement_ids": ["OL-005"],
-      "paths": ["src/offerloom/profiles.py", "src/offerloom/profile_entries.py", "src/offerloom/documents.py", "src/offerloom/api.py", "src/offerloom/problems.py", "src/offerloom/db.py", "src/offerloom/workflows.py", "migrations/sql/005_profiles.up.sql", "migrations/versions/0002_profiles.py", "web/src/ProfileEntries.tsx", "web/src/ThemePreference.tsx", "web/src/ThemePreference.test.tsx", "web/src/App.tsx", "web/src/App.test.tsx", "web/src/api.ts", "web/src/api.test.ts", "web/src/styles.css", "tests/test_profiles.py", "tests/test_database.py", "tests/test_identity.py", "README.md", "docs/development/README.md"],
+      "paths": ["src/bonafides/profiles.py", "src/bonafides/profile_entries.py", "src/bonafides/documents.py", "src/bonafides/api.py", "src/bonafides/problems.py", "src/bonafides/db.py", "src/bonafides/workflows.py", "migrations/sql/005_profiles.up.sql", "migrations/versions/0002_profiles.py", "web/src/ProfileEntries.tsx", "web/src/ThemePreference.tsx", "web/src/ThemePreference.test.tsx", "web/src/App.tsx", "web/src/App.test.tsx", "web/src/api.ts", "web/src/api.test.ts", "web/src/styles.css", "tests/test_profiles.py", "tests/test_database.py", "tests/test_identity.py", "README.md", "docs/development/README.md"],
       "author": null,
       "author_role": "AI-assisted implementation contributor; human rights holder not attested",
       "reviewer": null,
@@ -572,7 +572,7 @@
     {
       "id": "ol006-reviewed-local-import",
       "requirement_ids": ["OL-006"],
-      "paths": ["src/offerloom/imports.py", "src/offerloom/import_parser.py", "src/offerloom/storage.py", "src/offerloom/api.py", "src/offerloom/config.py", "src/offerloom/cli.py", "src/offerloom/db.py", "src/offerloom/workflows.py", "src/offerloom/worker.py", "migrations/sql/006_imports.up.sql", "migrations/versions/0003_imports.py", "web/src/ResumeImport.tsx", "web/src/ResumeImport.test.tsx", "web/src/api.ts", "web/src/App.tsx", "web/src/styles.css", "tests/test_imports.py", "tests/test_import_parser.py", "tests/test_config.py", "tests/test_identity.py", ".github/backend_gate.py", "Dockerfile", "compose.yaml", "deploy/prepare.py", "tools/m0_probe.py", "README.md", "docs/development/README.md", "docs/compliance/M0-evidence.md"],
+      "paths": ["src/bonafides/imports.py", "src/bonafides/import_parser.py", "src/bonafides/storage.py", "src/bonafides/api.py", "src/bonafides/config.py", "src/bonafides/cli.py", "src/bonafides/db.py", "src/bonafides/workflows.py", "src/bonafides/worker.py", "migrations/sql/006_imports.up.sql", "migrations/versions/0003_imports.py", "web/src/ResumeImport.tsx", "web/src/ResumeImport.test.tsx", "web/src/api.ts", "web/src/App.tsx", "web/src/styles.css", "tests/test_imports.py", "tests/test_import_parser.py", "tests/test_config.py", "tests/test_identity.py", ".github/backend_gate.py", "Dockerfile", "compose.yaml", "deploy/prepare.py", "tools/runtime_proof.py", "README.md", "docs/development/README.md", "docs/compliance/M0-evidence.md"],
       "author": null,
       "author_role": "AI-assisted implementation contributor; human rights holder not attested",
       "reviewer": null,
@@ -599,7 +599,7 @@
     {
       "id": "ol007-reviewed-job-source",
       "requirement_ids": ["OL-007"],
-      "paths": ["src/offerloom/sources.py", "src/offerloom/greenhouse.py", "src/offerloom/source_gateway.py", "src/offerloom/commands.py", "src/offerloom/api.py", "src/offerloom/cli.py", "src/offerloom/db.py", "src/offerloom/workflows.py", "src/offerloom/worker.py", "migrations/sql/007_sources.up.sql", "migrations/versions/0004_sources.py", "web/src/JobSources.tsx", "web/src/JobSources.test.tsx", "web/src/api.ts", "web/src/App.tsx", "web/src/styles.css", "tests/test_sources.py", "tests/test_greenhouse.py", "tests/greenhouse_fixture.py", "tests/test_identity.py", "compose.yaml", "tools/m0_probe.py", "README.md", "docs/development/README.md", "docs/architecture/README.md", "docs/compliance/M0-evidence.md"],
+      "paths": ["src/bonafides/sources.py", "src/bonafides/greenhouse.py", "src/bonafides/source_gateway.py", "src/bonafides/commands.py", "src/bonafides/api.py", "src/bonafides/cli.py", "src/bonafides/db.py", "src/bonafides/workflows.py", "src/bonafides/worker.py", "migrations/sql/007_sources.up.sql", "migrations/versions/0004_sources.py", "web/src/JobSources.tsx", "web/src/JobSources.test.tsx", "web/src/api.ts", "web/src/App.tsx", "web/src/styles.css", "tests/test_sources.py", "tests/test_greenhouse.py", "tests/greenhouse_fixture.py", "tests/test_identity.py", "compose.yaml", "tools/runtime_proof.py", "README.md", "docs/development/README.md", "docs/architecture/README.md", "docs/compliance/M0-evidence.md"],
       "author": null,
       "author_role": "AI-assisted implementation contributor; human rights holder not attested",
       "reviewer": null,
@@ -626,7 +626,7 @@
     {
       "id": "ol008-durable-catalog",
       "requirement_ids": ["OL-008"],
-      "paths": ["src/offerloom/catalog.py", "src/offerloom/sources.py", "src/offerloom/db.py", "src/offerloom/api.py", "src/offerloom/workflows.py", "migrations/sql/008_catalog.up.sql", "migrations/versions/0005_catalog.py", "tests/test_catalog.py", "tests/test_sources.py", "tests/test_identity.py", "web/src/JobSources.tsx", "web/src/JobSources.test.tsx", "web/src/App.tsx", "web/src/api.ts", "web/src/styles.css", "tools/catalog_probe.py", "tools/m0_probe.py", "README.md", "docs/development/README.md", "docs/compliance/M0-evidence.md"],
+      "paths": ["src/bonafides/catalog.py", "src/bonafides/sources.py", "src/bonafides/db.py", "src/bonafides/api.py", "src/bonafides/workflows.py", "migrations/sql/008_catalog.up.sql", "migrations/versions/0005_catalog.py", "tests/test_catalog.py", "tests/test_sources.py", "tests/test_identity.py", "web/src/JobSources.tsx", "web/src/JobSources.test.tsx", "web/src/App.tsx", "web/src/api.ts", "web/src/styles.css", "tools/catalog_probe.py", "tools/runtime_proof.py", "README.md", "docs/development/README.md", "docs/compliance/M0-evidence.md"],
       "author": null,
       "author_role": "OpenAI coding-assistant implementation under the owner's authorized local contribution identity; not a claim of human-authored code",
       "reviewer": null,
@@ -653,7 +653,7 @@
     {
       "id": "ol009-reviewed-suitability",
       "requirement_ids": ["OL-009"],
-      "paths": ["src/offerloom/suitability.py", "src/offerloom/local_model.py", "src/offerloom/config.py", "src/offerloom/api.py", "src/offerloom/db.py", "src/offerloom/commands.py", "src/offerloom/workflows.py", "src/offerloom/worker.py", "migrations/sql/009_suitability.up.sql", "migrations/versions/0006_suitability.py", "tests/test_suitability.py", "tests/test_local_model.py", "tests/test_worker.py", "tests/test_config.py", "tests/test_identity.py", "web/src/Suitability.tsx", "web/src/Suitability.test.tsx", "web/src/JobSources.tsx", "web/src/JobSources.test.tsx", "web/src/App.tsx", "web/src/App.test.tsx", "web/src/api.ts", "web/src/styles.css", "deploy/prepare.py", "compose.yaml", "README.md", "docs/development/README.md", "docs/compliance/M0-evidence.md"],
+      "paths": ["src/bonafides/suitability.py", "src/bonafides/local_model.py", "src/bonafides/config.py", "src/bonafides/api.py", "src/bonafides/db.py", "src/bonafides/commands.py", "src/bonafides/workflows.py", "src/bonafides/worker.py", "migrations/sql/009_suitability.up.sql", "migrations/versions/0006_suitability.py", "tests/test_suitability.py", "tests/test_local_model.py", "tests/test_worker.py", "tests/test_config.py", "tests/test_identity.py", "web/src/Suitability.tsx", "web/src/Suitability.test.tsx", "web/src/JobSources.tsx", "web/src/JobSources.test.tsx", "web/src/App.tsx", "web/src/App.test.tsx", "web/src/api.ts", "web/src/styles.css", "deploy/prepare.py", "compose.yaml", "README.md", "docs/development/README.md", "docs/compliance/M0-evidence.md"],
       "author": null,
       "author_role": "OpenAI coding-assistant implementation under the owner's authorized local contribution identity; not a claim of human-authored code",
       "reviewer": null,
@@ -680,7 +680,7 @@
     {
       "id": "ol010-manual-tracking",
       "requirement_ids": ["OL-010"],
-      "paths": ["src/offerloom/tracking.py", "src/offerloom/api.py", "src/offerloom/commands.py", "src/offerloom/db.py", "src/offerloom/workflows.py", "migrations/sql/010_tracking.up.sql", "migrations/versions/0007_tracking.py", "tests/test_tracking.py", "tests/test_catalog.py", "web/src/Tracking.tsx", "web/src/Tracking.test.tsx", "web/src/tracking-api.ts", "web/src/App.tsx", "web/src/App.test.tsx", "web/src/styles.css", "README.md", "docs/development/README.md", "docs/compliance/M0-evidence.md", "compliance/provenance.json"],
+      "paths": ["src/bonafides/tracking.py", "src/bonafides/api.py", "src/bonafides/commands.py", "src/bonafides/db.py", "src/bonafides/workflows.py", "migrations/sql/010_tracking.up.sql", "migrations/versions/0007_tracking.py", "tests/test_tracking.py", "tests/test_catalog.py", "web/src/Tracking.tsx", "web/src/Tracking.test.tsx", "web/src/tracking-api.ts", "web/src/App.tsx", "web/src/App.test.tsx", "web/src/styles.css", "README.md", "docs/development/README.md", "docs/compliance/M0-evidence.md", "compliance/provenance.json"],
       "author": null,
       "author_role": "OpenAI coding-assistant implementation under the owner's authorized local contribution identity; not a claim of human-authored code",
       "reviewer": null,
@@ -707,7 +707,7 @@
     {
       "id": "ol011-reviewable-documents",
       "requirement_ids": ["OL-011"],
-      "paths": ["src/offerloom/document_generation.py", "src/offerloom/document_frame.py", "src/offerloom/documents.py", "src/offerloom/profiles.py", "src/offerloom/local_model.py", "src/offerloom/suitability.py", "src/offerloom/render_service.py", "src/offerloom/worker.py", "src/offerloom/workflows.py", "src/offerloom/api.py", "src/offerloom/db.py", "src/offerloom/templates/evidence-v1.html", "src/offerloom/templates/compact-v1.html", "migrations/sql/011_documents.up.sql", "migrations/versions/0008_documents.py", "tests/test_document_generation.py", "tests/test_documents.py", "tests/test_identity.py", "tests/test_local_model.py", "web/src/Documents.tsx", "web/src/Documents.test.tsx", "web/src/document-state.ts", "web/src/App.tsx", "web/src/App.test.tsx", "web/src/api.ts", "web/src/api.test.ts", "web/src/styles.css", "README.md", "docs/development/README.md", "docs/compliance/M0-evidence.md", "compliance/provenance.json"],
+      "paths": ["src/bonafides/document_generation.py", "src/bonafides/document_frame.py", "src/bonafides/documents.py", "src/bonafides/profiles.py", "src/bonafides/local_model.py", "src/bonafides/suitability.py", "src/bonafides/render_service.py", "src/bonafides/worker.py", "src/bonafides/workflows.py", "src/bonafides/api.py", "src/bonafides/db.py", "src/bonafides/templates/evidence-v1.html", "src/bonafides/templates/compact-v1.html", "migrations/sql/011_documents.up.sql", "migrations/versions/0008_documents.py", "tests/test_document_generation.py", "tests/test_documents.py", "tests/test_identity.py", "tests/test_local_model.py", "web/src/Documents.tsx", "web/src/Documents.test.tsx", "web/src/document-state.ts", "web/src/App.tsx", "web/src/App.test.tsx", "web/src/api.ts", "web/src/api.test.ts", "web/src/styles.css", "README.md", "docs/development/README.md", "docs/compliance/M0-evidence.md", "compliance/provenance.json"],
       "author": null,
       "author_role": "OpenAI coding-assistant implementation under the owner's authorized local contribution identity; not a claim of human-authored code",
       "reviewer": null,
@@ -734,7 +734,7 @@
     {
       "id": "ol012-defensible-section-proposals-and-pdf",
       "requirement_ids": ["OL-012"],
-      "paths": ["src/offerloom/section_regeneration.py", "src/offerloom/document_generation.py", "src/offerloom/documents.py", "src/offerloom/local_model.py", "src/offerloom/suitability.py", "src/offerloom/worker.py", "src/offerloom/workflows.py", "src/offerloom/db.py", "src/offerloom/api.py", "src/offerloom/render_service.py", "migrations/sql/012_section_regeneration.up.sql", "migrations/versions/0009_section_regeneration.py", "tests/test_section_regeneration.py", "tests/test_document_generation.py", "tests/test_documents.py", "tests/test_local_model.py", "tests/test_render_safety.py", "tests/test_identity.py", "tools/m0_probe.py", "web/src/Documents.tsx", "web/src/SectionProposals.tsx", "web/src/Documents.test.tsx", "web/src/api.ts", "web/src/styles.css", "README.md", "docs/development/README.md", "docs/compliance/M0-evidence.md", "compliance/provenance.json"],
+      "paths": ["src/bonafides/section_regeneration.py", "src/bonafides/document_generation.py", "src/bonafides/documents.py", "src/bonafides/local_model.py", "src/bonafides/suitability.py", "src/bonafides/worker.py", "src/bonafides/workflows.py", "src/bonafides/db.py", "src/bonafides/api.py", "src/bonafides/render_service.py", "migrations/sql/012_section_regeneration.up.sql", "migrations/versions/0009_section_regeneration.py", "tests/test_section_regeneration.py", "tests/test_document_generation.py", "tests/test_documents.py", "tests/test_local_model.py", "tests/test_render_safety.py", "tests/test_identity.py", "tools/runtime_proof.py", "web/src/Documents.tsx", "web/src/SectionProposals.tsx", "web/src/Documents.test.tsx", "web/src/api.ts", "web/src/styles.css", "README.md", "docs/development/README.md", "docs/compliance/M0-evidence.md", "compliance/provenance.json"],
       "author": null,
       "author_role": "OpenAI coding-assistant implementation under the owner's authorized local contribution identity; not a claim of human-authored code",
       "reviewer": null,
@@ -761,7 +761,7 @@
     {
       "id": "ol013-durable-tasks-and-exact-approvals",
       "requirement_ids": ["OL-013"],
-      "paths": ["src/offerloom/workflows.py", "src/offerloom/approvals.py", "src/offerloom/commands.py", "src/offerloom/auth.py", "src/offerloom/imports.py", "src/offerloom/api.py", "src/offerloom/db.py", "migrations/sql/013_task_controls.up.sql", "migrations/versions/0010_task_controls.py", "tests/test_task_control.py", "tests/test_action_approvals.py", "tests/test_workflows.py", "tests/test_identity.py", "tests/test_worker.py", "tools/m0_probe.py", "web/src/Tasks.tsx", "web/src/Tasks.test.tsx", "web/src/App.tsx", "web/src/App.test.tsx", "web/src/api.ts", "web/src/styles.css", "web/src/Documents.test.tsx", "web/src/JobSources.test.tsx", "web/src/Suitability.test.tsx", "web/src/ResumeImport.test.tsx", "README.md", "docs/development/README.md", "docs/compliance/M0-evidence.md", "compliance/provenance.json"],
+      "paths": ["src/bonafides/workflows.py", "src/bonafides/approvals.py", "src/bonafides/commands.py", "src/bonafides/auth.py", "src/bonafides/imports.py", "src/bonafides/api.py", "src/bonafides/db.py", "migrations/sql/013_task_controls.up.sql", "migrations/versions/0010_task_controls.py", "tests/test_task_control.py", "tests/test_action_approvals.py", "tests/test_workflows.py", "tests/test_identity.py", "tests/test_worker.py", "tools/runtime_proof.py", "web/src/Tasks.tsx", "web/src/Tasks.test.tsx", "web/src/App.tsx", "web/src/App.test.tsx", "web/src/api.ts", "web/src/styles.css", "web/src/Documents.test.tsx", "web/src/JobSources.test.tsx", "web/src/Suitability.test.tsx", "web/src/ResumeImport.test.tsx", "README.md", "docs/development/README.md", "docs/compliance/M0-evidence.md", "compliance/provenance.json"],
       "author": null,
       "author_role": "OpenAI coding-assistant implementation under the owner's authorized local contribution identity; not a claim of human-authored code",
       "reviewer": null,
@@ -788,7 +788,7 @@
     {
       "id": "ol014-owner-portability-erasure-and-checkpoint-recovery",
       "requirement_ids": ["OL-014"],
-      "paths": ["src/offerloom/portable_archive.py", "src/offerloom/portable_columns.py", "src/offerloom/portable_data.py", "src/offerloom/portable_erasure.py", "src/offerloom/portable_exports.py", "src/offerloom/portable_import.py", "src/offerloom/portable_previews.py", "src/offerloom/maintenance.py", "src/offerloom/maintenance_operator.py", "src/offerloom/installation_control.py", "src/offerloom/execution_guard.py", "src/offerloom/spool_guard.py", "src/offerloom/backup_archive.py", "src/offerloom/backup_configuration.py", "src/offerloom/backup_generations.py", "src/offerloom/backup_operator.py", "src/offerloom/installation_backup.py", "src/offerloom/installation_restore.py", "src/offerloom/profiles.py", "src/offerloom/api.py", "src/offerloom/approvals.py", "src/offerloom/auth.py", "src/offerloom/worker.py", "src/offerloom/workflows.py", "deploy/init-db.sh", "Dockerfile", "compose.yaml", "pyproject.toml", "uv.lock", "tools/m0_probe.py", "tests/test_portable_archive.py", "tests/test_portable_data.py", "tests/test_portable_erasure.py", "tests/test_portable_exports.py", "tests/test_portable_import.py", "tests/test_portable_previews.py", "tests/test_maintenance_recovery.py", "tests/test_backup_archive.py", "tests/test_backup_configuration.py", "tests/test_backup_generations.py", "tests/test_reauthentication.py", "web/src/ConnectionPanel.tsx", "web/src/DataPortability.tsx", "web/src/DataPortability.test.tsx", "web/src/OwnerDataControls.tsx", "web/src/App.tsx", "web/src/api.ts", "docs/development/README.md"],
+      "paths": ["src/bonafides/portable_archive.py", "src/bonafides/portable_columns.py", "src/bonafides/portable_data.py", "src/bonafides/portable_erasure.py", "src/bonafides/portable_exports.py", "src/bonafides/portable_import.py", "src/bonafides/portable_previews.py", "src/bonafides/maintenance.py", "src/bonafides/maintenance_operator.py", "src/bonafides/installation_control.py", "src/bonafides/execution_guard.py", "src/bonafides/spool_guard.py", "src/bonafides/backup_archive.py", "src/bonafides/backup_configuration.py", "src/bonafides/backup_generations.py", "src/bonafides/backup_operator.py", "src/bonafides/installation_backup.py", "src/bonafides/installation_restore.py", "src/bonafides/profiles.py", "src/bonafides/api.py", "src/bonafides/approvals.py", "src/bonafides/auth.py", "src/bonafides/worker.py", "src/bonafides/workflows.py", "deploy/init-db.sh", "Dockerfile", "compose.yaml", "pyproject.toml", "uv.lock", "tools/runtime_proof.py", "tests/test_portable_archive.py", "tests/test_portable_data.py", "tests/test_portable_erasure.py", "tests/test_portable_exports.py", "tests/test_portable_import.py", "tests/test_portable_previews.py", "tests/test_maintenance_recovery.py", "tests/test_backup_archive.py", "tests/test_backup_configuration.py", "tests/test_backup_generations.py", "tests/test_reauthentication.py", "web/src/ConnectionPanel.tsx", "web/src/DataPortability.tsx", "web/src/DataPortability.test.tsx", "web/src/OwnerDataControls.tsx", "web/src/App.tsx", "web/src/api.ts", "docs/development/README.md"],
       "author": null,
       "author_role": "OpenAI coding-assistant implementation under the owner's authorized local contribution identity; not human-authored-code certification",
       "reviewer": null,
@@ -815,7 +815,7 @@
     {
       "id": "ol015-daily-backup-lifecycle-and-explicit-restored-target-opening",
       "requirement_ids": ["OL-015"],
-      "paths": ["src/offerloom/backup_schedule.py", "src/offerloom/backup_operator.py", "src/offerloom/backup_configuration.py", "src/offerloom/backup_generations.py", "src/offerloom/portable_data.py", "src/offerloom/portable_exports.py", "src/offerloom/installation_open.py", "src/offerloom/installation_restore.py", "src/offerloom/cli.py", "src/offerloom/db.py", "src/offerloom/workflows.py", "migrations/sql/024_daily_backups.up.sql", "migrations/versions/0021_daily_backups.py", "tests/test_backup_schedule.py", "tests/test_installation_open.py", "tests/test_portable_exports.py", "docs/development/README.md"],
+      "paths": ["src/bonafides/backup_schedule.py", "src/bonafides/backup_operator.py", "src/bonafides/backup_configuration.py", "src/bonafides/backup_generations.py", "src/bonafides/portable_data.py", "src/bonafides/portable_exports.py", "src/bonafides/installation_open.py", "src/bonafides/installation_restore.py", "src/bonafides/cli.py", "src/bonafides/db.py", "src/bonafides/workflows.py", "migrations/sql/024_daily_backups.up.sql", "migrations/versions/0021_daily_backups.py", "tests/test_backup_schedule.py", "tests/test_installation_open.py", "tests/test_portable_exports.py", "docs/development/README.md"],
       "author": null,
       "author_role": "OpenAI coding-assistant implementation under the owner's authorized local contribution identity; not human-authored-code certification",
       "reviewer": null,
@@ -842,7 +842,7 @@
     {
       "id": "m1-final-original-privacy-and-profile-acceptance",
       "requirement_ids": ["OL-015", "IN-DAT-06-A1", "IN-SEC-01-A2", "IN-SEC-04-A1", "IN-SEC-04-A2", "IN-PRO-006-A1", "IN-PRO-007-A1", "IN-PRO-015-A1"],
-      "paths": ["src/offerloom/task_retention.py", "src/offerloom/credential_rotation.py", "src/offerloom/crypto.py", "src/offerloom/portable_exports.py", "src/offerloom/installation_restore.py", "src/offerloom/cli.py", "src/offerloom/db.py", "src/offerloom/workflows.py", "src/offerloom/portable_data.py", "src/offerloom/profile_entries.py", "src/offerloom/profiles.py", "migrations/sql/025_credential_rotation.up.sql", "migrations/versions/0022_credential_rotation.py", "tests/test_task_retention.py", "tests/test_credential_rotation.py", "tests/test_config.py", "tests/test_profiles.py", "web/src/api.ts", "web/src/ProfileEntries.tsx", "web/src/Tasks.tsx", "web/src/App.test.tsx", "web/src/DataPortability.test.tsx", "web/src/Documents.test.tsx", "web/src/ResumeImport.test.tsx", "web/src/Suitability.test.tsx", "web/src/Tracking.test.tsx", "web/src/JobSources.test.tsx"],
+      "paths": ["src/bonafides/task_retention.py", "src/bonafides/credential_rotation.py", "src/bonafides/crypto.py", "src/bonafides/portable_exports.py", "src/bonafides/installation_restore.py", "src/bonafides/cli.py", "src/bonafides/db.py", "src/bonafides/workflows.py", "src/bonafides/portable_data.py", "src/bonafides/profile_entries.py", "src/bonafides/profiles.py", "migrations/sql/025_credential_rotation.up.sql", "migrations/versions/0022_credential_rotation.py", "tests/test_task_retention.py", "tests/test_credential_rotation.py", "tests/test_config.py", "tests/test_profiles.py", "web/src/api.ts", "web/src/ProfileEntries.tsx", "web/src/Tasks.tsx", "web/src/App.test.tsx", "web/src/DataPortability.test.tsx", "web/src/Documents.test.tsx", "web/src/ResumeImport.test.tsx", "web/src/Suitability.test.tsx", "web/src/Tracking.test.tsx", "web/src/JobSources.test.tsx"],
       "author": null,
       "author_role": "OpenAI coding-assistant implementation under the owner's authorized local contribution identity; not human-authored-code certification",
       "reviewer": null,
@@ -869,7 +869,7 @@
     {
       "id": "m1-final-persisted-document-defaults-and-operation-disclosure",
       "requirement_ids": ["IN-SEC-05-A2", "IN-SEC-06-A1", "IN-SEC-06-A2", "IN-DOC-015-A3"],
-      "paths": ["src/offerloom/document_defaults.py", "src/offerloom/document_frame.py", "src/offerloom/document_generation.py", "src/offerloom/api.py", "src/offerloom/templates/evidence-letter-v1.html", "src/offerloom/templates/compact-letter-v1.html", "tests/test_document_defaults.py", "tests/test_document_generation.py", "tests/test_documents.py", "tests/test_portable_exports.py", "web/src/Documents.tsx", "web/src/SectionProposals.tsx", "web/src/api.ts", "web/src/Documents.test.tsx", "docs/development/README.md"],
+      "paths": ["src/bonafides/document_defaults.py", "src/bonafides/document_frame.py", "src/bonafides/document_generation.py", "src/bonafides/api.py", "src/bonafides/templates/evidence-letter-v1.html", "src/bonafides/templates/compact-letter-v1.html", "tests/test_document_defaults.py", "tests/test_document_generation.py", "tests/test_documents.py", "tests/test_portable_exports.py", "web/src/Documents.tsx", "web/src/SectionProposals.tsx", "web/src/api.ts", "web/src/Documents.test.tsx", "docs/development/README.md"],
       "author": null,
       "author_role": "OpenAI coding-assistant implementation under the owner's authorized local contribution identity; not human-authored-code certification",
       "reviewer": null,

@@ -191,7 +191,7 @@ class Inventory:
     def snapshot(self, source_only: bool) -> Object:
         return {
             "schema_version": 1,
-            "generator": "offerloom-artifact-inventory/1",
+            "generator": "bonafides-artifact-inventory/1",
             "recorded_date": datetime.now(UTC).date().isoformat(),
             "distribution_status": "blocked",
             "release_eligible": False,
@@ -1102,8 +1102,8 @@ def collect_image_tar(archive: Path, image_id: str, inventory: Inventory) -> Non
     """Read exported rootfs without extracting or executing untrusted image content."""
     inventory.input(archive, "exported image filesystem")
     image = component(
-        "pkg:oci/offerloom@" + quote(image_id, safe=""),
-        "Offerloom image",
+        "pkg:oci/bonafides@" + quote(image_id, safe=""),
+        "BonaFides image",
         image_id,
         "actual exported container filesystem",
     )
@@ -1334,7 +1334,7 @@ def collect_image(image: str, inventory: Inventory) -> None:
             f"{image}: declared volumes are not inspected as live volume content; "
             "this is an image rootfs inventory only"
         )
-    with tempfile.TemporaryDirectory(prefix="offerloom-inventory-") as temporary:
+    with tempfile.TemporaryDirectory(prefix="bonafides-inventory-") as temporary:
         # No bind mounts, network, image startup or package-manager execution.
         try:
             created = subprocess.run(

@@ -28,20 +28,20 @@ from test_render_safety import _body
 from test_sources import SourceContext
 from test_sources import catalog as catalog
 
-from offerloom.commands import canonical_json, lock_installation
-from offerloom.execution_guard import ExecutionGuard
-from offerloom.import_parser import ImportFailure, ImportParserClient
-from offerloom.installation_control import (
+from bonafides.commands import canonical_json, lock_installation
+from bonafides.execution_guard import ExecutionGuard
+from bonafides.import_parser import ImportFailure, ImportParserClient
+from bonafides.installation_control import (
     Control,
     InstallationMaintenance,
     assert_control,
     begin_control,
 )
-from offerloom.problems import Problem
-from offerloom.render_service import RenderClient
-from offerloom.spool_guard import SpoolBusy
-from offerloom.storage import BlobStore
-from offerloom.workflows import assert_fence, claim, claim_control, enqueue
+from bonafides.problems import Problem
+from bonafides.render_service import RenderClient
+from bonafides.spool_guard import SpoolBusy
+from bonafides.storage import BlobStore
+from bonafides.workflows import assert_fence, claim, claim_control, enqueue
 
 
 @pytest.mark.postgres
@@ -52,7 +52,7 @@ def test_runtime_cannot_erase_unreferenced_history_or_cascade_its_parent(
     leaf_id = uuid4()
     with pg_context.migrator.begin() as conn:
         conn.execute(
-            text("""INSERT INTO offerloom.profile_revisions(
+            text("""INSERT INTO bonafides.profile_revisions(
             owner_id,id,profile_id,revision_no,snapshot,content_sha256,reason)
             VALUES(:owner,:id,:profile,2,'{}',repeat('0',64),'synthetic unreferenced leaf')"""),
             {"owner": pg_context.owner_id, "id": leaf_id, "profile": pg_context.profile_id},
@@ -60,14 +60,14 @@ def test_runtime_cannot_erase_unreferenced_history_or_cascade_its_parent(
     target = leaf_id if table == "profile_revisions" else pg_context.profile_id
     with pytest.raises(DBAPIError) as denied, pg_context.runtime.begin() as conn:
         conn.execute(
-            text(f"DELETE FROM offerloom.{table} WHERE owner_id=:owner AND id=:id"),
+            text(f"DELETE FROM bonafides.{table} WHERE owner_id=:owner AND id=:id"),
             {"owner": pg_context.owner_id, "id": target},
         )
     assert getattr(denied.value.orig, "sqlstate", None) == "42501"
     with pg_context.migrator.begin() as conn:
         assert (
             conn.execute(
-                text("SELECT id FROM offerloom.profile_revisions WHERE owner_id=:owner AND id=:id"),
+                text("SELECT id FROM bonafides.profile_revisions WHERE owner_id=:owner AND id=:id"),
                 {"owner": pg_context.owner_id, "id": leaf_id},
             ).scalar_one()
             == leaf_id
@@ -78,12 +78,12 @@ def _queue_control(conn: Connection, owner: UUID, kind: str = "backup") -> UUID:
     identifier = uuid4()
     snapshot = canonical_json({"schema_version": 1})
     conn.execute(
-        text("""INSERT INTO offerloom.workflow_runs(
+        text("""INSERT INTO bonafides.workflow_runs(
         owner_id,id,kind,input,dedupe_key,request_sha256,deadline_at,maintenance_epoch)
         SELECT :owner,:id,:kind,CAST(:input AS jsonb),:dedupe,
         :sha,
         clock_timestamp()+interval '3 minutes',maintenance_epoch
-        FROM offerloom.installation_state WHERE singleton"""),
+        FROM bonafides.installation_state WHERE singleton"""),
         {
             "owner": owner,
             "id": identifier,
@@ -109,14 +109,14 @@ def renderer_spool(tmp_path: Path) -> Iterator[Path]:
     spool = tmp_path / "maintenance-renderer"
     spool.mkdir(mode=0o700)
     container: str | None = None
-    environment = dict(os.environ, OFFERLOOM_RENDERER_SPOOL=str(spool))
+    environment = dict(os.environ, BONAFIDES_RENDERER_SPOOL=str(spool))
     if sys.platform == "linux":
-        arguments = [sys.executable, "-m", "offerloom.render_service", "serve"]
+        arguments = [sys.executable, "-m", "bonafides.render_service", "serve"]
     else:
-        image = os.environ.get("OFFERLOOM_TEST_PARSER_IMAGE")
+        image = os.environ.get("BONAFIDES_TEST_PARSER_IMAGE")
         if not image:
             pytest.fail("Maintenance renderer proof requires the current sealed Linux image.")
-        container = "offerloom-maintenance-renderer-" + uuid4().hex
+        container = "bonafides-maintenance-renderer-" + uuid4().hex
         arguments = [
             "docker",
             "run",
@@ -143,12 +143,12 @@ def renderer_spool(tmp_path: Path) -> Iterator[Path]:
             "--mount",
             f"type=bind,src={spool},dst=/spool",
             "--env",
-            "OFFERLOOM_RENDERER_SPOOL=/spool",
+            "BONAFIDES_RENDERER_SPOOL=/spool",
             "--entrypoint",
             "python",
             image,
             "-m",
-            "offerloom.render_service",
+            "bonafides.render_service",
             "serve",
         ]
     process = subprocess.Popen(
@@ -210,7 +210,7 @@ def test_destructive_control_requires_a_consumed_exact_approval(
     with pg_context.runtime.begin() as conn:
         assert lock_installation(conn) >= 0
         assert (
-            conn.execute(text("SELECT count(*) FROM offerloom.installation_controls")).scalar_one()
+            conn.execute(text("SELECT count(*) FROM bonafides.installation_controls")).scalar_one()
             == 0
         )
 
@@ -230,24 +230,24 @@ def test_control_cannot_revive_or_mutate_after_fence_or_deadline_loss(
         elif fault == "epoch":
             conn.execute(
                 text(
-                    "UPDATE offerloom.installation_state SET maintenance_epoch=maintenance_epoch+1"
+                    "UPDATE bonafides.installation_state SET maintenance_epoch=maintenance_epoch+1"
                 )
             )
         elif fault == "lease":
             conn.execute(
-                text("""UPDATE offerloom.installation_controls
+                text("""UPDATE bonafides.installation_controls
             SET lease_expires_at=clock_timestamp()-interval '1 second'""")
             )
         else:
             conn.execute(
-                text("""UPDATE offerloom.installation_controls
+                text("""UPDATE bonafides.installation_controls
             SET deadline_at=statement_timestamp()-interval '1 second',
             drain_deadline_at=statement_timestamp()-interval '1 second'""")
             )
     for operation in ("assert", "heartbeat", "quiesce", "release"):
         with pytest.raises(DBAPIError) as denied, catalog.runtime.transaction() as conn:
             conn.execute(
-                text(f"SELECT offerloom.{operation}_installation_control(:id,:holder,:fence)"),
+                text(f"SELECT bonafides.{operation}_installation_control(:id,:holder,:fence)"),
                 candidate.parameters,
             )
         assert getattr(denied.value.orig, "sqlstate", None) == "55000"
@@ -258,17 +258,17 @@ def test_control_cannot_revive_or_mutate_after_fence_or_deadline_loss(
 def test_runtime_cannot_forge_maintenance_state_or_control_receipt(catalog: SourceContext) -> None:
     control = _begin(catalog)
     for query in (
-        "UPDATE offerloom.installation_state SET maintenance_active=false",
-        "UPDATE offerloom.installation_state SET maintenance_epoch=maintenance_epoch+1",
-        "UPDATE offerloom.installation_controls SET phase='quiescent'",
-        "DELETE FROM offerloom.installation_controls",
+        "UPDATE bonafides.installation_state SET maintenance_active=false",
+        "UPDATE bonafides.installation_state SET maintenance_epoch=maintenance_epoch+1",
+        "UPDATE bonafides.installation_controls SET phase='quiescent'",
+        "DELETE FROM bonafides.installation_controls",
     ):
         with pytest.raises(DBAPIError) as denied, catalog.runtime.transaction() as conn:
             conn.execute(text(query))
         assert getattr(denied.value.orig, "sqlstate", None) == "42501"
     with pytest.raises(DBAPIError), catalog.runtime.transaction() as conn:
         conn.execute(
-            text("SELECT offerloom.release_installation_control(:id,:holder,:fence)"),
+            text("SELECT bonafides.release_installation_control(:id,:holder,:fence)"),
             control.parameters,
         )
     with catalog.runtime.transaction() as conn:
@@ -328,7 +328,7 @@ def test_coordinator_drains_actual_api_and_both_live_sealed_spools_before_releas
             # must preserve authority during a copy longer than this short lease.
             with catalog.identity.admin.transaction() as conn:
                 conn.execute(
-                    text("""UPDATE offerloom.installation_controls
+                    text("""UPDATE bonafides.installation_controls
                 SET lease_expires_at=clock_timestamp()+interval '3 seconds' WHERE id=:id"""),
                     {"id": control.id},
                 )
@@ -358,7 +358,7 @@ def test_coordinator_drains_actual_api_and_both_live_sealed_spools_before_releas
     assert catalog.client.get("/api/v1/profile").status_code == 200
     with catalog.runtime.transaction() as conn:
         row = conn.execute(
-            text("SELECT state,result FROM offerloom.workflow_runs WHERE id=:id"),
+            text("SELECT state,result FROM bonafides.workflow_runs WHERE id=:id"),
             {"id": control.id},
         ).one()
         assert row.state == "succeeded" and row.result == {
@@ -374,7 +374,7 @@ def test_absent_daemon_does_not_turn_empty_spools_into_quiescence(catalog: Sourc
     control = _begin(catalog)
     with catalog.identity.admin.transaction() as conn:
         conn.execute(
-            text("""UPDATE offerloom.installation_controls
+            text("""UPDATE bonafides.installation_controls
         SET drain_deadline_at=clock_timestamp()+interval '0.2 seconds' WHERE id=:id"""),
             {"id": control.id},
         )
@@ -391,7 +391,7 @@ def test_absent_daemon_does_not_turn_empty_spools_into_quiescence(catalog: Sourc
     with catalog.runtime.transaction() as conn:
         assert (
             conn.execute(
-                text("SELECT phase FROM offerloom.installation_controls WHERE id=:id"),
+                text("SELECT phase FROM bonafides.installation_controls WHERE id=:id"),
                 {"id": control.id},
             ).scalar_one()
             == "draining"
@@ -404,7 +404,7 @@ def test_authenticated_status_remains_readonly_while_ordinary_api_is_fenced(
 ) -> None:
     with catalog.identity.admin.transaction() as conn:
         before = conn.execute(
-            text("""UPDATE offerloom.sessions SET last_seen_at=now()-interval '2 minutes'
+            text("""UPDATE bonafides.sessions SET last_seen_at=now()-interval '2 minutes'
             WHERE owner_id=:owner RETURNING last_seen_at"""),
             {"owner": catalog.owner_id},
         ).scalar_one()
@@ -424,7 +424,7 @@ def test_authenticated_status_remains_readonly_while_ordinary_api_is_fenced(
                 status["workspace_version"]
                 == conn.execute(
                     text(
-                        "SELECT workspace_version FROM offerloom.owner_settings WHERE owner_id=:owner"
+                        "SELECT workspace_version FROM bonafides.owner_settings WHERE owner_id=:owner"
                     ),
                     {"owner": catalog.owner_id},
                 ).scalar_one()
@@ -447,13 +447,13 @@ def test_authenticated_status_remains_readonly_while_ordinary_api_is_fenced(
     assert bad_origin.status_code == 403 and bad_origin.json()["code"] == "origin_rejected"
     with catalog.identity.admin.transaction() as conn:
         after = conn.execute(
-            text("SELECT last_seen_at FROM offerloom.sessions WHERE owner_id=:owner"),
+            text("SELECT last_seen_at FROM bonafides.sessions WHERE owner_id=:owner"),
             {"owner": catalog.owner_id},
         ).scalar_one()
         assert after == before
         assert (
             conn.execute(
-                text("SELECT count(*) FROM offerloom.installation_activities")
+                text("SELECT count(*) FROM bonafides.installation_activities")
             ).scalar_one()
             == 0
         )
@@ -471,17 +471,17 @@ def test_maintenance_status_does_not_bypass_session_authentication(
         if invalid == "missing":
             catalog.client.cookies.clear()
         elif invalid == "revoked":
-            conn.execute(text("UPDATE offerloom.sessions SET revoked_at=clock_timestamp()"))
+            conn.execute(text("UPDATE bonafides.sessions SET revoked_at=clock_timestamp()"))
         elif invalid == "auth_epoch":
-            conn.execute(text("UPDATE offerloom.owners SET auth_epoch=auth_epoch+1"))
+            conn.execute(text("UPDATE bonafides.owners SET auth_epoch=auth_epoch+1"))
         elif invalid == "absolute_expiry":
             conn.execute(
-                text("""UPDATE offerloom.sessions SET created_at=now()-interval '2 days',
+                text("""UPDATE bonafides.sessions SET created_at=now()-interval '2 days',
             expires_at=now()-interval '1 second'""")
             )
         else:
             conn.execute(
-                text("UPDATE offerloom.sessions SET last_seen_at=now()-interval '13 hours'")
+                text("UPDATE bonafides.sessions SET last_seen_at=now()-interval '13 hours'")
             )
     response = catalog.client.get("/api/v1/maintenance")
     assert response.status_code == 401
@@ -498,21 +498,21 @@ def test_status_reports_required_recovery_instead_of_inventing_quiescence(
     with catalog.identity.admin.transaction() as conn:
         if lost == "lease":
             conn.execute(
-                text("""UPDATE offerloom.installation_controls
+                text("""UPDATE bonafides.installation_controls
             SET lease_expires_at=clock_timestamp()-interval '1 second'""")
             )
         elif lost == "drain":
             conn.execute(
-                text("""UPDATE offerloom.installation_controls
+                text("""UPDATE bonafides.installation_controls
             SET drain_deadline_at=clock_timestamp()-interval '1 second'""")
             )
         elif lost == "namespace":
             conn.execute(
-                text("UPDATE offerloom.installation_state SET namespace_id=gen_random_uuid()")
+                text("UPDATE bonafides.installation_state SET namespace_id=gen_random_uuid()")
             )
         else:
             conn.execute(
-                text("UPDATE offerloom.workflow_runs SET fence=fence+1 WHERE id=:id"),
+                text("UPDATE bonafides.workflow_runs SET fence=fence+1 WHERE id=:id"),
                 {"id": control.id},
             )
     response = catalog.client.get("/api/v1/maintenance")

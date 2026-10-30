@@ -1,6 +1,6 @@
 -- SPDX-License-Identifier: MIT OR Apache-2.0
 -- OL-007 retains source policy evidence and attributable posting observations.
-SET LOCAL search_path=offerloom,pg_catalog;
+SET LOCAL search_path=bonafides,pg_catalog;
 ALTER TABLE source_configs ADD COLUMN company text NOT NULL DEFAULT 'Unspecified employer'
  CHECK(length(company) BETWEEN 1 AND 500);
 ALTER TABLE source_configs ADD COLUMN policy_version bigint NOT NULL DEFAULT 1 CHECK(policy_version>0);
@@ -39,7 +39,7 @@ ALTER TABLE source_configs ADD CONSTRAINT source_enabled_review CHECK(
  source_kind<>'greenhouse' OR NOT enabled OR
  (current_policy_review_id IS NOT NULL AND terms_reviewed_at IS NOT NULL AND terms_url IS NOT NULL
  AND terms_revision IS NOT NULL AND allowed_host='boards-api.greenhouse.io'));
-CREATE FUNCTION guard_source_identity() RETURNS trigger LANGUAGE plpgsql SET search_path=offerloom,pg_catalog AS $$
+CREATE FUNCTION guard_source_identity() RETURNS trigger LANGUAGE plpgsql SET search_path=bonafides,pg_catalog AS $$
 BEGIN
  IF ROW(NEW.owner_id,NEW.id,NEW.source_kind,NEW.board_token,NEW.created_at)
  IS DISTINCT FROM ROW(OLD.owner_id,OLD.id,OLD.source_kind,OLD.board_token,OLD.created_at)
@@ -53,7 +53,7 @@ BEGIN
  RETURN NEW;
 END $$;
 CREATE TRIGGER source_identity_guard BEFORE UPDATE ON source_configs FOR EACH ROW EXECUTE FUNCTION guard_source_identity();
-CREATE FUNCTION check_source_review() RETURNS trigger LANGUAGE plpgsql SET search_path=offerloom,pg_catalog AS $$
+CREATE FUNCTION check_source_review() RETURNS trigger LANGUAGE plpgsql SET search_path=bonafides,pg_catalog AS $$
 BEGIN
  IF EXISTS(SELECT 1 FROM source_configs s WHERE s.owner_id=NEW.owner_id AND s.id=NEW.id
  AND s.source_kind='greenhouse' AND s.current_policy_review_id IS NOT NULL
@@ -78,7 +78,7 @@ ALTER TABLE job_postings ADD CONSTRAINT posting_source_shape CHECK(
  (source_config_id IS NOT NULL AND external_id IS NOT NULL AND length(external_id) BETWEEN 1 AND 200
  AND content_sha256 IS NOT NULL AND last_observed_at IS NOT NULL));
 CREATE UNIQUE INDEX posting_source_identity ON job_postings(owner_id,source_config_id,external_id);
-CREATE FUNCTION guard_posting_source() RETURNS trigger LANGUAGE plpgsql SET search_path=offerloom,pg_catalog AS $$
+CREATE FUNCTION guard_posting_source() RETURNS trigger LANGUAGE plpgsql SET search_path=bonafides,pg_catalog AS $$
 BEGIN
  IF ROW(NEW.owner_id,NEW.id,NEW.source_config_id,NEW.external_id,NEW.created_at)
  IS DISTINCT FROM ROW(OLD.owner_id,OLD.id,OLD.source_config_id,OLD.external_id,OLD.created_at)
@@ -98,7 +98,7 @@ ALTER TABLE job_source_observations ADD UNIQUE(owner_id,source_config_id,externa
 ALTER TABLE job_source_observations ADD FOREIGN KEY(owner_id,source_config_id,policy_version,policy_review_id)
  REFERENCES source_policy_reviews(owner_id,source_config_id,policy_version,id) ON DELETE RESTRICT;
 CREATE INDEX observation_history_cursor ON job_source_observations(owner_id,posting_id,created_at DESC,id DESC);
-CREATE FUNCTION check_observation_source() RETURNS trigger LANGUAGE plpgsql SET search_path=offerloom,pg_catalog AS $$
+CREATE FUNCTION check_observation_source() RETURNS trigger LANGUAGE plpgsql SET search_path=bonafides,pg_catalog AS $$
 BEGIN
  IF NOT EXISTS(SELECT 1 FROM job_postings p JOIN source_configs s
  ON s.owner_id=p.owner_id AND s.id=p.source_config_id
@@ -128,7 +128,7 @@ ALTER TABLE workflow_runs ADD CONSTRAINT source_workflow_shape CHECK(
  AND deadline_at<=created_at+interval '180 seconds' AND token_budget=0 AND cost_budget_microunits=0));
 CREATE UNIQUE INDEX one_active_source_refresh ON workflow_runs(owner_id,source_config_id)
  WHERE kind='source_refresh' AND state IN ('pending','running','retryable_failure','waiting_for_approval');
-CREATE FUNCTION guard_source_workflow_pin() RETURNS trigger LANGUAGE plpgsql SET search_path=offerloom,pg_catalog AS $$
+CREATE FUNCTION guard_source_workflow_pin() RETURNS trigger LANGUAGE plpgsql SET search_path=bonafides,pg_catalog AS $$
 BEGIN
  IF OLD.kind='source_refresh' AND ROW(NEW.kind,NEW.input,NEW.source_config_id,NEW.source_policy_version,
  NEW.source_policy_review_id,NEW.source_policy_sha256,NEW.max_attempts,NEW.deadline_at,NEW.created_at)
@@ -142,7 +142,7 @@ ALTER TABLE workflow_runs ADD FOREIGN KEY(owner_id,source_config_id,source_polic
  REFERENCES source_policy_reviews(owner_id,source_config_id,policy_version,id,policy_sha256) ON DELETE RESTRICT;
 REVOKE ALL ON FUNCTION guard_posting_source(),check_observation_source() FROM PUBLIC;
 REVOKE ALL ON FUNCTION guard_source_identity(),check_source_review(),guard_source_workflow_pin() FROM PUBLIC;
-GRANT SELECT,INSERT ON source_policy_reviews TO offerloom_runtime;
-REVOKE UPDATE,DELETE ON source_policy_reviews FROM offerloom_runtime;
-REVOKE DELETE ON source_configs,job_postings,job_source_observations FROM offerloom_runtime;
+GRANT SELECT,INSERT ON source_policy_reviews TO bonafides_runtime;
+REVOKE UPDATE,DELETE ON source_policy_reviews FROM bonafides_runtime;
+REVOKE DELETE ON source_configs,job_postings,job_source_observations FROM bonafides_runtime;
 INSERT INTO schema_migrations(version,source_sha256) VALUES(7,repeat('0',64));

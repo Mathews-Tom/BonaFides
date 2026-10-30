@@ -26,16 +26,16 @@ from test_sources import catalog as catalog
 from test_suitability import _profile
 from test_tracking import _application
 
-from offerloom.approvals import consume_action_approval, prepare_action_approval
-from offerloom.commands import canonical_json
-from offerloom.import_parser import ImportParserClient
-from offerloom.installation_control import InstallationMaintenance, begin_control
-from offerloom.portable_archive import Manifest, decode_archive
-from offerloom.portable_data import collect_owner_data, export_owner_data
-from offerloom.portable_import import import_controlled_owner_data
-from offerloom.profiles import content_hash
-from offerloom.storage import BlobStore, StoredBlob
-from offerloom.workflows import claim_control
+from bonafides.approvals import consume_action_approval, prepare_action_approval
+from bonafides.commands import canonical_json
+from bonafides.import_parser import ImportParserClient
+from bonafides.installation_control import InstallationMaintenance, begin_control
+from bonafides.portable_archive import Manifest, decode_archive
+from bonafides.portable_data import collect_owner_data, export_owner_data
+from bonafides.portable_import import import_controlled_owner_data
+from bonafides.profiles import content_hash
+from bonafides.storage import BlobStore, StoredBlob
+from bonafides.workflows import claim_control
 
 _MIB = 1024 * 1024
 _ATTACHMENT_BYTES = 1024 * _MIB
@@ -90,7 +90,7 @@ def _blob(
     identifier = uuid4()
     with context.runtime.transaction() as conn:
         conn.execute(
-            text("""INSERT INTO offerloom.blobs
+            text("""INSERT INTO bonafides.blobs
             (owner_id,id,sha256,byte_length,media_type,storage_key)
             VALUES(:owner,:id,:sha,:size,:media,:key)"""),
             {
@@ -118,7 +118,7 @@ def _attachments(context: SourceContext, inventory: BlobInventory, total: int) -
             blob_id = _blob(context, inventory, "attachment", index, size)
             with context.runtime.transaction() as conn:
                 conn.execute(
-                    text("""INSERT INTO offerloom.application_attachments
+                    text("""INSERT INTO bonafides.application_attachments
                     (owner_id,application_id,blob_id,display_name)
                     VALUES(:owner,:application,:blob,:name)"""),
                     {
@@ -176,7 +176,7 @@ def _accepted_originals(context: SourceContext, inventory: BlobInventory) -> Non
         }
         with context.runtime.transaction() as conn:
             conn.execute(
-                text("""INSERT INTO offerloom.workflow_runs
+                text("""INSERT INTO bonafides.workflow_runs
                 (owner_id,id,kind,state,dedupe_key,request_sha256,deadline_at,finished_at)
                 VALUES(:owner,:id,'profile_import','succeeded',:dedupe,:sha,
                 clock_timestamp()+interval '5 minutes',clock_timestamp())"""),
@@ -188,13 +188,13 @@ def _accepted_originals(context: SourceContext, inventory: BlobInventory) -> Non
                 },
             )
             conn.execute(
-                text("""INSERT INTO offerloom.import_batches
+                text("""INSERT INTO bonafides.import_batches
                 (owner_id,id,workflow_run_id,blob_id,media_type,byte_size,profile_version,
                 parsed_text,source_sha256,proposals,review,review_expires_at,reviewed_at,
                 merged_profile_revision_id)
                 SELECT :owner,:id,:workflow,:blob,'application/pdf',:size,version,:source,:sha,
                 CAST(:proposals AS jsonb),CAST(:review AS jsonb),clock_timestamp()+interval '1 day',
-                clock_timestamp(),current_revision_id FROM offerloom.profiles WHERE owner_id=:owner"""),
+                clock_timestamp(),current_revision_id FROM bonafides.profiles WHERE owner_id=:owner"""),
                 {
                     "owner": context.owner_id,
                     "id": import_id,
@@ -208,12 +208,12 @@ def _accepted_originals(context: SourceContext, inventory: BlobInventory) -> Non
                 },
             )
             conn.execute(
-                text("""INSERT INTO offerloom.evidence_records(owner_id,id,current_revision_id)
+                text("""INSERT INTO bonafides.evidence_records(owner_id,id,current_revision_id)
                 VALUES(:owner,:id,:revision)"""),
                 {"owner": context.owner_id, "id": evidence_id, "revision": revision_id},
             )
             conn.execute(
-                text("""INSERT INTO offerloom.evidence_revisions
+                text("""INSERT INTO bonafides.evidence_revisions
                 (owner_id,id,evidence_id,revision_no,payload,blob_id,content_sha256)
                 VALUES(:owner,:id,:evidence,1,CAST(:payload AS jsonb),:blob,:sha)"""),
                 {
@@ -235,14 +235,14 @@ def _approved_import(context: SourceContext, digest: str) -> Prepared:
     with context.runtime.transaction() as conn:
         owner = _owner(conn, context.owner_id)
         namespace = conn.execute(
-            text("SELECT namespace_id FROM offerloom.installation_state WHERE singleton")
+            text("SELECT namespace_id FROM bonafides.installation_state WHERE singleton")
         ).scalar_one()
         conn.execute(
-            text("""INSERT INTO offerloom.workflow_runs
+            text("""INSERT INTO bonafides.workflow_runs
             (owner_id,id,kind,input,dedupe_key,request_sha256,deadline_at,maintenance_epoch)
             SELECT :owner,:id,'portable_import',CAST(:input AS jsonb),:dedupe,:sha,
             clock_timestamp()+interval '5 minutes',maintenance_epoch
-            FROM offerloom.installation_state WHERE singleton"""),
+            FROM bonafides.installation_state WHERE singleton"""),
             {
                 "owner": context.owner_id,
                 "id": identifier,
@@ -266,7 +266,7 @@ def _approved_import(context: SourceContext, digest: str) -> Prepared:
     _approve(context.runtime.engine, owner, prepared)
     with context.identity.admin.transaction() as conn:
         conn.execute(
-            text("""UPDATE offerloom.workflow_runs SET state='pending',version=version+1,
+            text("""UPDATE bonafides.workflow_runs SET state='pending',version=version+1,
             last_error_code=NULL WHERE owner_id=:owner AND id=:id"""),
             {"owner": context.owner_id, "id": identifier},
         )
@@ -311,7 +311,7 @@ def test_real_owner_quotas_roundtrip_streamed_archive(
     pdf_id = _blob(catalog, inventory, "pdf", 0, _PDF_BYTES)
     with catalog.runtime.transaction() as conn:
         conn.execute(
-            text("""INSERT INTO offerloom.document_artifacts
+            text("""INSERT INTO bonafides.document_artifacts
             (owner_id,document_revision_id,blob_id,renderer_version,format)
             VALUES(:owner,:revision,:blob,'synthetic-quota-pdf-v1','pdf')"""),
             {
@@ -322,14 +322,14 @@ def test_real_owner_quotas_roundtrip_streamed_archive(
         )
         totals = conn.execute(
             text("""SELECT sum(b.byte_length),max(b.byte_length),count(*)
-            FROM offerloom.application_attachments a JOIN offerloom.blobs b
+            FROM bonafides.application_attachments a JOIN bonafides.blobs b
             ON b.owner_id=a.owner_id AND b.id=a.blob_id WHERE a.owner_id=:owner"""),
             {"owner": catalog.owner_id},
         ).one()
         assert tuple(totals) == (_ATTACHMENT_BYTES, 10 * _MIB, 103)
         per_application = conn.execute(
-            text("""SELECT sum(b.byte_length),count(*) FROM offerloom.application_attachments a
-            JOIN offerloom.blobs b ON b.owner_id=a.owner_id AND b.id=a.blob_id
+            text("""SELECT sum(b.byte_length),count(*) FROM bonafides.application_attachments a
+            JOIN bonafides.blobs b ON b.owner_id=a.owner_id AND b.id=a.blob_id
             WHERE a.owner_id=:owner GROUP BY a.application_id"""),
             {"owner": catalog.owner_id},
         ).all()
@@ -338,7 +338,7 @@ def test_real_owner_quotas_roundtrip_streamed_archive(
         assert all(row[1] <= 100 for row in per_application)
         assert tuple(
             conn.execute(
-                text("""SELECT sum(byte_size),max(byte_size),count(*) FROM offerloom.import_batches
+                text("""SELECT sum(byte_size),max(byte_size),count(*) FROM bonafides.import_batches
             WHERE owner_id=:owner"""),
                 {"owner": catalog.owner_id},
             ).one()
@@ -413,14 +413,14 @@ def test_real_owner_quotas_roundtrip_streamed_archive(
             assert restored.manifest.records[family] == manifest.records[family], family
         assert (
             conn.execute(
-                text("SELECT count(*) FROM offerloom.import_batches WHERE owner_id=:owner"),
+                text("SELECT count(*) FROM bonafides.import_batches WHERE owner_id=:owner"),
                 {"owner": catalog.owner_id},
             ).scalar_one()
             == 0
         )  # Workflow state is excluded; accepted original evidence is retained.
         actual = conn.execute(
             text(
-                "SELECT id,sha256,byte_length,storage_key FROM offerloom.blobs WHERE owner_id=:owner"
+                "SELECT id,sha256,byte_length,storage_key FROM bonafides.blobs WHERE owner_id=:owner"
             ),
             {"owner": catalog.owner_id},
         ).all()

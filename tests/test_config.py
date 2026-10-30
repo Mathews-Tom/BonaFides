@@ -12,8 +12,8 @@ from cryptography.exceptions import InvalidTag
 from hypothesis import given
 from hypothesis import strategies as st
 
-from offerloom.config import ConfigurationError, MigrationSettings, Settings, read_secret
-from offerloom.crypto import (
+from bonafides.config import ConfigurationError, MigrationSettings, Settings, read_secret
+from bonafides.crypto import (
     EnvelopeContext,
     Keyring,
     canonical_provider_origin,
@@ -36,7 +36,7 @@ def keyring() -> Keyring:
 
 def environment(tmp_path: Path) -> dict[str, str]:
     dsn = tmp_path / "dsn"
-    dsn.write_text("postgresql://owner:private-password@localhost/offerloom_test")
+    dsn.write_text("postgresql://owner:private-password@localhost/bonafides_test")
     dsn.chmod(0o600)
     keys = tmp_path / "keys"
     keys.write_text(
@@ -56,12 +56,12 @@ def environment(tmp_path: Path) -> dict[str, str]:
     for directory in (blobs, spool, import_spool):
         directory.mkdir()
     return {
-        "OFFERLOOM_DATABASE_DSN_FILE": str(dsn),
-        "OFFERLOOM_KEYRING_FILE": str(keys),
-        "OFFERLOOM_ORIGIN": "http://localhost:8000",
-        "OFFERLOOM_BLOB_ROOT": str(blobs),
-        "OFFERLOOM_RENDERER_SPOOL": str(spool),
-        "OFFERLOOM_IMPORT_SPOOL": str(import_spool),
+        "BONAFIDES_DATABASE_DSN_FILE": str(dsn),
+        "BONAFIDES_KEYRING_FILE": str(keys),
+        "BONAFIDES_ORIGIN": "http://localhost:8000",
+        "BONAFIDES_BLOB_ROOT": str(blobs),
+        "BONAFIDES_RENDERER_SPOOL": str(spool),
+        "BONAFIDES_IMPORT_SPOOL": str(import_spool),
     }
 
 
@@ -80,11 +80,11 @@ def test_settings_load_only_explicit_secret_files(tmp_path: Path) -> None:
 def test_local_model_route_is_explicit_and_not_auto_provisioned(tmp_path: Path) -> None:
     env = environment(tmp_path)
     path = tmp_path / "operator-owned-route.json"
-    env["OFFERLOOM_LOCAL_MODEL_ROUTE_FILE"] = str(path)
+    env["BONAFIDES_LOCAL_MODEL_ROUTE_FILE"] = str(path)
     settings = Settings.from_env(env)
     assert settings.local_model_route_file == path
     assert not path.exists()
-    env["OFFERLOOM_LOCAL_MODEL_ROUTE_FILE"] = ""
+    env["BONAFIDES_LOCAL_MODEL_ROUTE_FILE"] = ""
     assert Settings.from_env(env).local_model_route_file is None
 
 
@@ -94,7 +94,7 @@ def test_local_model_route_is_explicit_and_not_auto_provisioned(tmp_path: Path) 
 )
 def test_missing_required_configuration_names_only(tmp_path: Path, field: str) -> None:
     env = environment(tmp_path)
-    del env[f"OFFERLOOM_{field}"]
+    del env[f"BONAFIDES_{field}"]
     with pytest.raises(ConfigurationError) as error:
         Settings.from_env(env)
     assert "private-password" not in str(error.value)
@@ -115,7 +115,7 @@ def test_missing_required_configuration_names_only(tmp_path: Path, field: str) -
 )
 def test_origin_is_exact_secure_or_loopback(tmp_path: Path, origin: str) -> None:
     env = environment(tmp_path)
-    env["OFFERLOOM_ORIGIN"] = origin
+    env["BONAFIDES_ORIGIN"] = origin
     with pytest.raises(ConfigurationError):
         Settings.from_env(env)
 
@@ -131,7 +131,7 @@ def test_origin_is_exact_secure_or_loopback(tmp_path: Path, origin: str) -> None
 )
 def test_invalid_database_configuration_redacted(tmp_path: Path, dsn: str) -> None:
     env = environment(tmp_path)
-    Path(env["OFFERLOOM_DATABASE_DSN_FILE"]).write_text(dsn)
+    Path(env["BONAFIDES_DATABASE_DSN_FILE"]).write_text(dsn)
     with pytest.raises(ConfigurationError) as error:
         Settings.from_env(env)
     assert dsn not in str(error.value)
@@ -160,7 +160,7 @@ def test_rejects_world_readable_secret_and_symlink(tmp_path: Path) -> None:
 )
 def test_rejects_shared_private_roots(tmp_path: Path, left: str, right: str) -> None:
     env = environment(tmp_path)
-    env[f"OFFERLOOM_{left}"] = env[f"OFFERLOOM_{right}"]
+    env[f"BONAFIDES_{left}"] = env[f"BONAFIDES_{right}"]
     with pytest.raises(ConfigurationError):
         Settings.from_env(env)
 
@@ -169,9 +169,9 @@ def test_migration_configuration_needs_only_migration_secret(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     secret = tmp_path / "migration"
-    secret.write_text("postgresql://migrator:secret@localhost/offerloom_test")
+    secret.write_text("postgresql://migrator:secret@localhost/bonafides_test")
     secret.chmod(0o600)
-    monkeypatch.setenv("OFFERLOOM_MIGRATION_DSN_FILE", str(secret))
+    monkeypatch.setenv("BONAFIDES_MIGRATION_DSN_FILE", str(secret))
     assert MigrationSettings.load().migration_dsn is not None
 
 

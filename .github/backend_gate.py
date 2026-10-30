@@ -29,7 +29,7 @@ def main() -> int:
             "--env-file",
             str(env_file),
             "--project",
-            "offerloom-proof-ci-backend",
+            "bonafides-proof-ci-backend",
             "--benchmark",
         ]
     )
@@ -43,7 +43,7 @@ def main() -> int:
         "--env-file",
         str(env_file),
         "--project-name",
-        "offerloom-proof-ci-backend",
+        "bonafides-proof-ci-backend",
     ]
     call([*compose, "up", "-d", "--wait", "db", "db-access"])
     call(
@@ -56,27 +56,27 @@ def main() -> int:
             "-U",
             "postgres",
             "-d",
-            "offerloom",
+            "bonafides",
             "-X",
             "-v",
             "ON_ERROR_STOP=1",
         ],
-        data="CREATE DATABASE offerloom_test OWNER offerloom_migrator; REVOKE ALL ON DATABASE offerloom_test FROM PUBLIC; GRANT CONNECT ON DATABASE offerloom_test TO offerloom_runtime;\n",
+        data="CREATE DATABASE bonafides_test OWNER bonafides_migrator; REVOKE ALL ON DATABASE bonafides_test FROM PUBLIC; GRANT CONNECT ON DATABASE bonafides_test TO bonafides_runtime;\n",
     )
     env = dict(os.environ)
-    env["OFFERLOOM_TEST_PARSER_IMAGE"] = env.get("OFFERLOOM_IMAGE", "offerloom-m0:local")
+    env["BONAFIDES_TEST_PARSER_IMAGE"] = env.get("BONAFIDES_IMAGE", "bonafides:local")
     for role, name in (
-        ("migrator", "OFFERLOOM_TEST_MIGRATION_DSN"),
-        ("runtime", "OFFERLOOM_TEST_RUNTIME_DSN"),
+        ("migrator", "BONAFIDES_TEST_MIGRATION_DSN"),
+        ("runtime", "BONAFIDES_TEST_RUNTIME_DSN"),
     ):
         dsn = (
             (secret_dir / f"{role}_dsn")
             .read_text()
             .strip()
-            .replace("@db:5432/offerloom", "@localhost:15432/offerloom_test")
+            .replace("@db:5432/bonafides", "@localhost:15432/bonafides_test")
         )
         env[name] = dsn
-    env["OFFERLOOM_TEST_DSN"] = env["OFFERLOOM_TEST_RUNTIME_DSN"]
+    env["BONAFIDES_TEST_DSN"] = env["BONAFIDES_TEST_RUNTIME_DSN"]
     for arguments in (
         ["uv", "run", "--frozen", "ruff", "check", "."],
         ["uv", "run", "--frozen", "ruff", "format", "--check", "."],

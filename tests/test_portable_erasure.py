@@ -28,13 +28,13 @@ from test_sources import catalog as catalog
 from test_suitability import _posting, _profile, _queue, _route, _view
 from test_tracking import _application
 
-from offerloom import suitability
-from offerloom.approvals import consume_action_approval, prepare_action_approval
-from offerloom.import_parser import ImportParserClient
-from offerloom.installation_control import Control, InstallationMaintenance, begin_control
-from offerloom.portable_erasure import delete_controlled_owner_data, purge_scope
-from offerloom.storage import BlobStore, StoredBlob
-from offerloom.workflows import assert_fence, claim, claim_control, enqueue
+from bonafides import suitability
+from bonafides.approvals import consume_action_approval, prepare_action_approval
+from bonafides.import_parser import ImportParserClient
+from bonafides.installation_control import Control, InstallationMaintenance, begin_control
+from bonafides.portable_erasure import delete_controlled_owner_data, purge_scope
+from bonafides.storage import BlobStore, StoredBlob
+from bonafides.workflows import assert_fence, claim, claim_control, enqueue
 
 
 def _checkpoint(
@@ -50,19 +50,19 @@ def _checkpoint(
     with maintenance.quiescent():
         with context.identity.admin.transaction() as conn:
             conn.execute(
-                text("""INSERT INTO offerloom.installation_backups(
+                text("""INSERT INTO bonafides.installation_backups(
                 id,owner_id,namespace_id,maintenance_epoch,workspace_version,
                 installation_auth_epoch,owner_auth_epoch,schema_versions,
                 image_sha256,source_sha256,config_sha256,keyring_sha256,recipient_sha256,
                 file_name,cipher_sha256,manifest_sha256,byte_length,captured_at,
                 restore_verified_at,restore_receipt_sha256,restore_target_namespace)
                 SELECT :id,:owner,:namespace,:epoch,s.workspace_version,i.auth_epoch,o.auth_epoch,
-                (SELECT jsonb_object_agg(version::text,source_sha256) FROM offerloom.schema_migrations),
+                (SELECT jsonb_object_agg(version::text,source_sha256) FROM bonafides.schema_migrations),
                 repeat('0',64),repeat('0',64),repeat('0',64),repeat('0',64),repeat('0',64),
                 :file,repeat('0',64),repeat('0',64),1,clock_timestamp(),
                 clock_timestamp(),repeat('0',64),:target
-                FROM offerloom.owner_settings s JOIN offerloom.owners o ON o.id=s.owner_id
-                CROSS JOIN offerloom.installation_state i WHERE s.owner_id=:owner AND i.singleton"""),
+                FROM bonafides.owner_settings s JOIN bonafides.owners o ON o.id=s.owner_id
+                CROSS JOIN bonafides.installation_state i WHERE s.owner_id=:owner AND i.singleton"""),
                 {
                     "id": identifier,
                     "owner": context.owner_id,
@@ -91,7 +91,7 @@ def _deletion(context: SourceContext, application: dict[str, Any] | None = None)
         owner = _owner(conn, context.owner_id)
         identifier = _queue_control(conn, context.owner_id, "privacy_delete")
         namespace = conn.execute(
-            text("SELECT namespace_id FROM offerloom.installation_state WHERE singleton")
+            text("SELECT namespace_id FROM bonafides.installation_state WHERE singleton")
         ).scalar_one()
         payload: dict[str, object] = {
             "preview_sha256": "2" * 64,
@@ -117,7 +117,7 @@ def _deletion(context: SourceContext, application: dict[str, Any] | None = None)
     # actual SQL/filesystem execution below use production code and runtime role.
     with context.identity.admin.transaction() as conn:
         conn.execute(
-            text("""UPDATE offerloom.workflow_runs SET state='pending',version=version+1,
+            text("""UPDATE bonafides.workflow_runs SET state='pending',version=version+1,
             last_error_code=NULL WHERE owner_id=:owner AND id=:id"""),
             {"owner": context.owner_id, "id": identifier},
         )
@@ -139,7 +139,7 @@ def _attachment(context: SourceContext, application: dict[str, Any], data: bytes
     stored = BlobStore(context.identity.settings.blob_root).put_bytes(context.owner_id, data)
     with context.runtime.transaction() as conn:
         blob_id = conn.execute(
-            text("""INSERT INTO offerloom.blobs(owner_id,sha256,byte_length,media_type,storage_key)
+            text("""INSERT INTO bonafides.blobs(owner_id,sha256,byte_length,media_type,storage_key)
             VALUES(:owner,:sha,:size,'text/plain',:key)
             ON CONFLICT(owner_id,sha256) DO UPDATE SET sha256=EXCLUDED.sha256 RETURNING id"""),
             {
@@ -150,7 +150,7 @@ def _attachment(context: SourceContext, application: dict[str, Any], data: bytes
             },
         ).scalar_one()
         conn.execute(
-            text("""INSERT INTO offerloom.application_attachments(owner_id,application_id,blob_id,display_name)
+            text("""INSERT INTO bonafides.application_attachments(owner_id,application_id,blob_id,display_name)
             VALUES(:owner,:application,:blob,'synthetic-private.txt')"""),
             {"owner": context.owner_id, "application": UUID(application["id"]), "blob": blob_id},
         )
@@ -173,12 +173,12 @@ def test_application_erasure_preserves_neighbors_and_shared_bytes_and_blocks_old
     )
     with catalog.runtime.transaction() as conn:
         request_key = conn.execute(
-            text("""SELECT key FROM offerloom.idempotency_records
+            text("""SELECT key FROM bonafides.idempotency_records
             WHERE owner_id=:owner AND response_status=201 AND response_body->>'id'=:id"""),
             {"owner": catalog.owner_id, "id": first["id"]},
         ).scalar_one()
         posting_id = conn.execute(
-            text("""SELECT o.posting_id FROM offerloom.applications a JOIN offerloom.saved_opportunities o
+            text("""SELECT o.posting_id FROM bonafides.applications a JOIN bonafides.saved_opportunities o
             ON o.owner_id=a.owner_id AND o.id=a.opportunity_id WHERE a.owner_id=:owner AND a.id=:id"""),
             {"owner": catalog.owner_id, "id": UUID(first["id"])},
         ).scalar_one()
@@ -191,7 +191,7 @@ def test_application_erasure_preserves_neighbors_and_shared_bytes_and_blocks_old
         unrelated = enqueue(conn, catalog.owner_id, "document_generate", unrelated_input)
         if collision == "cached_response":
             conn.execute(
-                text("""INSERT INTO offerloom.idempotency_records(
+                text("""INSERT INTO bonafides.idempotency_records(
                 owner_id,route_key,key,request_sha256,response_status,response_body,expires_at)
                 VALUES(:owner,'/synthetic/retained','retained-cache-key',repeat('4',64),200,
                 jsonb_build_object('id',CAST(:id AS text),'note',CAST(:note AS text)),
@@ -208,30 +208,30 @@ def test_application_erasure_preserves_neighbors_and_shared_bytes_and_blocks_old
             assert_fence(conn, old)
         maintenance.finish(result)
     with catalog.runtime.transaction() as conn:
-        assert conn.execute(text("SELECT id FROM offerloom.applications")).scalars().all() == [
+        assert conn.execute(text("SELECT id FROM bonafides.applications")).scalars().all() == [
             UUID(second["id"])
         ]
-        assert conn.execute(text("SELECT count(*) FROM offerloom.job_postings")).scalar_one() == 2
-        assert conn.execute(text("SELECT id FROM offerloom.document_drafts")).scalar_one() == UUID(
+        assert conn.execute(text("SELECT count(*) FROM bonafides.job_postings")).scalar_one() == 2
+        assert conn.execute(text("SELECT id FROM bonafides.document_drafts")).scalar_one() == UUID(
             base["id"]
         )
         assert (
             conn.execute(
-                text("SELECT state::text FROM offerloom.workflow_runs WHERE id=:id"),
+                text("SELECT state::text FROM bonafides.workflow_runs WHERE id=:id"),
                 {"id": unrelated},
             ).scalar_one()
             == "pending"
         )
         assert (
             conn.execute(
-                text("SELECT state::text FROM offerloom.workflow_runs WHERE id=:id"),
+                text("SELECT state::text FROM bonafides.workflow_runs WHERE id=:id"),
                 {"id": related},
             ).scalar_one()
             == "cancelled"
         )
         if collision == "cached_response":
             assert conn.execute(
-                text("""SELECT response_body FROM offerloom.idempotency_records
+                text("""SELECT response_body FROM bonafides.idempotency_records
                 WHERE owner_id=:owner AND route_key='/synthetic/retained'"""),
                 {"owner": catalog.owner_id},
             ).scalar_one() == {"id": second["id"], "note": first["id"]}
@@ -255,7 +255,7 @@ def test_application_erasure_preserves_neighbors_and_shared_bytes_and_blocks_old
     )
     assert replay.status_code == 410 and replay.json()["code"] == "data_erased"
     with catalog.runtime.transaction() as conn:
-        assert conn.execute(text("SELECT id FROM offerloom.applications")).scalars().all() == [
+        assert conn.execute(text("SELECT id FROM bonafides.applications")).scalars().all() == [
             UUID(second["id"])
         ]
 
@@ -278,18 +278,18 @@ def test_unwritable_live_purge_stays_closed_then_resumes_exact_remaining_bytes(
             assert path.read_bytes() == b"Synthetic purge must actually unlink this"
             with catalog.runtime.transaction() as conn:
                 assert (
-                    conn.execute(text("SELECT count(*) FROM offerloom.applications")).scalar_one()
+                    conn.execute(text("SELECT count(*) FROM bonafides.applications")).scalar_one()
                     == 0
                 )
                 assert (
                     conn.execute(
-                        text("SELECT maintenance_active FROM offerloom.installation_state")
+                        text("SELECT maintenance_active FROM bonafides.installation_state")
                     ).scalar_one()
                     is True
                 )
                 assert (
                     conn.execute(
-                        text("SELECT completed_at FROM offerloom.portable_purges")
+                        text("SELECT completed_at FROM bonafides.portable_purges")
                     ).scalar_one()
                     is None
                 )
@@ -304,12 +304,12 @@ def test_unwritable_live_purge_stays_closed_then_resumes_exact_remaining_bytes(
     with catalog.runtime.transaction() as conn:
         assert (
             conn.execute(
-                text("SELECT maintenance_active FROM offerloom.installation_state")
+                text("SELECT maintenance_active FROM bonafides.installation_state")
             ).scalar_one()
             is False
         )
         assert (
-            conn.execute(text("SELECT outcome FROM offerloom.portable_purge_items")).scalar_one()
+            conn.execute(text("SELECT outcome FROM bonafides.portable_purge_items")).scalar_one()
             == "removed"
         )
 
@@ -344,7 +344,7 @@ def test_workspace_erasure_removes_reviewed_source_and_profile_history_but_keeps
     with catalog.runtime.transaction() as conn:
         previous_workflow = enqueue(conn, catalog.owner_id, "posting_extract", {})
         conn.execute(
-            text("""UPDATE offerloom.local_model_reservations SET owner_id=:owner,
+            text("""UPDATE bonafides.local_model_reservations SET owner_id=:owner,
             workflow_run_id=:workflow,fence=1,reserved_until=clock_timestamp()
             WHERE singleton"""),
             {"owner": catalog.owner_id, "workflow": previous_workflow},
@@ -365,16 +365,16 @@ def test_workspace_erasure_removes_reviewed_source_and_profile_history_but_keeps
             "source_policy_reviews",
             "blobs",
         ):
-            assert conn.execute(text(f"SELECT count(*) FROM offerloom.{name}")).scalar_one() == 0
+            assert conn.execute(text(f"SELECT count(*) FROM bonafides.{name}")).scalar_one() == 0
         assert (
             conn.execute(
-                text("SELECT count(*) FROM offerloom.profile_revisions WHERE profile_id=:profile"),
+                text("SELECT count(*) FROM bonafides.profile_revisions WHERE profile_id=:profile"),
                 {"profile": UUID(previous_profile["id"])},
             ).scalar_one()
             == 0
         )
         assert (
-            conn.execute(text("SELECT id FROM offerloom.owners")).scalar_one() == catalog.owner_id
+            conn.execute(text("SELECT id FROM bonafides.owners")).scalar_one() == catalog.owner_id
         )
     assert not (
         catalog.identity.settings.blob_root / str(catalog.owner_id) / stored.storage_key

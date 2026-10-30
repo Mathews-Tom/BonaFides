@@ -23,10 +23,10 @@ from test_sources import SourceContext
 from test_sources import catalog as catalog
 from test_suitability import _profile
 
-from offerloom import suitability, tracking
-from offerloom.commands import canonical_json
-from offerloom.problems import Problem
-from offerloom.storage import BlobStore
+from bonafides import suitability, tracking
+from bonafides.commands import canonical_json
+from bonafides.problems import Problem
+from bonafides.storage import BlobStore
 
 
 def _application(context: SourceContext, **changes: object) -> dict[str, Any]:
@@ -190,21 +190,21 @@ def test_saved_only_default_creation_replay_repeat_and_independence(catalog: Sou
     with catalog.runtime.transaction() as conn:
         assert (
             conn.execute(
-                text("SELECT count(*) FROM offerloom.workflow_runs WHERE owner_id=:owner"),
+                text("SELECT count(*) FROM bonafides.workflow_runs WHERE owner_id=:owner"),
                 {"owner": catalog.owner_id},
             ).scalar_one()
             == 0
         )
         assert (
             conn.execute(
-                text("SELECT count(*) FROM offerloom.model_runs WHERE owner_id=:owner"),
+                text("SELECT count(*) FROM bonafides.model_runs WHERE owner_id=:owner"),
                 {"owner": catalog.owner_id},
             ).scalar_one()
             == 0
         )
         assert (
             conn.execute(
-                text("SELECT count(*) FROM offerloom.external_accounts WHERE owner_id=:owner"),
+                text("SELECT count(*) FROM bonafides.external_accounts WHERE owner_id=:owner"),
                 {"owner": catalog.owner_id},
             ).scalar_one()
             == 0
@@ -336,7 +336,7 @@ def test_arbitrary_immutable_historical_corrections_fix_distinct_period_counts(
     with pytest.raises(DBAPIError), catalog.runtime.transaction() as conn:
         conn.execute(
             text(
-                "UPDATE offerloom.application_stage_events SET reason='forbidden' WHERE owner_id=:owner AND id=:id"
+                "UPDATE bonafides.application_stage_events SET reason='forbidden' WHERE owner_id=:owner AND id=:id"
             ),
             {"owner": catalog.owner_id, "id": UUID(applied["id"])},
         )
@@ -409,7 +409,7 @@ def test_signed_owner_filter_bound_keysets_equal_timestamps_and_literal_search(
     with catalog.identity.admin.transaction() as conn:
         conn.execute(
             text(
-                "UPDATE offerloom.applications SET created_at='2026-01-02T00:00:00Z' WHERE owner_id=:owner"
+                "UPDATE bonafides.applications SET created_at='2026-01-02T00:00:00Z' WHERE owner_id=:owner"
             ),
             {"owner": catalog.owner_id},
         )
@@ -477,7 +477,7 @@ def test_history_paginates_beyond_child_quotas_and_next_stage_is_monotonic(
     app = _application(catalog)
     with catalog.runtime.transaction() as conn:
         conn.execute(
-            text("""INSERT INTO offerloom.application_stage_events(owner_id,application_id,to_stage,effective_at,sequence)
+            text("""INSERT INTO bonafides.application_stage_events(owner_id,application_id,to_stage,effective_at,sequence)
             SELECT :owner,:app,'applied',clock_timestamp(),n FROM generate_series(2,225) n"""),
             {"owner": catalog.owner_id, "app": UUID(app["id"])},
         )
@@ -814,7 +814,7 @@ def test_attachment_download_is_inert_parent_owner_bound_and_hash_checked(
     with catalog.runtime.transaction() as conn:
         conn.execute(
             text(
-                "INSERT INTO offerloom.blobs(owner_id,sha256,byte_length,media_type,storage_key) VALUES(:owner,:sha,:size,'application/pdf',:key)"
+                "INSERT INTO bonafides.blobs(owner_id,sha256,byte_length,media_type,storage_key) VALUES(:owner,:sha,:size,'application/pdf',:key)"
             ),
             {
                 "owner": catalog.owner_id,
@@ -828,7 +828,7 @@ def test_attachment_download_is_inert_parent_owner_bound_and_hash_checked(
         assert (
             conn.execute(
                 text(
-                    "SELECT media_type FROM offerloom.blobs WHERE owner_id=:owner AND sha256=:sha"
+                    "SELECT media_type FROM bonafides.blobs WHERE owner_id=:owner AND sha256=:sha"
                 ),
                 {"owner": catalog.owner_id, "sha": blob.sha256},
             ).scalar_one()
@@ -1019,7 +1019,7 @@ def test_notes_contacts_private_projection_bounds_and_child_parent_relationships
         )
         outbox = (
             conn.execute(
-                text("SELECT payload FROM offerloom.outbox_events WHERE owner_id=:owner"),
+                text("SELECT payload FROM bonafides.outbox_events WHERE owner_id=:owner"),
                 {"owner": catalog.owner_id},
             )
             .scalars()
@@ -1028,7 +1028,7 @@ def test_notes_contacts_private_projection_bounds_and_child_parent_relationships
         assert marker not in json.dumps(outbox)
         audit = (
             conn.execute(
-                text("SELECT detail FROM offerloom.audit_events WHERE owner_id=:owner"),
+                text("SELECT detail FROM bonafides.audit_events WHERE owner_id=:owner"),
                 {"owner": catalog.owner_id},
             )
             .scalars()
@@ -1036,12 +1036,12 @@ def test_notes_contacts_private_projection_bounds_and_child_parent_relationships
         )
         assert marker not in json.dumps(audit)
         conn.execute(
-            text("""INSERT INTO offerloom.application_notes(owner_id,application_id,body)
+            text("""INSERT INTO bonafides.application_notes(owner_id,application_id,body)
             SELECT :owner,:app,'Synthetic quota' FROM generate_series(1,99)"""),
             {"owner": catalog.owner_id, "app": UUID(app["id"])},
         )
         conn.execute(
-            text("""INSERT INTO offerloom.application_contacts(owner_id,application_id,display_name)
+            text("""INSERT INTO bonafides.application_contacts(owner_id,application_id,display_name)
             SELECT :owner,:app,'Synthetic quota' FROM generate_series(1,99)"""),
             {"owner": catalog.owner_id, "app": UUID(app["id"])},
         )
@@ -1296,7 +1296,7 @@ def test_appointment_quota_rejects_addition_without_hiding_retained_rows(
     app = _application(catalog)
     with catalog.runtime.transaction() as conn:
         conn.execute(
-            text("""INSERT INTO offerloom.appointments(owner_id,application_id,kind,title,starts_at,local_start,timezone,display_timezone)
+            text("""INSERT INTO bonafides.appointments(owner_id,application_id,kind,title,starts_at,local_start,timezone,display_timezone)
             SELECT :owner,:app,'follow_up','Synthetic retained quota',timestamptz '2026-10-01 00:00:00+00',
             timestamp '2026-10-01 00:00:00','UTC','UTC' FROM generate_series(1,200)"""),
             {"owner": catalog.owner_id, "app": UUID(app["id"])},
@@ -1333,7 +1333,7 @@ def test_attachment_reference_count_and_byte_quotas_use_retained_real_blobs(
     with catalog.runtime.transaction() as conn:
         blob_id = conn.execute(
             text(
-                "SELECT blob_id FROM offerloom.application_attachments WHERE owner_id=:owner AND id=:id"
+                "SELECT blob_id FROM bonafides.application_attachments WHERE owner_id=:owner AND id=:id"
             ),
             {"owner": catalog.owner_id, "id": UUID(app["attachment_id"])},
         ).scalar_one()
@@ -1347,7 +1347,7 @@ def test_attachment_reference_count_and_byte_quotas_use_retained_real_blobs(
     with catalog.runtime.transaction() as conn:
         for target, extra in targets:
             conn.execute(
-                text("""INSERT INTO offerloom.application_attachments(owner_id,application_id,blob_id,display_name)
+                text("""INSERT INTO bonafides.application_attachments(owner_id,application_id,blob_id,display_name)
                 SELECT :owner,:app,:blob,'Synthetic retained reference.txt' FROM generate_series(1,:n)"""),
                 {"owner": catalog.owner_id, "app": UUID(target["id"]), "blob": blob_id, "n": extra},
             )
@@ -1400,7 +1400,7 @@ def test_attachment_replay_csrf_cas_and_changed_payload_do_not_duplicate_bytes(
         assert (
             conn.execute(
                 text(
-                    "SELECT count(*) FROM offerloom.application_attachments WHERE owner_id=:owner"
+                    "SELECT count(*) FROM bonafides.application_attachments WHERE owner_id=:owner"
                 ),
                 {"owner": catalog.owner_id},
             ).scalar_one()
@@ -1408,7 +1408,7 @@ def test_attachment_replay_csrf_cas_and_changed_payload_do_not_duplicate_bytes(
         )
         assert (
             conn.execute(
-                text("SELECT count(*) FROM offerloom.blobs WHERE owner_id=:owner"),
+                text("SELECT count(*) FROM bonafides.blobs WHERE owner_id=:owner"),
                 {"owner": catalog.owner_id},
             ).scalar_one()
             == 1

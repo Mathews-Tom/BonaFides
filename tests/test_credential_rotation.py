@@ -23,18 +23,18 @@ from sqlalchemy.engine import RowMapping
 from test_database import PGContext
 from test_database import pg_context as pg_context
 
-from offerloom.auth import recover_password
-from offerloom.backup_archive import BackupError, BackupFile, BackupManifest
-from offerloom.cli import main
-from offerloom.credential_rotation import (
+from bonafides.auth import recover_password
+from bonafides.backup_archive import BackupError, BackupFile, BackupManifest
+from bonafides.cli import main
+from bonafides.credential_rotation import (
     CredentialBinding,
     CredentialRotationConfiguration,
     rotate_credentials,
 )
-from offerloom.crypto import Envelope, EnvelopeContext, Keyring, decrypt, encrypt
-from offerloom.db import Database
-from offerloom.execution_guard import LOCK_NAME, ExecutionGuard
-from offerloom.installation_restore import _escrow, _rebind_credentials, _revoke_restored_authority
+from bonafides.crypto import Envelope, EnvelopeContext, Keyring, decrypt, encrypt
+from bonafides.db import Database
+from bonafides.execution_guard import LOCK_NAME, ExecutionGuard
+from bonafides.installation_restore import _escrow, _rebind_credentials, _revoke_restored_authority
 
 
 @dataclass(frozen=True)
@@ -74,13 +74,13 @@ def rotation_case(pg_context: PGContext, tmp_path: Path) -> Iterator[RotationCas
     with ExecutionGuard(blob) as guard, pg_context.migrator.begin() as conn:
         conn.execute(
             text(
-                "UPDATE offerloom.installation_state SET execution_guard_id=:guard WHERE singleton"
+                "UPDATE bonafides.installation_state SET execution_guard_id=:guard WHERE singleton"
             ),
             {"guard": guard.identity},
         )
         state = conn.execute(
             text(
-                "SELECT namespace_id,maintenance_epoch FROM offerloom.installation_state WHERE singleton"
+                "SELECT namespace_id,maintenance_epoch FROM bonafides.installation_state WHERE singleton"
             )
         ).one()
     old_id, new_id = "old-" + uuid4().hex, "new-" + uuid4().hex
@@ -97,7 +97,7 @@ def rotation_case(pg_context: PGContext, tmp_path: Path) -> Iterator[RotationCas
     contexts: dict[UUID, EnvelopeContext] = {}
     with pg_context.migrator.begin() as conn:
         conn.execute(
-            text("""INSERT INTO offerloom.external_accounts
+            text("""INSERT INTO bonafides.external_accounts
             (owner_id,id,provider_key,external_subject_hash,status)
             VALUES(:owner,:id,'synthetic-provider',:subject,'disconnected')"""),
             {"owner": pg_context.owner_id, "id": account, "subject": uuid4().hex},
@@ -108,7 +108,7 @@ def rotation_case(pg_context: PGContext, tmp_path: Path) -> Iterator[RotationCas
             context = EnvelopeContext(state.namespace_id, pg_context.owner_id, purpose, record)
             envelope = encrypt(old, context, plaintext)
             conn.execute(
-                text("""INSERT INTO offerloom.encrypted_credentials
+                text("""INSERT INTO bonafides.encrypted_credentials
                 (owner_id,id,external_account_id,purpose,key_id,algorithm,nonce,ciphertext)
                 VALUES(:owner,:id,:account,:purpose,:key,'AES-256-GCM',:nonce,:ciphertext)"""),
                 {
@@ -161,11 +161,11 @@ def rotation_case(pg_context: PGContext, tmp_path: Path) -> Iterator[RotationCas
         with pg_context.migrator.begin() as conn:
             conn.execute(
                 text(
-                    "UPDATE offerloom.installation_state SET maintenance_active=false WHERE singleton"
+                    "UPDATE bonafides.installation_state SET maintenance_active=false WHERE singleton"
                 )
             )
             conn.execute(
-                text("DELETE FROM offerloom.credential_key_usage WHERE key_id IN (:old,:new)"),
+                text("DELETE FROM bonafides.credential_key_usage WHERE key_id IN (:old,:new)"),
                 {"old": old_id, "new": new_id},
             )
 
@@ -175,7 +175,7 @@ def _rows(case: RotationCase) -> list[RowMapping]:
         return list(
             conn.execute(
                 text(
-                    "SELECT * FROM offerloom.encrypted_credentials WHERE owner_id=:owner ORDER BY id"
+                    "SELECT * FROM bonafides.encrypted_credentials WHERE owner_id=:owner ORDER BY id"
                 ),
                 {"owner": case.pg.owner_id},
             ).mappings()
@@ -205,7 +205,7 @@ def _assert_rotated(case: RotationCase) -> None:
             decrypt(case.old_keyring, context, envelope)
     with case.pg.migrator.begin() as conn:
         assert conn.execute(
-            text("SELECT status FROM offerloom.external_accounts WHERE id=:id"),
+            text("SELECT status FROM bonafides.external_accounts WHERE id=:id"),
             {"id": case.account_id},
         ).scalar_one() in ("disconnected", "reauthorize")
 
@@ -219,7 +219,7 @@ def test_rotation_reencrypts_every_class_with_fresh_nonce_and_preserves_lifecycl
     original_keyfile = case.config.credential_keyring_file.read_bytes()
     with case.pg.migrator.begin() as conn:
         conn.execute(
-            text("UPDATE offerloom.external_accounts SET status=:status WHERE id=:id"),
+            text("UPDATE bonafides.external_accounts SET status=:status WHERE id=:id"),
             {"status": status, "id": case.account_id},
         )
     receipt = rotate_credentials(case.config)
@@ -240,7 +240,7 @@ def test_rotation_reencrypts_every_class_with_fresh_nonce_and_preserves_lifecycl
         details = (
             conn.execute(
                 text(
-                    "SELECT detail FROM offerloom.audit_events WHERE action='credential_key_rotation'"
+                    "SELECT detail FROM bonafides.audit_events WHERE action='credential_key_rotation'"
                 )
             )
             .scalars()
@@ -260,7 +260,7 @@ def test_password_and_session_revocation_are_independent_of_credential_rotation(
     try:
         with db.transaction() as conn:
             session = conn.execute(
-                text("""INSERT INTO offerloom.sessions
+                text("""INSERT INTO bonafides.sessions
                 (owner_id,token_sha256,csrf_sha256,expires_at)
                 VALUES(:owner,repeat('b',64),repeat('c',64),now()+interval '1 day') RETURNING id"""),
                 {"owner": case.pg.owner_id},
@@ -270,29 +270,29 @@ def test_password_and_session_revocation_are_independent_of_credential_rotation(
         assert _rows(case) == old_rows
         with db.transaction() as conn:
             assert conn.execute(
-                text("SELECT revoked_at IS NOT NULL FROM offerloom.sessions WHERE id=:id"),
+                text("SELECT revoked_at IS NOT NULL FROM bonafides.sessions WHERE id=:id"),
                 {"id": session},
             ).scalar_one()
             owner_before = conn.execute(
-                text("SELECT password_hash,auth_epoch,version FROM offerloom.owners")
+                text("SELECT password_hash,auth_epoch,version FROM bonafides.owners")
             ).one()
             fresh = conn.execute(
-                text("""INSERT INTO offerloom.sessions
+                text("""INSERT INTO bonafides.sessions
                 (owner_id,token_sha256,csrf_sha256,expires_at,auth_epoch)
                 SELECT id,repeat('d',64),repeat('e',64),now()+interval '1 day',auth_epoch
-                FROM offerloom.owners RETURNING id""")
+                FROM bonafides.owners RETURNING id""")
             ).scalar_one()
         rotate_credentials(case.config)
         _assert_rotated(case)
         with db.transaction() as conn:
             assert (
                 conn.execute(
-                    text("SELECT password_hash,auth_epoch,version FROM offerloom.owners")
+                    text("SELECT password_hash,auth_epoch,version FROM bonafides.owners")
                 ).one()
                 == owner_before
             )
             assert conn.execute(
-                text("SELECT revoked_at IS NULL FROM offerloom.sessions WHERE id=:id"),
+                text("SELECT revoked_at IS NULL FROM bonafides.sessions WHERE id=:id"),
                 {"id": fresh},
             ).scalar_one()
     finally:
@@ -332,7 +332,7 @@ def test_preflight_authenticates_all_rows_and_rejects_bad_keys_without_partial_r
         ciphertext[-1] ^= 1
         with case.pg.migrator.begin() as conn:
             conn.execute(
-                text("UPDATE offerloom.encrypted_credentials SET ciphertext=:cipher WHERE id=:id"),
+                text("UPDATE bonafides.encrypted_credentials SET ciphertext=:cipher WHERE id=:id"),
                 {"cipher": bytes(ciphertext), "id": last["id"]},
             )
     before = _rows(case)
@@ -345,7 +345,7 @@ def test_preflight_authenticates_all_rows_and_rejects_bad_keys_without_partial_r
         assert (
             conn.execute(
                 text(
-                    "SELECT count(*) FROM offerloom.audit_events WHERE action='credential_key_rotation'"
+                    "SELECT count(*) FROM bonafides.audit_events WHERE action='credential_key_rotation'"
                 )
             ).scalar_one()
             == 0
@@ -372,7 +372,7 @@ def test_origin_bound_rows_cannot_be_silently_rebound_or_substituted(
             if change == "stored_origin":
                 conn.execute(
                     text(
-                        "UPDATE offerloom.encrypted_credentials SET provider_origin='https://other.example' WHERE id=:id"
+                        "UPDATE bonafides.encrypted_credentials SET provider_origin='https://other.example' WHERE id=:id"
                     ),
                     {"id": row["id"]},
                 )
@@ -386,7 +386,7 @@ def test_origin_bound_rows_cannot_be_silently_rebound_or_substituted(
             elif change == "purpose":
                 conn.execute(
                     text(
-                        "UPDATE offerloom.encrypted_credentials SET purpose='wrong-purpose' WHERE id=:id"
+                        "UPDATE bonafides.encrypted_credentials SET purpose='wrong-purpose' WHERE id=:id"
                     ),
                     {"id": row["id"]},
                 )
@@ -405,12 +405,12 @@ def test_origin_bound_rows_cannot_be_silently_rebound_or_substituted(
                 # Preserve the unique (key_id,nonce) invariant while moving an
                 # authentic envelope to another record: authentication must fail.
                 conn.execute(
-                    text("DELETE FROM offerloom.encrypted_credentials WHERE id=:id"),
+                    text("DELETE FROM bonafides.encrypted_credentials WHERE id=:id"),
                     {"id": other["id"]},
                 )
                 conn.execute(
                     text(
-                        "UPDATE offerloom.encrypted_credentials SET nonce=:nonce,ciphertext=:cipher WHERE id=:id"
+                        "UPDATE bonafides.encrypted_credentials SET nonce=:nonce,ciphertext=:cipher WHERE id=:id"
                     ),
                     {"nonce": other["nonce"], "cipher": other["ciphertext"], "id": row["id"]},
                 )
@@ -445,7 +445,7 @@ def test_rotation_requires_exact_installation_guard_epoch_and_migrator(
         with case.pg.migrator.begin() as conn:
             conn.execute(
                 text(
-                    "UPDATE offerloom.installation_state SET execution_guard_id=:id WHERE singleton"
+                    "UPDATE bonafides.installation_state SET execution_guard_id=:id WHERE singleton"
                 ),
                 {"id": uuid4()},
             )
@@ -488,7 +488,7 @@ def test_rotation_refuses_active_work_or_uncontracted_envelope_classes(
     with case.pg.migrator.begin() as conn:
         if kind == "work":
             conn.execute(
-                text("""INSERT INTO offerloom.workflow_runs
+                text("""INSERT INTO bonafides.workflow_runs
                 (owner_id,kind,input,dedupe_key,request_sha256,deadline_at)
                 VALUES(:owner,'backup','{}',:dedupe,repeat('0',64),now()+interval '1 hour')"""),
                 {"owner": case.pg.owner_id, "dedupe": uuid4().hex},
@@ -496,14 +496,14 @@ def test_rotation_refuses_active_work_or_uncontracted_envelope_classes(
         elif kind == "control":
             control = uuid4()
             conn.execute(
-                text("""INSERT INTO offerloom.workflow_runs
+                text("""INSERT INTO bonafides.workflow_runs
                 (owner_id,id,kind,input,dedupe_key,request_sha256,deadline_at,state,finished_at)
                 VALUES(:owner,:id,'backup','{}',:dedupe,repeat('0',64),now()+interval '1 hour',
                 'succeeded',clock_timestamp())"""),
                 {"owner": case.pg.owner_id, "id": control, "dedupe": uuid4().hex},
             )
             conn.execute(
-                text("""INSERT INTO offerloom.installation_controls
+                text("""INSERT INTO bonafides.installation_controls
                 (id,owner_id,holder,fence,workflow_fence,namespace_id,maintenance_epoch,
                  purpose,scope,deadline_at,drain_deadline_at,lease_expires_at)
                 VALUES(:id,:owner,:holder,1,1,:namespace,:epoch,'backup','{}',
@@ -518,7 +518,7 @@ def test_rotation_refuses_active_work_or_uncontracted_envelope_classes(
             )
         elif kind == "activity":
             conn.execute(
-                text("""INSERT INTO offerloom.installation_activities
+                text("""INSERT INTO bonafides.installation_activities
                 (id,namespace_id,maintenance_epoch,participant_id,kind,execution_id)
                 VALUES(:id,:namespace,:epoch,:participant,'api',:execution)"""),
                 {
@@ -531,24 +531,24 @@ def test_rotation_refuses_active_work_or_uncontracted_envelope_classes(
             )
         elif kind == "account":
             conn.execute(
-                text("UPDATE offerloom.external_accounts SET status='connected' WHERE id=:id"),
+                text("UPDATE bonafides.external_accounts SET status='connected' WHERE id=:id"),
                 {"id": case.account_id},
             )
         elif kind == "cursor":
             conn.execute(
                 text(
-                    "UPDATE offerloom.external_accounts SET sync_cursor_ciphertext=:cipher WHERE id=:id"
+                    "UPDATE bonafides.external_accounts SET sync_cursor_ciphertext=:cipher WHERE id=:id"
                 ),
                 {"cipher": b"uncontracted synthetic cursor", "id": case.account_id},
             )
         else:
             session = conn.execute(
-                text("""INSERT INTO offerloom.sessions(owner_id,token_sha256,csrf_sha256,expires_at)
+                text("""INSERT INTO bonafides.sessions(owner_id,token_sha256,csrf_sha256,expires_at)
                 VALUES(:owner,repeat('f',64),repeat('a',64),now()+interval '1 day') RETURNING id"""),
                 {"owner": case.pg.owner_id},
             ).scalar_one()
             conn.execute(
-                text("""INSERT INTO offerloom.oauth_transactions
+                text("""INSERT INTO bonafides.oauth_transactions
                 (owner_id,state_sha256,session_id,provider_key,pkce_ciphertext,key_id,nonce,
                  redirect_uri,requested_scopes,expires_at)
                 VALUES(:owner,repeat('1',64),:session,'synthetic-provider',:cipher,:key,:nonce,
@@ -571,7 +571,7 @@ def test_rotation_refuses_active_work_or_uncontracted_envelope_classes(
     finally:
         with case.pg.migrator.begin() as conn:
             conn.execute(
-                text("DELETE FROM offerloom.installation_activities WHERE id=:id"), {"id": activity}
+                text("DELETE FROM bonafides.installation_activities WHERE id=:id"), {"id": activity}
             )
 
 
@@ -588,20 +588,20 @@ def test_real_killed_process_resumes_only_unrotated_key_ids(rotation_case: Rotat
         blocker.commit()
         with case.pg.migrator.begin() as conn:
             conn.exec_driver_sql(
-                f"""CREATE FUNCTION offerloom.test_pause_rotation()
+                f"""CREATE FUNCTION bonafides.test_pause_rotation()
             RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN
             IF NEW.id='00000000-0000-0000-0000-000000000002'::uuid THEN
               PERFORM pg_advisory_xact_lock({lock_key});
             END IF; RETURN NEW; END $$;
-            CREATE TRIGGER test_pause_rotation BEFORE UPDATE ON offerloom.encrypted_credentials
-            FOR EACH ROW EXECUTE FUNCTION offerloom.test_pause_rotation();""",
+            CREATE TRIGGER test_pause_rotation BEFORE UPDATE ON bonafides.encrypted_credentials
+            FOR EACH ROW EXECUTE FUNCTION bonafides.test_pause_rotation();""",
                 execution_options={"no_parameters": True},
             )
         child = subprocess.Popen(
             [
                 sys.executable,
                 "-m",
-                "offerloom.cli",
+                "bonafides.cli",
                 "credential-rotate",
                 "--config",
                 str(case.config_file),
@@ -613,7 +613,7 @@ def test_real_killed_process_resumes_only_unrotated_key_ids(rotation_case: Rotat
         while time.monotonic() < deadline:
             with case.pg.migrator.begin() as conn:
                 committed = conn.execute(
-                    text("SELECT count(*) FROM offerloom.encrypted_credentials WHERE key_id=:key"),
+                    text("SELECT count(*) FROM bonafides.encrypted_credentials WHERE key_id=:key"),
                     {"key": case.keyring.active_key_id},
                 ).scalar_one()
             if committed == 1:
@@ -635,8 +635,8 @@ def test_real_killed_process_resumes_only_unrotated_key_ids(rotation_case: Rotat
         blocker.close()
         with case.pg.migrator.begin() as conn:
             conn.exec_driver_sql(
-                """DROP TRIGGER IF EXISTS test_pause_rotation ON offerloom.encrypted_credentials;
-            DROP FUNCTION IF EXISTS offerloom.test_pause_rotation();""",
+                """DROP TRIGGER IF EXISTS test_pause_rotation ON bonafides.encrypted_credentials;
+            DROP FUNCTION IF EXISTS bonafides.test_pause_rotation();""",
                 execution_options={"no_parameters": True},
             )
     assert [row["key_id"] for row in _rows(case)].count(case.keyring.active_key_id) == 1
@@ -652,7 +652,7 @@ def test_real_killed_process_resumes_only_unrotated_key_ids(rotation_case: Rotat
 
 def _manifest(case: RotationCase, keyring: Keyring) -> BackupManifest:
     return BackupManifest(
-        format="offerloom-installation",
+        format="bonafides-installation",
         format_version=1,
         created_at=datetime.now(UTC),
         source_namespace=case.config.namespace_id,
@@ -713,7 +713,7 @@ def test_native_rebinding_preserves_legacy_or_origin_bound_version_and_retained_
     ):
         usage_before = conn.execute(
             text(
-                "SELECT coalesce(sum(encryption_count),0) FROM offerloom.credential_key_usage WHERE key_id=:key"
+                "SELECT coalesce(sum(encryption_count),0) FROM bonafides.credential_key_usage WHERE key_id=:key"
             ),
             {"key": keys.active_key_id},
         ).scalar_one()
@@ -727,7 +727,7 @@ def test_native_rebinding_preserves_legacy_or_origin_bound_version_and_retained_
         finally:
             conn.info.pop("execution_guard")
         usage_after = conn.execute(
-            text("SELECT encryption_count FROM offerloom.credential_key_usage WHERE key_id=:key"),
+            text("SELECT encryption_count FROM bonafides.credential_key_usage WHERE key_id=:key"),
             {"key": keys.active_key_id},
         ).scalar_one()
         assert usage_after == expected_base + 3
@@ -762,13 +762,13 @@ def test_native_rebinding_preserves_legacy_or_origin_bound_version_and_retained_
     with case.pg.migrator.begin() as conn:
         assert (
             conn.execute(
-                text("SELECT status FROM offerloom.external_accounts WHERE id=:id"),
+                text("SELECT status FROM bonafides.external_accounts WHERE id=:id"),
                 {"id": case.account_id},
             ).scalar_one()
             == "disconnected"
         )
         assert conn.execute(
-            text("SELECT maintenance_active FROM offerloom.installation_state WHERE singleton")
+            text("SELECT maintenance_active FROM bonafides.installation_state WHERE singleton")
         ).scalar_one()
 
 
@@ -838,12 +838,12 @@ def test_rotation_rejects_incomplete_claims_schema_or_exhausted_key(
             if failure == "wrong_schema":
                 conn.execute(
                     text(
-                        "INSERT INTO offerloom.schema_migrations(version,source_sha256) VALUES(999,repeat('0',64))"
+                        "INSERT INTO bonafides.schema_migrations(version,source_sha256) VALUES(999,repeat('0',64))"
                     )
                 )
             else:
                 conn.execute(
-                    text("""INSERT INTO offerloom.credential_key_usage(key_id,encryption_count)
+                    text("""INSERT INTO bonafides.credential_key_usage(key_id,encryption_count)
                     VALUES(:key,1048576)"""),
                     {"key": case.keyring.active_key_id},
                 )
@@ -858,7 +858,7 @@ def test_rotation_rejects_incomplete_claims_schema_or_exhausted_key(
     finally:
         if failure == "wrong_schema":
             with case.pg.migrator.begin() as conn:
-                conn.execute(text("DELETE FROM offerloom.schema_migrations WHERE version=999"))
+                conn.execute(text("DELETE FROM bonafides.schema_migrations WHERE version=999"))
 
 
 @pytest.mark.postgres
@@ -874,21 +874,21 @@ def test_real_concurrent_version_change_refuses_stale_batch_and_resumes_from_fre
         blocker.commit()
         with case.pg.migrator.begin() as conn:
             conn.exec_driver_sql(
-                f"""CREATE FUNCTION offerloom.test_version_pause()
+                f"""CREATE FUNCTION bonafides.test_version_pause()
             RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN
-            IF coalesce(current_setting('offerloom.test_mutator',true),'')<>'yes'
-            AND EXISTS(SELECT 1 FROM offerloom.encrypted_credentials WHERE key_id='{case.keyring.active_key_id}')
+            IF coalesce(current_setting('bonafides.test_mutator',true),'')<>'yes'
+            AND EXISTS(SELECT 1 FROM bonafides.encrypted_credentials WHERE key_id='{case.keyring.active_key_id}')
             THEN PERFORM pg_advisory_xact_lock({lock_key}); END IF;
             RETURN NULL; END $$;
-            CREATE TRIGGER test_version_pause BEFORE UPDATE ON offerloom.encrypted_credentials
-            FOR EACH STATEMENT EXECUTE FUNCTION offerloom.test_version_pause();""",
+            CREATE TRIGGER test_version_pause BEFORE UPDATE ON bonafides.encrypted_credentials
+            FOR EACH STATEMENT EXECUTE FUNCTION bonafides.test_version_pause();""",
                 execution_options={"no_parameters": True},
             )
         child = subprocess.Popen(
             [
                 sys.executable,
                 "-m",
-                "offerloom.cli",
+                "bonafides.cli",
                 "credential-rotate",
                 "--config",
                 str(case.config_file),
@@ -900,7 +900,7 @@ def test_real_concurrent_version_change_refuses_stale_batch_and_resumes_from_fre
         while time.monotonic() < deadline:
             with case.pg.migrator.begin() as conn:
                 committed = conn.execute(
-                    text("SELECT count(*) FROM offerloom.encrypted_credentials WHERE key_id=:key"),
+                    text("SELECT count(*) FROM bonafides.encrypted_credentials WHERE key_id=:key"),
                     {"key": case.keyring.active_key_id},
                 ).scalar_one()
             if committed == 1:
@@ -911,9 +911,9 @@ def test_real_concurrent_version_change_refuses_stale_batch_and_resumes_from_fre
         else:
             pytest.fail("Version-check child did not reach the committed batch boundary")
         with case.pg.migrator.begin() as conn:
-            conn.execute(text("SET LOCAL offerloom.test_mutator='yes'"))
+            conn.execute(text("SET LOCAL bonafides.test_mutator='yes'"))
             conn.execute(
-                text("""UPDATE offerloom.encrypted_credentials SET version=version+1
+                text("""UPDATE bonafides.encrypted_credentials SET version=version+1
                 WHERE id='00000000-0000-0000-0000-000000000002'""")
             )
         blocker.execute(text("SELECT pg_advisory_unlock(:key)"), {"key": lock_key})
@@ -929,8 +929,8 @@ def test_real_concurrent_version_change_refuses_stale_batch_and_resumes_from_fre
         blocker.close()
         with case.pg.migrator.begin() as conn:
             conn.exec_driver_sql(
-                """DROP TRIGGER IF EXISTS test_version_pause ON offerloom.encrypted_credentials;
-            DROP FUNCTION IF EXISTS offerloom.test_version_pause();""",
+                """DROP TRIGGER IF EXISTS test_version_pause ON bonafides.encrypted_credentials;
+            DROP FUNCTION IF EXISTS bonafides.test_version_pause();""",
                 execution_options={"no_parameters": True},
             )
     receipt = rotate_credentials(case.config)

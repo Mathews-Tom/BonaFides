@@ -1,6 +1,6 @@
 -- SPDX-License-Identifier: MIT OR Apache-2.0
 -- OL-006 stages bounded private imports independently from canonical profile history.
-SET LOCAL search_path=offerloom,pg_catalog;
+SET LOCAL search_path=bonafides,pg_catalog;
 CREATE TABLE import_batches (
  owner_id uuid NOT NULL REFERENCES owners(id) ON DELETE CASCADE,
  id uuid NOT NULL DEFAULT gen_random_uuid(), workflow_run_id uuid NOT NULL,
@@ -24,7 +24,7 @@ CREATE TABLE import_batches (
 CREATE INDEX import_owner_list_idx ON import_batches(owner_id,created_at DESC,id);
 CREATE INDEX import_review_expiry_idx ON import_batches(review_expires_at) WHERE review IS NULL;
 -- Keep bytes, extracted source, and accepted review immutable after each phase.
-CREATE FUNCTION guard_import_batch() RETURNS trigger LANGUAGE plpgsql SET search_path=offerloom,pg_catalog AS $$
+CREATE FUNCTION guard_import_batch() RETURNS trigger LANGUAGE plpgsql SET search_path=bonafides,pg_catalog AS $$
 BEGIN
  IF ROW(NEW.owner_id,NEW.id,NEW.workflow_run_id,NEW.blob_id,NEW.media_type,NEW.byte_size,NEW.created_at)
  IS DISTINCT FROM ROW(OLD.owner_id,OLD.id,OLD.workflow_run_id,OLD.blob_id,OLD.media_type,OLD.byte_size,OLD.created_at)
@@ -38,5 +38,5 @@ BEGIN
 END $$;
 CREATE TRIGGER import_phase_guard BEFORE UPDATE ON import_batches FOR EACH ROW EXECUTE FUNCTION guard_import_batch();
 REVOKE ALL ON FUNCTION guard_import_batch() FROM PUBLIC;
-GRANT SELECT,INSERT,UPDATE,DELETE ON import_batches TO offerloom_runtime;
+GRANT SELECT,INSERT,UPDATE,DELETE ON import_batches TO bonafides_runtime;
 INSERT INTO schema_migrations(version,source_sha256) VALUES(6,repeat('0',64));

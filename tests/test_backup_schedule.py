@@ -17,11 +17,11 @@ from sqlalchemy import text
 from test_database import PGContext
 from test_database import pg_context as pg_context
 
-from offerloom import backup_schedule
-from offerloom.backup_archive import BackupError
-from offerloom.backup_generations import verify_ciphertext
-from offerloom.backup_operator import CaptureConfiguration, DailyScheduleConfiguration
-from offerloom.backup_schedule import (
+from bonafides import backup_schedule
+from bonafides.backup_archive import BackupError
+from bonafides.backup_generations import verify_ciphertext
+from bonafides.backup_operator import CaptureConfiguration, DailyScheduleConfiguration
+from bonafides.backup_schedule import (
     backup_status,
     claim_daily_slot,
     copy_ciphertext,
@@ -29,12 +29,12 @@ from offerloom.backup_schedule import (
     resolve_interrupted,
     run_due,
 )
-from offerloom.config import Settings
-from offerloom.crypto import Keyring
-from offerloom.db import Database
-from offerloom.execution_guard import ExecutionGuard
-from offerloom.installation_control import begin_control
-from offerloom.workflows import claim_control, enqueue
+from bonafides.config import Settings
+from bonafides.crypto import Keyring
+from bonafides.db import Database
+from bonafides.execution_guard import ExecutionGuard
+from bonafides.installation_control import begin_control
+from bonafides.workflows import claim_control, enqueue
 
 
 @pytest.fixture
@@ -56,7 +56,7 @@ def environment(
     db = Database(settings)
     with db.transaction() as conn:
         namespace = conn.execute(
-            text("SELECT namespace_id FROM offerloom.installation_state WHERE singleton")
+            text("SELECT namespace_id FROM bonafides.installation_state WHERE singleton")
         ).scalar_one()
     config = CaptureConfiguration(
         recipient=root / "public.pem",
@@ -92,17 +92,17 @@ def _seed_created(
     (config.destination / name).write_bytes(payload)
     with context.migrator.begin() as conn:
         conn.execute(
-            text("""INSERT INTO offerloom.installation_backups(
+            text("""INSERT INTO bonafides.installation_backups(
             id,owner_id,namespace_id,maintenance_epoch,workspace_version,
             installation_auth_epoch,owner_auth_epoch,schema_versions,image_sha256,
             source_sha256,config_sha256,keyring_sha256,recipient_sha256,file_name,
             cipher_sha256,manifest_sha256,byte_length,captured_at,cipher_verified_at)
             SELECT :id,:owner,:namespace,:epoch,s.workspace_version,i.auth_epoch,o.auth_epoch,
-            (SELECT jsonb_object_agg(version::text,source_sha256) FROM offerloom.schema_migrations),
+            (SELECT jsonb_object_agg(version::text,source_sha256) FROM bonafides.schema_migrations),
             repeat('0',64),repeat('0',64),repeat('0',64),repeat('0',64),repeat('0',64),
             :name,:sha,repeat('0',64),:length,:day,:day
-            FROM offerloom.owner_settings s JOIN offerloom.owners o ON o.id=s.owner_id
-            CROSS JOIN offerloom.installation_state i WHERE s.owner_id=:owner AND i.singleton"""),
+            FROM bonafides.owner_settings s JOIN bonafides.owners o ON o.id=s.owner_id
+            CROSS JOIN bonafides.installation_state i WHERE s.owner_id=:owner AND i.singleton"""),
             {
                 "id": identifier,
                 "owner": context.owner_id,
@@ -115,15 +115,15 @@ def _seed_created(
             },
         )
         conn.execute(
-            text("""UPDATE offerloom.installation_controls SET phase='released',
+            text("""UPDATE bonafides.installation_controls SET phase='released',
             settled_at=clock_timestamp(),released_at=clock_timestamp() WHERE id=:id"""),
             {"id": identifier},
         )
         conn.execute(
-            text("UPDATE offerloom.installation_state SET maintenance_active=false WHERE singleton")
+            text("UPDATE bonafides.installation_state SET maintenance_active=false WHERE singleton")
         )
         conn.execute(
-            text("""UPDATE offerloom.workflow_runs SET state='succeeded',
+            text("""UPDATE bonafides.workflow_runs SET state='succeeded',
             lease_holder=NULL,lease_expires_at=NULL,finished_at=clock_timestamp()
             WHERE id=:id"""),
             {"id": identifier},
@@ -132,7 +132,7 @@ def _seed_created(
         slot = claim_daily_slot(conn, config, now=day)
         assert slot is not None
         conn.execute(
-            text("""UPDATE offerloom.backup_daily_runs SET state='created',
+            text("""UPDATE bonafides.backup_daily_runs SET state='created',
             generation_id=:generation,created_at=:day,finished_at=:day WHERE id=:id"""),
             {"id": slot, "generation": identifier, "day": day},
         )
@@ -162,18 +162,18 @@ def test_daily_slot_concurrent_catchup_is_once_and_not_per_missed_day(
     assert sum(value is not None for value in claims) == 1
     with db.transaction() as conn:
         assert (
-            conn.execute(text("SELECT slot_date FROM offerloom.backup_daily_runs")).scalar_one()
+            conn.execute(text("SELECT slot_date FROM bonafides.backup_daily_runs")).scalar_one()
             == now.date()
         )
         assert claim_daily_slot(conn, config, now=now + timedelta(days=1)) is None
         conn.execute(
-            text("""UPDATE offerloom.backup_daily_runs SET state='failed',
+            text("""UPDATE bonafides.backup_daily_runs SET state='failed',
             finished_at=clock_timestamp(),failure_code='backup_schedule_capture_failed'""")
         )
         assert claim_daily_slot(conn, config, now=now) is None
         assert claim_daily_slot(conn, config, now=now + timedelta(days=50)) is not None
         assert (
-            conn.execute(text("SELECT count(*) FROM offerloom.backup_daily_runs")).scalar_one() == 2
+            conn.execute(text("SELECT count(*) FROM bonafides.backup_daily_runs")).scalar_one() == 2
         )
 
 
@@ -295,7 +295,7 @@ def test_retention_requires_new_exact_bytes_then_keeps_fourteen(
     # Migrator-only policy fixture: ciphertext-only days cannot replace a drill.
     with pg_context.migrator.begin() as conn:
         conn.execute(
-            text("""UPDATE offerloom.installation_backups
+            text("""UPDATE bonafides.installation_backups
             SET restore_verified_at=clock_timestamp(),restore_receipt_sha256=repeat('0',64),
             restore_target_namespace=:target WHERE id=:id"""),
             {"target": uuid4(), "id": UUID(str(records[0]["generation_id"]))},
@@ -305,7 +305,7 @@ def test_retention_requires_new_exact_bytes_then_keeps_fourteen(
     # Only a newer native-drill fixture releases the protected prior last-good.
     with pg_context.migrator.begin() as conn:
         conn.execute(
-            text("""UPDATE offerloom.installation_backups
+            text("""UPDATE bonafides.installation_backups
             SET restore_verified_at=clock_timestamp(),restore_receipt_sha256=repeat('0',64),
             restore_target_namespace=:target WHERE id=:id"""),
             {"target": uuid4(), "id": UUID(str(newest["generation_id"]))},
@@ -316,13 +316,13 @@ def test_retention_requires_new_exact_bytes_then_keeps_fourteen(
     with db.transaction() as conn:
         assert (
             conn.execute(
-                text("SELECT count(*) FROM offerloom.backup_daily_runs WHERE state='pruned'")
+                text("SELECT count(*) FROM bonafides.backup_daily_runs WHERE state='pruned'")
             ).scalar_one()
             == 1
         )
         assert (
             conn.execute(
-                text("SELECT count(*) FROM offerloom.installation_backups WHERE pruned_at IS NULL")
+                text("SELECT count(*) FROM bonafides.installation_backups WHERE pruned_at IS NULL")
             ).scalar_one()
             == 14
         )

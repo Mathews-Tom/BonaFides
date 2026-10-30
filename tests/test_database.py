@@ -12,9 +12,9 @@ from sqlalchemy import Connection, Engine, create_engine, text
 from sqlalchemy.engine import make_url
 from sqlalchemy.exc import DBAPIError
 
-from offerloom.commands import command
-from offerloom.problems import Problem
-from offerloom.workflows import migrate
+from bonafides.commands import command
+from bonafides.problems import Problem
+from bonafides.workflows import migrate
 
 
 @dataclass(frozen=True)
@@ -42,8 +42,8 @@ def _secret(name: str) -> str | None:
 
 @pytest.fixture
 def pg_context() -> Iterator[PGContext]:
-    migration_dsn = _secret("OFFERLOOM_TEST_MIGRATION_DSN")
-    runtime_dsn = _secret("OFFERLOOM_TEST_RUNTIME_DSN") or _secret("OFFERLOOM_TEST_DSN")
+    migration_dsn = _secret("BONAFIDES_TEST_MIGRATION_DSN")
+    runtime_dsn = _secret("BONAFIDES_TEST_RUNTIME_DSN") or _secret("BONAFIDES_TEST_DSN")
     if not migration_dsn or not runtime_dsn:
         pytest.fail(
             "disposable PostgreSQL18 migration/runtime DSNs not configured; integration gate cannot skip"
@@ -57,33 +57,33 @@ def pg_context() -> Iterator[PGContext]:
     runtime = create_engine(runtime_dsn, hide_parameters=True)
     owner_id, profile_id, revision_id = uuid4(), uuid4(), uuid4()
     with migrator.begin() as conn:
-        if conn.execute(text("SELECT count(*) FROM offerloom.owners")).scalar_one():
+        if conn.execute(text("SELECT count(*) FROM bonafides.owners")).scalar_one():
             pytest.fail("PostgreSQL invariant tests require an empty disposable owner database")
         conn.execute(
-            text("UPDATE offerloom.installation_state SET execution_guard_id=NULL WHERE singleton")
+            text("UPDATE bonafides.installation_state SET execution_guard_id=NULL WHERE singleton")
         )
         conn.execute(
             text(
-                "INSERT INTO offerloom.owners(id,login_name,password_hash) VALUES(:id,'m0-invariant-test','not-a-login-hash')"
+                "INSERT INTO bonafides.owners(id,login_name,password_hash) VALUES(:id,'m0-invariant-test','not-a-login-hash')"
             ),
             {"id": owner_id},
         )
         conn.execute(
-            text("INSERT INTO offerloom.owner_settings(owner_id) VALUES(:owner)"),
+            text("INSERT INTO bonafides.owner_settings(owner_id) VALUES(:owner)"),
             {"owner": owner_id},
         )
         conn.execute(
-            text("INSERT INTO offerloom.profiles(owner_id,id) VALUES(:owner,:id)"),
+            text("INSERT INTO bonafides.profiles(owner_id,id) VALUES(:owner,:id)"),
             {"owner": owner_id, "id": profile_id},
         )
         conn.execute(
-            text("""INSERT INTO offerloom.profile_revisions(owner_id,id,profile_id,revision_no,snapshot,content_sha256,reason)
+            text("""INSERT INTO bonafides.profile_revisions(owner_id,id,profile_id,revision_no,snapshot,content_sha256,reason)
             VALUES(:owner,:id,:profile,1,'{}',repeat('0',64),'synthetic test')"""),
             {"owner": owner_id, "id": revision_id, "profile": profile_id},
         )
         conn.execute(
             text(
-                "UPDATE offerloom.profiles SET current_revision_id=:revision WHERE owner_id=:owner"
+                "UPDATE bonafides.profiles SET current_revision_id=:revision WHERE owner_id=:owner"
             ),
             {"owner": owner_id, "revision": revision_id},
         )
@@ -92,31 +92,31 @@ def pg_context() -> Iterator[PGContext]:
     finally:
         with migrator.begin() as conn:
             conn.execute(
-                text("""UPDATE offerloom.installation_state SET maintenance_active=false
+                text("""UPDATE bonafides.installation_state SET maintenance_active=false
                 WHERE singleton AND EXISTS(
-                SELECT 1 FROM offerloom.installation_controls WHERE owner_id=:owner)"""),
+                SELECT 1 FROM bonafides.installation_controls WHERE owner_id=:owner)"""),
                 {"owner": owner_id},
             )
             conn.execute(
-                text("DELETE FROM offerloom.portable_purges WHERE owner_id=:owner"),
+                text("DELETE FROM bonafides.portable_purges WHERE owner_id=:owner"),
                 {"owner": owner_id},
             )
             conn.execute(
-                text("DELETE FROM offerloom.installation_backups WHERE owner_id=:owner"),
+                text("DELETE FROM bonafides.installation_backups WHERE owner_id=:owner"),
                 {"owner": owner_id},
             )
             conn.execute(
-                text("DELETE FROM offerloom.installation_controls WHERE owner_id=:owner"),
+                text("DELETE FROM bonafides.installation_controls WHERE owner_id=:owner"),
                 {"owner": owner_id},
             )
-            conn.execute(text("DELETE FROM offerloom.owners WHERE id=:owner"), {"owner": owner_id})
+            conn.execute(text("DELETE FROM bonafides.owners WHERE id=:owner"), {"owner": owner_id})
         runtime.dispose()
         migrator.dispose()
 
 
 @pytest.mark.postgres
 def test_migration_repeat_and_checksum_ledger(pg_context: PGContext) -> None:
-    query = text("SELECT version,source_sha256 FROM offerloom.schema_migrations ORDER BY version")
+    query = text("SELECT version,source_sha256 FROM bonafides.schema_migrations ORDER BY version")
     with pg_context.runtime.begin() as conn:
         before = conn.execute(query).all()
     config = MigrationSecret(str(pg_context.migrator.url.render_as_string(hide_password=False)))
@@ -128,7 +128,7 @@ def test_migration_repeat_and_checksum_ledger(pg_context: PGContext) -> None:
         with pg_context.migrator.begin() as conn:
             conn.execute(
                 text(
-                    "UPDATE offerloom.schema_migrations SET source_sha256=:hash WHERE version=:version"
+                    "UPDATE bonafides.schema_migrations SET source_sha256=:hash WHERE version=:version"
                 ),
                 {"hash": "f" * 64, "version": version},
             )
@@ -138,7 +138,7 @@ def test_migration_repeat_and_checksum_ledger(pg_context: PGContext) -> None:
         with pg_context.migrator.begin() as conn:
             conn.execute(
                 text(
-                    "UPDATE offerloom.schema_migrations SET source_sha256=:hash WHERE version=:version"
+                    "UPDATE bonafides.schema_migrations SET source_sha256=:hash WHERE version=:version"
                 ),
                 {"hash": original_hash, "version": version},
             )
@@ -148,21 +148,21 @@ def test_migration_repeat_and_checksum_ledger(pg_context: PGContext) -> None:
 def test_owner_foreign_key_and_current_pointer(pg_context: PGContext) -> None:
     with pytest.raises(DBAPIError), pg_context.runtime.begin() as conn:
         conn.execute(
-            text("""INSERT INTO offerloom.profile_revisions(owner_id,profile_id,revision_no,snapshot,content_sha256,reason)
+            text("""INSERT INTO bonafides.profile_revisions(owner_id,profile_id,revision_no,snapshot,content_sha256,reason)
                 VALUES(:owner,:profile,2,'{}',repeat('1',64),'cross-owner')"""),
             {"owner": uuid4(), "profile": pg_context.profile_id},
         )
     with pytest.raises(DBAPIError), pg_context.runtime.begin() as conn:
         conn.execute(
             text(
-                "UPDATE offerloom.profiles SET current_revision_id=:revision WHERE owner_id=:owner"
+                "UPDATE bonafides.profiles SET current_revision_id=:revision WHERE owner_id=:owner"
             ),
             {"owner": pg_context.owner_id, "revision": uuid4()},
         )
     with pg_context.runtime.begin() as conn:
         assert (
             conn.execute(
-                text("SELECT current_revision_id FROM offerloom.profiles WHERE owner_id=:owner"),
+                text("SELECT current_revision_id FROM bonafides.profiles WHERE owner_id=:owner"),
                 {"owner": pg_context.owner_id},
             ).scalar_one()
             == pg_context.revision_id
@@ -172,11 +172,11 @@ def test_owner_foreign_key_and_current_pointer(pg_context: PGContext) -> None:
 @pytest.mark.postgres
 def test_immutable_revisions_and_runtime_ddl_denied(pg_context: PGContext) -> None:
     for statement in (
-        "UPDATE offerloom.profile_revisions SET reason='mutated' WHERE owner_id=:owner",
-        "CREATE TABLE offerloom.forbidden_runtime_ddl(id integer)",
-        "UPDATE offerloom.audit_events SET action='mutated' WHERE owner_id=:owner",
-        "DELETE FROM offerloom.audit_events WHERE owner_id=:owner",
-        "UPDATE offerloom.schema_migrations SET source_sha256=repeat('f',64)",
+        "UPDATE bonafides.profile_revisions SET reason='mutated' WHERE owner_id=:owner",
+        "CREATE TABLE bonafides.forbidden_runtime_ddl(id integer)",
+        "UPDATE bonafides.audit_events SET action='mutated' WHERE owner_id=:owner",
+        "DELETE FROM bonafides.audit_events WHERE owner_id=:owner",
+        "UPDATE bonafides.schema_migrations SET source_sha256=repeat('f',64)",
     ):
         with pytest.raises(DBAPIError), pg_context.runtime.begin() as conn:
             conn.execute(text(statement), {"owner": pg_context.owner_id})
@@ -190,7 +190,7 @@ def test_idempotency_replays_before_stale_version(pg_context: PGContext) -> None
         nonlocal calls
         calls += 1
         conn.execute(
-            text("UPDATE offerloom.profiles SET version=version+1 WHERE owner_id=:owner"),
+            text("UPDATE bonafides.profiles SET version=version+1 WHERE owner_id=:owner"),
             {"owner": pg_context.owner_id},
         )
         return 202, {"id": "persisted-response", "version": 2}

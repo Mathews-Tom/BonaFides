@@ -18,7 +18,7 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any
 
-from tools.m0_probe import API, ProbeFailure, Proof, require, run
+from tools.runtime_proof import API, ProbeFailure, Proof, require, run
 
 QUERIES = (
     "/api/v1/postings?limit=20",
@@ -33,14 +33,14 @@ import json,sys
 from urllib.parse import parse_qs,urlsplit
 from uuid import UUID
 from sqlalchemy import event
-from offerloom.catalog import CatalogQuery,list_postings
-from offerloom.config import Settings
-from offerloom.db import Database
+from bonafides.catalog import CatalogQuery,list_postings
+from bonafides.config import Settings
+from bonafides.db import Database
 settings=Settings.load()
 db=Database(settings)
 captured=[]
 def capture(conn,cursor,statement,parameters,context,executemany):
- if statement.lstrip().upper().startswith('SELECT') and 'offerloom.job_postings' in statement:
+ if statement.lstrip().upper().startswith('SELECT') and 'bonafides.job_postings' in statement:
   captured.append((statement,parameters))
 event.listen(db.engine,'before_cursor_execute',capture)
 plans=[]
@@ -65,10 +65,10 @@ def seed(proof: Proof, source_id: str, owner_id: str, previous: int, count: int)
 
     owner, source = str(UUID(owner_id)), str(UUID(source_id))
     proof.sql(f"""
-INSERT INTO offerloom.job_postings
+INSERT INTO bonafides.job_postings
 (owner_id,id,title,company,location_text,description_text,dedupe_key,source_config_id,
  external_id,content_sha256,last_observed_at,created_at,status)
-SELECT '{owner}'::uuid,md5('offerloom-catalog-load:'||i)::uuid,
+SELECT '{owner}'::uuid,md5('bonafides-catalog-load:'||i)::uuid,
  'Synthetic operations engineer '||i,'Synthetic employer '||(i%100),
  CASE WHEN i%7=0 THEN 'London' ELSE 'Remote within synthetic region '||(i%10) END,
  'Linux SQL operational procedures. '||CASE WHEN i%101=0 THEN 'rareprobe ' ELSE '' END||repeat('Retained original synthetic posting. ',20),
@@ -76,21 +76,21 @@ SELECT '{owner}'::uuid,md5('offerloom-catalog-load:'||i)::uuid,
  clock_timestamp()-i*interval '1 second','2026-01-01 00:00:00+00'::timestamptz,
  CASE WHEN i%11=0 THEN 'closed' WHEN i%13=0 THEN 'unknown' ELSE 'open' END
 FROM generate_series({max(1, previous)}, {count - 1}) i;
-INSERT INTO offerloom.job_source_observations
+INSERT INTO bonafides.job_source_observations
 (owner_id,posting_id,source_config_id,external_id,content_sha256,source_url,snapshot)
 SELECT owner_id,id,source_config_id,external_id,content_sha256,'manual:synthetic-load',
  jsonb_build_object('title',title,'description_text',description_text)
-FROM offerloom.job_postings p WHERE owner_id='{owner}' AND dedupe_key LIKE 'catalog-load:%'
-AND NOT EXISTS(SELECT 1 FROM offerloom.job_source_observations o WHERE o.owner_id=p.owner_id AND o.posting_id=p.id);
-INSERT INTO offerloom.saved_opportunities(owner_id,posting_id)
-SELECT owner_id,id FROM offerloom.job_postings p WHERE owner_id='{owner}'
+FROM bonafides.job_postings p WHERE owner_id='{owner}' AND dedupe_key LIKE 'catalog-load:%'
+AND NOT EXISTS(SELECT 1 FROM bonafides.job_source_observations o WHERE o.owner_id=p.owner_id AND o.posting_id=p.id);
+INSERT INTO bonafides.saved_opportunities(owner_id,posting_id)
+SELECT owner_id,id FROM bonafides.job_postings p WHERE owner_id='{owner}'
 AND dedupe_key LIKE 'catalog-load:%' AND external_id ~ '0$'
-AND NOT EXISTS(SELECT 1 FROM offerloom.saved_opportunities s WHERE s.owner_id=p.owner_id AND s.posting_id=p.id);
-ANALYZE offerloom.job_postings;
-ANALYZE offerloom.job_source_observations;
-ANALYZE offerloom.saved_opportunities;
+AND NOT EXISTS(SELECT 1 FROM bonafides.saved_opportunities s WHERE s.owner_id=p.owner_id AND s.posting_id=p.id);
+ANALYZE bonafides.job_postings;
+ANALYZE bonafides.job_source_observations;
+ANALYZE bonafides.saved_opportunities;
 """)
-    actual = int(proof.sql("SELECT count(*) FROM offerloom.job_postings"))
+    actual = int(proof.sql("SELECT count(*) FROM bonafides.job_postings"))
     require(actual == count, "catalog_dataset_cardinality_mismatch")
 
 
@@ -200,7 +200,7 @@ def main() -> int:
     args = parser.parse_args()
     require(
         args.project == args.confirm_disposable
-        and re.fullmatch(r"offerloom-proof-[a-z0-9-]{1,32}", args.project) is not None,
+        and re.fullmatch(r"bonafides-proof-[a-z0-9-]{1,32}", args.project) is not None,
         "disposable_confirmation_required",
     )
     require(
@@ -213,7 +213,7 @@ def main() -> int:
             "protocol": "OL008 bounded retained-catalog HTTP load v2",
             "host": platform.platform(),
             "machine": platform.machine(),
-            "dataset_seed": "offerloom-catalog-load:<1..N-1>",
+            "dataset_seed": "bonafides-catalog-load:<1..N-1>",
             "protocol_revision": (
                 "v1 incorrectly required GIN for the 1%-selective rareprobe query; "
                 "v2 retains that query and unchanged dataset, adds the existing "

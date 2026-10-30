@@ -19,13 +19,13 @@ from cryptography import x509
 from cryptography.hazmat.primitives import hashes,serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
 from cryptography.x509.oid import NameOID
-from offerloom.backup_archive import BackupFile,BackupManifest,BackupError,create_bundle,recover_bundle
+from bonafides.backup_archive import BackupFile,BackupManifest,BackupError,create_bundle,recover_bundle
 case=sys.argv[1]
 with tempfile.TemporaryDirectory() as temporary:
  root=Path(temporary)
  key=rsa.generate_private_key(public_exponent=65537,key_size=3072)
  now=datetime.now(UTC)
- subject=x509.Name([x509.NameAttribute(NameOID.COMMON_NAME,'Offerloom archive regression')])
+ subject=x509.Name([x509.NameAttribute(NameOID.COMMON_NAME,'BonaFides archive regression')])
  cert=(x509.CertificateBuilder().subject_name(subject).issuer_name(subject).public_key(key.public_key())
        .serial_number(x509.random_serial_number()).not_valid_before(now-timedelta(minutes=1))
        .not_valid_after(now+timedelta(days=1)).sign(key,hashes.SHA256()))
@@ -40,7 +40,7 @@ with tempfile.TemporaryDirectory() as temporary:
  schema={str(n):hashlib.sha256(f'synthetic schema {n}'.encode()).hexdigest() for n in range(1,19)}
  namespace=uuid4()
  def factory(sha,size,fingerprint,files):
-  return BackupManifest(format='offerloom-installation',format_version=1,created_at=now,
+  return BackupManifest(format='bonafides-installation',format_version=1,created_at=now,
    source_namespace=namespace,source_owner_id=owner,control_id=uuid4(),installation_auth_epoch=1,
    owner_auth_epoch=1,maintenance_epoch=1,workspace_version=1,image_sha256='2'*64,
    source_sha256='3'*64,config_sha256='4'*64,recipient_sha256=fingerprint,
@@ -203,7 +203,7 @@ with tempfile.TemporaryDirectory() as temporary:
     ],
 )
 def test_actual_authenticated_archive_boundary(case: str) -> None:
-    image = os.environ.get("OFFERLOOM_TEST_PARSER_IMAGE")
+    image = os.environ.get("BONAFIDES_TEST_PARSER_IMAGE")
     if not image:
         pytest.fail("Backup archive tests require the qualified Linux image and Docker.")
     root = Path(__file__).resolve().parents[1]

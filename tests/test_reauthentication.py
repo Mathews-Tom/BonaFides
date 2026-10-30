@@ -8,8 +8,8 @@ from sqlalchemy import text
 from test_identity import NEW_PASSWORD, PASSWORD, IdentityContext, _bootstrap, _headers
 from test_identity import identity as identity
 
-from offerloom import auth
-from offerloom.auth import SESSION_COOKIE, digest, recover_password
+from bonafides import auth
+from bonafides.auth import SESSION_COOKIE, digest, recover_password
 
 _ROUTE = "/api/v1/session/reauthenticate"
 
@@ -28,17 +28,17 @@ def test_password_confirmation_rotates_stale_session_without_changing_workspace(
         with identity.admin.transaction() as conn:
             conn.execute(
                 text(
-                    "UPDATE offerloom.sessions SET authenticated_at=clock_timestamp()-interval '6 minutes' WHERE token_sha256=:token"
+                    "UPDATE bonafides.sessions SET authenticated_at=clock_timestamp()-interval '6 minutes' WHERE token_sha256=:token"
                 ),
                 {"token": digest(old_token)},
             )
             before = conn.execute(
                 text(
-                    "SELECT o.auth_epoch,s.workspace_version,p.version,p.current_revision_id FROM offerloom.owners o JOIN offerloom.owner_settings s ON s.owner_id=o.id JOIN offerloom.profiles p ON p.owner_id=o.id"
+                    "SELECT o.auth_epoch,s.workspace_version,p.version,p.current_revision_id FROM bonafides.owners o JOIN bonafides.owner_settings s ON s.owner_id=o.id JOIN bonafides.profiles p ON p.owner_id=o.id"
                 )
             ).one()
             old_auth = conn.execute(
-                text("SELECT authenticated_at FROM offerloom.sessions WHERE token_sha256=:token"),
+                text("SELECT authenticated_at FROM bonafides.sessions WHERE token_sha256=:token"),
                 {"token": digest(old_token)},
             ).scalar_one()
         rejected = client.post(
@@ -51,7 +51,7 @@ def test_password_confirmation_rotates_stale_session_without_changing_workspace(
             assert (
                 conn.execute(
                     text(
-                        "SELECT authenticated_at FROM offerloom.sessions WHERE token_sha256=:token AND revoked_at IS NULL"
+                        "SELECT authenticated_at FROM bonafides.sessions WHERE token_sha256=:token AND revoked_at IS NULL"
                     ),
                     {"token": digest(old_token)},
                 ).scalar_one()
@@ -71,14 +71,14 @@ def test_password_confirmation_rotates_stale_session_without_changing_workspace(
             assert (
                 conn.execute(
                     text(
-                        "SELECT o.auth_epoch,s.workspace_version,p.version,p.current_revision_id FROM offerloom.owners o JOIN offerloom.owner_settings s ON s.owner_id=o.id JOIN offerloom.profiles p ON p.owner_id=o.id"
+                        "SELECT o.auth_epoch,s.workspace_version,p.version,p.current_revision_id FROM bonafides.owners o JOIN bonafides.owner_settings s ON s.owner_id=o.id JOIN bonafides.profiles p ON p.owner_id=o.id"
                     )
                 ).one()
                 == before
             )
             sessions = conn.execute(
                 text(
-                    "SELECT revoked_at IS NOT NULL,authenticated_at>clock_timestamp()-interval '5 minutes' FROM offerloom.sessions ORDER BY created_at,id"
+                    "SELECT revoked_at IS NOT NULL,authenticated_at>clock_timestamp()-interval '5 minutes' FROM bonafides.sessions ORDER BY created_at,id"
                 )
             ).all()
             assert [tuple(row) for row in sessions] == [(True, False), (False, True)]
@@ -133,7 +133,7 @@ def test_password_confirmation_requires_owner_csrf_and_persistent_attempt_budget
         with identity.admin.transaction() as conn:
             assert (
                 conn.execute(
-                    text("SELECT count(*) FROM offerloom.sessions WHERE revoked_at IS NULL")
+                    text("SELECT count(*) FROM bonafides.sessions WHERE revoked_at IS NULL")
                 ).scalar_one()
                 == 1
             )
@@ -162,10 +162,10 @@ def test_password_rotation_during_confirmation_cannot_mint_a_session(
         assert response.status_code == 401
         assert client.get("/api/v1/session").status_code == 401
         with identity.admin.transaction() as conn:
-            assert conn.execute(text("SELECT count(*) FROM offerloom.sessions")).scalar_one() == 1
+            assert conn.execute(text("SELECT count(*) FROM bonafides.sessions")).scalar_one() == 1
             assert (
                 conn.execute(
-                    text("SELECT count(*) FROM offerloom.sessions WHERE revoked_at IS NULL")
+                    text("SELECT count(*) FROM bonafides.sessions WHERE revoked_at IS NULL")
                 ).scalar_one()
                 == 0
             )

@@ -4,9 +4,9 @@
 BEGIN;
 SET LOCAL lock_timeout = '5s';
 SET LOCAL statement_timeout = '60s';
-CREATE SCHEMA offerloom;
-REVOKE ALL ON SCHEMA offerloom FROM PUBLIC;
-SET LOCAL search_path = offerloom, pg_catalog;
+CREATE SCHEMA bonafides;
+REVOKE ALL ON SCHEMA bonafides FROM PUBLIC;
+SET LOCAL search_path = bonafides, pg_catalog;
 CREATE TABLE schema_migrations (version integer PRIMARY KEY, applied_at timestamptz NOT NULL DEFAULT now());
 CREATE TYPE workflow_state AS ENUM ('pending','running','waiting_for_approval','retryable_failure','permanent_failure','cancelled','succeeded');
 CREATE TYPE application_stage AS ENUM ('preparing','applied','screening','interview','offer','accepted','rejected','withdrawn');
@@ -371,13 +371,13 @@ CREATE FUNCTION reject_revision_update() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN RAISE EXCEPTION 'immutable record; append a new revision' USING ERRCODE='55000'; END $$;
 DO $$ DECLARE t text; BEGIN
  FOREACH t IN ARRAY ARRAY['profile_revisions','claim_revisions','evidence_revisions','claim_evidence_links','profile_revision_claims','job_source_observations','application_stage_events','document_revisions','document_claim_links','document_reviews','audit_events'] LOOP
- EXECUTE format('CREATE TRIGGER immutable_update BEFORE UPDATE ON offerloom.%I FOR EACH ROW EXECUTE FUNCTION offerloom.reject_revision_update()',t);
+ EXECUTE format('CREATE TRIGGER immutable_update BEFORE UPDATE ON bonafides.%I FOR EACH ROW EXECUTE FUNCTION bonafides.reject_revision_update()',t);
  END LOOP;
 END $$;
 -- A worker MUST call this in the SAME transaction before any domain/outbox write.
 -- Row lock serializes cancellation/reclaim with publishing; never hold it over I/O.
 CREATE FUNCTION assert_workflow_fence(p_owner uuid,p_run uuid,p_worker uuid,p_fence bigint)
-RETURNS void LANGUAGE plpgsql SET search_path=offerloom,pg_catalog AS $$
+RETURNS void LANGUAGE plpgsql SET search_path=bonafides,pg_catalog AS $$
 DECLARE w workflow_runs;
 BEGIN
  -- Acquire maintenance fence BEFORE workflow lock, consistently with API writers.
@@ -390,7 +390,7 @@ BEGIN
  IF w.maintenance_epoch<>(SELECT maintenance_epoch FROM installation_state WHERE singleton)
  THEN RAISE EXCEPTION 'installation epoch changed' USING ERRCODE='55000'; END IF;
 END $$;
-REVOKE ALL ON ALL TABLES IN SCHEMA offerloom FROM PUBLIC;
-REVOKE ALL ON ALL FUNCTIONS IN SCHEMA offerloom FROM PUBLIC;
+REVOKE ALL ON ALL TABLES IN SCHEMA bonafides FROM PUBLIC;
+REVOKE ALL ON ALL FUNCTIONS IN SCHEMA bonafides FROM PUBLIC;
 INSERT INTO schema_migrations(version) VALUES (1);
 COMMIT;

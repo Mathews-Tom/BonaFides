@@ -34,7 +34,7 @@ function server(initial = task(), handler?: Handler) {
   const state = { workflows: { [initial.id]: initial } as Record<string, Workflow>, approval: null as ActionApproval | null, failure: null as Error | null, detailWaits: {} as Record<string, Promise<void>>, listCursor: null as string | null };
   const request = vi.spyOn(api, 'request').mockImplementation(async <T,>(path: string, method = 'GET', body?: unknown, version?: number, key: boolean | string = false) => {
     if (handler) { const value = await handler(path, method, body, version, key); if (value !== undefined) return value as T; }
-    const url = new URL(path, 'http://offerloom.local');
+    const url = new URL(path, 'http://bonafides.local');
     if (url.pathname === '/workflows') return { items: Object.values(state.workflows).filter(item => !url.searchParams.get('state') || item.state === url.searchParams.get('state')), next_cursor: state.listCursor } as T;
     const id = url.pathname.split('/')[2] ?? ''; const live = state.workflows[id];
     if (!live) throw new ApiError(404, 'workflow_not_found');

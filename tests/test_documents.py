@@ -21,7 +21,7 @@ from test_sources import SourceContext
 from test_sources import catalog as catalog
 from test_suitability import _profile
 
-from offerloom.documents import (
+from bonafides.documents import (
     DocumentBlock,
     DocumentBody,
     DocumentSection,
@@ -33,8 +33,8 @@ from offerloom.documents import (
     prepare_render,
     unsupported_paths,
 )
-from offerloom.problems import Problem
-from offerloom.render_service import (
+from bonafides.problems import Problem
+from bonafides.render_service import (
     RenderClient,
     RenderFailure,
     RenderReceipt,
@@ -42,7 +42,7 @@ from offerloom.render_service import (
     isolation_canary,
     render_html,
 )
-from offerloom.storage import BlobStore, atomic_file, directory, read_file
+from bonafides.storage import BlobStore, atomic_file, directory, read_file
 
 
 def example(text: str = "Maintained Linux services.") -> tuple[DocumentBody, Fact]:
@@ -252,7 +252,7 @@ def test_typed_pdf_export_fences_hash_format_version_and_idempotency(
         assert (
             conn.execute(
                 text(
-                    "SELECT count(*) FROM offerloom.workflow_runs "
+                    "SELECT count(*) FROM bonafides.workflow_runs "
                     "WHERE owner_id=:owner AND kind='pdf_render'"
                 ),
                 {"owner": catalog.owner_id},
@@ -270,7 +270,7 @@ def test_typed_pdf_export_fences_hash_format_version_and_idempotency(
         rows = (
             conn.execute(
                 text(
-                    "SELECT input FROM offerloom.workflow_runs "
+                    "SELECT input FROM bonafides.workflow_runs "
                     "WHERE owner_id=:owner AND kind='pdf_render'"
                 ),
                 {"owner": catalog.owner_id},
@@ -293,7 +293,7 @@ def test_typed_pdf_export_fences_hash_format_version_and_idempotency(
 def test_workflow_output_is_not_export_permission(
     reviewed: bool, unsupported: list[str], expected: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from offerloom import document_generation, documents
+    from bonafides import document_generation, documents
 
     monkeypatch.setattr(document_generation, "lock_workspace", lambda *args: None)
 
@@ -316,7 +316,7 @@ def test_workflow_output_is_not_export_permission(
 
 
 def test_review_does_not_authorize_a_different_revision(monkeypatch: pytest.MonkeyPatch) -> None:
-    from offerloom import document_generation, documents
+    from bonafides import document_generation, documents
 
     monkeypatch.setattr(document_generation, "lock_workspace", lambda *args: None)
     monkeypatch.setattr(document_generation, "export_eligibility", lambda *args: None)
@@ -328,7 +328,7 @@ def test_review_does_not_authorize_a_different_revision(monkeypatch: pytest.Monk
             "id": str(revision_id),
             "body": body.model_dump(mode="json"),
             "content_sha256": body_digest(body),
-            "template_version": "offerloom-base-v1",
+            "template_version": "bonafides-base-v1",
             "provenance_snapshot": {"schema_version": 1},
         },
         "reviewed": True,
@@ -480,11 +480,11 @@ def test_client_requires_receipt_digest_and_never_trusts_pdf_magic_alone(tmp_pat
 def test_supervisor_timeout_kills_and_reaps_real_child(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from offerloom import render_service
+    from bonafides import render_service
 
     body, _ = example()
     request = render_service.RenderRequest(
-        schema_version=1, template_version="offerloom-base-v1", body=body
+        schema_version=1, template_version="bonafides-base-v1", body=body
     )
     job_id = "a" * 64
     actual_popen = subprocess.Popen

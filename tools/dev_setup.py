@@ -35,7 +35,7 @@ def initialize(directory: Path, env_file: Path, project: str, port: int, benchma
     for role in ("migrator", "runtime"):
         private_write(
             directory / f"{role}_dsn",
-            f"postgresql+psycopg://offerloom_{role}:{credentials[role]}@db:5432/offerloom",
+            f"postgresql+psycopg://bonafides_{role}:{credentials[role]}@db:5432/bonafides",
         )
     keyring = {
         "active_key_id": "local-1",
@@ -46,9 +46,9 @@ def initialize(directory: Path, env_file: Path, project: str, port: int, benchma
     # No credential values belong in Compose interpolation or a process environment.
     private_write(
         env_file,
-        f"COMPOSE_PROJECT_NAME={project}\nOFFERLOOM_SECRET_DIR={directory.resolve()}\n"
-        f"OFFERLOOM_PORT={port}\nOFFERLOOM_ORIGIN=http://localhost:{port}\n"
-        f"OFFERLOOM_MODE={'benchmark' if benchmark else 'production'}",
+        f"COMPOSE_PROJECT_NAME={project}\nBONAFIDES_SECRET_DIR={directory.resolve()}\n"
+        f"BONAFIDES_PORT={port}\nBONAFIDES_ORIGIN=http://localhost:{port}\n"
+        f"BONAFIDES_MODE={'benchmark' if benchmark else 'production'}",
     )
 
 
@@ -56,7 +56,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--directory", type=Path, default=Path(".secrets"))
     parser.add_argument("--env-file", type=Path, default=Path(".env"))
-    parser.add_argument("--project", default="offerloom-local")
+    parser.add_argument("--project", default="bonafides-local")
     parser.add_argument("--port", type=int, default=8000)
     parser.add_argument(
         "--benchmark",

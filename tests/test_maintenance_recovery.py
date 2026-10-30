@@ -29,32 +29,32 @@ from test_sources import SourceContext
 from test_sources import catalog as catalog
 from test_tracking import _application
 
-from offerloom.approvals import consume_action_approval
-from offerloom.db import Database
-from offerloom.execution_guard import LOCK_NAME, ExecutionGuard
-from offerloom.import_parser import ImportParserClient
-from offerloom.installation_backup import table_integrity
-from offerloom.installation_control import Control, begin_control
-from offerloom.installation_restore import _revoke_restored_authority
-from offerloom.maintenance import start_api_activity
-from offerloom.maintenance_operator import MaintenanceRecoveryConfiguration, inspect, recover
-from offerloom.portable_data import quarantine_records
-from offerloom.problems import Problem
-from offerloom.storage import BlobStore
-from offerloom.workflows import claim_control
+from bonafides.approvals import consume_action_approval
+from bonafides.db import Database
+from bonafides.execution_guard import LOCK_NAME, ExecutionGuard
+from bonafides.import_parser import ImportParserClient
+from bonafides.installation_backup import table_integrity
+from bonafides.installation_control import Control, begin_control
+from bonafides.installation_restore import _revoke_restored_authority
+from bonafides.maintenance import start_api_activity
+from bonafides.maintenance_operator import MaintenanceRecoveryConfiguration, inspect, recover
+from bonafides.portable_data import quarantine_records
+from bonafides.problems import Problem
+from bonafides.storage import BlobStore
+from bonafides.workflows import claim_control
 
 _CHILD = r'''
 import base64, hashlib, json, sys
 from pathlib import Path
 from uuid import UUID, uuid4
 from sqlalchemy import text
-from offerloom.config import Settings
-from offerloom.crypto import Keyring
-from offerloom.db import Database
-from offerloom.installation_control import Control, InstallationMaintenance
-from offerloom.maintenance import start_api_activity
-from offerloom.portable_erasure import erase_scope, orphan_inventory, purge_scope
-from offerloom.storage import BlobStore
+from bonafides.config import Settings
+from bonafides.crypto import Keyring
+from bonafides.db import Database
+from bonafides.installation_control import Control, InstallationMaintenance
+from bonafides.maintenance import start_api_activity
+from bonafides.portable_erasure import erase_scope, orphan_inventory, purge_scope
+from bonafides.storage import BlobStore
 
 config = json.loads(Path(sys.argv[1]).read_text())
 settings = Settings(
@@ -84,7 +84,7 @@ with maintenance.quiescent():
             data = value.encode()
             digest, staging = hashlib.sha256(data).hexdigest(), uuid4()
             with db.transaction() as conn:
-                conn.execute(text("""SELECT offerloom.register_portable_staging(
+                conn.execute(text("""SELECT bonafides.register_portable_staging(
                     :id,:holder,:fence,:sha,:length,:staging)"""),
                     {**control.parameters, "sha":digest, "length":len(data),
                      "staging":".staging-"+staging.hex})
@@ -144,7 +144,7 @@ def _configuration(
     with context.identity.admin.transaction() as conn:
         state = conn.execute(
             text(
-                "SELECT namespace_id,maintenance_epoch FROM offerloom.installation_state WHERE singleton"
+                "SELECT namespace_id,maintenance_epoch FROM bonafides.installation_state WHERE singleton"
             )
         ).one()
     config = MaintenanceRecoveryConfiguration(
@@ -216,7 +216,7 @@ def _kill(child: subprocess.Popen[bytes]) -> None:
 
 def _cli(path: Path) -> dict[str, Any]:
     result = subprocess.run(
-        [sys.executable, "-m", "offerloom.cli", "maintenance-recover", "--config", str(path)],
+        [sys.executable, "-m", "bonafides.cli", "maintenance-recover", "--config", str(path)],
         capture_output=True,
         timeout=90,
     )
@@ -240,12 +240,12 @@ def test_live_actor_refuses_then_real_death_recovers_orphan_with_both_sealed_dae
         with catalog.identity.admin.transaction() as conn:
             assert (
                 conn.execute(
-                    text("SELECT count(*) FROM offerloom.installation_activities")
+                    text("SELECT count(*) FROM bonafides.installation_activities")
                 ).scalar_one()
                 == 1
             )
             assert not conn.execute(
-                text("SELECT maintenance_active FROM offerloom.installation_state WHERE singleton")
+                text("SELECT maintenance_active FROM bonafides.installation_state WHERE singleton")
             ).scalar_one()
     finally:
         _kill(child)
@@ -258,13 +258,13 @@ def test_live_actor_refuses_then_real_death_recovers_orphan_with_both_sealed_dae
     with catalog.identity.admin.transaction() as conn:
         assert (
             conn.execute(
-                text("SELECT count(*) FROM offerloom.installation_activities")
+                text("SELECT count(*) FROM bonafides.installation_activities")
             ).scalar_one()
             == 0
         )
         receipt = conn.execute(
             text(
-                "SELECT process_proof,parser_nonce,renderer_nonce,cleared_activities,outcome FROM offerloom.maintenance_recoveries"
+                "SELECT process_proof,parser_nonce,renderer_nonce,cleared_activities,outcome FROM bonafides.maintenance_recoveries"
             )
         ).one()
         assert receipt.process_proof == "exclusive-kernel-flock/v1"
@@ -293,7 +293,7 @@ def test_killed_destructive_actor_aborts_rollback_or_resumes_exact_published_sco
     _kill(child)
     with catalog.identity.admin.transaction() as conn:
         committed = conn.execute(
-            text("SELECT EXISTS(SELECT 1 FROM offerloom.portable_purges WHERE control_id=:id)"),
+            text("SELECT EXISTS(SELECT 1 FROM bonafides.portable_purges WHERE control_id=:id)"),
             {"id": control.id},
         ).scalar_one()
         assert committed is (mode == "committed")
@@ -302,19 +302,19 @@ def test_killed_destructive_actor_aborts_rollback_or_resumes_exact_published_sco
     with catalog.identity.admin.transaction() as conn:
         exists = conn.execute(
             text(
-                "SELECT EXISTS(SELECT 1 FROM offerloom.applications WHERE owner_id=:owner AND id=:id)"
+                "SELECT EXISTS(SELECT 1 FROM bonafides.applications WHERE owner_id=:owner AND id=:id)"
             ),
             {"owner": catalog.owner_id, "id": application["id"]},
         ).scalar_one()
         assert exists is (mode == "precommit")
         state, receipt = conn.execute(
-            text("SELECT state,result FROM offerloom.workflow_runs WHERE id=:id"),
+            text("SELECT state,result FROM bonafides.workflow_runs WHERE id=:id"),
             {"id": control.id},
         ).one()
         assert state == ("permanent_failure" if mode == "precommit" else "succeeded")
         assert receipt["outcome"] == result["outcome"]
         assert not conn.execute(
-            text("SELECT maintenance_active FROM offerloom.installation_state WHERE singleton")
+            text("SELECT maintenance_active FROM bonafides.installation_state WHERE singleton")
         ).scalar_one()
     blob_path = config.blob_root / str(catalog.owner_id) / stored.storage_key
     if mode == "precommit":
@@ -360,13 +360,13 @@ def test_offline_recovery_refuses_unproven_or_foreign_authority_without_clearing
             def remove_owned_activity() -> None:
                 with catalog.identity.admin.transaction() as cleanup:
                     cleanup.execute(
-                        text("DELETE FROM offerloom.installation_activities WHERE id=:id"),
+                        text("DELETE FROM bonafides.installation_activities WHERE id=:id"),
                         {"id": activity_id},
                     )
 
             request.addfinalizer(remove_owned_activity)
             conn.execute(
-                text("""INSERT INTO offerloom.installation_activities
+                text("""INSERT INTO bonafides.installation_activities
                 (id,namespace_id,maintenance_epoch,participant_id,kind,execution_id)
                 VALUES(:id,:namespace,:epoch,:participant,'api',:execution)"""),
                 {
@@ -380,22 +380,22 @@ def test_offline_recovery_refuses_unproven_or_foreign_authority_without_clearing
         elif fault == "legacy_control":
             conn.execute(
                 text(
-                    "UPDATE offerloom.installation_controls SET execution_guard_id=NULL WHERE id=:id"
+                    "UPDATE bonafides.installation_controls SET execution_guard_id=NULL WHERE id=:id"
                 ),
                 {"id": control.id},
             )
         elif fault == "unknown_provider":
             model = conn.execute(
-                text("""INSERT INTO offerloom.model_runs(owner_id,workflow_run_id,provider_key,model_id,task_kind,
+                text("""INSERT INTO bonafides.model_runs(owner_id,workflow_run_id,provider_key,model_id,task_kind,
                 prompt_version,input_sha256,parameters,egress_class,reserved_tokens,reserved_cost_microunits,status)
                 VALUES(:owner,:id,'synthetic','synthetic','synthetic','synthetic',repeat('0',64),'{}','local',30,3,'running') RETURNING id"""),
                 {"owner": control.owner_id, "id": control.id},
             ).scalar_one()
             conn.execute(
-                text("""INSERT INTO offerloom.provider_executions
+                text("""INSERT INTO bonafides.provider_executions
                 (id,namespace_id,maintenance_epoch,participant_id,owner_id,model_run_id,execution_guard_id)
                 SELECT :id,namespace_id,maintenance_epoch,:participant,:owner,:model,execution_guard_id
-                FROM offerloom.installation_state WHERE singleton"""),
+                FROM bonafides.installation_state WHERE singleton"""),
                 {"id": uuid4(), "participant": uuid4(), "owner": control.owner_id, "model": model},
             )
     _stop_ordinary(catalog)
@@ -417,16 +417,16 @@ def test_offline_recovery_refuses_unproven_or_foreign_authority_without_clearing
     with catalog.identity.admin.transaction() as conn:
         assert (
             conn.execute(
-                text("SELECT phase FROM offerloom.installation_controls WHERE id=:id"),
+                text("SELECT phase FROM bonafides.installation_controls WHERE id=:id"),
                 {"id": control.id},
             ).scalar_one()
             == "draining"
         )
         assert conn.execute(
-            text("SELECT maintenance_active FROM offerloom.installation_state WHERE singleton")
+            text("SELECT maintenance_active FROM bonafides.installation_state WHERE singleton")
         ).scalar_one()
         assert (
-            conn.execute(text("SELECT count(*) FROM offerloom.maintenance_recoveries")).scalar_one()
+            conn.execute(text("SELECT count(*) FROM bonafides.maintenance_recoveries")).scalar_one()
             == 0
         )
     assert not (config.parser_spool / ".maintenance.request").exists()
@@ -441,18 +441,18 @@ def test_runtime_cannot_invoke_old_begin_or_privileged_recovery_and_inspection_i
     with catalog.runtime.transaction() as conn:
         assert not conn.execute(
             text("""SELECT has_function_privilege(current_user,
-            'offerloom.begin_installation_control(uuid,uuid,uuid,bigint,uuid)','EXECUTE')
+            'bonafides.begin_installation_control(uuid,uuid,uuid,bigint,uuid)','EXECUTE')
             OR has_function_privilege(current_user,
-            'offerloom.begin_maintenance_recovery(uuid,uuid,bigint,uuid,uuid,bigint,uuid,text,text,uuid)','EXECUTE')
-            OR has_table_privilege(current_user,'offerloom.maintenance_recoveries','INSERT')""")
+            'bonafides.begin_maintenance_recovery(uuid,uuid,bigint,uuid,uuid,bigint,uuid,text,text,uuid)','EXECUTE')
+            OR has_table_privilege(current_user,'bonafides.maintenance_recoveries','INSERT')""")
         ).scalar_one()
         counts, fingerprints = table_integrity(conn)
         assert counts["maintenance_recoveries"] == 0
         assert fingerprints["maintenance_recoveries"] == hashlib.sha256(b"").hexdigest()
     for statement in (
-        "INSERT INTO offerloom.maintenance_recoveries DEFAULT VALUES",
-        "UPDATE offerloom.maintenance_recoveries SET outcome='SUPERSEDED' WHERE false",
-        "DELETE FROM offerloom.maintenance_recoveries WHERE false",
+        "INSERT INTO bonafides.maintenance_recoveries DEFAULT VALUES",
+        "UPDATE bonafides.maintenance_recoveries SET outcome='SUPERSEDED' WHERE false",
+        "DELETE FROM bonafides.maintenance_recoveries WHERE false",
     ):
         with pytest.raises(DBAPIError) as denied, catalog.runtime.transaction() as conn:
             conn.execute(text(statement))
@@ -504,25 +504,25 @@ def test_partial_committed_purge_refuses_corrupt_remaining_file_then_resumes_wit
         assert (
             conn.execute(
                 text(
-                    "SELECT count(*) FROM offerloom.portable_purge_items WHERE control_id=:id AND resolved_at IS NOT NULL"
+                    "SELECT count(*) FROM bonafides.portable_purge_items WHERE control_id=:id AND resolved_at IS NOT NULL"
                 ),
                 {"id": control.id},
             ).scalar_one()
             == 1
         )
         version = conn.execute(
-            text("SELECT workspace_version FROM offerloom.owner_settings WHERE owner_id=:owner"),
+            text("SELECT workspace_version FROM bonafides.owner_settings WHERE owner_id=:owner"),
             {"owner": catalog.owner_id},
         ).scalar_one()
     failed = subprocess.run(
-        [sys.executable, "-m", "offerloom.cli", "maintenance-recover", "--config", str(path)],
+        [sys.executable, "-m", "bonafides.cli", "maintenance-recover", "--config", str(path)],
         capture_output=True,
         timeout=90,
     )
     assert failed.returncode == 2 and b"file_integrity" in failed.stderr
     with catalog.identity.admin.transaction() as conn:
         assert conn.execute(
-            text("SELECT maintenance_active FROM offerloom.installation_state WHERE singleton")
+            text("SELECT maintenance_active FROM bonafides.installation_state WHERE singleton")
         ).scalar_one()
     # Repair only the synthetic fixture's corrupt remaining object, then require
     # the NEW exact adopted holder/fence (the first operator's old tuple is stale).
@@ -538,7 +538,7 @@ def test_partial_committed_purge_refuses_corrupt_remaining_file_then_resumes_wit
         assert (
             conn.execute(
                 text(
-                    "SELECT workspace_version FROM offerloom.owner_settings WHERE owner_id=:owner"
+                    "SELECT workspace_version FROM bonafides.owner_settings WHERE owner_id=:owner"
                 ),
                 {"owner": catalog.owner_id},
             ).scalar_one()
@@ -546,7 +546,7 @@ def test_partial_committed_purge_refuses_corrupt_remaining_file_then_resumes_wit
         )
         assert (
             conn.execute(
-                text("SELECT count(*) FROM offerloom.portable_purges WHERE control_id=:id"),
+                text("SELECT count(*) FROM bonafides.portable_purges WHERE control_id=:id"),
                 {"id": control.id},
             ).scalar_one()
             == 1
@@ -554,7 +554,7 @@ def test_partial_committed_purge_refuses_corrupt_remaining_file_then_resumes_wit
         assert (
             conn.execute(
                 text(
-                    "SELECT count(*) FROM offerloom.portable_purge_items WHERE control_id=:id AND resolved_at IS NULL"
+                    "SELECT count(*) FROM bonafides.portable_purge_items WHERE control_id=:id AND resolved_at IS NULL"
                 ),
                 {"id": control.id},
             ).scalar_one()
@@ -603,13 +603,13 @@ def test_precommit_import_abort_removes_only_owned_new_cas_and_partial_staging(
     with catalog.identity.admin.transaction() as conn:
         files = conn.execute(
             text(
-                "SELECT storage_key,staging_name FROM offerloom.portable_staged_files WHERE control_id=:id"
+                "SELECT storage_key,staging_name FROM bonafides.portable_staged_files WHERE control_id=:id"
             ),
             {"id": control.id},
         ).all()
         assert len(files) == 2
         assert not conn.execute(
-            text("SELECT EXISTS(SELECT 1 FROM offerloom.portable_purges WHERE control_id=:id)"),
+            text("SELECT EXISTS(SELECT 1 FROM bonafides.portable_purges WHERE control_id=:id)"),
             {"id": control.id},
         ).scalar_one()
     assert _cli(path)["outcome"] == "ABORTED"
@@ -626,7 +626,7 @@ def test_precommit_import_abort_removes_only_owned_new_cas_and_partial_staging(
     )
     with catalog.identity.admin.transaction() as conn:
         assert conn.execute(
-            text("SELECT EXISTS(SELECT 1 FROM offerloom.applications WHERE id=:id)"),
+            text("SELECT EXISTS(SELECT 1 FROM bonafides.applications WHERE id=:id)"),
             {"id": application["id"]},
         ).scalar_one()
 
@@ -645,7 +645,7 @@ def test_expired_provider_free_crash_uses_positive_exclusion_not_lease_clearance
     _kill(child)
     with catalog.identity.admin.transaction() as conn:
         conn.execute(
-            text("""UPDATE offerloom.installation_controls
+            text("""UPDATE bonafides.installation_controls
             SET deadline_at=clock_timestamp()-interval '1 second',
             drain_deadline_at=clock_timestamp()-interval '2 seconds',
             lease_expires_at=clock_timestamp()-interval '1 second' WHERE id=:id"""),
@@ -664,13 +664,13 @@ def test_closed_native_target_without_current_namespace_control_is_never_promote
     # target state; this fixture is not evidence of a native pg_restore drill.
     with catalog.identity.admin.transaction() as conn:
         conn.execute(
-            text("""UPDATE offerloom.installation_controls
+            text("""UPDATE bonafides.installation_controls
             SET phase='released',settled_at=clock_timestamp(),released_at=clock_timestamp(),
             result='{\"error_code\":\"installation_restored\"}' WHERE id=:id"""),
             {"id": control.id},
         )
         conn.execute(
-            text("""UPDATE offerloom.installation_state SET namespace_id=:namespace,
+            text("""UPDATE bonafides.installation_state SET namespace_id=:namespace,
             maintenance_epoch=maintenance_epoch+1,maintenance_active=true WHERE singleton"""),
             {"namespace": uuid4()},
         )
@@ -686,7 +686,7 @@ def test_closed_native_target_without_current_namespace_control_is_never_promote
         recover(config)
     with catalog.identity.admin.transaction() as conn:
         assert conn.execute(
-            text("SELECT maintenance_active FROM offerloom.installation_state WHERE singleton")
+            text("SELECT maintenance_active FROM bonafides.installation_state WHERE singleton")
         ).scalar_one()
 
 
@@ -699,7 +699,7 @@ def test_native_revocation_disables_manual_and_reviewed_sources_without_losing_h
     with catalog.identity.admin.transaction() as conn:
         before = conn.execute(
             text("""SELECT id,source_kind,version,policy_version,current_policy_review_id
-            FROM offerloom.source_configs
+            FROM bonafides.source_configs
             WHERE owner_id=:owner AND enabled ORDER BY id"""),
             {"owner": catalog.owner_id},
         ).all()
@@ -717,7 +717,7 @@ def test_native_revocation_disables_manual_and_reviewed_sources_without_losing_h
             for original in before:
                 current = conn.execute(
                     text("""SELECT enabled,version,policy_version,current_policy_review_id,
-                    terms_reviewed_at FROM offerloom.source_configs WHERE id=:id"""),
+                    terms_reviewed_at FROM bonafides.source_configs WHERE id=:id"""),
                     {"id": original.id},
                 ).one()
                 assert not current.enabled
@@ -726,19 +726,19 @@ def test_native_revocation_disables_manual_and_reviewed_sources_without_losing_h
                 assert current.current_policy_review_id is None
                 assert current.terms_reviewed_at is None
             assert conn.execute(
-                text("SELECT id FROM offerloom.source_policy_reviews WHERE source_config_id=:id"),
+                text("SELECT id FROM bonafides.source_policy_reviews WHERE source_config_id=:id"),
                 {"id": UUID(reviewed["id"])},
             ).scalar_one() == next(
                 row.current_policy_review_id for row in before if row.id == UUID(reviewed["id"])
             )
             assert conn.execute(
-                text("""SELECT o.posting_id FROM offerloom.applications a
-                JOIN offerloom.saved_opportunities o
+                text("""SELECT o.posting_id FROM bonafides.applications a
+                JOIN bonafides.saved_opportunities o
                 ON o.owner_id=a.owner_id AND o.id=a.opportunity_id WHERE a.id=:id"""),
                 {"id": UUID(application["id"])},
             ).scalar_one() == UUID(application["posting_id"])
             assert conn.execute(
-                text("SELECT maintenance_active FROM offerloom.installation_state WHERE singleton")
+                text("SELECT maintenance_active FROM bonafides.installation_state WHERE singleton")
             ).scalar_one()
 
 
@@ -754,7 +754,7 @@ def test_restored_runtime_can_quarantine_its_nonempty_export_without_domain_writ
         with catalog.identity.admin.transaction() as conn:
             conn.exec_driver_sql(
                 """DO $$ BEGIN
-            EXECUTE format('GRANT TEMPORARY ON DATABASE %I TO offerloom_runtime',current_database());
+            EXECUTE format('GRANT TEMPORARY ON DATABASE %I TO bonafides_runtime',current_database());
             END $$;""",
                 execution_options={"no_parameters": True},
             )
@@ -763,7 +763,7 @@ def test_restored_runtime_can_quarantine_its_nonempty_export_without_domain_writ
     with catalog.identity.admin.transaction() as conn:
         conn.exec_driver_sql(
             """DO $$ BEGIN
-        EXECUTE format('REVOKE TEMPORARY ON DATABASE %I FROM offerloom_runtime',current_database());
+        EXECUTE format('REVOKE TEMPORARY ON DATABASE %I FROM bonafides_runtime',current_database());
         END $$;""",
             execution_options={"no_parameters": True},
         )

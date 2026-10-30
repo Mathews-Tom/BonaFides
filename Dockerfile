@@ -9,8 +9,8 @@ RUN pnpm build
 
 FROM ghcr.io/astral-sh/uv:0.13.0@sha256:cdc6093146eb3ff6a40107b38f008b789e050e77ad87865e381d9917da55a168 AS uv
 FROM python:3.12.15-alpine3.24@sha256:b658b05ce9c4eb97ec6fc19424818a1f31993659c2b505a532f470e83807815d AS app
-LABEL org.opencontainers.image.title="Offerloom M0" org.opencontainers.image.licenses="MIT OR Apache-2.0"
-ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 UV_PYTHON_DOWNLOADS=never UV_COMPILE_BYTECODE=1 UV_LINK_MODE=copy PATH=/app/.venv/bin:$PATH HOME=/tmp OFFERLOOM_WEB_DIST=/app/web/dist
+LABEL org.opencontainers.image.title="BonaFides" org.opencontainers.image.licenses="MIT OR Apache-2.0"
+ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 UV_PYTHON_DOWNLOADS=never UV_COMPILE_BYTECODE=1 UV_LINK_MODE=copy PATH=/app/.venv/bin:$PATH HOME=/tmp BONAFIDES_WEB_DIST=/app/web/dist
 WORKDIR /app
 COPY --from=uv /uv /usr/local/bin/uv
 # Preserve APK ownership/license metadata for the exported-image collector.
@@ -19,12 +19,12 @@ COPY --from=uv /uv /usr/local/bin/uv
 # OpenSSL CMS supplies a standard authenticated recipient-encryption envelope.
 RUN test "$(python --version)" = 'Python 3.12.15' \
  && apk add --no-cache libpq libpq-dev postgresql18-client openssl binutils pango harfbuzz-subset libjpeg-turbo openjpeg libffi fontconfig font-dejavu ca-certificates \
- && mkdir -p /usr/share/offerloom /data/blobs /spool /import-spool /run/offerloom \
- && apk info -v > /usr/share/offerloom/native-packages.txt \
- && fc-list > /usr/share/offerloom/fonts.txt \
- && addgroup -g 10001 offerloom \
- && adduser -D -u 10001 -G offerloom -h /tmp offerloom \
- && chown -R 10001:10001 /data /spool /import-spool /run/offerloom
+ && mkdir -p /usr/share/bonafides /data/blobs /spool /import-spool /run/bonafides \
+ && apk info -v > /usr/share/bonafides/native-packages.txt \
+ && fc-list > /usr/share/bonafides/fonts.txt \
+ && addgroup -g 10001 bonafides \
+ && adduser -D -u 10001 -G bonafides -h /tmp bonafides \
+ && chown -R 10001:10001 /data /spool /import-spool /run/bonafides
 COPY pyproject.toml uv.lock .python-version alembic.ini README.md LICENSE-MIT LICENSE-APACHE NOTICE ./
 COPY src/ src/
 COPY migrations/ migrations/
@@ -37,5 +37,5 @@ RUN uv sync --frozen --only-group build --no-build \
 COPY --from=web /build/web/dist /app/web/dist
 USER 10001:10001
 EXPOSE 8000
-ENTRYPOINT ["python", "-m", "offerloom"]
+ENTRYPOINT ["python", "-m", "bonafides"]
 CMD ["api"]

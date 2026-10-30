@@ -26,8 +26,8 @@ from pypdf.generic import (
 )
 from pypdf.generic._font import Font
 
-from offerloom import import_parser
-from offerloom.import_parser import (
+from bonafides import import_parser
+from bonafides.import_parser import (
     MAX_PAGE_CONTENT_BYTES,
     MAX_PDF_PAGES,
     MAX_QUEUED_JOBS,
@@ -37,7 +37,7 @@ from offerloom.import_parser import (
     ImportFailure,
     ImportParserClient,
 )
-from offerloom.storage import atomic_file, directory, read_file
+from bonafides.storage import atomic_file, directory, read_file
 
 
 def _wait_for(predicate: Callable[[], bool]) -> None:
@@ -55,14 +55,14 @@ def parser(tmp_path_factory: pytest.TempPathFactory) -> Iterator[ImportParserCli
     spool.mkdir(mode=0o700)
     container: str | None = None
     if sys.platform == "linux":
-        args = [sys.executable, "-m", "offerloom.import_parser", "serve", str(spool)]
+        args = [sys.executable, "-m", "bonafides.import_parser", "serve", str(spool)]
     else:
         # Production is Linux-only; Darwin cannot enforce the child RLIMIT_AS.
         # Test the real sealed Linux parser instead of weakening that boundary.
-        image = os.environ.get("OFFERLOOM_TEST_PARSER_IMAGE")
+        image = os.environ.get("BONAFIDES_TEST_PARSER_IMAGE")
         if not image:
-            pytest.fail("Non-Linux parser tests require OFFERLOOM_TEST_PARSER_IMAGE and Docker.")
-        container = "offerloom-parser-test-" + uuid4().hex
+            pytest.fail("Non-Linux parser tests require BONAFIDES_TEST_PARSER_IMAGE and Docker.")
+        container = "bonafides-parser-test-" + uuid4().hex
         args = [
             "docker",
             "run",
@@ -92,7 +92,7 @@ def parser(tmp_path_factory: pytest.TempPathFactory) -> Iterator[ImportParserCli
             "python",
             image,
             "-m",
-            "offerloom.import_parser",
+            "bonafides.import_parser",
             "serve",
             "/import-spool",
         ]
@@ -235,7 +235,7 @@ def test_real_pdf_extraction_and_normalized_source_digest(parser: ImportParserCl
 def test_positioned_pdf_reconstructs_wrapped_quotes_before_proposal_limits(
     parser: ImportParserClient,
 ) -> None:
-    from offerloom.imports import extract_proposals
+    from bonafides.imports import extract_proposals
 
     lines = ["Skills"]
     expected = []
@@ -257,8 +257,8 @@ def test_positioned_pdf_reconstructs_wrapped_quotes_before_proposal_limits(
 def test_positioned_pdf_does_not_coalesce_distinct_bullets_to_escape_limits(
     parser: ImportParserClient,
 ) -> None:
-    from offerloom.imports import extract_proposals
-    from offerloom.problems import Problem
+    from bonafides.imports import extract_proposals
+    from bonafides.problems import Problem
 
     # Two pages preserve duplicate statements rather than silently deduplicating.
     accepted = parser.parse(

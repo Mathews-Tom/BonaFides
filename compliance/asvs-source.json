@@ -28,6 +28,6 @@
   "attribution": "OWASP Foundation and OWASP ASVS contributors, Application Security Verification Standard 5.0.0",
   "license_url": "https://creativecommons.org/licenses/by-sa/4.0/",
   "upstream_license_url": "https://github.com/OWASP/ASVS/blob/v5.0.0_release/LICENSE.md",
-  "adaptation": "Original requirement columns preserved; Offerloom applicability, responsibility and pending evidence fields added. Register adaptation distributed under CC-BY-SA-4.0. No endorsement implied.",
+  "adaptation": "Original requirement columns preserved; BonaFides applicability, responsibility and pending evidence fields added. Register adaptation distributed under CC-BY-SA-4.0. No endorsement implied.",
   "verification": "No conformance, test pass, exclusion approval, reviewer signature or Level 2 completion is asserted."
 }

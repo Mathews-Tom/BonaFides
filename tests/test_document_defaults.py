@@ -31,20 +31,20 @@ from test_sources import SourceContext
 from test_sources import catalog as catalog
 from test_suitability import FixtureModel, _profile, _route
 
-from offerloom import documents, suitability
-from offerloom.auth import Owner, require_owner
-from offerloom.commands import canonical_json
-from offerloom.document_frame import template_digest
-from offerloom.storage import BlobStore
-from offerloom.worker import Worker
-from offerloom.workflows import publish
+from bonafides import documents, suitability
+from bonafides.auth import Owner, require_owner
+from bonafides.commands import canonical_json
+from bonafides.document_frame import template_digest
+from bonafides.storage import BlobStore
+from bonafides.worker import Worker
+from bonafides.workflows import publish
 
 
 def _stored(context: SourceContext) -> dict[str, Any]:
     with context.runtime.transaction() as conn:
         return dict(
             conn.execute(
-                text("SELECT * FROM offerloom.owner_settings WHERE owner_id=:owner"),
+                text("SELECT * FROM bonafides.owner_settings WHERE owner_id=:owner"),
                 {"owner": context.owner_id},
             )
             .mappings()
@@ -68,7 +68,7 @@ def test_partial_defaults_preserve_other_preferences_and_replay_without_rollback
     with catalog.runtime.transaction() as conn:
         conn.execute(
             text(
-                "UPDATE offerloom.owner_settings SET settings=CAST(:settings AS jsonb) "
+                "UPDATE bonafides.owner_settings SET settings=CAST(:settings AS jsonb) "
                 "WHERE owner_id=:owner"
             ),
             {"owner": catalog.owner_id, "settings": canonical_json(unrelated)},
@@ -76,7 +76,7 @@ def test_partial_defaults_preserve_other_preferences_and_replay_without_rollback
     before = _stored(catalog)
     original = _defaults(catalog)
     assert _stored(catalog) == before, "Reading unset defaults must not mutate the owner."
-    assert original["template_version"] == "offerloom-evidence-v1"
+    assert original["template_version"] == "bonafides-evidence-v1"
     assert original["tone"] == "professional"
 
     headers = catalog.headers(original["version"])
@@ -89,17 +89,17 @@ def test_partial_defaults_preserve_other_preferences_and_replay_without_rollback
     assert first.headers["etag"] == f'"{first.json()["version"]}"'
     second = catalog.client.patch(
         "/api/v1/document-defaults",
-        json={"template_version": "offerloom-compact-letter-v1"},
+        json={"template_version": "bonafides-compact-letter-v1"},
         headers=catalog.headers(first.json()["version"]),
     )
     assert second.status_code == 200, second.text
     assert second.json()["tone"] == "concise"
-    assert second.json()["template_version"] == "offerloom-compact-letter-v1"
+    assert second.json()["template_version"] == "bonafides-compact-letter-v1"
     saved = _stored(catalog)
     assert saved["settings"] == {
         **unrelated,
         "document_defaults": {
-            "template_version": "offerloom-compact-letter-v1",
+            "template_version": "bonafides-compact-letter-v1",
             "tone": "concise",
         },
     }
@@ -137,7 +137,7 @@ def test_partial_defaults_preserve_other_preferences_and_replay_without_rollback
         {"template_version": None},
         {"tone": "casual"},
         {"tone": 1},
-        {"template_version": "offerloom-base-v1"},
+        {"template_version": "bonafides-base-v1"},
         {"template_version": "file:///tmp/owned.html"},
         {"template_version": ""},
         {"language": "fr"},
@@ -228,8 +228,8 @@ def test_foreign_authenticated_principal_cannot_read_or_change_singleton_owner_d
         {},
         {"tone": "concise"},
         {"template_version": "removed-template", "tone": "professional"},
-        {"template_version": "offerloom-evidence-v1", "tone": "casual"},
-        {"template_version": "offerloom-evidence-v1", "tone": "professional", "extra": True},
+        {"template_version": "bonafides-evidence-v1", "tone": "casual"},
+        {"template_version": "bonafides-evidence-v1", "tone": "professional", "extra": True},
     ],
 )
 def test_corrupted_stored_defaults_fail_explicitly_without_fallback_or_partial_repair(
@@ -239,7 +239,7 @@ def test_corrupted_stored_defaults_fail_explicitly_without_fallback_or_partial_r
     with catalog.runtime.transaction() as conn:
         conn.execute(
             text(
-                "UPDATE offerloom.owner_settings SET settings=CAST(:settings AS jsonb) "
+                "UPDATE bonafides.owner_settings SET settings=CAST(:settings AS jsonb) "
                 "WHERE owner_id=:owner"
             ),
             {"owner": catalog.owner_id, "settings": canonical_json({"document_defaults": corrupt})},
@@ -262,7 +262,7 @@ def _pinned_rows(context: SourceContext) -> dict[str, object]:
             table: (
                 conn.execute(
                     text(
-                        f"SELECT row_to_json(r) FROM offerloom.{table} r "
+                        f"SELECT row_to_json(r) FROM bonafides.{table} r "
                         "WHERE owner_id=:owner ORDER BY id"
                     ),
                     {"owner": context.owner_id},
@@ -331,7 +331,7 @@ def test_defaults_do_not_mutate_saved_pins_artifacts_or_pending_explicit_generat
     defaults = _defaults(catalog)
     changed = catalog.client.patch(
         "/api/v1/document-defaults",
-        json={"template_version": "offerloom-compact-letter-v1", "tone": "concise"},
+        json={"template_version": "bonafides-compact-letter-v1", "tone": "concise"},
         headers=catalog.headers(defaults["version"]),
     )
     assert changed.status_code == 200, changed.text
@@ -369,7 +369,7 @@ def test_defaults_do_not_mutate_saved_pins_artifacts_or_pending_explicit_generat
 
 @pytest.mark.postgres
 @pytest.mark.parametrize(
-    "template", ["offerloom-evidence-letter-v1", "offerloom-compact-letter-v1"]
+    "template", ["bonafides-evidence-letter-v1", "bonafides-compact-letter-v1"]
 )
 def test_explicit_letter_generation_pins_selected_template_and_printable_frame(
     catalog: SourceContext,

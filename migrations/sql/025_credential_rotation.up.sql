@@ -1,5 +1,5 @@
 -- SPDX-License-Identifier: MIT OR Apache-2.0
-SET search_path=offerloom,pg_catalog;
+SET search_path=bonafides,pg_catalog;
 
 -- Legacy AAD remains readable only for explicit migration/native recovery.
 ALTER TABLE encrypted_credentials
@@ -19,6 +19,6 @@ CREATE TABLE credential_key_usage (
 );
 INSERT INTO credential_key_usage(key_id,encryption_count)
  SELECT key_id,count(*) FROM encrypted_credentials GROUP BY key_id;
-REVOKE ALL ON credential_key_usage FROM PUBLIC,offerloom_runtime;
-GRANT SELECT ON credential_key_usage TO offerloom_runtime;
+REVOKE ALL ON credential_key_usage FROM PUBLIC,bonafides_runtime;
+GRANT SELECT ON credential_key_usage TO bonafides_runtime;
 INSERT INTO schema_migrations(version,source_sha256) VALUES(25,repeat('0',64));

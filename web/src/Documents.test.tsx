@@ -10,7 +10,7 @@ const profile: Profile = { id: 'profile', version: 3, current_revision: { id: 'p
 const saved: DocumentRecord = {
   id: 'base-doc', version: 4, scope: 'base', kind: 'resume', application_id: null, reviewed: false, unsupported_claims: [], stale: false, stale_reason: null,
   artifacts: [{ id: 'old-artifact', revision_id: 'old-revision', format: 'pdf' }],
-  current_revision: { id: 'doc-rev-2', revision_no: 2, content_sha256: 'b'.repeat(64), profile_revision_id: 'profile-rev-3', template_version: 'offerloom-evidence-v1', origin: 'deterministic', created_at: '2026-10-25T12:30:00Z', reason: 'Base composition', validation_issues: [],
+  current_revision: { id: 'doc-rev-2', revision_no: 2, content_sha256: 'b'.repeat(64), profile_revision_id: 'profile-rev-3', template_version: 'bonafides-evidence-v1', origin: 'deterministic', created_at: '2026-10-25T12:30:00Z', reason: 'Base composition', validation_issues: [],
     body: { title: 'Base résumé', sections: [{ key: 'experience', heading: 'Experience', blocks: [{ block_key: 'b-1', text: 'Maintained Linux service checks.', claim_kind: 'factual', claim_revision_ids: ['claim-1'], evidence_revision_ids: ['evidence-1'] }] }, { key: 'skills', heading: 'Skills', blocks: [{ block_key: 'b-2', text: 'Wrote SQL queries.', claim_kind: 'factual', claim_revision_ids: ['claim-2'], evidence_revision_ids: ['evidence-2'] }] }] },
     provenance_snapshot: { schema_version: 2, mode: 'deterministic_base', model_run: null, frame: { display_name: 'Mira Vale', contact: { email: 'mira@example.test' } }, facts: [{ claim_revision_id: 'claim-1', evidence_revision_id: 'evidence-1', claim_text: 'Maintained Linux service checks.', evidence_text: 'Fictional service notes.', source: 'Owner notebook', claim_sha256: 'c'.repeat(64), evidence_sha256: 'd'.repeat(64), status: 'user_asserted' }, { claim_revision_id: 'claim-2', evidence_revision_id: 'evidence-2', claim_text: 'Wrote SQL queries.', evidence_text: 'Fictional SQL work sample.', source: 'Work sample', claim_sha256: 'e'.repeat(64), evidence_sha256: 'f'.repeat(64), status: 'supported' }] },
   },
@@ -19,7 +19,7 @@ const application: ApplicationSummary = { id: 'application-1', version: 7, attem
 const tailored: DocumentRecord = { ...saved, id: 'tailored-resume', scope: 'tailored', application_id: application.id };
 const route = { status: 'unqualified' as const, reason: 'generate_documents qualification has not been authorized', identity: { model: 'unqualified-local' } };
 const pair: ApplicationDocuments = { application_id: application.id, version: 7, items: [tailored], generation_route: route, requirements_revision_id: 'requirements-1' };
-const context: GenerationContext = { application_id: application.id, application_version: 7, profile_revision_id: 'profile-rev-3', profile_version: 3, requirements_revision_id: 'requirements-1', template_version: 'offerloom-evidence-v1', tone: 'professional', language: 'en', context_sha256: '1'.repeat(64), model_projection: { facts: [{ text: 'Maintained Linux service checks.' }], requirements: [{ text: 'Linux' }] }, frame: { display_name: 'Mira Vale', contact: { email: 'mira@example.test' } }, generation_route: route };
+const context: GenerationContext = { application_id: application.id, application_version: 7, profile_revision_id: 'profile-rev-3', profile_version: 3, requirements_revision_id: 'requirements-1', template_version: 'bonafides-evidence-v1', tone: 'professional', language: 'en', context_sha256: '1'.repeat(64), model_projection: { facts: [{ text: 'Maintained Linux service checks.' }], requirements: [{ text: 'Linux' }] }, frame: { display_name: 'Mira Vale', contact: { email: 'mira@example.test' } }, generation_route: route };
 const workflow: Workflow = {
   id: 'compose-1', version: 1, state: 'pending', kind: 'document_generate', mode: 'deterministic_base', attempt: 0, max_attempts: 3, last_error_code: null, result: null,
   created_at: '2026-10-25T12:00:00Z', updated_at: '2026-10-25T12:00:00Z', deadline_at: '2030-01-01T00:00:00Z', next_attempt_at: null,
@@ -28,13 +28,13 @@ const workflow: Workflow = {
   cancellation: { requested: false, local_fence_settled: false, provider_stopped: null, completed_effects_preserved: true, reason: null },
   usage: { status: 'not_applicable', model_runs: 0, inference_post_attempts: 0, inference_post_limit: null, input_tokens: null, output_tokens: null, token_budget: 0, tokens_used: 0, cost_budget_microunits: 0, cost_used_microunits: null, currency: 'USD' },
 };
-const remembered: DocumentDefaults = { version: 8, template_version: 'offerloom-evidence-v1', tone: 'professional', language: 'en', revision_retention: 'until_owner_erasure', task_input_retention_seconds: 86400, temporary_export_retention_seconds: 86400, extension_supported: false };
+const remembered: DocumentDefaults = { version: 8, template_version: 'bonafides-evidence-v1', tone: 'professional', language: 'en', revision_retention: 'until_owner_erasure', task_input_retention_seconds: 86400, temporary_export_retention_seconds: 86400, extension_supported: false };
 
 type Handler = (path: string, method: string, body: unknown, version: number | undefined, key: boolean | string | undefined) => Promise<unknown>;
 function fixture(document: DocumentRecord | null = saved, handler?: Handler, defaultsHandler?: Handler) {
   const api = new Api();
   const request = vi.spyOn(api, 'request').mockImplementation(async <T,>(path: string, method = 'GET', body?: unknown, version?: number, key?: boolean | string) => {
-    if (path === '/document-templates') return { items: [{ version: 'offerloom-evidence-v1', label: 'Evidence', language: 'en', paper: 'A4' }, { version: 'offerloom-compact-v1', label: 'Compact', language: 'en', paper: 'A4' }, { version: 'offerloom-evidence-letter-v1', label: 'Evidence', language: 'en', paper: 'Letter' }, { version: 'offerloom-compact-letter-v1', label: 'Compact', language: 'en', paper: 'Letter' }] } as T;
+    if (path === '/document-templates') return { items: [{ version: 'bonafides-evidence-v1', label: 'Evidence', language: 'en', paper: 'A4' }, { version: 'bonafides-compact-v1', label: 'Compact', language: 'en', paper: 'A4' }, { version: 'bonafides-evidence-letter-v1', label: 'Evidence', language: 'en', paper: 'Letter' }, { version: 'bonafides-compact-letter-v1', label: 'Compact', language: 'en', paper: 'Letter' }] } as T;
     if (path === '/document-defaults') {
       if (defaultsHandler) return await defaultsHandler(path, method, body, version, key) as T;
       if (method === 'GET') return remembered as T;
@@ -53,12 +53,12 @@ async function ready() {
 
 describe('remembered document defaults and current operation isolation', () => {
   it('persists only the edited presentation while retaining a dirty saved document and current choices, then uses it in a new workspace', async () => {
-    const user = userEvent.setup(); let stored: DocumentDefaults = { ...remembered, template_version: 'offerloom-evidence-letter-v1', tone: 'concise' };
+    const user = userEvent.setup(); let stored: DocumentDefaults = { ...remembered, template_version: 'bonafides-evidence-letter-v1', tone: 'concise' };
     const { api, request } = fixture(saved, async (path, method) => {
       if (path === '/applications') return { items: [application], next_cursor: null };
       if (path === '/applications/application-1/documents') return pair;
       if (path.startsWith('/applications/application-1/generation-context?')) {
-        const query = new URL(path, 'https://offerloom.test').searchParams;
+        const query = new URL(path, 'https://bonafides.test').searchParams;
         return { ...context, template_version: query.get('template_version'), tone: query.get('tone'), generation_route: { ...route, status: 'qualified', identity: { endpoint: 'http://local-model.test:11434/api/chat', model: 'default-consumer-fixture' } } };
       }
       if (path === '/applications/application-1/generation' && method === 'POST') return { ...workflow, mode: 'tailored_ai' };
@@ -77,22 +77,22 @@ describe('remembered document defaults and current operation isolation', () => {
     expect(screen.getByRole('button', { name: 'Accept this exact revision' })).toBeDisabled();
     expect(screen.getByRole('button', { name: 'Render reviewed PDF' })).toBeDisabled();
     await user.click(screen.getByText('Remembered defaults and retention'));
-    expect(screen.getByLabelText('Built-in presentation')).toHaveValue('offerloom-evidence-letter-v1');
+    expect(screen.getByLabelText('Built-in presentation')).toHaveValue('bonafides-evidence-letter-v1');
     expect(screen.getByLabelText('Remembered writing tone')).toHaveValue('concise');
     expect(within(screen.getByLabelText('Built-in presentation')).getByRole('option', { name: 'Evidence · English · Letter' })).toBeInTheDocument();
     fireEvent.change(input, { target: { value: 'Dirty words retained while defaults change.' } });
-    await user.selectOptions(screen.getByLabelText('Remembered built-in presentation'), 'offerloom-compact-letter-v1');
+    await user.selectOptions(screen.getByLabelText('Remembered built-in presentation'), 'bonafides-compact-letter-v1');
     await user.click(screen.getByRole('button', { name: 'Save remembered defaults' }));
     await screen.findByText(/Remembered defaults saved for future work/);
     const patch = request.mock.calls.find(call => call[1] === 'PATCH');
-    expect(patch?.[2]).toEqual({ template_version: 'offerloom-compact-letter-v1' }); expect(patch?.[4]).toBeTypeOf('string');
+    expect(patch?.[2]).toEqual({ template_version: 'bonafides-compact-letter-v1' }); expect(patch?.[4]).toBeTypeOf('string');
     expect(stored.tone).toBe('concise'); expect(stored.revision_retention).toBe('until_owner_erasure');
     expect(input).toHaveValue('Dirty words retained while defaults change.');
-    expect(screen.getByLabelText('Built-in presentation')).toHaveValue('offerloom-evidence-letter-v1');
+    expect(screen.getByLabelText('Built-in presentation')).toHaveValue('bonafides-evidence-letter-v1');
     expect(request.mock.calls.some(call => call[1] === 'PUT' || call[0].startsWith('/documents/'))).toBe(false);
     view.unmount(); render(<Documents api={api} profile={profile} />); await ready();
     await user.click(screen.getByText('Remembered defaults and retention'));
-    expect(screen.getByLabelText('Built-in presentation')).toHaveValue('offerloom-compact-letter-v1');
+    expect(screen.getByLabelText('Built-in presentation')).toHaveValue('bonafides-compact-letter-v1');
     expect(screen.getByLabelText('Block text: b-1')).toHaveValue(saved.current_revision.body.sections[0]!.blocks[0]!.text);
     await openTailored(user);
     expect(screen.getByLabelText('Writing tone')).toHaveValue('concise');
@@ -104,14 +104,14 @@ describe('remembered document defaults and current operation isolation', () => {
     await user.click(confirm);
     await user.click(screen.getByRole('button', { name: 'Generate résumé and cover letter pair' }));
     await screen.findByRole('heading', { name: 'Document task: pending' });
-    expect(request.mock.calls.find(call => call[0] === '/applications/application-1/generation' && call[1] === 'POST')?.[2]).toEqual({ profile_revision_id: profile.current_revision.id, requirements_revision_id: context.requirements_revision_id, template_version: 'offerloom-compact-letter-v1', tone: 'concise', language: 'en', context_sha256: context.context_sha256 });
+    expect(request.mock.calls.find(call => call[0] === '/applications/application-1/generation' && call[1] === 'POST')?.[2]).toEqual({ profile_revision_id: profile.current_revision.id, requirements_revision_id: context.requirements_revision_id, template_version: 'bonafides-compact-letter-v1', tone: 'concise', language: 'en', context_sha256: context.context_sha256 });
   });
 
   it('keeps defaults loading failures visible and retries without replacing explicit choices or dirty text', async () => {
     const user = userEvent.setup(); let reads = 0;
     const { api, request } = fixture(saved, undefined, async () => {
       if (++reads === 1) throw new TypeError('offline');
-      return { ...remembered, template_version: 'offerloom-evidence-letter-v1', tone: 'concise' };
+      return { ...remembered, template_version: 'bonafides-evidence-letter-v1', tone: 'concise' };
     });
     render(<Documents api={api} profile={profile} />); const input = await ready();
     expect(await screen.findByText(/Remembered defaults could not be loaded/)).toBeVisible();
@@ -119,12 +119,12 @@ describe('remembered document defaults and current operation isolation', () => {
     await user.click(screen.getByText('Remembered defaults and retention'));
     expect(screen.getByLabelText('Built-in presentation')).toHaveValue('');
     expect(screen.queryByRole('button', { name: 'Save remembered defaults' })).not.toBeInTheDocument();
-    await user.selectOptions(screen.getByLabelText('Built-in presentation'), 'offerloom-compact-v1');
+    await user.selectOptions(screen.getByLabelText('Built-in presentation'), 'bonafides-compact-v1');
     fireEvent.change(input, { target: { value: 'Retained while settings recover.' } });
     await user.click(screen.getByRole('button', { name: 'Reload remembered defaults' }));
     await waitFor(() => expect(screen.getByLabelText('Remembered writing tone')).toHaveValue('concise'));
     expect(screen.queryByText(/Remembered defaults could not be loaded/)).not.toBeInTheDocument();
-    expect(screen.getByLabelText('Built-in presentation')).toHaveValue('offerloom-compact-v1');
+    expect(screen.getByLabelText('Built-in presentation')).toHaveValue('bonafides-compact-v1');
     expect(input).toHaveValue('Retained while settings recover.');
     expect(request.mock.calls.filter(call => call[1] !== 'GET' && call[1] !== undefined)).toHaveLength(0);
   });
@@ -140,21 +140,21 @@ describe('remembered document defaults and current operation isolation', () => {
     });
     render(<Documents api={api} profile={profile} />); await ready();
     await user.click(screen.getByText('Remembered defaults and retention'));
-    await user.selectOptions(screen.getByLabelText('Remembered built-in presentation'), 'offerloom-compact-letter-v1');
+    await user.selectOptions(screen.getByLabelText('Remembered built-in presentation'), 'bonafides-compact-letter-v1');
     await user.click(screen.getByRole('button', { name: 'Save remembered defaults' }));
     await screen.findByText(/The saved version changed/);
     expect(screen.getByRole('button', { name: 'Save remembered defaults' })).toBeDisabled();
     await user.click(screen.getByRole('button', { name: 'Reload remembered defaults' }));
     await waitFor(() => expect(screen.getByLabelText('Remembered writing tone')).toHaveValue('professional'));
-    expect(screen.getByLabelText('Remembered built-in presentation')).toHaveValue('offerloom-compact-letter-v1');
+    expect(screen.getByLabelText('Remembered built-in presentation')).toHaveValue('bonafides-compact-letter-v1');
     expect(writes).toBe(1);
     await user.click(screen.getByRole('button', { name: 'Save remembered defaults' }));
     await screen.findByText(/Remembered defaults saved for future work/);
     const patches = request.mock.calls.filter(call => call[1] === 'PATCH');
-    expect(patches.map(call => call[2])).toEqual([{ template_version: 'offerloom-compact-letter-v1' }, { template_version: 'offerloom-compact-letter-v1' }]);
+    expect(patches.map(call => call[2])).toEqual([{ template_version: 'bonafides-compact-letter-v1' }, { template_version: 'bonafides-compact-letter-v1' }]);
     expect(patches.map(call => call[3])).toEqual([8, 12]); expect(patches[1]?.[4]).not.toBe(patches[0]?.[4]);
     expect(stored.tone).toBe('professional');
-    expect(screen.getByLabelText('Built-in presentation')).toHaveValue('offerloom-evidence-v1');
+    expect(screen.getByLabelText('Built-in presentation')).toHaveValue('bonafides-evidence-v1');
   });
 
   it('retains an offline defaults draft and reuses the same key only on explicit identical retry', async () => {
@@ -349,13 +349,13 @@ describe('review, export and generation boundaries', () => {
     });
     render(<Documents api={api} profile={profile} />);
     await waitFor(() => expect(screen.getByRole('button', { name: 'Create base résumé' })).toBeEnabled());
-    await user.selectOptions(screen.getByLabelText('Built-in presentation'), 'offerloom-compact-v1');
+    await user.selectOptions(screen.getByLabelText('Built-in presentation'), 'bonafides-compact-v1');
     await user.click(screen.getByRole('button', { name: 'Create base résumé' }));
     expect(await screen.findByText('Document task: pending')).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Cover letter' })).not.toBeInTheDocument();
     expect(screen.queryByLabelText('Tracked application')).not.toBeInTheDocument();
     const call = request.mock.calls.find(item => item[1] === 'POST');
-    expect(call?.[2]).toEqual({ profile_revision_id: 'profile-rev-3', template_version: 'offerloom-compact-v1' }); expect(call?.[3]).toBe(3);
+    expect(call?.[2]).toEqual({ profile_revision_id: 'profile-rev-3', template_version: 'bonafides-compact-v1' }); expect(call?.[3]).toBe(3);
     await user.click(screen.getByRole('button', { name: 'Cancel document task' }));
     expect(await screen.findByText('Document task: cancelled')).toBeInTheDocument();
     expect(screen.queryByLabelText('Block text: b-1')).not.toBeInTheDocument();
@@ -485,7 +485,7 @@ const completedSectionWorkflow: Workflow = {
   result: { document_id: tailored.id, proposal_id: sectionProposal.id, target_revision_id: tailored.current_revision.id, section_key: 'experience', model_run_id: 'section-run-1' },
 };
 function sectionPreview(path: string, status: 'qualified' | 'unqualified' | 'disabled' = 'qualified'): SectionRegenerationContext {
-  const query = new URL(path, 'https://offerloom.test').searchParams;
+  const query = new URL(path, 'https://bonafides.test').searchParams;
   const section = tailored.current_revision.body.sections.find(item => item.key === query.get('section_key'))!;
   const tone = query.get('tone') === 'concise' ? 'concise' : 'professional';
   return {

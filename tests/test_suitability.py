@@ -20,12 +20,12 @@ from test_local_model import qualified_route, route_data, route_file
 from test_sources import MANUAL, SourceContext
 from test_sources import catalog as catalog
 
-from offerloom import local_model, suitability
-from offerloom.commands import canonical_json
-from offerloom.local_model import LocalRoute, ModelFailure, ModelResult
-from offerloom.problems import Problem
-from offerloom.worker import Worker
-from offerloom.workflows import Claim, cancel_workflow, claim, reap
+from bonafides import local_model, suitability
+from bonafides.commands import canonical_json
+from bonafides.local_model import LocalRoute, ModelFailure, ModelResult
+from bonafides.problems import Problem
+from bonafides.worker import Worker
+from bonafides.workflows import Claim, cancel_workflow, claim, reap
 
 SOURCE = (
     "🪴 Linux required.\nSQL required.\nKubernetes preferred.\n"
@@ -270,7 +270,7 @@ def test_requirements_unicode_spans_review_history_cas_idempotency_and_boundarie
     with catalog.runtime.transaction() as conn:
         canonical = (
             conn.execute(
-                text("""SELECT requirements,requirements_reviewed_at FROM offerloom.job_postings
+                text("""SELECT requirements,requirements_reviewed_at FROM bonafides.job_postings
         WHERE owner_id=:owner AND id=:id"""),
                 {"owner": catalog.owner_id, "id": UUID(posting["id"])},
             )
@@ -345,7 +345,7 @@ def test_linux_sql_links_missing_kubernetes_and_no_profile_mutation(catalog: Sou
     with catalog.identity.admin.transaction() as conn:
         retained = conn.execute(
             text(
-                "SELECT evidence_coverage FROM offerloom.match_assessments WHERE owner_id=:owner AND id=:id"
+                "SELECT evidence_coverage FROM bonafides.match_assessments WHERE owner_id=:owner AND id=:id"
             ),
             {"owner": catalog.owner_id, "id": UUID(assessment["id"])},
         ).scalar_one()
@@ -353,7 +353,7 @@ def test_linux_sql_links_missing_kubernetes_and_no_profile_mutation(catalog: Sou
     with pytest.raises(DBAPIError), catalog.identity.admin.transaction() as conn:
         conn.execute(
             text(
-                "UPDATE offerloom.match_assessments SET explanation='changed' WHERE owner_id=:owner"
+                "UPDATE bonafides.match_assessments SET explanation='changed' WHERE owner_id=:owner"
             ),
             {"owner": catalog.owner_id},
         )
@@ -421,11 +421,11 @@ def test_empty_review_is_unavailable_and_offline_is_not_zero(catalog: SourceCont
     after = _view(catalog, posting["id"])
     assert after == view and after["model_route"]["status"] == "disabled"
     with catalog.runtime.transaction() as conn:
-        assert conn.execute(text("SELECT count(*) FROM offerloom.model_runs")).scalar_one() == 0
+        assert conn.execute(text("SELECT count(*) FROM bonafides.model_runs")).scalar_one() == 0
         assert (
             conn.execute(
                 text(
-                    "SELECT count(*) FROM offerloom.workflow_runs WHERE kind IN ('posting_extract','matching')"
+                    "SELECT count(*) FROM bonafides.workflow_runs WHERE kind IN ('posting_extract','matching')"
                 )
             ).scalar_one()
             == 0
@@ -619,7 +619,7 @@ def test_stale_pins_preserve_historical_assessment_disposition_does_not_invent_s
     with catalog.identity.admin.transaction() as conn:
         conn.execute(
             text(
-                "UPDATE offerloom.job_postings SET description_text=description_text||' Changed',version=version+1 WHERE owner_id=:owner AND id=:id"
+                "UPDATE bonafides.job_postings SET description_text=description_text||' Changed',version=version+1 WHERE owner_id=:owner AND id=:id"
             ),
             {"owner": catalog.owner_id, "id": UUID(posting["id"])},
         )
@@ -670,7 +670,7 @@ def test_extraction_model_proposal_never_confirms_or_overwrites_reviews(
         run = (
             conn.execute(
                 text(
-                    "SELECT usage_status,metadata FROM offerloom.model_runs WHERE owner_id=:owner AND workflow_run_id=:id"
+                    "SELECT usage_status,metadata FROM bonafides.model_runs WHERE owner_id=:owner AND workflow_run_id=:id"
                 ),
                 {"owner": catalog.owner_id, "id": task.id},
             )
@@ -744,21 +744,21 @@ def test_publication_fences_after_provider_returns(
                 if mode == "lease":
                     conn.execute(
                         text(
-                            "UPDATE offerloom.workflow_runs SET lease_expires_at=clock_timestamp()-interval '1 second' WHERE owner_id=:owner AND id=:id"
+                            "UPDATE bonafides.workflow_runs SET lease_expires_at=clock_timestamp()-interval '1 second' WHERE owner_id=:owner AND id=:id"
                         ),
                         {"owner": catalog.owner_id, "id": task.id},
                     )
                 elif mode == "source":
                     conn.execute(
                         text(
-                            "UPDATE offerloom.job_postings SET title='Changed source',version=version+1 WHERE owner_id=:owner AND id=:id"
+                            "UPDATE bonafides.job_postings SET title='Changed source',version=version+1 WHERE owner_id=:owner AND id=:id"
                         ),
                         {"owner": catalog.owner_id, "id": UUID(posting["id"])},
                     )
                 else:
                     conn.execute(
                         text(
-                            "UPDATE offerloom.installation_state SET maintenance_active=true,maintenance_epoch=maintenance_epoch+1 WHERE singleton"
+                            "UPDATE bonafides.installation_state SET maintenance_active=true,maintenance_epoch=maintenance_epoch+1 WHERE singleton"
                         )
                     )
 
@@ -776,7 +776,7 @@ def test_publication_fences_after_provider_returns(
             assert (
                 conn.execute(
                     text(
-                        "SELECT state FROM offerloom.workflow_runs WHERE owner_id=:owner AND id=:id"
+                        "SELECT state FROM bonafides.workflow_runs WHERE owner_id=:owner AND id=:id"
                     ),
                     {"owner": catalog.owner_id, "id": task.id},
                 ).scalar_one()
@@ -784,7 +784,7 @@ def test_publication_fences_after_provider_returns(
             )
             assert (
                 conn.execute(
-                    text("SELECT count(*) FROM offerloom.match_assessments WHERE owner_id=:owner"),
+                    text("SELECT count(*) FROM bonafides.match_assessments WHERE owner_id=:owner"),
                     {"owner": catalog.owner_id},
                 ).scalar_one()
                 == 0
@@ -794,7 +794,7 @@ def test_publication_fences_after_provider_returns(
             with catalog.identity.admin.transaction() as conn:
                 conn.execute(
                     text(
-                        "UPDATE offerloom.installation_state SET maintenance_active=false WHERE singleton"
+                        "UPDATE bonafides.installation_state SET maintenance_active=false WHERE singleton"
                     )
                 )
 
@@ -824,7 +824,7 @@ def test_stale_source_rejected_before_network_but_disposition_change_allowed(
     with catalog.identity.admin.transaction() as conn:
         conn.execute(
             text(
-                "UPDATE offerloom.job_postings SET company='Changed company',version=version+1 WHERE owner_id=:owner AND id=:id"
+                "UPDATE bonafides.job_postings SET company='Changed company',version=version+1 WHERE owner_id=:owner AND id=:id"
             ),
             {"owner": catalog.owner_id, "id": UUID(posting["id"])},
         )
@@ -914,7 +914,7 @@ def test_provider_outage_worker_retries_at_most_two_transmissions_and_reservatio
         reservation = (
             conn.execute(
                 text(
-                    "SELECT workflow_run_id,reserved_until>clock_timestamp() AS active FROM offerloom.local_model_reservations WHERE singleton"
+                    "SELECT workflow_run_id,reserved_until>clock_timestamp() AS active FROM bonafides.local_model_reservations WHERE singleton"
                 )
             )
             .mappings()
@@ -926,12 +926,12 @@ def test_provider_outage_worker_retries_at_most_two_transmissions_and_reservatio
     with catalog.identity.admin.transaction() as conn:
         conn.execute(
             text(
-                "UPDATE offerloom.local_model_reservations SET reserved_until=clock_timestamp()-interval '1 second' WHERE singleton"
+                "UPDATE bonafides.local_model_reservations SET reserved_until=clock_timestamp()-interval '1 second' WHERE singleton"
             )
         )
         conn.execute(
             text(
-                "UPDATE offerloom.workflow_runs SET next_attempt_at=clock_timestamp()-interval '1 second' WHERE owner_id=:owner AND id=:id"
+                "UPDATE bonafides.workflow_runs SET next_attempt_at=clock_timestamp()-interval '1 second' WHERE owner_id=:owner AND id=:id"
             ),
             {"owner": catalog.owner_id, "id": task.id},
         )
@@ -976,7 +976,7 @@ def test_transmission_counter_reclaim_singleton_and_two_call_limit(
     with catalog.identity.admin.transaction() as conn:
         conn.execute(
             text(
-                "UPDATE offerloom.workflow_runs SET lease_expires_at=clock_timestamp()-interval '1 second' WHERE owner_id=:owner AND id=:id"
+                "UPDATE bonafides.workflow_runs SET lease_expires_at=clock_timestamp()-interval '1 second' WHERE owner_id=:owner AND id=:id"
             ),
             {"owner": catalog.owner_id, "id": task.id},
         )
@@ -985,7 +985,7 @@ def test_transmission_counter_reclaim_singleton_and_two_call_limit(
     with catalog.identity.admin.transaction() as conn:
         conn.execute(
             text(
-                "UPDATE offerloom.workflow_runs SET next_attempt_at=clock_timestamp()-interval '1 second' WHERE owner_id=:owner AND id=:id"
+                "UPDATE bonafides.workflow_runs SET next_attempt_at=clock_timestamp()-interval '1 second' WHERE owner_id=:owner AND id=:id"
             ),
             {"owner": catalog.owner_id, "id": task.id},
         )
@@ -1001,7 +1001,7 @@ def test_transmission_counter_reclaim_singleton_and_two_call_limit(
     with catalog.identity.admin.transaction() as conn:
         conn.execute(
             text(
-                "UPDATE offerloom.local_model_reservations SET reserved_until=clock_timestamp()-interval '1 second' WHERE singleton"
+                "UPDATE bonafides.local_model_reservations SET reserved_until=clock_timestamp()-interval '1 second' WHERE singleton"
             )
         )
     with catalog.runtime.transaction() as conn:
@@ -1014,7 +1014,7 @@ def test_transmission_counter_reclaim_singleton_and_two_call_limit(
     with catalog.identity.admin.transaction() as conn:
         conn.execute(
             text(
-                "UPDATE offerloom.local_model_reservations SET reserved_until=clock_timestamp()-interval '1 second' WHERE singleton"
+                "UPDATE bonafides.local_model_reservations SET reserved_until=clock_timestamp()-interval '1 second' WHERE singleton"
             )
         )
     with (
@@ -1028,7 +1028,7 @@ def test_transmission_counter_reclaim_singleton_and_two_call_limit(
         assert (
             conn.execute(
                 text(
-                    "SELECT model_network_attempts FROM offerloom.workflow_runs WHERE owner_id=:owner AND id=:id"
+                    "SELECT model_network_attempts FROM bonafides.workflow_runs WHERE owner_id=:owner AND id=:id"
                 ),
                 {"owner": catalog.owner_id, "id": task.id},
             ).scalar_one()
@@ -1055,7 +1055,7 @@ def test_manual_coverage_idempotency_and_immutable_requirement_history(
     with catalog.runtime.transaction() as conn:
         assert (
             conn.execute(
-                text("SELECT count(*) FROM offerloom.match_assessments WHERE owner_id=:owner"),
+                text("SELECT count(*) FROM bonafides.match_assessments WHERE owner_id=:owner"),
                 {"owner": catalog.owner_id},
             ).scalar_one()
             == 1
@@ -1063,7 +1063,7 @@ def test_manual_coverage_idempotency_and_immutable_requirement_history(
     with pytest.raises(DBAPIError), catalog.identity.admin.transaction() as conn:
         conn.execute(
             text(
-                "UPDATE offerloom.posting_requirement_revisions SET requirements='[]' WHERE owner_id=:owner"
+                "UPDATE bonafides.posting_requirement_revisions SET requirements='[]' WHERE owner_id=:owner"
             ),
             {"owner": catalog.owner_id},
         )
@@ -1091,7 +1091,7 @@ def test_unqualified_route_cannot_queue_but_manual_review_still_works(
     with catalog.runtime.transaction() as conn:
         assert (
             conn.execute(
-                text("SELECT count(*) FROM offerloom.workflow_runs WHERE kind='posting_extract'")
+                text("SELECT count(*) FROM bonafides.workflow_runs WHERE kind='posting_extract'")
             ).scalar_one()
             == 0
         )
@@ -1159,7 +1159,7 @@ def test_local_model_session_lock_prevents_overlapping_calls(
                 assert (
                     conn.execute(
                         text(
-                            "SELECT model_network_attempts FROM offerloom.workflow_runs WHERE owner_id=:owner AND id=:id"
+                            "SELECT model_network_attempts FROM bonafides.workflow_runs WHERE owner_id=:owner AND id=:id"
                         ),
                         {"owner": catalog.owner_id, "id": second_task.id},
                     ).scalar_one()
@@ -1234,7 +1234,7 @@ def test_settings_route_prompt_and_template_changes_invalidate_not_rewrite_histo
     if change == "settings":
         with catalog.identity.admin.transaction() as conn:
             conn.execute(
-                text("UPDATE offerloom.owner_settings SET version=version+1 WHERE owner_id=:owner"),
+                text("UPDATE bonafides.owner_settings SET version=version+1 WHERE owner_id=:owner"),
                 {"owner": catalog.owner_id},
             )
     elif change == "route":

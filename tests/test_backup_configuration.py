@@ -23,15 +23,15 @@ from sqlalchemy import text
 from test_identity import IdentityContext, _bootstrap, _login
 from test_identity import identity as identity
 
-from offerloom.api import create_app
-from offerloom.backup_archive import BackupError
-from offerloom.backup_configuration import capture_runtime_pins, verified_checkpoint
-from offerloom.backup_operator import CaptureConfiguration
-from offerloom.commands import canonical_json
-from offerloom.config import Settings
-from offerloom.db import Database
-from offerloom.installation_control import begin_control
-from offerloom.workflows import claim_control, enqueue
+from bonafides.api import create_app
+from bonafides.backup_archive import BackupError
+from bonafides.backup_configuration import capture_runtime_pins, verified_checkpoint
+from bonafides.backup_operator import CaptureConfiguration
+from bonafides.commands import canonical_json
+from bonafides.config import Settings
+from bonafides.db import Database
+from bonafides.installation_control import begin_control
+from bonafides.workflows import claim_control, enqueue
 
 
 def _configuration(context: IdentityContext, root: Path) -> tuple[Settings, CaptureConfiguration]:
@@ -73,7 +73,7 @@ def _attested_policy_fixture(
     db = Database(settings)
     try:
         with db.transaction() as conn:
-            owner = conn.execute(text("SELECT id FROM offerloom.owners")).scalar_one()
+            owner = conn.execute(text("SELECT id FROM bonafides.owners")).scalar_one()
             identifier = enqueue(conn, owner, "backup", {})
             task = claim_control(conn, uuid4(), workflow_id=identifier)
             assert task is not None
@@ -84,18 +84,18 @@ def _attested_policy_fixture(
         archive.write_bytes(payload)
         with context.admin.transaction() as conn:
             conn.execute(
-                text("""INSERT INTO offerloom.installation_backups(
+                text("""INSERT INTO bonafides.installation_backups(
                 id,owner_id,namespace_id,maintenance_epoch,workspace_version,
                 installation_auth_epoch,owner_auth_epoch,schema_versions,
                 image_sha256,source_sha256,config_sha256,keyring_sha256,recipient_sha256,
                 file_name,cipher_sha256,manifest_sha256,byte_length,captured_at,
                 restore_verified_at,restore_receipt_sha256,restore_target_namespace)
                 SELECT :id,:owner,:namespace,:epoch,s.workspace_version,i.auth_epoch,o.auth_epoch,
-                (SELECT jsonb_object_agg(version::text,source_sha256) FROM offerloom.schema_migrations),
+                (SELECT jsonb_object_agg(version::text,source_sha256) FROM bonafides.schema_migrations),
                 :image,:source,:config,:keyring,:recipient,:file,:cipher,repeat('0',64),:length,
                 clock_timestamp(),clock_timestamp(),repeat('0',64),:target
-                FROM offerloom.owner_settings s JOIN offerloom.owners o ON o.id=s.owner_id
-                CROSS JOIN offerloom.installation_state i WHERE s.owner_id=:owner AND i.singleton"""),
+                FROM bonafides.owner_settings s JOIN bonafides.owners o ON o.id=s.owner_id
+                CROSS JOIN bonafides.installation_state i WHERE s.owner_id=:owner AND i.singleton"""),
                 {
                     "id": identifier,
                     "owner": owner,
@@ -114,7 +114,7 @@ def _attested_policy_fixture(
             )
             # This is deliberately only a selection fixture, not an observed
             # maintenance drain, finished backup or native restoration.
-            conn.execute(text("UPDATE offerloom.installation_state SET maintenance_active=false"))
+            conn.execute(text("UPDATE bonafides.installation_state SET maintenance_active=false"))
         return owner, identifier, archive
     finally:
         db.close()
@@ -150,12 +150,12 @@ def test_checkpoint_refuses_stale_owner_workspace_runtime_and_unverified_ledger(
         ):
             with identity.admin.transaction() as conn:
                 original = conn.execute(
-                    text(f"SELECT {column} FROM offerloom.installation_backups WHERE id=:id"),
+                    text(f"SELECT {column} FROM bonafides.installation_backups WHERE id=:id"),
                     {"id": identifier},
                 ).scalar_one()
                 conn.execute(
                     text(
-                        f"UPDATE offerloom.installation_backups SET {column}={expression} WHERE id=:id"
+                        f"UPDATE bonafides.installation_backups SET {column}={expression} WHERE id=:id"
                     ),
                     {"id": identifier},
                 )
@@ -166,11 +166,11 @@ def test_checkpoint_refuses_stale_owner_workspace_runtime_and_unverified_ledger(
                 with identity.admin.transaction() as conn:
                     conn.execute(
                         text(
-                            f"UPDATE offerloom.installation_backups SET {column}=:value WHERE id=:id"
+                            f"UPDATE bonafides.installation_backups SET {column}=:value WHERE id=:id"
                         )
                         if column != "schema_versions"
                         else text(
-                            "UPDATE offerloom.installation_backups SET schema_versions=CAST(:value AS jsonb) WHERE id=:id"
+                            "UPDATE bonafides.installation_backups SET schema_versions=CAST(:value AS jsonb) WHERE id=:id"
                         ),
                         {
                             "id": identifier,
@@ -181,7 +181,7 @@ def test_checkpoint_refuses_stale_owner_workspace_runtime_and_unverified_ledger(
                     )
         with identity.admin.transaction() as conn:
             conn.execute(
-                text("""UPDATE offerloom.installation_backups SET restore_verified_at=NULL,
+                text("""UPDATE bonafides.installation_backups SET restore_verified_at=NULL,
                 restore_receipt_sha256=NULL,restore_target_namespace=NULL WHERE id=:id"""),
                 {"id": identifier},
             )

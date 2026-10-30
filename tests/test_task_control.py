@@ -25,11 +25,11 @@ from test_sources import catalog as catalog
 from test_suitability import _profile
 from test_workflows import _claim, _enqueue
 
-from offerloom import profile_entries, workflows
-from offerloom.commands import canonical_json
-from offerloom.crypto import Keyring
-from offerloom.problems import Problem
-from offerloom.workflows import (
+from bonafides import profile_entries, workflows
+from bonafides.commands import canonical_json
+from bonafides.crypto import Keyring
+from bonafides.problems import Problem
+from bonafides.workflows import (
     Claim,
     claim,
     enqueue,
@@ -51,12 +51,12 @@ def task_model_context(pg_context: PGContext) -> Iterator[PGContext]:
     finally:
         with pg_context.migrator.begin() as conn:
             conn.execute(
-                text("""UPDATE offerloom.local_model_reservations SET owner_id=NULL,
+                text("""UPDATE bonafides.local_model_reservations SET owner_id=NULL,
                 workflow_run_id=NULL,fence=NULL,reserved_until='-infinity' WHERE owner_id=:owner"""),
                 {"owner": pg_context.owner_id},
             )
             conn.execute(
-                text("DELETE FROM offerloom.model_runs WHERE owner_id=:owner"),
+                text("DELETE FROM bonafides.model_runs WHERE owner_id=:owner"),
                 {"owner": pg_context.owner_id},
             )
 
@@ -65,7 +65,7 @@ def _due(pg: PGContext, task: Claim) -> None:
     with pg.migrator.begin() as conn:
         conn.execute(
             text(
-                "UPDATE offerloom.workflow_runs SET next_attempt_at=clock_timestamp()-interval '1 second' WHERE owner_id=:owner AND id=:id"
+                "UPDATE bonafides.workflow_runs SET next_attempt_at=clock_timestamp()-interval '1 second' WHERE owner_id=:owner AND id=:id"
             ),
             {"owner": task.owner_id, "id": task.id},
         )
@@ -74,7 +74,7 @@ def _due(pg: PGContext, task: Claim) -> None:
 def _unknown(pg: PGContext, task: Claim) -> None:
     with pg.runtime.begin() as conn:
         conn.execute(
-            text("""INSERT INTO offerloom.workflow_steps
+            text("""INSERT INTO bonafides.workflow_steps
             (owner_id,workflow_run_id,step_key,attempt,fence,state,delivery_state,error_code,checkpoint)
             VALUES(:owner,:id,'external_delivery',:attempt,:fence,'waiting_for_approval','unknown',
             'delivery_reconciliation_required','{"private_source":"must never appear"}')"""),
@@ -85,7 +85,7 @@ def _unknown(pg: PGContext, task: Claim) -> None:
 def _queue(context: SourceContext) -> UUID:
     with context.runtime.transaction() as conn:
         revision = conn.execute(
-            text("SELECT current_revision_id FROM offerloom.profiles WHERE owner_id=:owner"),
+            text("SELECT current_revision_id FROM bonafides.profiles WHERE owner_id=:owner"),
             {"owner": context.owner_id},
         ).scalar_one()
         return enqueue(
@@ -105,7 +105,7 @@ def _retryable(context: SourceContext) -> dict[str, Any]:
     with context.identity.admin.transaction() as conn:
         conn.execute(
             text(
-                "UPDATE offerloom.workflow_runs SET next_attempt_at=clock_timestamp()-interval '1 second' WHERE owner_id=:owner AND id=:id"
+                "UPDATE bonafides.workflow_runs SET next_attempt_at=clock_timestamp()-interval '1 second' WHERE owner_id=:owner AND id=:id"
             ),
             {"owner": context.owner_id, "id": identifier},
         )
@@ -124,14 +124,14 @@ def test_attempt_ledger_records_actual_claims_and_control_without_reset(
     with pg_context.runtime.begin() as conn:
         before = conn.execute(
             text(
-                "SELECT attempt,max_attempts,deadline_at,next_attempt_at,model_network_attempts,token_budget,tokens_used,cost_budget_microunits,cost_used_microunits,error_fingerprint,repeated_error_count FROM offerloom.workflow_runs WHERE owner_id=:owner AND id=:id"
+                "SELECT attempt,max_attempts,deadline_at,next_attempt_at,model_network_attempts,token_budget,tokens_used,cost_budget_microunits,cost_used_microunits,error_fingerprint,repeated_error_count FROM bonafides.workflow_runs WHERE owner_id=:owner AND id=:id"
             ),
             {"owner": first.owner_id, "id": workflow},
         ).one()
         result = retry_workflow(conn, first.owner_id, workflow)
         after = conn.execute(
             text(
-                "SELECT attempt,max_attempts,deadline_at,next_attempt_at,model_network_attempts,token_budget,tokens_used,cost_budget_microunits,cost_used_microunits,error_fingerprint,repeated_error_count FROM offerloom.workflow_runs WHERE owner_id=:owner AND id=:id"
+                "SELECT attempt,max_attempts,deadline_at,next_attempt_at,model_network_attempts,token_budget,tokens_used,cost_budget_microunits,cost_used_microunits,error_fingerprint,repeated_error_count FROM bonafides.workflow_runs WHERE owner_id=:owner AND id=:id"
             ),
             {"owner": first.owner_id, "id": workflow},
         ).one()
@@ -164,13 +164,13 @@ def test_attempt_ledger_records_actual_claims_and_control_without_reset(
     with pytest.raises(DBAPIError), pg_context.runtime.begin() as conn:
         conn.execute(
             text(
-                "UPDATE offerloom.workflow_attempt_events SET event='cancelled' WHERE owner_id=:owner"
+                "UPDATE bonafides.workflow_attempt_events SET event='cancelled' WHERE owner_id=:owner"
             ),
             {"owner": first.owner_id},
         )
     with pytest.raises(DBAPIError), pg_context.runtime.begin() as conn:
         conn.execute(
-            text("DELETE FROM offerloom.workflow_attempt_events WHERE owner_id=:owner"),
+            text("DELETE FROM bonafides.workflow_attempt_events WHERE owner_id=:owner"),
             {"owner": first.owner_id},
         )
 
@@ -213,7 +213,7 @@ def test_unknown_delivery_never_becomes_resendable_after_failure_or_timeout(
         assert result["retry_block_reason"] == "delivery_reconciliation_required"
     with pg_context.migrator.begin() as conn:
         conn.execute(
-            text("""UPDATE offerloom.workflow_runs SET created_at=clock_timestamp()-interval '181 seconds',
+            text("""UPDATE bonafides.workflow_runs SET created_at=clock_timestamp()-interval '181 seconds',
             deadline_at=clock_timestamp()-interval '1 second' WHERE owner_id=:owner AND id=:id"""),
             {"owner": task.owner_id, "id": task.id},
         )
@@ -237,7 +237,7 @@ def test_unknown_delivery_reaper_fences_worker_without_erasing_checkpoint(
     if initial != "running":
         with pg_context.migrator.begin() as conn:
             conn.execute(
-                text("""UPDATE offerloom.workflow_runs SET state=CAST(:state AS offerloom.workflow_state),
+                text("""UPDATE bonafides.workflow_runs SET state=CAST(:state AS bonafides.workflow_state),
                 lease_holder=NULL,lease_expires_at=NULL WHERE owner_id=:owner AND id=:id"""),
                 {"state": initial, "owner": task.owner_id, "id": task.id},
             )
@@ -285,12 +285,12 @@ def test_retry_guards_preserve_run(pg_context: PGContext, mutation: str, reason:
     _due(pg_context, task)
     with pg_context.migrator.begin() as conn:
         conn.execute(
-            text(f"UPDATE offerloom.workflow_runs SET {mutation} WHERE owner_id=:owner AND id=:id"),
+            text(f"UPDATE bonafides.workflow_runs SET {mutation} WHERE owner_id=:owner AND id=:id"),
             {"owner": task.owner_id, "id": task.id},
         )
         before = conn.execute(
             text(
-                "SELECT to_jsonb(w) FROM offerloom.workflow_runs w WHERE owner_id=:owner AND id=:id"
+                "SELECT to_jsonb(w) FROM bonafides.workflow_runs w WHERE owner_id=:owner AND id=:id"
             ),
             {"owner": task.owner_id, "id": task.id},
         ).scalar_one()
@@ -301,7 +301,7 @@ def test_retry_guards_preserve_run(pg_context: PGContext, mutation: str, reason:
         assert (
             conn.execute(
                 text(
-                    "SELECT to_jsonb(w) FROM offerloom.workflow_runs w WHERE owner_id=:owner AND id=:id"
+                    "SELECT to_jsonb(w) FROM bonafides.workflow_runs w WHERE owner_id=:owner AND id=:id"
                 ),
                 {"owner": task.owner_id, "id": task.id},
             ).scalar_one()
@@ -329,7 +329,7 @@ def test_usage_distinguishes_unattempted_known_zero_and_unknown(
         assert usage["input_tokens"] is None and usage["cost_used_microunits"] is None
         assert isinstance(result["queue_age_seconds"], int)
         conn.execute(
-            text("""INSERT INTO offerloom.model_runs(owner_id,workflow_run_id,provider_key,model_id,task_kind,
+            text("""INSERT INTO bonafides.model_runs(owner_id,workflow_run_id,provider_key,model_id,task_kind,
             prompt_version,input_sha256,parameters,egress_class,reserved_tokens,reserved_cost_microunits,
             status,usage_status,input_tokens,output_tokens,actual_cost_microunits,finished_at)
             VALUES(:owner,:id,'synthetic','synthetic','synthetic','synthetic',repeat('0',64),'{}','local',100,0,
@@ -343,7 +343,7 @@ def test_usage_distinguishes_unattempted_known_zero_and_unknown(
             and usage["cost_used_microunits"] == 0
         )
         conn.execute(
-            text("""UPDATE offerloom.model_runs SET usage_status='unknown',input_tokens=NULL,
+            text("""UPDATE bonafides.model_runs SET usage_status='unknown',input_tokens=NULL,
             output_tokens=NULL,actual_cost_microunits=NULL,status='unknown_usage' WHERE owner_id=:owner AND workflow_run_id=:id"""),
             {"owner": pg_context.owner_id, "id": workflow},
         )
@@ -366,7 +366,7 @@ def test_history_pages_are_bounded_parent_scoped_and_payload_free(pg_context: PG
     with pg_context.runtime.begin() as conn:
         for index in range(35):
             conn.execute(
-                text("""INSERT INTO offerloom.workflow_steps(owner_id,workflow_run_id,step_key,attempt,fence,state,checkpoint,error_code)
+                text("""INSERT INTO bonafides.workflow_steps(owner_id,workflow_run_id,step_key,attempt,fence,state,checkpoint,error_code)
                 VALUES(:owner,:id,:key,:attempt,:fence,'succeeded','{"secret":"private checkpoint"}',:error)"""),
                 {
                     "owner": task.owner_id,
@@ -452,7 +452,7 @@ def test_retry_http_security_preconditions_exact_replay_and_control_version(
     assert catalog.client.post(route, json={"reset": True}, headers=headers).status_code == 422
     with catalog.runtime.transaction() as conn:
         workspace = conn.execute(
-            text("SELECT workspace_version FROM offerloom.owner_settings WHERE owner_id=:owner"),
+            text("SELECT workspace_version FROM bonafides.owner_settings WHERE owner_id=:owner"),
             {"owner": catalog.owner_id},
         ).scalar_one()
     success = catalog.client.post(route, json={}, headers=headers)
@@ -477,7 +477,7 @@ def test_retry_http_security_preconditions_exact_replay_and_control_version(
         assert (
             conn.execute(
                 text(
-                    "SELECT workspace_version FROM offerloom.owner_settings WHERE owner_id=:owner"
+                    "SELECT workspace_version FROM bonafides.owner_settings WHERE owner_id=:owner"
                 ),
                 {"owner": catalog.owner_id},
             ).scalar_one()
@@ -485,7 +485,7 @@ def test_retry_http_security_preconditions_exact_replay_and_control_version(
         )
         count = conn.execute(
             text(
-                "SELECT count(*) FROM offerloom.workflow_attempt_events WHERE owner_id=:owner AND workflow_run_id=:id AND event='retry_requested'"
+                "SELECT count(*) FROM bonafides.workflow_attempt_events WHERE owner_id=:owner AND workflow_run_id=:id AND event='retry_requested'"
             ),
             {"owner": catalog.owner_id, "id": UUID(workflow["id"])},
         ).scalar_one()
@@ -584,13 +584,13 @@ def test_retry_cannot_bypass_source_revocation_or_retry_after(catalog: SourceCon
     with catalog.identity.admin.transaction() as conn:
         conn.execute(
             text(
-                "UPDATE offerloom.workflow_runs SET next_attempt_at=clock_timestamp()-interval '1 second' WHERE owner_id=:owner AND id=:id"
+                "UPDATE bonafides.workflow_runs SET next_attempt_at=clock_timestamp()-interval '1 second' WHERE owner_id=:owner AND id=:id"
             ),
             {"owner": catalog.owner_id, "id": identifier},
         )
         conn.execute(
             text(
-                "UPDATE offerloom.source_configs SET enabled=false,current_policy_review_id=NULL,terms_reviewed_at=NULL,version=version+1,policy_version=policy_version+1 WHERE owner_id=:owner AND id=:id"
+                "UPDATE bonafides.source_configs SET enabled=false,current_policy_review_id=NULL,terms_reviewed_at=NULL,version=version+1,policy_version=policy_version+1 WHERE owner_id=:owner AND id=:id"
             ),
             {"owner": catalog.owner_id, "id": UUID(source["id"])},
         )
@@ -616,28 +616,28 @@ def test_retry_retains_model_reservation_and_all_cumulative_accounting(
     _due(pg, task)
     with pg.migrator.begin() as conn:
         conn.execute(
-            text("""UPDATE offerloom.workflow_runs SET token_budget=100,tokens_used=30,
+            text("""UPDATE bonafides.workflow_runs SET token_budget=100,tokens_used=30,
             cost_budget_microunits=10,cost_used_microunits=3,model_network_attempts=1
             WHERE owner_id=:owner AND id=:id"""),
             {"owner": task.owner_id, "id": task.id},
         )
         conn.execute(
-            text("""UPDATE offerloom.local_model_reservations SET owner_id=:owner,workflow_run_id=:id,
+            text("""UPDATE bonafides.local_model_reservations SET owner_id=:owner,workflow_run_id=:id,
             fence=:fence,reserved_until=clock_timestamp()+interval '2 minutes' WHERE singleton"""),
             {"owner": task.owner_id, "id": task.id, "fence": task.fence},
         )
         conn.execute(
-            text("""INSERT INTO offerloom.model_runs(owner_id,workflow_run_id,provider_key,model_id,task_kind,
+            text("""INSERT INTO bonafides.model_runs(owner_id,workflow_run_id,provider_key,model_id,task_kind,
             prompt_version,input_sha256,parameters,egress_class,reserved_tokens,reserved_cost_microunits,status)
             VALUES(:owner,:id,'synthetic','synthetic','synthetic','synthetic',repeat('0',64),'{}','local',30,3,'running')"""),
             {"owner": task.owner_id, "id": task.id},
         )
     with pg.runtime.begin() as conn:
         reservation = conn.execute(
-            text("SELECT to_jsonb(r) FROM offerloom.local_model_reservations r WHERE singleton")
+            text("SELECT to_jsonb(r) FROM bonafides.local_model_reservations r WHERE singleton")
         ).scalar_one()
         runs = conn.execute(
-            text("SELECT to_jsonb(r) FROM offerloom.model_runs r WHERE owner_id=:owner"),
+            text("SELECT to_jsonb(r) FROM bonafides.model_runs r WHERE owner_id=:owner"),
             {"owner": task.owner_id},
         ).all()
         original = get_workflow(conn, task.owner_id, task.id)
@@ -650,13 +650,13 @@ def test_retry_retains_model_reservation_and_all_cumulative_accounting(
         assert updated["usage"] == original["usage"]
         assert (
             conn.execute(
-                text("SELECT to_jsonb(r) FROM offerloom.local_model_reservations r WHERE singleton")
+                text("SELECT to_jsonb(r) FROM bonafides.local_model_reservations r WHERE singleton")
             ).scalar_one()
             == reservation
         )
         assert (
             conn.execute(
-                text("SELECT to_jsonb(r) FROM offerloom.model_runs r WHERE owner_id=:owner"),
+                text("SELECT to_jsonb(r) FROM bonafides.model_runs r WHERE owner_id=:owner"),
                 {"owner": task.owner_id},
             ).all()
             == runs
@@ -672,7 +672,7 @@ def test_attempt_events_paginate_actual_interruption_and_reclaim_checkpoints(
     with pg_context.migrator.begin() as conn:
         conn.execute(
             text(
-                "UPDATE offerloom.workflow_runs SET max_attempts=10 WHERE owner_id=:owner AND id=:id"
+                "UPDATE bonafides.workflow_runs SET max_attempts=10 WHERE owner_id=:owner AND id=:id"
             ),
             {"owner": pg_context.owner_id, "id": identifier},
         )
@@ -682,7 +682,7 @@ def test_attempt_events_paginate_actual_interruption_and_reclaim_checkpoints(
         with pg_context.migrator.begin() as conn:
             conn.execute(
                 text(
-                    "UPDATE offerloom.workflow_runs SET lease_expires_at=clock_timestamp()-interval '1 second' WHERE owner_id=:owner AND id=:id"
+                    "UPDATE bonafides.workflow_runs SET lease_expires_at=clock_timestamp()-interval '1 second' WHERE owner_id=:owner AND id=:id"
                 ),
                 {"owner": task.owner_id, "id": task.id},
             )
@@ -729,7 +729,7 @@ def test_import_review_expiry_still_terminalizes_without_reopening(pg_context: P
     task = _claim(pg_context)
     with pg_context.migrator.begin() as conn:
         conn.execute(
-            text("""UPDATE offerloom.workflow_runs SET state='waiting_for_approval',lease_holder=NULL,
+            text("""UPDATE bonafides.workflow_runs SET state='waiting_for_approval',lease_holder=NULL,
             lease_expires_at=NULL,created_at=clock_timestamp()-interval '181 seconds',
             deadline_at=clock_timestamp()-interval '1 second'
             WHERE owner_id=:owner AND id=:id"""),
@@ -755,13 +755,13 @@ def test_retry_cannot_restore_superseded_profile_source(pg_context: PGContext) -
     replacement = uuid4()
     with pg_context.migrator.begin() as conn:
         conn.execute(
-            text("""INSERT INTO offerloom.profile_revisions(owner_id,id,profile_id,revision_no,snapshot,content_sha256,reason)
+            text("""INSERT INTO bonafides.profile_revisions(owner_id,id,profile_id,revision_no,snapshot,content_sha256,reason)
             VALUES(:owner,:revision,:profile,2,'{}',repeat('1',64),'synthetic changed source')"""),
             {"owner": task.owner_id, "revision": replacement, "profile": pg_context.profile_id},
         )
         conn.execute(
             text(
-                "UPDATE offerloom.profiles SET current_revision_id=:revision WHERE owner_id=:owner AND id=:profile"
+                "UPDATE bonafides.profiles SET current_revision_id=:revision WHERE owner_id=:owner AND id=:profile"
             ),
             {"owner": task.owner_id, "revision": replacement, "profile": pg_context.profile_id},
         )
@@ -796,7 +796,7 @@ def test_noncanonical_persisted_numbers_refuse_without_clamping_or_retry_mutatio
     with pg_context.migrator.begin() as conn:
         conn.execute(
             text(
-                f"UPDATE offerloom.workflow_runs SET {field}={expression} WHERE owner_id=:owner AND id=:id"
+                f"UPDATE bonafides.workflow_runs SET {field}={expression} WHERE owner_id=:owner AND id=:id"
             ),
             {
                 "owner": task.owner_id,
@@ -813,14 +813,14 @@ def test_noncanonical_persisted_numbers_refuse_without_clamping_or_retry_mutatio
     with pg_context.runtime.begin() as conn:
         assert (
             conn.execute(
-                text("SELECT state FROM offerloom.workflow_runs WHERE owner_id=:owner AND id=:id"),
+                text("SELECT state FROM bonafides.workflow_runs WHERE owner_id=:owner AND id=:id"),
                 {"owner": task.owner_id, "id": task.id},
             ).scalar_one()
             == "retryable_failure"
         )
         assert (
             conn.execute(
-                text("""SELECT count(*) FROM offerloom.workflow_attempt_events
+                text("""SELECT count(*) FROM bonafides.workflow_attempt_events
             WHERE owner_id=:owner AND workflow_run_id=:id AND event='retry_requested'"""),
                 {"owner": task.owner_id, "id": task.id},
             ).scalar_one()
@@ -840,18 +840,18 @@ def test_document_retry_preserves_separate_historical_and_current_profile_pins(
     replacement = uuid4()
     with pg_context.migrator.begin() as conn:
         conn.execute(
-            text("""INSERT INTO offerloom.profile_revisions(owner_id,id,profile_id,revision_no,snapshot,content_sha256,reason)
+            text("""INSERT INTO bonafides.profile_revisions(owner_id,id,profile_id,revision_no,snapshot,content_sha256,reason)
             VALUES(:owner,:revision,:profile,2,'{}',repeat('1',64),'synthetic retained historical facts')"""),
             {"owner": task.owner_id, "revision": replacement, "profile": pg_context.profile_id},
         )
         conn.execute(
             text(
-                "UPDATE offerloom.profiles SET current_revision_id=:revision WHERE owner_id=:owner AND id=:profile"
+                "UPDATE bonafides.profiles SET current_revision_id=:revision WHERE owner_id=:owner AND id=:profile"
             ),
             {"owner": task.owner_id, "revision": replacement, "profile": pg_context.profile_id},
         )
         conn.execute(
-            text("""UPDATE offerloom.workflow_runs SET input=input || jsonb_build_object('current_profile_revision_id',CAST(:revision AS text))
+            text("""UPDATE bonafides.workflow_runs SET input=input || jsonb_build_object('current_profile_revision_id',CAST(:revision AS text))
             WHERE owner_id=:owner AND id=:id"""),
             {"owner": task.owner_id, "id": task.id, "revision": replacement},
         )
@@ -859,7 +859,7 @@ def test_document_retry_preserves_separate_historical_and_current_profile_pins(
         result = retry_workflow(conn, task.owner_id, task.id)
         assert result["state"] == "pending"
         snapshot = conn.execute(
-            text("SELECT input FROM offerloom.workflow_runs WHERE owner_id=:owner AND id=:id"),
+            text("SELECT input FROM bonafides.workflow_runs WHERE owner_id=:owner AND id=:id"),
             {"owner": task.owner_id, "id": task.id},
         ).scalar_one()
         assert snapshot["profile_revision_id"] == str(pg_context.revision_id)
@@ -887,7 +887,7 @@ def test_reaper_dead_letters_exhausted_cumulative_allowance_without_another_clai
     _due(pg_context, task)
     with pg_context.migrator.begin() as conn:
         conn.execute(
-            text(f"UPDATE offerloom.workflow_runs SET {mutation} WHERE owner_id=:owner AND id=:id"),
+            text(f"UPDATE bonafides.workflow_runs SET {mutation} WHERE owner_id=:owner AND id=:id"),
             {"owner": task.owner_id, "id": task.id},
         )
     with pg_context.runtime.begin() as conn:
@@ -922,7 +922,7 @@ def test_reviewed_import_continuation_remains_retryable_without_renewing_allowan
     with importing.identity.admin.transaction() as conn:
         conn.execute(
             text(
-                "UPDATE offerloom.workflow_runs SET next_attempt_at=clock_timestamp()-interval '1 second' WHERE owner_id=:owner AND id=:id"
+                "UPDATE bonafides.workflow_runs SET next_attempt_at=clock_timestamp()-interval '1 second' WHERE owner_id=:owner AND id=:id"
             ),
             {"owner": importing.owner_id, "id": identifier},
         )

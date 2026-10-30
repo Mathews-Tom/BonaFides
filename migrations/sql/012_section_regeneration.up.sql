@@ -1,5 +1,5 @@
 -- SPDX-License-Identifier: MIT OR Apache-2.0
-SET search_path=offerloom,pg_catalog;
+SET search_path=bonafides,pg_catalog;
 
 -- New stage qualification is independent; no existing receipt is promoted.
 ALTER TABLE local_model_route_blocks DROP CONSTRAINT local_model_route_blocks_stage_check;
@@ -34,6 +34,6 @@ CREATE TABLE document_regeneration_proposals (
 );
 CREATE INDEX document_regeneration_proposal_history_idx
  ON document_regeneration_proposals(owner_id,document_draft_id,created_at DESC,id DESC);
-REVOKE ALL ON document_regeneration_proposals FROM PUBLIC,offerloom_runtime;
-GRANT SELECT,INSERT ON document_regeneration_proposals TO offerloom_runtime;
+REVOKE ALL ON document_regeneration_proposals FROM PUBLIC,bonafides_runtime;
+GRANT SELECT,INSERT ON document_regeneration_proposals TO bonafides_runtime;
 INSERT INTO schema_migrations(version,source_sha256) VALUES(12,repeat('0',64));

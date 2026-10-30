@@ -10,9 +10,9 @@ from pathlib import Path
 import pytest
 from test_import_parser import parser as parser
 
-from offerloom.import_parser import ImportFailure, ImportParserClient
-from offerloom.spool_guard import SpoolBusy, pause_spool, shared_spool
-from offerloom.storage import atomic_file, directory, read_file
+from bonafides.import_parser import ImportFailure, ImportParserClient
+from bonafides.spool_guard import SpoolBusy, pause_spool, shared_spool
+from bonafides.storage import atomic_file, directory, read_file
 
 
 @pytest.mark.parametrize("stale_ack", [False, True])

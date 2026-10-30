@@ -1,5 +1,5 @@
 -- SPDX-License-Identifier: MIT OR Apache-2.0
-SET search_path=offerloom,pg_catalog;
+SET search_path=bonafides,pg_catalog;
 
 -- Imported observations are deliberately not model_runs or executable tasks.
 CREATE TABLE portable_model_history (
@@ -18,8 +18,8 @@ CREATE TABLE portable_model_history (
 );
 CREATE TRIGGER immutable_update BEFORE UPDATE ON portable_model_history
  FOR EACH ROW EXECUTE FUNCTION reject_revision_update();
-REVOKE ALL ON portable_model_history FROM PUBLIC,offerloom_runtime;
-GRANT SELECT,INSERT ON portable_model_history TO offerloom_runtime;
+REVOKE ALL ON portable_model_history FROM PUBLIC,bonafides_runtime;
+GRANT SELECT,INSERT ON portable_model_history TO bonafides_runtime;
 
 ALTER TABLE match_assessments ADD COLUMN historical_model_run_id uuid;
 ALTER TABLE match_assessments ADD FOREIGN KEY(owner_id,historical_model_run_id)

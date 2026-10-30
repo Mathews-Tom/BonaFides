@@ -2,7 +2,7 @@
 # CI-only credential-free relay; PostgreSQL itself remains on the private network.
 services:
   db-access:
-    image: ${OFFERLOOM_IMAGE:-offerloom-m0:local}
+    image: ${BONAFIDES_IMAGE:-bonafides:local}
     build: {context: ., target: app}
     user: "10001:10001"
     read_only: true
@@ -15,7 +15,7 @@ services:
     restart: "on-failure:3"
     stop_grace_period: 10s
     logging: {driver: json-file, options: {max-size: 5m, max-file: "2"}}
-    entrypoint: [python, -m, offerloom.relay]
+    entrypoint: [python, -m, bonafides.relay]
     command: [db]
     networks: [ingress, private]
     ports: ["127.0.0.1:15432:5432"]

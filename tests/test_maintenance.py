@@ -15,18 +15,18 @@ from test_identity import identity as identity
 from test_sources import SourceContext
 from test_sources import catalog as catalog
 
-from offerloom.commands import lock_installation
-from offerloom.maintenance import finish_activity, start_api_activity
-from offerloom.problems import Problem
-from offerloom.storage import BlobStore
-from offerloom.worker import Worker
-from offerloom.workflows import claim, enqueue, reap
+from bonafides.commands import lock_installation
+from bonafides.maintenance import finish_activity, start_api_activity
+from bonafides.problems import Problem
+from bonafides.storage import BlobStore
+from bonafides.worker import Worker
+from bonafides.workflows import claim, enqueue, reap
 
 
 def _barrier(context: SourceContext, active: bool) -> None:
     with context.identity.admin.transaction() as conn:
         conn.execute(
-            text("""UPDATE offerloom.installation_state SET maintenance_active=:active,
+            text("""UPDATE bonafides.installation_state SET maintenance_active=:active,
             maintenance_epoch=maintenance_epoch+1 WHERE singleton"""),
             {"active": active},
         )
@@ -38,7 +38,7 @@ def _active(context: SourceContext) -> list[tuple[object, ...]]:
             tuple(row)
             for row in conn.execute(
                 text(
-                    "SELECT id,kind,participant_id,execution_id FROM offerloom.installation_activities"
+                    "SELECT id,kind,participant_id,execution_id FROM bonafides.installation_activities"
                 )
             )
         ]
@@ -112,7 +112,7 @@ def test_worker_lease_and_maintenance_do_not_acknowledge_running_execution(
             assert len(registrations) == 1
             with catalog.identity.admin.transaction() as conn:
                 conn.execute(
-                    text("""UPDATE offerloom.workflow_runs
+                    text("""UPDATE bonafides.workflow_runs
                     SET lease_expires_at=clock_timestamp()-interval '1 second'
                     WHERE owner_id=:owner AND id=:id"""),
                     {"owner": catalog.owner_id, "id": workflow_id},
@@ -129,7 +129,7 @@ def test_worker_lease_and_maintenance_do_not_acknowledge_running_execution(
             with catalog.runtime.transaction() as conn:
                 state = conn.execute(
                     text(
-                        "SELECT state FROM offerloom.workflow_runs WHERE owner_id=:owner AND id=:id"
+                        "SELECT state FROM bonafides.workflow_runs WHERE owner_id=:owner AND id=:id"
                     ),
                     {"owner": catalog.owner_id, "id": workflow_id},
                 ).scalar_one()
@@ -151,7 +151,7 @@ def test_registration_requires_exact_positive_completion_and_no_time_based_clean
     try:
         with catalog.identity.admin.transaction() as conn:
             conn.execute(
-                text("""UPDATE offerloom.installation_activities
+                text("""UPDATE bonafides.installation_activities
                 SET started_at=clock_timestamp()-interval '1 day' WHERE id=:id"""),
                 {"id": registration.id},
             )
@@ -169,7 +169,7 @@ def test_registration_requires_exact_positive_completion_and_no_time_based_clean
     finally:
         with catalog.identity.admin.transaction() as conn:
             conn.execute(
-                text("DELETE FROM offerloom.installation_activities WHERE id=:id"),
+                text("DELETE FROM bonafides.installation_activities WHERE id=:id"),
                 {"id": registration.id},
             )
         _barrier(catalog, False)

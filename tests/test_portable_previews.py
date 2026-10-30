@@ -35,19 +35,19 @@ from test_sources import catalog as catalog
 from test_suitability import _profile
 from test_tracking import _application
 
-from offerloom.api import create_app
-from offerloom.approvals import get_action_approval
-from offerloom.backup_configuration import capture_runtime_pins
-from offerloom.commands import lock_installation
-from offerloom.config import Settings
-from offerloom.import_parser import ImportParserClient
-from offerloom.portable_data import export_owner_data, quarantine_records
-from offerloom.portable_exports import LifecycleWorker
-from offerloom.portable_previews import expire_previews
-from offerloom.portable_uploads import load_candidate, retain_candidate
-from offerloom.problems import Problem
-from offerloom.storage import BlobStore
-from offerloom.workflows import Claim, claim_control, reap
+from bonafides.api import create_app
+from bonafides.approvals import get_action_approval
+from bonafides.backup_configuration import capture_runtime_pins
+from bonafides.commands import lock_installation
+from bonafides.config import Settings
+from bonafides.import_parser import ImportParserClient
+from bonafides.portable_data import export_owner_data, quarantine_records
+from bonafides.portable_exports import LifecycleWorker
+from bonafides.portable_previews import expire_previews
+from bonafides.portable_uploads import load_candidate, retain_candidate
+from bonafides.problems import Problem
+from bonafides.storage import BlobStore
+from bonafides.workflows import Claim, claim_control, reap
 
 
 def _version(context: SourceContext) -> int:
@@ -108,7 +108,7 @@ def test_unavailable_admission_does_not_consume_the_sole_destructive_attempt(
                 row = (
                     conn.execute(
                         text("""SELECT state,attempt,max_attempts,lease_holder,lease_expires_at
-                    FROM offerloom.workflow_runs WHERE id=:id"""),
+                    FROM bonafides.workflow_runs WHERE id=:id"""),
                         {"id": identifier},
                     )
                     .mappings()
@@ -123,23 +123,23 @@ def test_unavailable_admission_does_not_consume_the_sole_destructive_attempt(
                 }
                 assert reap(conn) == 0
                 assert conn.execute(
-                    text("""SELECT consumed_at IS NULL FROM offerloom.action_approvals
+                    text("""SELECT consumed_at IS NULL FROM bonafides.action_approvals
                     WHERE workflow_run_id=:id"""),
                     {"id": identifier},
                 ).scalar_one()
                 assert (
                     conn.execute(
-                        text("SELECT count(*) FROM offerloom.installation_controls")
+                        text("SELECT count(*) FROM bonafides.installation_controls")
                     ).scalar_one()
                     == 0
                 )
                 assert conn.execute(
-                    text("SELECT EXISTS(SELECT 1 FROM offerloom.applications WHERE id=:id)"),
+                    text("SELECT EXISTS(SELECT 1 FROM bonafides.applications WHERE id=:id)"),
                     {"id": UUID(selected["id"])},
                 ).scalar_one()
                 assert (
                     conn.execute(
-                        text("""SELECT count(*) FROM offerloom.workflow_attempt_events
+                        text("""SELECT count(*) FROM bonafides.workflow_attempt_events
                     WHERE workflow_run_id=:id AND event='claimed'"""),
                         {"id": identifier},
                     ).scalar_one()
@@ -151,7 +151,7 @@ def test_unavailable_admission_does_not_consume_the_sole_destructive_attempt(
     with catalog.runtime.transaction() as conn:
         row = (
             conn.execute(
-                text("SELECT state,attempt,max_attempts FROM offerloom.workflow_runs WHERE id=:id"),
+                text("SELECT state,attempt,max_attempts FROM bonafides.workflow_runs WHERE id=:id"),
                 {"id": identifier},
             )
             .mappings()
@@ -159,13 +159,13 @@ def test_unavailable_admission_does_not_consume_the_sole_destructive_attempt(
         )
         assert dict(row) == {"state": "succeeded", "attempt": 1, "max_attempts": 1}
         assert conn.execute(
-            text("""SELECT consumed_at IS NOT NULL FROM offerloom.action_approvals
+            text("""SELECT consumed_at IS NOT NULL FROM bonafides.action_approvals
             WHERE workflow_run_id=:id"""),
             {"id": identifier},
         ).scalar_one()
         assert (
             conn.execute(
-                text("SELECT count(*) FROM offerloom.applications WHERE id=:id"),
+                text("SELECT count(*) FROM bonafides.applications WHERE id=:id"),
                 {"id": UUID(selected["id"])},
             ).scalar_one()
             == 0
@@ -181,7 +181,7 @@ def test_admission_preserves_explicit_preflight_failure_and_database_errors(
     phase: str,
     database_error: bool,
 ) -> None:
-    from offerloom import portable_exports
+    from bonafides import portable_exports
 
     selected, preview = _approved_application_deletion(catalog)
     identifier = UUID(preview["workflow_run_id"])
@@ -213,7 +213,7 @@ def test_admission_preserves_explicit_preflight_failure_and_database_errors(
         row = (
             conn.execute(
                 text("""SELECT state,attempt,last_error_code,lease_holder
-            FROM offerloom.workflow_runs WHERE id=:id"""),
+            FROM bonafides.workflow_runs WHERE id=:id"""),
                 {"id": identifier},
             )
             .mappings()
@@ -226,16 +226,16 @@ def test_admission_preserves_explicit_preflight_failure_and_database_errors(
             "lease_holder": None,
         }
         assert conn.execute(
-            text("""SELECT consumed_at IS NULL FROM offerloom.action_approvals
+            text("""SELECT consumed_at IS NULL FROM bonafides.action_approvals
             WHERE workflow_run_id=:id"""),
             {"id": identifier},
         ).scalar_one()
         assert (
-            conn.execute(text("SELECT count(*) FROM offerloom.installation_controls")).scalar_one()
+            conn.execute(text("SELECT count(*) FROM bonafides.installation_controls")).scalar_one()
             == 0
         )
         assert conn.execute(
-            text("SELECT EXISTS(SELECT 1 FROM offerloom.applications WHERE id=:id)"),
+            text("SELECT EXISTS(SELECT 1 FROM bonafides.applications WHERE id=:id)"),
             {"id": UUID(selected["id"])},
         ).scalar_one()
 
@@ -264,7 +264,7 @@ def test_admission_does_not_steal_a_candidate_claimed_during_preflight(
         row = (
             conn.execute(
                 text("""SELECT state,attempt,max_attempts,lease_holder
-            FROM offerloom.workflow_runs WHERE id=:id"""),
+            FROM bonafides.workflow_runs WHERE id=:id"""),
                 {"id": identifier},
             )
             .mappings()
@@ -277,12 +277,12 @@ def test_admission_does_not_steal_a_candidate_claimed_during_preflight(
             "lease_holder": other_holder,
         }
         assert conn.execute(
-            text("""SELECT consumed_at IS NULL FROM offerloom.action_approvals
+            text("""SELECT consumed_at IS NULL FROM bonafides.action_approvals
             WHERE workflow_run_id=:id"""),
             {"id": identifier},
         ).scalar_one()
         assert (
-            conn.execute(text("SELECT count(*) FROM offerloom.installation_controls")).scalar_one()
+            conn.execute(text("SELECT count(*) FROM bonafides.installation_controls")).scalar_one()
             == 0
         )
 
@@ -317,10 +317,10 @@ def test_typed_owner_preview_dispatches_exact_scope_and_revokes_old_sessions(
     refused = _approve(catalog, preview, "delete everything")
     assert refused.status_code == 422 and refused.json()["code"] == "confirmation_phrase_mismatch"
     with catalog.runtime.transaction() as conn:
-        assert conn.execute(text("SELECT count(*) FROM offerloom.applications")).scalar_one() == 2
+        assert conn.execute(text("SELECT count(*) FROM bonafides.applications")).scalar_one() == 2
         assert (
             conn.execute(
-                text("SELECT state FROM offerloom.workflow_runs WHERE id=:id"),
+                text("SELECT state FROM bonafides.workflow_runs WHERE id=:id"),
                 {"id": UUID(preview["workflow_run_id"])},
             ).scalar_one()
             == "waiting_for_approval"
@@ -329,11 +329,11 @@ def test_typed_owner_preview_dispatches_exact_scope_and_revokes_old_sessions(
     assert approved.status_code == 200 and approved.json()["state"] == "pending", approved.text
     assert _worker(catalog, parser, renderer_spool).run_once()
     with catalog.runtime.transaction() as conn:
-        remaining = conn.execute(text("SELECT id FROM offerloom.applications")).scalars().all()
+        remaining = conn.execute(text("SELECT id FROM bonafides.applications")).scalars().all()
         assert remaining == ([UUID(neighbor["id"])] if scope == "application" else [])
         result = (
             conn.execute(
-                text("SELECT state,result FROM offerloom.workflow_runs WHERE id=:id"),
+                text("SELECT state,result FROM bonafides.workflow_runs WHERE id=:id"),
                 {"id": UUID(preview["workflow_run_id"])},
             )
             .mappings()
@@ -342,13 +342,13 @@ def test_typed_owner_preview_dispatches_exact_scope_and_revokes_old_sessions(
         assert result["state"] == "succeeded" and result["result"]["filesystem_complete"] is True
         assert (
             conn.execute(
-                text("SELECT maintenance_active FROM offerloom.installation_state")
+                text("SELECT maintenance_active FROM bonafides.installation_state")
             ).scalar_one()
             is False
         )
         assert (
             conn.execute(
-                text("SELECT clear_reason FROM offerloom.portable_previews WHERE id=:id"),
+                text("SELECT clear_reason FROM bonafides.portable_previews WHERE id=:id"),
                 {"id": UUID(preview["id"])},
             ).scalar_one()
             == "erased"
@@ -385,7 +385,7 @@ def test_preview_replay_requires_recent_authentication_and_stale_workspace_canno
     with catalog.identity.admin.transaction() as conn:
         conn.execute(
             text(
-                "UPDATE offerloom.sessions SET authenticated_at=clock_timestamp()-interval '6 minutes'"
+                "UPDATE bonafides.sessions SET authenticated_at=clock_timestamp()-interval '6 minutes'"
             )
         )
     replay = catalog.client.post(
@@ -408,19 +408,19 @@ def test_preview_replay_requires_recent_authentication_and_stale_workspace_canno
     assert fresh.status_code == 201, fresh.text
     with catalog.identity.admin.transaction() as conn:
         conn.execute(
-            text("UPDATE offerloom.owner_settings SET workspace_version=workspace_version+1")
+            text("UPDATE bonafides.owner_settings SET workspace_version=workspace_version+1")
         )
     stale = _approve(catalog, fresh.json(), fresh.json()["approval"]["confirmation_phrase"])
     assert stale.status_code == 409 and stale.json()["code"] == "portable_preview_stale"
     with catalog.runtime.transaction() as conn:
         assert (
-            conn.execute(text("SELECT count(*) FROM offerloom.installation_controls")).scalar_one()
+            conn.execute(text("SELECT count(*) FROM bonafides.installation_controls")).scalar_one()
             == 0
         )
         assert (
             conn.execute(
                 text(
-                    "SELECT count(*) FROM offerloom.action_approvals WHERE approved_at IS NOT NULL"
+                    "SELECT count(*) FROM bonafides.action_approvals WHERE approved_at IS NOT NULL"
                 )
             ).scalar_one()
             == 0
@@ -442,7 +442,7 @@ def _eligible_policy_checkpoint(
     archive.write_bytes(payload)
     with context.identity.admin.transaction() as conn:
         conn.execute(
-            text("""UPDATE offerloom.installation_backups SET image_sha256=:image,
+            text("""UPDATE bonafides.installation_backups SET image_sha256=:image,
             source_sha256=:source,config_sha256=:config,keyring_sha256=:keyring,
             recipient_sha256=:recipient,file_name=:file,cipher_sha256=:cipher,byte_length=:length
             WHERE id=:id"""),
@@ -473,7 +473,7 @@ def test_long_archive_validation_does_not_expire_the_new_preview(
 
     from sqlalchemy import Connection
 
-    from offerloom import portable_previews
+    from bonafides import portable_previews
 
     output = io.BytesIO()
     export_owner_data(catalog.runtime, catalog.identity.settings, catalog.owner_id, output)
@@ -525,16 +525,16 @@ def test_candidate_retention_cannot_consume_the_reviewed_preview_lifetime(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from offerloom import portable_previews
+    from bonafides import portable_previews
 
     original = _application(catalog, title="Synthetic retained replacement")
     _attachment(catalog, original, b"Synthetic retained bytes\n" * 60_000)
     output = io.BytesIO()
     export_owner_data(catalog.runtime, catalog.identity.settings, catalog.owner_id, output)
     settings = _eligible_policy_checkpoint(catalog, parser, renderer_spool, tmp_path)
-    finalize = text("""SELECT offerloom.finalize_portable_preview(
+    finalize = text("""SELECT bonafides.finalize_portable_preview(
         owner_id,id,plan,preview_sha256,expires_at)
-        FROM offerloom.portable_previews WHERE owner_id=:owner AND id=:id""")
+        FROM bonafides.portable_previews WHERE owner_id=:owner AND id=:id""")
 
     def slow_retention(conn: Connection, owner: UUID, identifier: UUID, stream: BinaryIO) -> None:
         # An incomplete candidate cannot become an approvable replacement.
@@ -546,7 +546,7 @@ def test_candidate_retention_cannot_consume_the_reviewed_preview_lifetime(
         conn.execute(
             text("""SELECT pg_sleep(GREATEST(0,
             extract(epoch FROM expires_at-clock_timestamp())+0.01))
-            FROM offerloom.portable_previews WHERE owner_id=:owner AND id=:id"""),
+            FROM bonafides.portable_previews WHERE owner_id=:owner AND id=:id"""),
             {"owner": owner, "id": identifier},
         )
         monkeypatch.setattr(portable_previews, "PREVIEW_TTL_SECONDS", 600)
@@ -620,7 +620,7 @@ def test_uploaded_nonempty_import_is_bound_and_candidate_bytes_are_released(
             load_candidate(conn, catalog.owner_id, UUID(preview["workflow_run_id"]), restored)
             assert restored.getvalue() == archive
         with pytest.raises(DBAPIError), catalog.runtime.transaction() as conn:
-            conn.execute(text("UPDATE offerloom.portable_previews SET plan='{}'"))
+            conn.execute(text("UPDATE bonafides.portable_previews SET plan='{}'"))
         if operation == "dispatch":
             approved = _approve(context, preview, preview["approval"]["confirmation_phrase"])
             assert approved.status_code == 200, approved.text
@@ -632,11 +632,11 @@ def test_uploaded_nonempty_import_is_bound_and_candidate_bytes_are_released(
             assert client.get("/api/v1/session").status_code == 401
             with catalog.runtime.transaction() as conn:
                 assert conn.execute(
-                    text("SELECT id FROM offerloom.applications")
+                    text("SELECT id FROM bonafides.applications")
                 ).scalars().all() == [UUID(original["id"])]
                 assert (
                     conn.execute(
-                        text("SELECT maintenance_active FROM offerloom.installation_state")
+                        text("SELECT maintenance_active FROM bonafides.installation_state")
                     ).scalar_one()
                     is False
                 )
@@ -667,7 +667,7 @@ def test_uploaded_nonempty_import_is_bound_and_candidate_bytes_are_released(
             with catalog.identity.admin.transaction() as conn:
                 conn.execute(
                     text(
-                        "UPDATE offerloom.portable_previews SET expires_at=created_at+interval '1 microsecond'"
+                        "UPDATE bonafides.portable_previews SET expires_at=created_at+interval '1 microsecond'"
                     )
                 )
             with catalog.runtime.transaction() as conn:
@@ -677,7 +677,7 @@ def test_uploaded_nonempty_import_is_bound_and_candidate_bytes_are_released(
             row = (
                 conn.execute(
                     text(
-                        "SELECT candidate_bytes,clear_reason FROM offerloom.portable_previews WHERE id=:id"
+                        "SELECT candidate_bytes,clear_reason FROM bonafides.portable_previews WHERE id=:id"
                     ),
                     {"id": UUID(preview["id"])},
                 )
@@ -687,13 +687,13 @@ def test_uploaded_nonempty_import_is_bound_and_candidate_bytes_are_released(
             assert row["candidate_bytes"] is None and row["clear_reason"] == reason
             assert (
                 conn.execute(
-                    text("SELECT count(*) FROM offerloom.portable_preview_chunks")
+                    text("SELECT count(*) FROM bonafides.portable_preview_chunks")
                 ).scalar_one()
                 == 0
             )
             if operation != "dispatch":
                 assert set(
-                    conn.execute(text("SELECT id FROM offerloom.applications")).scalars()
+                    conn.execute(text("SELECT id FROM bonafides.applications")).scalars()
                 ) == {UUID(original["id"]), UUID(added_later["id"])}
 
 
@@ -752,11 +752,11 @@ def test_upload_backpressure_precedes_buffering_and_disconnect_releases_slot(
     asyncio.run(exercise())
     with catalog.runtime.transaction() as conn:
         assert (
-            conn.execute(text("SELECT count(*) FROM offerloom.portable_previews")).scalar_one() == 0
+            conn.execute(text("SELECT count(*) FROM bonafides.portable_previews")).scalar_one() == 0
         )
         assert (
             conn.execute(
-                text("SELECT count(*) FROM offerloom.installation_activities")
+                text("SELECT count(*) FROM bonafides.installation_activities")
             ).scalar_one()
             == 0
         )

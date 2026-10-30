@@ -12,9 +12,9 @@ from sqlalchemy.exc import DBAPIError
 from test_database import PGContext
 from test_database import pg_context as pg_context
 
-from offerloom.execution_guard import ExecutionGuard
-from offerloom.installation_control import begin_control
-from offerloom.workflows import claim, claim_control, enqueue
+from bonafides.execution_guard import ExecutionGuard
+from bonafides.installation_control import begin_control
+from bonafides.workflows import claim, claim_control, enqueue
 
 
 @pytest.mark.postgres
@@ -27,7 +27,7 @@ def test_operator_claim_does_not_steal_an_older_lifecycle_job(pg_context: PGCont
         assert task is not None and task.id == selected and task.kind == "backup"
         assert (
             conn.execute(
-                text("SELECT state FROM offerloom.workflow_runs WHERE owner_id=:owner AND id=:id"),
+                text("SELECT state FROM bonafides.workflow_runs WHERE owner_id=:owner AND id=:id"),
                 {"owner": pg_context.owner_id, "id": older},
             ).scalar_one()
             == "pending"
@@ -50,17 +50,17 @@ def test_runtime_cannot_forge_or_remove_a_generation_drill(
     with pg_context.migrator.begin() as conn:
         # This is an ACL fixture, not an asserted physical backup or drain receipt.
         conn.execute(
-            text("""INSERT INTO offerloom.installation_backups(
+            text("""INSERT INTO bonafides.installation_backups(
             id,owner_id,namespace_id,maintenance_epoch,workspace_version,
             installation_auth_epoch,owner_auth_epoch,schema_versions,
             image_sha256,source_sha256,config_sha256,keyring_sha256,recipient_sha256,
             file_name,cipher_sha256,manifest_sha256,byte_length,captured_at)
             SELECT :id,:owner,:namespace,:epoch,s.workspace_version,i.auth_epoch,o.auth_epoch,
-            (SELECT jsonb_object_agg(version::text,source_sha256) FROM offerloom.schema_migrations),
+            (SELECT jsonb_object_agg(version::text,source_sha256) FROM bonafides.schema_migrations),
             repeat('0',64),repeat('0',64),repeat('0',64),repeat('0',64),repeat('0',64),
             :file,repeat('0',64),repeat('0',64),1,clock_timestamp()
-            FROM offerloom.owner_settings s JOIN offerloom.owners o ON o.id=s.owner_id
-            CROSS JOIN offerloom.installation_state i WHERE s.owner_id=:owner AND i.singleton"""),
+            FROM bonafides.owner_settings s JOIN bonafides.owners o ON o.id=s.owner_id
+            CROSS JOIN bonafides.installation_state i WHERE s.owner_id=:owner AND i.singleton"""),
             {
                 "id": identifier,
                 "owner": pg_context.owner_id,
@@ -70,10 +70,10 @@ def test_runtime_cannot_forge_or_remove_a_generation_drill(
             },
         )
     query = (
-        "UPDATE offerloom.installation_backups SET restore_verified_at=clock_timestamp(),"
+        "UPDATE bonafides.installation_backups SET restore_verified_at=clock_timestamp(),"
         "restore_receipt_sha256=repeat('0',64),restore_target_namespace=:target WHERE id=:id"
         if operation == "UPDATE"
-        else "DELETE FROM offerloom.installation_backups WHERE id=:id"
+        else "DELETE FROM bonafides.installation_backups WHERE id=:id"
     )
     with pytest.raises(DBAPIError) as denied, pg_context.runtime.begin() as conn:
         conn.execute(text(query), {"id": identifier, "target": uuid4()})
@@ -81,6 +81,6 @@ def test_runtime_cannot_forge_or_remove_a_generation_drill(
     with pg_context.runtime.begin() as conn:
         assert conn.execute(
             text(
-                "SELECT id,restore_verified_at,restore_receipt_sha256 FROM offerloom.installation_backups"
+                "SELECT id,restore_verified_at,restore_receipt_sha256 FROM bonafides.installation_backups"
             ),
         ).one() == (identifier, None, None)

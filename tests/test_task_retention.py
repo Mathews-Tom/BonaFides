@@ -19,21 +19,21 @@ from test_sources import catalog as catalog
 from test_suitability import _profile
 from test_tracking import _application
 
-from offerloom import backup_schedule, task_retention
-from offerloom.commands import canonical_json
-from offerloom.config import ConfigurationError
-from offerloom.db import Database
-from offerloom.maintenance import (
+from bonafides import backup_schedule, task_retention
+from bonafides.commands import canonical_json
+from bonafides.config import ConfigurationError
+from bonafides.db import Database
+from bonafides.maintenance import (
     Activity,
     ProviderExecution,
     finish_activity,
     start_worker_activity,
 )
-from offerloom.portable_exports import LifecycleWorker
-from offerloom.problems import Problem
-from offerloom.storage import BlobStore
-from offerloom.task_retention import expire_task_inputs, task_retention_status
-from offerloom.workflows import Claim, enqueue
+from bonafides.portable_exports import LifecycleWorker
+from bonafides.problems import Problem
+from bonafides.storage import BlobStore
+from bonafides.task_retention import expire_task_inputs, task_retention_status
+from bonafides.workflows import Claim, enqueue
 
 pytestmark = pytest.mark.postgres
 
@@ -57,7 +57,7 @@ def _seed(
 def _state(context: SourceContext, identifier: UUID, state: str, hours: int = 25) -> None:
     with context.identity.admin.transaction() as conn:
         conn.execute(
-            text("""UPDATE offerloom.workflow_runs SET state=CAST(:state AS offerloom.workflow_state),
+            text("""UPDATE bonafides.workflow_runs SET state=CAST(:state AS bonafides.workflow_state),
             finished_at=CASE WHEN :state IN ('succeeded','cancelled','permanent_failure')
                 THEN clock_timestamp()-make_interval(hours=>:hours) ELSE NULL END,
             lease_holder=CASE WHEN :state='running' THEN :holder ELSE NULL END,
@@ -77,7 +77,7 @@ def _row(context: SourceContext, identifier: UUID) -> dict[str, Any]:
     with context.runtime.transaction() as conn:
         return dict(
             conn.execute(
-                text("SELECT * FROM offerloom.workflow_runs WHERE owner_id=:owner AND id=:id"),
+                text("SELECT * FROM bonafides.workflow_runs WHERE owner_id=:owner AND id=:id"),
                 {"owner": context.owner_id, "id": identifier},
             )
             .mappings()
@@ -94,7 +94,7 @@ def _model(context: SourceContext, workflow_id: UUID) -> UUID:
     identifier = uuid4()
     with context.identity.admin.transaction() as conn:
         conn.execute(
-            text("""INSERT INTO offerloom.model_runs
+            text("""INSERT INTO bonafides.model_runs
             (owner_id,id,workflow_run_id,provider_key,model_id,task_kind,prompt_version,input_sha256,
             output_sha256,parameters,egress_class,reserved_tokens,reserved_cost_microunits,status,metadata)
             VALUES(:owner,:id,:workflow,'ollama','synthetic-model','document_generate','synthetic-v1',
@@ -152,13 +152,13 @@ def test_expired_terminal_inputs_scrub_all_content_and_preserve_committed_data(
     )
     with catalog.identity.admin.transaction() as conn:
         conn.execute(
-            text("""UPDATE offerloom.workflow_runs SET result=CAST(:result AS jsonb)
+            text("""UPDATE bonafides.workflow_runs SET result=CAST(:result AS jsonb)
             WHERE owner_id=:owner AND id=:id"""),
             {"owner": catalog.owner_id, "id": identifier, "result": canonical_json(identifiers)},
         )
         blob_id = uuid4()
         conn.execute(
-            text("""INSERT INTO offerloom.blobs(owner_id,id,sha256,byte_length,media_type,storage_key)
+            text("""INSERT INTO bonafides.blobs(owner_id,id,sha256,byte_length,media_type,storage_key)
             VALUES(:owner,:id,:sha,:length,'application/pdf',:key)"""),
             {
                 "owner": catalog.owner_id,
@@ -169,7 +169,7 @@ def test_expired_terminal_inputs_scrub_all_content_and_preserve_committed_data(
             },
         )
         conn.execute(
-            text("""INSERT INTO offerloom.document_artifacts
+            text("""INSERT INTO bonafides.document_artifacts
             (owner_id,document_revision_id,blob_id,renderer_version,format)
             VALUES(:owner,:revision,:blob,'synthetic-preservation-v1','pdf')"""),
             {"owner": catalog.owner_id, "revision": UUID(revision["id"]), "blob": blob_id},
@@ -186,7 +186,7 @@ def test_expired_terminal_inputs_scrub_all_content_and_preserve_committed_data(
         for table in tables:
             before_data[table] = conn.execute(
                 text(
-                    f"SELECT jsonb_agg(to_jsonb(t) ORDER BY id) FROM offerloom.{table} t WHERE owner_id=:owner"
+                    f"SELECT jsonb_agg(to_jsonb(t) ORDER BY id) FROM bonafides.{table} t WHERE owner_id=:owner"
                 ),
                 {"owner": catalog.owner_id},
             ).scalar_one()
@@ -210,7 +210,7 @@ def test_expired_terminal_inputs_scrub_all_content_and_preserve_committed_data(
             if key in {"application_id", "document_id", "revision_id"}:
                 assert (
                     conn.execute(
-                        text("""SELECT id FROM offerloom.workflow_runs WHERE owner_id=:owner
+                        text("""SELECT id FROM bonafides.workflow_runs WHERE owner_id=:owner
                     AND id=:id AND input->>:key=:value"""),
                         {"owner": catalog.owner_id, "id": identifier, "key": key, "value": value},
                     ).scalar_one()
@@ -220,7 +220,7 @@ def test_expired_terminal_inputs_scrub_all_content_and_preserve_committed_data(
             assert (
                 conn.execute(
                     text(
-                        f"SELECT jsonb_agg(to_jsonb(t) ORDER BY id) FROM offerloom.{table} t WHERE owner_id=:owner"
+                        f"SELECT jsonb_agg(to_jsonb(t) ORDER BY id) FROM bonafides.{table} t WHERE owner_id=:owner"
                     ),
                     {"owner": catalog.owner_id},
                 ).scalar_one()
@@ -229,7 +229,7 @@ def test_expired_terminal_inputs_scrub_all_content_and_preserve_committed_data(
         assert (
             conn.execute(
                 text(
-                    "SELECT input_sha256 FROM offerloom.model_runs WHERE owner_id=:owner AND id=:id"
+                    "SELECT input_sha256 FROM bonafides.model_runs WHERE owner_id=:owner AND id=:id"
                 ),
                 {"owner": catalog.owner_id, "id": model},
             ).scalar_one()
@@ -273,7 +273,7 @@ def test_newly_expired_input_is_scrubbed_after_recent_success(catalog: SourceCon
     assert _status(catalog) == first_status  # No redundant no-op audit receipt.
     with catalog.identity.admin.transaction() as conn:
         conn.execute(
-            text("""UPDATE offerloom.workflow_runs
+            text("""UPDATE bonafides.workflow_runs
             SET finished_at=clock_timestamp()-interval '24 hours'
             WHERE owner_id=:owner AND id=:id"""),
             {"owner": catalog.owner_id, "id": identifier},
@@ -299,19 +299,19 @@ def test_unknown_delivery_provider_live_execution_and_unreleased_control_are_pre
     _state(catalog, live, "permanent_failure")
     with catalog.identity.admin.transaction() as conn:
         conn.execute(
-            text("""INSERT INTO offerloom.workflow_steps
+            text("""INSERT INTO bonafides.workflow_steps
             (owner_id,workflow_run_id,step_key,attempt,fence,state,delivery_state)
             VALUES(:owner,:id,'external_write',1,1,'failed','unknown')"""),
             {"owner": catalog.owner_id, "id": unknown},
         )
         conn.execute(
-            text("""INSERT INTO offerloom.installation_controls
+            text("""INSERT INTO bonafides.installation_controls
             (id,owner_id,holder,fence,workflow_fence,namespace_id,maintenance_epoch,purpose,scope,
             phase,deadline_at,drain_deadline_at,lease_expires_at,settled_at)
             SELECT :id,:owner,:holder,1,1,namespace_id,maintenance_epoch+1,'backup','{}','settled',
             clock_timestamp()-interval '25 hours',clock_timestamp()-interval '26 hours',
             clock_timestamp()-interval '25 hours',clock_timestamp()-interval '25 hours'
-            FROM offerloom.installation_state WHERE singleton"""),
+            FROM bonafides.installation_state WHERE singleton"""),
             {"owner": catalog.owner_id, "id": controlled, "holder": uuid4()},
         )
     preserved = (unknown, provider, live, controlled)
@@ -369,12 +369,12 @@ def test_database_cleanup_failure_is_audited_without_text_and_can_resume(
     before = _row(catalog, identifier)
     with catalog.identity.admin.transaction() as conn:
         conn.execute(
-            text("""CREATE FUNCTION offerloom.synthetic_retention_failure() RETURNS trigger
+            text("""CREATE FUNCTION bonafides.synthetic_retention_failure() RETURNS trigger
         LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'Synthetic private frozen prompt text'; END; $$""")
         )
         conn.execute(
             text("""CREATE TRIGGER synthetic_retention_failure BEFORE UPDATE OF input
-        ON offerloom.workflow_runs FOR EACH ROW EXECUTE FUNCTION offerloom.synthetic_retention_failure()""")
+        ON bonafides.workflow_runs FOR EACH ROW EXECUTE FUNCTION bonafides.synthetic_retention_failure()""")
         )
     try:
         with pytest.raises(DBAPIError):
@@ -389,7 +389,7 @@ def test_database_cleanup_failure_is_audited_without_text_and_can_resume(
             details = (
                 conn.execute(
                     text(
-                        "SELECT detail FROM offerloom.audit_events WHERE owner_id=:owner AND action='task_input_retention'"
+                        "SELECT detail FROM bonafides.audit_events WHERE owner_id=:owner AND action='task_input_retention'"
                     ),
                     {"owner": catalog.owner_id},
                 )
@@ -417,9 +417,9 @@ def test_database_cleanup_failure_is_audited_without_text_and_can_resume(
     finally:
         with catalog.identity.admin.transaction() as conn:
             conn.execute(
-                text("DROP TRIGGER synthetic_retention_failure ON offerloom.workflow_runs")
+                text("DROP TRIGGER synthetic_retention_failure ON bonafides.workflow_runs")
             )
-            conn.execute(text("DROP FUNCTION offerloom.synthetic_retention_failure()"))
+            conn.execute(text("DROP FUNCTION bonafides.synthetic_retention_failure()"))
     assert expire_task_inputs(catalog.runtime)["processed_count"] == 1
     resumed = _status(catalog)
     assert resumed["state"] == "succeeded" and resumed["last_success_at"] is not None
@@ -435,7 +435,7 @@ def test_admission_and_owner_locks_prevent_snapshot_or_writer_racing_expiry(
     def pause(
         _conn: Any, _cursor: Any, statement: str, _parameters: Any, _context: Any, _many: bool
     ) -> None:
-        if statement.startswith("UPDATE offerloom.workflow_runs SET input="):
+        if statement.startswith("UPDATE bonafides.workflow_runs SET input="):
             entered.set()
             assert release.wait(10)
 
@@ -452,7 +452,7 @@ def test_admission_and_owner_locks_prevent_snapshot_or_writer_racing_expiry(
                     conn.execute(text("SET LOCAL lock_timeout='200ms'"))
                     conn.execute(
                         text(
-                            "UPDATE offerloom.installation_state SET maintenance_active=true WHERE singleton"
+                            "UPDATE bonafides.installation_state SET maintenance_active=true WHERE singleton"
                         )
                     )
                 assert getattr(fenced.value.orig, "sqlstate", None) == "55P03"
@@ -463,7 +463,7 @@ def test_admission_and_owner_locks_prevent_snapshot_or_writer_racing_expiry(
                     conn.execute(text("SET LOCAL lock_timeout='200ms'"))
                     conn.execute(
                         text(
-                            "SELECT owner_id FROM offerloom.owner_settings WHERE owner_id=:owner FOR UPDATE"
+                            "SELECT owner_id FROM bonafides.owner_settings WHERE owner_id=:owner FOR UPDATE"
                         ),
                         {"owner": catalog.owner_id},
                     )
@@ -491,7 +491,7 @@ def test_optional_backup_configuration_failure_does_not_block_retention(
         return False
 
     monkeypatch.setattr(backup_schedule, "run_due", broken_backup)
-    monkeypatch.setattr("offerloom.portable_exports.signal.signal", lambda *_args: None)
+    monkeypatch.setattr("bonafides.portable_exports.signal.signal", lambda *_args: None)
     monkeypatch.setattr(worker, "run_once", stop_after_cleanup)
     worker.run()
     assert _row(catalog, identifier)["input"] == {"schema_version": 1}
@@ -537,7 +537,7 @@ def test_cleanup_acknowledgement_failure_remains_visible(
         with catalog.runtime.transaction() as conn:
             assert (
                 conn.execute(
-                    text("SELECT id FROM offerloom.installation_activities WHERE id=:id"),
+                    text("SELECT id FROM bonafides.installation_activities WHERE id=:id"),
                     {"id": outstanding[0].id},
                 ).scalar_one()
                 == outstanding[0].id

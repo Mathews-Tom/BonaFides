@@ -19,13 +19,13 @@ from sqlalchemy.exc import DBAPIError
 from test_identity import IdentityContext, _bootstrap
 from test_identity import identity as identity
 
-from offerloom import catalog as catalog_api
-from offerloom import sources
-from offerloom.commands import canonical_json
-from offerloom.db import Database
-from offerloom.greenhouse import BoardRead, PublishedJob, SourceFailure
-from offerloom.problems import Problem
-from offerloom.workflows import Claim, claim, enqueue, get_workflow
+from bonafides import catalog as catalog_api
+from bonafides import sources
+from bonafides.commands import canonical_json
+from bonafides.db import Database
+from bonafides.greenhouse import BoardRead, PublishedJob, SourceFailure
+from bonafides.problems import Problem
+from bonafides.workflows import Claim, claim, enqueue, get_workflow
 
 MANUAL: dict[str, object] = {
     "title": "Fictional infrastructure engineer",
@@ -140,7 +140,7 @@ class SourceContext:
         with self.identity.admin.transaction() as conn:
             conn.execute(
                 text(
-                    "UPDATE offerloom.source_configs SET next_allowed_at=clock_timestamp()-interval '1 second' WHERE owner_id=:owner AND id=:id"
+                    "UPDATE bonafides.source_configs SET next_allowed_at=clock_timestamp()-interval '1 second' WHERE owner_id=:owner AND id=:id"
                 ),
                 {"owner": self.owner_id, "id": UUID(source_id)},
             )
@@ -221,7 +221,7 @@ def test_manual_creation_is_independent_idempotent_exact_and_attributable(
     with catalog.runtime.transaction() as conn:
         assert (
             conn.execute(
-                text("SELECT count(*) FROM offerloom.workflow_runs WHERE owner_id=:owner"),
+                text("SELECT count(*) FROM bonafides.workflow_runs WHERE owner_id=:owner"),
                 {"owner": catalog.owner_id},
             ).scalar_one()
             == 0
@@ -345,7 +345,7 @@ def test_sources_default_disabled_require_exact_review_and_source_version(
         reviews = (
             conn.execute(
                 text(
-                    "SELECT board_token,company,policy_version,acknowledged_by_owner_id FROM offerloom.source_policy_reviews WHERE owner_id=:owner"
+                    "SELECT board_token,company,policy_version,acknowledged_by_owner_id FROM bonafides.source_policy_reviews WHERE owner_id=:owner"
                 ),
                 {"owner": catalog.owner_id},
             )
@@ -370,7 +370,7 @@ def test_refresh_idempotency_one_active_and_immutable_policy_pin(catalog: Source
     with pytest.raises(DBAPIError), catalog.runtime.transaction() as conn:
         conn.execute(
             text(
-                "UPDATE offerloom.workflow_runs SET max_attempts=4 WHERE owner_id=:owner AND id=:id"
+                "UPDATE bonafides.workflow_runs SET max_attempts=4 WHERE owner_id=:owner AND id=:id"
             ),
             {"owner": catalog.owner_id, "id": UUID(queued.json()["workflow_id"])},
         )
@@ -385,7 +385,7 @@ def test_refresh_idempotency_one_active_and_immutable_policy_pin(catalog: Source
                 "policy_review_id": str(
                     conn.execute(
                         text(
-                            "SELECT current_policy_review_id FROM offerloom.source_configs WHERE id=:id"
+                            "SELECT current_policy_review_id FROM bonafides.source_configs WHERE id=:id"
                         ),
                         {"id": UUID(source["id"])},
                     ).scalar_one()
@@ -409,7 +409,7 @@ def test_concurrent_refresh_requests_reserve_only_one_workflow(catalog: SourceCo
         assert (
             conn.execute(
                 text(
-                    "SELECT count(*) FROM offerloom.workflow_runs WHERE owner_id=:owner AND source_config_id=:source"
+                    "SELECT count(*) FROM bonafides.workflow_runs WHERE owner_id=:owner AND source_config_id=:source"
                 ),
                 {"owner": catalog.owner_id, "source": UUID(source["id"])},
             ).scalar_one()
@@ -531,7 +531,7 @@ def test_source_failure_retains_catalog_and_minimum_pause_across_workflow_exhaus
         with catalog.runtime.transaction() as conn:
             remaining = conn.execute(
                 text(
-                    "SELECT extract(epoch FROM next_allowed_at-clock_timestamp()) FROM offerloom.source_configs WHERE id=:id"
+                    "SELECT extract(epoch FROM next_allowed_at-clock_timestamp()) FROM bonafides.source_configs WHERE id=:id"
                 ),
                 {"id": UUID(source["id"])},
             ).scalar_one()
@@ -564,7 +564,7 @@ def test_worker_reserves_database_clock_interval_before_io_and_retries_no_earlie
         with catalog.runtime.transaction() as conn:
             remaining = conn.execute(
                 text(
-                    "SELECT extract(epoch FROM next_allowed_at-clock_timestamp()) FROM offerloom.source_configs WHERE id=:id"
+                    "SELECT extract(epoch FROM next_allowed_at-clock_timestamp()) FROM bonafides.source_configs WHERE id=:id"
                 ),
                 {"id": UUID(source["id"])},
             ).scalar_one()
@@ -578,7 +578,7 @@ def test_worker_reserves_database_clock_interval_before_io_and_retries_no_earlie
     with catalog.runtime.transaction() as conn:
         remaining = conn.execute(
             text(
-                "SELECT extract(epoch FROM next_attempt_at-clock_timestamp()) FROM offerloom.workflow_runs WHERE id=:id"
+                "SELECT extract(epoch FROM next_attempt_at-clock_timestamp()) FROM bonafides.workflow_runs WHERE id=:id"
             ),
             {"id": task.id},
         ).scalar_one()
@@ -603,7 +603,7 @@ def test_retry_exhaustion_keeps_source_pause_and_original_three_attempt_budget(
             with catalog.identity.admin.transaction() as conn:
                 conn.execute(
                     text(
-                        "UPDATE offerloom.workflow_runs SET next_attempt_at=clock_timestamp()-interval '1 second' WHERE id=:id"
+                        "UPDATE bonafides.workflow_runs SET next_attempt_at=clock_timestamp()-interval '1 second' WHERE id=:id"
                     ),
                     {"id": workflow_id},
                 )
@@ -615,7 +615,7 @@ def test_retry_exhaustion_keeps_source_pause_and_original_three_attempt_budget(
             assert (
                 conn.execute(
                     text(
-                        "SELECT extract(epoch FROM next_allowed_at-clock_timestamp()) FROM offerloom.source_configs WHERE id=:id"
+                        "SELECT extract(epoch FROM next_allowed_at-clock_timestamp()) FROM bonafides.source_configs WHERE id=:id"
                     ),
                     {"id": UUID(source["id"])},
                 ).scalar_one()
@@ -653,7 +653,7 @@ def test_new_review_keeps_old_employer_evidence_and_disable_retains_jobs(
     with catalog.runtime.transaction() as conn:
         rows = conn.execute(
             text(
-                "SELECT company,terms_revision FROM offerloom.source_policy_reviews WHERE owner_id=:owner ORDER BY policy_version"
+                "SELECT company,terms_revision FROM bonafides.source_policy_reviews WHERE owner_id=:owner ORDER BY policy_version"
             ),
             {"owner": catalog.owner_id},
         ).all()
@@ -714,7 +714,7 @@ def test_disable_policy_cancel_and_epoch_changes_fence_late_network_results(
             with catalog.identity.admin.transaction() as conn:
                 conn.execute(
                     text(
-                        "UPDATE offerloom.workflow_runs SET lease_expires_at=clock_timestamp()-interval '1 second' WHERE id=:id"
+                        "UPDATE bonafides.workflow_runs SET lease_expires_at=clock_timestamp()-interval '1 second' WHERE id=:id"
                     ),
                     {"id": UUID(workflow_id)},
                 )
@@ -722,7 +722,7 @@ def test_disable_policy_cancel_and_epoch_changes_fence_late_network_results(
             with catalog.identity.admin.transaction() as conn:
                 conn.execute(
                     text(
-                        "UPDATE offerloom.installation_state SET maintenance_epoch=maintenance_epoch+1 WHERE singleton"
+                        "UPDATE bonafides.installation_state SET maintenance_epoch=maintenance_epoch+1 WHERE singleton"
                     )
                 )
 
@@ -770,7 +770,7 @@ def test_publication_is_atomic_and_runtime_cannot_erase_history(catalog: SourceC
         assert (
             conn.execute(
                 text(
-                    "SELECT count(*) FROM offerloom.job_source_observations WHERE owner_id=:owner"
+                    "SELECT count(*) FROM bonafides.job_source_observations WHERE owner_id=:owner"
                 ),
                 {"owner": catalog.owner_id},
             ).scalar_one()
@@ -784,13 +784,13 @@ def test_publication_is_atomic_and_runtime_cannot_erase_history(catalog: SourceC
     ):
         with pytest.raises(DBAPIError), catalog.runtime.transaction() as conn:
             conn.execute(
-                text(f"DELETE FROM offerloom.{table} WHERE owner_id=:owner"),
+                text(f"DELETE FROM bonafides.{table} WHERE owner_id=:owner"),
                 {"owner": catalog.owner_id},
             )
     with pytest.raises(DBAPIError), catalog.runtime.transaction() as conn:
         conn.execute(
             text(
-                "UPDATE offerloom.source_policy_reviews SET company='relabeled' WHERE owner_id=:owner"
+                "UPDATE bonafides.source_policy_reviews SET company='relabeled' WHERE owner_id=:owner"
             ),
             {"owner": catalog.owner_id},
         )
@@ -816,7 +816,7 @@ def test_owner_scope_csrf_and_content_free_events(catalog: SourceContext) -> Non
         assert error.value.status == 404
         events = (
             conn.execute(
-                text("SELECT payload FROM offerloom.outbox_events WHERE owner_id=:owner"),
+                text("SELECT payload FROM bonafides.outbox_events WHERE owner_id=:owner"),
                 {"owner": catalog.owner_id},
             )
             .scalars()
@@ -824,7 +824,7 @@ def test_owner_scope_csrf_and_content_free_events(catalog: SourceContext) -> Non
         )
         audits = (
             conn.execute(
-                text("SELECT detail FROM offerloom.audit_events WHERE owner_id=:owner"),
+                text("SELECT detail FROM bonafides.audit_events WHERE owner_id=:owner"),
                 {"owner": catalog.owner_id},
             )
             .scalars()

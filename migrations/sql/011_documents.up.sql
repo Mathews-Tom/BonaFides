@@ -1,5 +1,5 @@
 -- SPDX-License-Identifier: MIT OR Apache-2.0
-SET search_path=offerloom,pg_catalog;
+SET search_path=bonafides,pg_catalog;
 
 -- Existing revision bytes, v1 hashes, reviews and artifacts are not rewritten.
 ALTER TABLE document_revisions ADD COLUMN validation_issues jsonb NOT NULL DEFAULT '[]'
@@ -12,5 +12,5 @@ ALTER TABLE local_model_route_blocks DROP CONSTRAINT local_model_route_blocks_st
 ALTER TABLE local_model_route_blocks ADD CONSTRAINT local_model_route_blocks_stage_check
  CHECK(stage IN ('extract_posting','match_requirements','generate_documents'));
 -- Runtime may append revisions/reviews but cannot rewrite historical statements.
-REVOKE UPDATE,DELETE ON document_revisions,document_claim_links,document_reviews FROM offerloom_runtime;
+REVOKE UPDATE,DELETE ON document_revisions,document_claim_links,document_reviews FROM bonafides_runtime;
 INSERT INTO schema_migrations(version,source_sha256) VALUES(11,repeat('0',64));
