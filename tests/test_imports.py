@@ -26,6 +26,7 @@ from test_identity import identity as identity
 from bonafides import imports
 from bonafides.commands import canonical_json
 from bonafides.db import Database
+from bonafides.documents import prepare_synthetic
 from bonafides.import_parser import (
     MAX_UPLOAD_BYTES,
     ImportFailure,
@@ -1594,3 +1595,65 @@ def test_projection_groups_plain_date_headers_without_guessing_labels_or_crossin
     assert entries[1].payload.start_date == "2023" and entries[1].payload.end_date is None
     assert entries[2].payload.text.startswith("Project: Alpha\n")
     assert entries[3].payload.text.startswith("Project: Beta\n")
+
+
+CLAIM_SOURCE = (
+    "Experience\nPlatform Engineer | Fictional Freight | 2021 – 2023\n"
+    "- Reduced batch runtime by 30% across 3 warehouses\n"
+    "- Saved $90K in synthetic licensing costs\n"
+)
+
+
+def test_projection_proposes_each_statement_line_as_a_structured_claim() -> None:
+    entries = _entries(CLAIM_SOURCE)
+    assert [entry.kind for entry in entries] == ["experience"]
+    proposals = entries[0].claim_proposals
+    assert [item.quote for item in proposals] == [
+        "- Reduced batch runtime by 30% across 3 warehouses",
+        "- Saved $90K in synthetic licensing costs",
+    ]
+    assert proposals[0].rendering == "Reduced batch runtime by 30% across 3 warehouses"
+    assert proposals[0].unparsed == []
+    assert proposals[1].claim is None
+    assert [(part.text, part.reason) for part in proposals[1].unparsed] == [
+        ("Saved", "unknown_verb")
+    ]
+    assert _entries("Skills\nSQL\n")[0].claim_proposals == []
+
+
+@pytest.mark.postgres
+def test_reviewed_import_adds_structured_claims_only_after_approval(
+    importing: ImportContext,
+) -> None:
+    original = importing.profile()
+    batch = importing.staged(CLAIM_SOURCE)
+    proposals = batch["entries"][0]["claim_proposals"]
+    assert [item["rendering"] for item in proposals] == [
+        "Reduced batch runtime by 30% across 3 warehouses",
+        None,
+    ]
+    assert proposals[1]["unparsed"] == [{"text": "Saved", "reason": "unknown_verb"}]
+    assert importing.profile() == original
+    accepted = importing.approve(batch)
+    assert accepted.status_code == 202, accepted.text
+    assert importing.profile() == original
+    importing.run()
+    claims = importing.profile()["current_revision"]["claims"]
+    assert [(item["rendering"], item["needs_attention"]) for item in claims] == [
+        ("Reduced batch runtime by 30% across 3 warehouses", False),
+        ("- Saved $90K in synthetic licensing costs", True),
+    ]
+    structured = claims[0]["revision"]["payload"]
+    assert structured["role"] == "Platform Engineer"
+    assert structured["organization"] == "Fictional Freight"
+    assert structured["claim"]["metric"] == {"value": "30", "unit": "percent", "change": "decrease"}
+    assert "text" not in structured
+    assert claims[0]["revision"]["evidence_links"][0]["excerpt"] == proposals[0]["quote"]
+    with importing.identity.admin.transaction() as conn:
+        prepared = prepare_synthetic(
+            conn, importing.owner_id, UUID(importing.profile()["current_revision"]["id"])
+        )
+    assert [block.text for block in prepared.body.sections[0].blocks] == [
+        "Reduced batch runtime by 30% across 3 warehouses",
+        "- Saved $90K in synthetic licensing costs",
+    ]

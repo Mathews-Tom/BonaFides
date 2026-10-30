@@ -14,6 +14,21 @@ interface ReviewDraft {
   claim_id: string; payload: ClaimPayload; reviewed: boolean; editing: boolean; identityConfirmed: boolean;
   choices: Partial<Record<PayloadField, FieldChoice>>;
 }
+
+/** Statement lines of experience and project entries arrive as structured claim proposals. */
+function ClaimProposals({ entry, draft }: { entry: ImportEntry; draft: ReviewDraft }) {
+  const proposals = entry.claim_proposals ?? [];
+  if (proposals.length === 0 || draft.kind !== entry.kind) return null;
+  const literal = draft.action !== 'add' || draft.payload.text !== entry.payload.text;
+  return <section className="import-claim-proposals" aria-label="Proposed structured claims"><h4>Proposed structured claims</h4>
+    <p className="hint">{literal ? 'This entry is saved as one free-text statement that needs attention: the statement was edited or replaces a saved entry.'
+      : 'Approving saves one claim per line. Fully parsed lines become structured claims; lines with unparsed parts stay free text that needs attention.'}</p>
+    <ol>{proposals.map(proposal => <li key={proposal.source_id}>
+      <p>{proposal.rendering ?? `No structured claim proposed for “${proposal.quote}”.`}</p>
+      {proposal.unparsed.length > 0 && <ul aria-label="Unparsed parts">{proposal.unparsed.map(part => <li key={`${part.reason}:${part.text}`}>Unparsed: “{part.text}” ({part.reason.replaceAll('_', ' ')})</li>)}</ul>}
+    </li>)}</ol></section>;
+}
+
 const fields: { key: PayloadField; label: string; limit: number }[] = [
   { key: 'text', label: 'Description', limit: 4000 }, { key: 'organization', label: 'Organization', limit: 200 },
   { key: 'role', label: 'Role or qualification', limit: 200 }, { key: 'start_date', label: 'Start date', limit: 10 },
@@ -754,6 +769,7 @@ export function ResumeImport({ api, profile, disabled, onProfile, onDirtyChange,
                   {draft.action === 'replace' && target && 'claim' in target.revision.payload && <p className="disclosure" role="note">
                     Accepting this replacement or source attachment converts the structured target to free text and discards its structured verb, metric, and period. Choosing “Keep current description” keeps only the rendered text; it still converts the stored representation. The import request sends the Description shown in this preview as text, not a structured claim.
                   </p>}
+                  {draft.action !== 'skip' && <ClaimProposals entry={entry} draft={draft} />}
                   {attention && draft.action !== 'skip' && <p className="hint">{issues[0] ?? 'Check the extraction, choose a target if needed, then confirm or exclude this entry.'}</p>}
                   <div className="import-preview-actions">
                     <span className="import-entry-status">{status}{draft.action === 'replace' && issues.length ? ' · current values retained until resolved' : ''}</span>

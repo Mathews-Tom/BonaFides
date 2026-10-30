@@ -6,6 +6,7 @@ from __future__ import annotations
 import hashlib
 import re
 import time
+from dataclasses import dataclass
 from threading import Event
 from typing import Annotated, Literal, cast
 from uuid import NAMESPACE_URL, UUID, uuid4, uuid5
@@ -18,6 +19,8 @@ from sqlalchemy.engine import RowMapping
 from starlette.concurrency import run_in_threadpool
 
 from bonafides.auth import Owner, StrictModel, require_owner
+from bonafides.claim_mapping import UnparsedPart, map_line
+from bonafides.claims import STRUCTURED_KINDS, StructuredClaim
 from bonafides.commands import append_outbox, canonical_json, command, lock_installation
 from bonafides.config import Settings
 from bonafides.db import Database
@@ -108,6 +111,16 @@ class ImportSource(StrictModel):
 IdentityField = Literal["display_name", "headline"]
 
 
+class ClaimLineProposal(StrictModel):
+    """One statement line proposed as a structured claim; unplaced parts are flagged."""
+
+    source_id: UUID
+    quote: str
+    claim: StructuredClaim | None
+    rendering: str | None
+    unparsed: list[UnparsedPart]
+
+
 class ImportEntry(StrictModel):
     entry_id: UUID
     kind: ClaimKind | None
@@ -115,6 +128,7 @@ class ImportEntry(StrictModel):
     payload: ClaimPayload
     sources: list[ImportSource] = Field(min_length=1, max_length=MAX_IMPORT_SOURCES)
     issues: list[str] = Field(default_factory=list)
+    claim_proposals: list[ClaimLineProposal] = Field(default_factory=list)
 
 
 class ImportComparison(StrictModel):
@@ -412,7 +426,37 @@ def project_entries(
         previous_end = end
     if sum(len(entry.sources) for entry in entries) > MAX_IMPORT_SOURCES:
         raise Problem(422, "import_source_limit")
+    for entry in entries:
+        if entry.kind in STRUCTURED_KINDS:
+            entry.claim_proposals = _claim_proposals(entry.sources)
     return entries
+
+
+def _statement_line(quote: str) -> bool:
+    """Role, organization and date lines are entry context, not achievement statements."""
+    literal = _BULLET.sub("", quote, count=1)
+    return not (
+        "|" in literal
+        or literal.casefold().startswith("project:")
+        or _DATE_RANGE.fullmatch(literal.strip()) is not None
+    )
+
+
+def _claim_proposals(sources: list[ImportSource]) -> list[ClaimLineProposal]:
+    proposals: list[ClaimLineProposal] = []
+    for part in sources:
+        if _statement_line(part.quote):
+            mapping = map_line(part.quote)
+            proposals.append(
+                ClaimLineProposal(
+                    source_id=part.source_id,
+                    quote=part.quote,
+                    claim=mapping.claim,
+                    rendering=mapping.rendering,
+                    unparsed=mapping.unparsed,
+                )
+            )
+    return proposals
 
 
 def _name_like(value: str) -> bool:
@@ -810,6 +854,91 @@ def stage_parsed(
     )
 
 
+@dataclass(frozen=True)
+class _ClaimInsert:
+    profile_id: UUID
+    kind: ClaimKind | None
+    claim_id: UUID
+    adding: bool
+
+
+def _statement_claims(
+    entry: ImportEntry | None, decision: ImportDecision
+) -> list[tuple[dict[str, object], str]]:
+    """An unedited experience or project entry becomes one claim per statement line.
+
+    Representable lines become structured claims; lines with unparsed parts stay literal and
+    therefore need attention. Role, organization and dates remain shared context.
+    """
+    if (
+        entry is None
+        or not entry.claim_proposals
+        or decision.kind != entry.kind
+        or decision.payload.text != entry.payload.text
+    ):
+        return []
+    context = decision.payload.model_dump(mode="json", exclude_none=True, exclude={"text"})
+    statements: list[tuple[dict[str, object], str]] = []
+    for proposal in entry.claim_proposals:
+        payload: StructuredClaimPayload | ClaimPayload
+        if proposal.claim is not None and not proposal.unparsed:
+            payload = StructuredClaimPayload.model_validate({**context, "claim": proposal.claim})
+        else:
+            payload = ClaimPayload.model_validate({**context, "text": proposal.quote})
+        statements.append((payload.model_dump(mode="json", exclude_none=True), proposal.quote))
+    return statements
+
+
+def _insert_claim(
+    conn: Connection,
+    owner_id: UUID,
+    target: _ClaimInsert,
+    payload: dict[str, object],
+    link: tuple[UUID, str],
+) -> UUID:
+    claim_revision_id = uuid4()
+    if target.adding:
+        conn.execute(
+            text("""INSERT INTO bonafides.professional_claims(owner_id,id,profile_id,kind)
+            VALUES(:owner,:id,:profile,:kind)"""),
+            {
+                "owner": owner_id,
+                "id": target.claim_id,
+                "profile": target.profile_id,
+                "kind": target.kind,
+            },
+        )
+    conn.execute(
+        text("""INSERT INTO bonafides.claim_revisions(owner_id,id,claim_id,revision_no,payload,content_sha256)
+        SELECT :owner,:id,:claim,COALESCE(max(revision_no),0)+1,CAST(:payload AS jsonb),:sha
+        FROM bonafides.claim_revisions WHERE owner_id=:owner AND claim_id=:claim"""),
+        {
+            "owner": owner_id,
+            "id": claim_revision_id,
+            "claim": target.claim_id,
+            "payload": canonical_json(payload),
+            "sha": content_hash(payload),
+        },
+    )
+    conn.execute(
+        text("""INSERT INTO bonafides.claim_evidence_links
+        (owner_id,claim_revision_id,evidence_revision_id,support_kind,excerpt)
+        VALUES(:owner,:claim,:evidence,'user_asserted',:quote)"""),
+        {"owner": owner_id, "claim": claim_revision_id, "evidence": link[0], "quote": link[1]},
+    )
+    conn.execute(
+        text("""UPDATE bonafides.professional_claims SET current_revision_id=:revision,
+        version=version+:increment WHERE owner_id=:owner AND id=:id"""),
+        {
+            "owner": owner_id,
+            "id": target.claim_id,
+            "revision": claim_revision_id,
+            "increment": 0 if target.adding else 1,
+        },
+    )
+    return claim_revision_id
+
+
 def merge_reviewed(conn: Connection, task: Claim) -> dict[str, object]:
     """Called only inside publish(): one locked transaction, at most one profile revision."""
     batch = _batch_for_task(conn, task)
@@ -834,15 +963,13 @@ def merge_reviewed(conn: Connection, task: Claim) -> dict[str, object]:
         raise Problem(412, "profile_version_conflict")
     review = ImportReview.model_validate(batch["review"])
     replacements = _validate_review(conn, task.owner_id, batch, review)
-    sources = {
-        part.source_id: part
-        for entry in project_entries(
-            batch["parsed_text"],
-            batch["source_sha256"],
-            [ImportProposal.model_validate(value) for value in batch["proposals"]],
-        )
-        for part in entry.sources
-    }
+    projected = project_entries(
+        batch["parsed_text"],
+        batch["source_sha256"],
+        [ImportProposal.model_validate(value) for value in batch["proposals"]],
+    )
+    sources = {part.source_id: part for entry in projected for part in entry.sources}
+    entries = {frozenset(part.source_id for part in entry.sources): entry for entry in projected}
     snapshot = _snapshot(conn, task.owner_id)
     claim_ids = list(snapshot.claim_revision_ids)
     identity_updates: dict[str, object] = {}
@@ -887,7 +1014,7 @@ def merge_reviewed(conn: Connection, task: Claim) -> dict[str, object]:
             (sources[source_id] for source_id in decision.source_ids), key=lambda part: part.start
         )
         original = "\n".join(part.quote for part in parts)
-        evidence_id, evidence_revision_id, claim_revision_id = uuid4(), uuid4(), uuid4()
+        evidence_id, evidence_revision_id = uuid4(), uuid4()
         source_payload: dict[str, object] = {
             "text": original,
             "source": "Owner-reviewed local literal import",
@@ -927,57 +1054,34 @@ def merge_reviewed(conn: Connection, task: Claim) -> dict[str, object]:
             claim_id = decision.claim_id
         else:
             claim_id = uuid4()
+        statements = _statement_claims(entries.get(frozenset(decision.source_ids)), decision)
+        if decision.action == "add" and statements:
+            for statement, excerpt in statements:
+                claim_ids.append(
+                    _insert_claim(
+                        conn,
+                        task.owner_id,
+                        _ClaimInsert(profile["id"], decision.kind, uuid4(), True),
+                        statement,
+                        (evidence_revision_id, excerpt),
+                    )
+                )
+            continue
         previous = (
             replacements[claim_id]["current_revision_id"] if claim_id in replacements else None
         )
-        if decision.action == "add":
-            conn.execute(
-                text("""INSERT INTO bonafides.professional_claims(owner_id,id,profile_id,kind)
-                VALUES(:owner,:id,:profile,:kind)"""),
-                {
-                    "owner": task.owner_id,
-                    "id": claim_id,
-                    "profile": profile["id"],
-                    "kind": decision.kind,
-                },
-            )
-        payload = decision.payload.model_dump(mode="json", exclude_none=True)
-        conn.execute(
-            text("""INSERT INTO bonafides.claim_revisions(owner_id,id,claim_id,revision_no,payload,content_sha256)
-            SELECT :owner,:id,:claim,COALESCE(max(revision_no),0)+1,CAST(:payload AS jsonb),:sha
-            FROM bonafides.claim_revisions WHERE owner_id=:owner AND claim_id=:claim"""),
-            {
-                "owner": task.owner_id,
-                "id": claim_revision_id,
-                "claim": claim_id,
-                "payload": canonical_json(payload),
-                "sha": content_hash(payload),
-            },
-        )
-        conn.execute(
-            text("""INSERT INTO bonafides.claim_evidence_links
-            (owner_id,claim_revision_id,evidence_revision_id,support_kind,excerpt)
-            VALUES(:owner,:claim,:evidence,'user_asserted',:quote)"""),
-            {
-                "owner": task.owner_id,
-                "claim": claim_revision_id,
-                "evidence": evidence_revision_id,
-                "quote": original,
-            },
-        )
-        conn.execute(
-            text("""UPDATE bonafides.professional_claims SET current_revision_id=:revision,
-            version=version+:increment WHERE owner_id=:owner AND id=:id"""),
-            {
-                "owner": task.owner_id,
-                "id": claim_id,
-                "revision": claim_revision_id,
-                "increment": 1 if decision.action == "replace" else 0,
-            },
+        claim_revision_id = _insert_claim(
+            conn,
+            task.owner_id,
+            _ClaimInsert(profile["id"], decision.kind, claim_id, decision.action == "add"),
+            decision.payload.model_dump(mode="json", exclude_none=True),
+            (evidence_revision_id, original),
         )
         claim_ids = [claim_revision_id if value == previous else value for value in claim_ids]
         if claim_revision_id not in claim_ids:
             claim_ids.append(claim_revision_id)
+    if len(claim_ids) > 100:
+        raise Problem(422, "claim_limit")
     # Recheck the cancellation/lease/deadline after constructing effects and before publication.
     # Any refusal rolls the complete transaction back, including all immutable rows above.
     assert_fence(conn, task)

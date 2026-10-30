@@ -208,6 +208,20 @@ describe('structured résumé review', () => {
   });
 
 
+  it('shows each statement line as a proposed structured claim with unparsed parts flagged before approval', async () => {
+    const user = userEvent.setup(); const batch = staged();
+    batch.entries = [{ ...batch.entries[0]!, claim_proposals: [
+      { source_id: 'source-work', quote: '- Reduced fictional batch runtime by 30%', claim: { schema_version: 1, verb: 'reduced', subject: 'fictional batch runtime', metric: { value: '30', unit: 'percent', change: 'decrease' } }, rendering: 'Reduced fictional batch runtime by 30%', unparsed: [] },
+      { source_id: 'source-extra', quote: '- Saved $90K in fictional costs', claim: null, rendering: null, unparsed: [{ text: 'Saved', reason: 'unknown_verb' }] },
+    ] }];
+    const { api, state } = server(batch); render(<Harness api={api} />); await open(user);
+    const proposals = within(screen.getByRole('article', { name: 'Preview entry 1' })).getByRole('region', { name: 'Proposed structured claims' });
+    expect(within(proposals).getByText('Reduced fictional batch runtime by 30%')).toBeVisible();
+    expect(within(proposals).getByText('No structured claim proposed for “- Saved $90K in fictional costs”.')).toBeVisible();
+    expect(within(proposals).getByText('Unparsed: “Saved” (unknown verb)')).toBeVisible();
+    expect(within(proposals).getByText(/Fully parsed lines become structured claims/)).toBeVisible();
+    expect(state.submissions).toEqual([]);
+  });
   it('retains exact uniquely matched claims without a per-entry review or new-source promise', async () => {
     const user = userEvent.setup(); const batch = staged();
     batch.entries = [{ ...batch.entries[0]!, payload: { ...oldPayload }, comparison: { status: 'unchanged', target_claim_id: oldClaim.id, candidate_claim_ids: [oldClaim.id] } }];
