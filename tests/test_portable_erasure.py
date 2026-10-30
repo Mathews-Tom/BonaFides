@@ -334,6 +334,10 @@ def test_workspace_erasure_removes_reviewed_source_and_profile_history_but_keeps
     )
     assert described.status_code == 200, described.text
     previous_profile = described.json()
+    assert (
+        previous_profile["current_revision"]["snapshot"]["description"]
+        == "Synthetic private introduction before erasure."
+    )
     catalog.create(enabled=False)
     application = _application(catalog)
     stored = _attachment(catalog, application, b"Synthetic workspace-private bytes")
@@ -383,7 +387,12 @@ def test_workspace_erasure_removes_reviewed_source_and_profile_history_but_keeps
     assert reopened.status_code == 200, reopened.text
     empty = reopened.json()
     assert empty["id"] != previous_profile["id"]
-    assert not any(empty["current_revision"]["snapshot"].values())
+    snapshot = empty["current_revision"]["snapshot"]
+    assert snapshot["display_name"] == ""
+    assert snapshot["headline"] == ""
+    assert snapshot["claim_revision_ids"] == []
+    assert snapshot["evidence_revision_ids"] == []
+    assert not any(snapshot.values())
     saved = catalog.client.put(
         "/api/v1/profile",
         json={

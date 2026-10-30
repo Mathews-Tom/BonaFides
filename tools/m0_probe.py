@@ -900,6 +900,21 @@ class Proof:
                 ),
                 "browser_secure_session_missing",
             )
+            description = "Synthetic description saved through the browser."
+            page.get_by_label("Description (optional)", exact=True).fill(description)
+            with page.expect_response(
+                lambda response: (
+                    response.url == f"{self.origin}/api/v1/profile"
+                    and response.request.method == "PUT"
+                )
+            ) as saved_response:
+                page.get_by_role("button", name="Save profile", exact=True).click()
+            require(saved_response.value.status == 200, "browser_description_save_failed")
+            persisted, _, _ = self.api.request("GET", "/api/v1/profile")
+            require(
+                persisted["current_revision"]["snapshot"].get("description") == description,
+                "browser_description_not_persisted",
+            )
             page.reload()
             expect(page.get_by_label("Display name", exact=True)).to_be_visible()
             expect(page.get_by_label("Highlight / tagline (optional)", exact=True)).to_be_visible()
@@ -911,7 +926,7 @@ class Proof:
             )
             expect(page.get_by_label("Description (optional)", exact=True)).to_be_visible()
             expect(page.get_by_label("Description (optional)", exact=True)).to_have_value(
-                snapshot.get("description", "")
+                description
             )
             browser.close()
         self.checked("actual_chromium_secure_localhost_login_and_reload")
