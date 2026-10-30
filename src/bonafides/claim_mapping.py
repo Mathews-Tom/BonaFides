@@ -27,27 +27,29 @@ from bonafides.claims import (
 )
 
 UnparsedReason = Literal[
-    "unknown_verb", "missing_subject", "additional_metric", "multiple_statements", "invalid_value"
+    "unknown_verb",
+    "missing_subject",
+    "additional_metric",
+    "multiple_statements",
+    "invalid_value",
+    "unplaced_scope",
 ]
 
 # Declared normalization: case-insensitive whole-word prefixes, longest phrase first.
 _VERB_PHRASES: dict[str, tuple[OwnershipVerb, MetricChange | None]] = {
+    # A phrase maps only to a vocabulary verb with the same meaning at the same or a lower
+    # ownership rank; a verb with another meaning stays unknown so the line needs attention.
     "led": ("led", None),
     "spearheaded": ("led", None),
     "headed": ("led", None),
     "directed": ("led", None),
-    "drove": ("led", None),
-    "championed": ("led", None),
-    "orchestrated": ("led", None),
-    "oversaw": ("led", None),
     "owned": ("owned", None),
     "took ownership of": ("owned", None),
     "responsible for": ("owned", None),
     "was responsible for": ("owned", None),
     "managed": ("managed", None),
     "supervised": ("managed", None),
-    "hired": ("managed", None),
-    "ran": ("managed", None),
+    "oversaw": ("managed", None),
     "mentored": ("mentored", None),
     "coached": ("mentored", None),
     "maintained": ("maintained", None),
@@ -58,19 +60,12 @@ _VERB_PHRASES: dict[str, tuple[OwnershipVerb, MetricChange | None]] = {
     "documented": ("wrote", None),
     "drafted": ("wrote", None),
     "initiated": ("initiated", None),
-    "launched": ("initiated", None),
     "founded": ("initiated", None),
     "established": ("initiated", None),
     "introduced": ("initiated", None),
     "pioneered": ("initiated", None),
-    "proposed": ("initiated", None),
     "designed": ("designed", None),
     "architected": ("designed", None),
-    "planned": ("designed", None),
-    "modeled": ("designed", None),
-    "defined": ("designed", None),
-    "specified": ("designed", None),
-    "prototyped": ("designed", None),
     "built": ("built", None),
     "developed": ("built", None),
     "implemented": ("built", None),
@@ -78,36 +73,18 @@ _VERB_PHRASES: dict[str, tuple[OwnershipVerb, MetricChange | None]] = {
     "engineered": ("built", None),
     "coded": ("built", None),
     "programmed": ("built", None),
-    "automated": ("built", None),
-    "integrated": ("built", None),
-    "configured": ("built", None),
-    "migrated": ("built", None),
-    "deployed": ("built", None),
-    "produced": ("built", None),
-    "set up": ("built", None),
     "delivered": ("delivered", None),
     "shipped": ("delivered", None),
+    "launched": ("delivered", None),
     "completed": ("delivered", None),
     "executed": ("delivered", None),
     "released": ("delivered", None),
     "rolled out": ("delivered", None),
-    "closed": ("delivered", None),
-    "negotiated": ("delivered", None),
-    "secured": ("delivered", None),
-    "won": ("delivered", None),
-    "achieved": ("delivered", None),
-    "resolved": ("delivered", None),
-    "fixed": ("delivered", None),
-    "trained": ("delivered", None),
-    "presented": ("delivered", None),
-    "published": ("wrote", None),
     "increased": ("increased", "increase"),
     "grew": ("increased", "increase"),
     "raised": ("increased", "increase"),
     "boosted": ("increased", "increase"),
     "expanded": ("increased", "increase"),
-    "scaled": ("increased", "increase"),
-    "accelerated": ("increased", "increase"),
     "reduced": ("reduced", "decrease"),
     "cut": ("reduced", "decrease"),
     "decreased": ("reduced", "decrease"),
@@ -120,9 +97,7 @@ _VERB_PHRASES: dict[str, tuple[OwnershipVerb, MetricChange | None]] = {
     "optimized": ("improved", "improvement"),
     "enhanced": ("improved", "improvement"),
     "streamlined": ("improved", "improvement"),
-    "refactored": ("improved", "improvement"),
     "modernized": ("improved", "improvement"),
-    "upgraded": ("improved", "improvement"),
     "stabilized": ("improved", "improvement"),
     "strengthened": ("improved", "improvement"),
     "analyzed": ("analyzed", None),
@@ -133,17 +108,11 @@ _VERB_PHRASES: dict[str, tuple[OwnershipVerb, MetricChange | None]] = {
     "researched": ("analyzed", None),
     "reviewed": ("analyzed", None),
     "measured": ("analyzed", None),
-    "forecasted": ("analyzed", None),
-    "tested": ("analyzed", None),
-    "monitored": ("analyzed", None),
-    "identified": ("analyzed", None),
     "coordinated": ("coordinated", None),
+    "orchestrated": ("coordinated", None),
     "organized": ("coordinated", None),
     "facilitated": ("coordinated", None),
     "scheduled": ("coordinated", None),
-    "partnered with": ("coordinated", None),
-    "collaborated with": ("coordinated", None),
-    "liaised with": ("coordinated", None),
     "contributed to": ("contributed", None),
     "contributed": ("contributed", None),
     "worked on": ("contributed", None),
@@ -151,16 +120,15 @@ _VERB_PHRASES: dict[str, tuple[OwnershipVerb, MetricChange | None]] = {
     "took part in": ("contributed", None),
     "supported": ("supported", None),
     "handled": ("supported", None),
-    "answered": ("supported", None),
-    "processed": ("supported", None),
-    "prepared": ("supported", None),
-    "updated": ("supported", None),
     "assisted with": ("assisted", None),
     "assisted in": ("assisted", None),
     "assisted": ("assisted", None),
     "helped": ("assisted", None),
     "helped to": ("assisted", None),
 }
+# Verbs that also mean "removed" or "shortened in scope" map only when a metric follows them
+# ("Cut costs by 20%", never "Cut the 2.0 release").
+_METRIC_ONLY = frozenset({"cut", "slashed", "trimmed"})
 _PHRASES = sorted(_VERB_PHRASES, key=lambda phrase: (-len(phrase), phrase))
 _BULLET = re.compile(r"^\s*(?:[-*•·●▪◦‣]\s+)?")
 _NUMBER = r"[0-9]{1,3}(?:,[0-9]{3})+(?:\.[0-9]{1,4})?|[0-9]{1,12}(?:\.[0-9]{1,4})?"
@@ -277,13 +245,22 @@ def _leading_amount(value: str) -> tuple[re.Match[str], str] | None:
     return None if match is None else (match, value[match.end() :].strip())
 
 
-def _verb(line: str) -> tuple[OwnershipVerb, MetricChange | None, str] | None:
+def _verb(line: str) -> tuple[str, OwnershipVerb, MetricChange | None, str] | None:
     folded = line.casefold()
     for phrase in _PHRASES:
         if folded.startswith(phrase) and (len(line) == len(phrase) or line[len(phrase)] == " "):
             verb, change = _VERB_PHRASES[phrase]
-            return verb, change, line[len(phrase) :].strip()
+            return phrase, verb, change, line[len(phrase) :].strip()
     return None
+
+
+def _unknown_verb(line: str, statement: str, unparsed: list[UnparsedPart]) -> ClaimMapping:
+    first = statement.split(" ", 1)[0] if statement else line.strip()
+    return ClaimMapping(
+        claim=None,
+        rendering=None,
+        unparsed=[UnparsedPart(text=first or line, reason="unknown_verb"), *unparsed],
+    )
 
 
 def statement_text(line: str) -> str:
@@ -301,13 +278,8 @@ def map_line(line: str) -> ClaimMapping:
     statement = head.strip()
     found = _verb(statement)
     if found is None:
-        first = statement.split(" ", 1)[0] if statement else line.strip()
-        return ClaimMapping(
-            claim=None,
-            rendering=None,
-            unparsed=[UnparsedPart(text=first or line, reason="unknown_verb"), *unparsed],
-        )
-    verb, verb_change, body = found
+        return _unknown_verb(line, statement, unparsed)
+    phrase, verb, verb_change, body = found
     fields: dict[str, object] = {"schema_version": 1, "verb": verb}
     period = _PERIOD.search(body)
     if period is not None:
@@ -348,6 +320,8 @@ def map_line(line: str) -> ClaimMapping:
         if magnitude is not None:
             metric["magnitude"] = magnitude
         fields["metric"] = metric
+    if phrase in _METRIC_ONLY and amount is None:
+        return _unknown_verb(line, statement, unparsed)
     scope = ""
     if tail:
         if _TAIL.match(tail):
@@ -357,7 +331,12 @@ def map_line(line: str) -> ClaimMapping:
     parts = _SCOPE.split(body.rstrip(","), maxsplit=1)
     subject = parts[0].strip().rstrip(",")
     if len(parts) == 2:
-        scope = f"{parts[1].strip()} {scope}".strip() if scope else parts[1].strip()
+        joined = f"{parts[1].strip()} {scope}".strip()
+        # A scope is a verbatim slice; a tail separated from it by the metric stays unplaced.
+        if scope and joined not in statement:
+            unparsed.append(UnparsedPart(text=scope, reason="unplaced_scope"))
+            joined = parts[1].strip()
+        scope = joined
     if scope:
         fields["scope"] = scope.rstrip(",")
     for leftover in _AMOUNT.finditer(f"{subject} {scope}"):

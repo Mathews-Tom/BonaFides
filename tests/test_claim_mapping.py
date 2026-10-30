@@ -5,8 +5,8 @@ from __future__ import annotations
 
 import pytest
 
-from bonafides.claim_mapping import map_line
-from bonafides.claims import grounded
+from bonafides.claim_mapping import _VERB_PHRASES, map_line
+from bonafides.claims import OWNERSHIP_VERBS, grounded
 
 
 @pytest.mark.parametrize(
@@ -54,7 +54,7 @@ def test_representable_lines_map_to_grounded_claims(line: str, rendering: str) -
             [("cut churn by 10%", "multiple_statements")],
         ),
         (
-            "Automated invoice matching, cutting errors by 40% and increasing throughput by 2x",
+            "Built invoice matching, cutting errors by 40% and increasing throughput by 2x",
             [("and increasing throughput by 2x", "additional_metric")],
         ),
         ("Led", [("Led", "missing_subject")]),
@@ -70,3 +70,73 @@ def test_partial_mapping_keeps_the_claim_beside_its_flags() -> None:
     mapping = map_line("Designed onboarding flow; cut churn by 10%")
     assert mapping.claim is not None and mapping.claim.verb == "designed"
     assert mapping.rendering == "Designed onboarding flow"
+
+
+@pytest.mark.parametrize(
+    "phrase",
+    [
+        "Proposed",
+        "Hired",
+        "Ran",
+        "Championed",
+        "Drove",
+        "Presented",
+        "Trained",
+        "Negotiated",
+        "Closed",
+        "Secured",
+        "Won",
+        "Fixed",
+        "Deployed",
+        "Scaled",
+        "Prioritized",
+        "Answered",
+        "Automated",
+        "Published",
+        "Planned",
+    ],
+)
+def test_a_verb_with_another_meaning_stays_unknown(phrase: str) -> None:
+    mapping = map_line(f"{phrase} the quarterly vendor review")
+    assert mapping.claim is None
+    assert [(part.text, part.reason) for part in mapping.unparsed] == [(phrase, "unknown_verb")]
+
+
+@pytest.mark.parametrize("phrase", sorted(_VERB_PHRASES))
+def test_a_vocabulary_verb_maps_to_itself_and_every_phrase_grounds_its_line(phrase: str) -> None:
+    line = f"{phrase.capitalize()} the quarterly vendor review by 20%"
+    mapping = map_line(line)
+    assert mapping.claim is not None, phrase
+    if phrase in OWNERSHIP_VERBS:
+        assert mapping.claim.verb == phrase
+    assert grounded(mapping.claim, line), phrase
+    assert grounded(mapping.claim, mapping.rendering or ""), phrase
+
+
+def test_oversaw_and_orchestrated_map_at_or_below_their_meaning() -> None:
+    assert _claim_verb("Oversaw the quarterly vendor review") == "managed"
+    assert _claim_verb("Orchestrated the quarterly vendor review") == "coordinated"
+    assert _claim_verb("Launched the quarterly vendor review") == "delivered"
+
+
+def _claim_verb(line: str) -> str | None:
+    claim = map_line(line).claim
+    return None if claim is None else claim.verb
+
+
+def test_cut_maps_to_reduced_only_before_a_metric() -> None:
+    assert _claim_verb("Cut cloud spend by 30%") == "reduced"
+    release = map_line("Cut the 2.0 release")
+    assert release.claim is None
+    assert [(part.text, part.reason) for part in release.unparsed] == [("Cut", "unknown_verb")]
+
+
+def test_a_scope_split_by_the_metric_is_flagged_not_joined() -> None:
+    line = "Reduced latency across 12 services by 40% for checkout"
+    mapping = map_line(line)
+    assert mapping.claim is not None and mapping.claim.scope == "across 12 services"
+    assert [(part.text, part.reason) for part in mapping.unparsed] == [
+        ("for checkout", "unplaced_scope")
+    ]
+    assert not mapping.representable
+    assert grounded(mapping.claim, line)
