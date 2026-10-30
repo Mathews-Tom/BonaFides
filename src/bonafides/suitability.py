@@ -26,6 +26,7 @@ from sqlalchemy.exc import DBAPIError
 
 from bonafides import local_model
 from bonafides.auth import Owner, StrictModel, audit, require_owner
+from bonafides.claims import claim_text as rendered_claim_text
 from bonafides.commands import append_outbox, canonical_json, command, lock_installation
 from bonafides.config import Settings
 from bonafides.db import Database
@@ -704,7 +705,7 @@ def _profile_projection(conn: Connection, owner_id: UUID, revision_id: UUID) -> 
         payload = cast(dict[str, object], found["payload"])
         claims[identifier] = {
             "id": str(identifier),
-            "text": str(payload.get("text", "")),
+            "text": rendered_claim_text(payload),
             "evidence_revision_ids": sorted(str(item) for item in permitted),
         }
         links[identifier] = permitted

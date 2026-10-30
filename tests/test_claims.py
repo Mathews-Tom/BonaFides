@@ -3,7 +3,9 @@
 
 from __future__ import annotations
 
+import json
 from typing import Any
+from uuid import UUID, uuid4
 
 import pytest
 from pydantic import ValidationError
@@ -20,6 +22,8 @@ from bonafides.claims import (
     needs_attention,
     render_claim,
 )
+from bonafides.documents import prepare_synthetic, publish_document
+from bonafides.problems import Problem
 
 
 def _claim(**fields: object) -> StructuredClaim:
@@ -387,3 +391,41 @@ def test_structured_claim_is_saved_without_a_sentence_and_rendered_on_read(
         )
         assert refused.status_code == 422
         assert _json(client.get("/api/v1/profile"))["version"] == 3
+
+
+@pytest.mark.postgres
+def test_base_resume_prints_the_profile_rendering_only_when_the_parts_are_quoted(
+    profile_owner: IdentityContext,
+) -> None:
+    with profile_owner.client() as client:
+        boot = _json(_bootstrap(profile_owner, client))
+        csrf, owner_id = str(boot["csrf_token"]), UUID(str(boot["owner_id"]))
+        evidence = _mutate(
+            client,
+            profile_owner,
+            csrf,
+            "POST",
+            "/evidence",
+            1,
+            {"payload": {"text": "Cut batch runtime by 30%", "source": "Synthetic review"}},
+        )
+        evidence_id = _json(evidence)["evidence"][0]["revision"]["id"]
+        body = _structured_body(evidence_id)
+        unquoted = json.loads(json.dumps(body))
+        unquoted["payload"]["claim"]["subject"] = "nightly batch runtime"
+        refused = _json(_mutate(client, profile_owner, csrf, "POST", "/claims", 2, unquoted))
+        with profile_owner.admin.transaction() as conn, pytest.raises(Problem) as empty:
+            prepare_synthetic(conn, owner_id, UUID(refused["current_revision"]["id"]))
+        assert empty.value.status == 409
+        claim_id = refused["changed_claim_id"]
+        saved = _json(_mutate(client, profile_owner, csrf, "PUT", f"/claims/{claim_id}", 3, body))
+        rendering = saved["current_revision"]["claims"][0]["rendering"]
+        with profile_owner.admin.transaction() as conn:
+            prepared = prepare_synthetic(conn, owner_id, UUID(saved["current_revision"]["id"]))
+            document = publish_document(conn, owner_id, uuid4(), prepared)
+        printed = _json(client.get(f"/api/v1/documents/{document['document_id']}"))
+        blocks = printed["current_revision"]["body"]["sections"][0]["blocks"]
+        assert (
+            [block["text"] for block in blocks] == [rendering] == ["Reduced batch runtime by 30%"]
+        )
+        assert printed["unsupported_claims"] == []

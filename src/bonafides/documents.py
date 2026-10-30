@@ -10,10 +10,11 @@ from typing import Annotated, Final, Literal
 from uuid import UUID, uuid4, uuid5
 
 from fastapi import APIRouter, Depends, Request, Response
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 from sqlalchemy import Connection, text
 
 from bonafides.auth import Owner, require_owner
+from bonafides.claims import grounded, render_claim, structured_claim
 from bonafides.config import Settings
 from bonafides.db import Database
 from bonafides.document_frame import PrintableFrame, template_digest
@@ -146,7 +147,11 @@ def _facts(conn: Connection, owner_id: UUID, profile_revision_id: UUID) -> tuple
     for row in rows:
         claim = row["claim_payload"]
         evidence = row["evidence_payload"]
-        claim_text = claim.get("text")
+        try:
+            structured = structured_claim(claim)
+            claim_text = render_claim(structured) if structured else claim.get("text")
+        except ValidationError as error:
+            raise Problem(409, "unsupported_claims") from error
         evidence_text = evidence.get("text")
         source = evidence.get("source")
         if (
@@ -167,11 +172,14 @@ def _facts(conn: Connection, owner_id: UUID, profile_revision_id: UUID) -> tuple
             or hashlib.sha256(canonical(evidence).encode()).hexdigest() != row["evidence_sha256"]
         ):
             raise Problem(409, "evidence_integrity_failed")
-        if (
-            row["support_kind"] not in ("direct", "user_asserted")
-            or row["excerpt"] != claim_text
-            or claim_text not in evidence_text
-        ):
+        # A literal claim must be quoted verbatim; a structured claim's literal parts must all
+        # appear in a verbatim evidence quote, since its sentence is derived, never stored.
+        quoted = (
+            row["excerpt"] in evidence_text and grounded(structured, row["excerpt"])
+            if structured
+            else row["excerpt"] == claim_text and claim_text in evidence_text
+        )
+        if row["support_kind"] not in ("direct", "user_asserted") or not quoted:
             continue
         if str(row["claim_id"]) not in order:
             raise Problem(409, "profile_integrity_failed")
