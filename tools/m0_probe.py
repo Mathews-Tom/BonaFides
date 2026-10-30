@@ -880,12 +880,16 @@ class Proof:
             page.get_by_role("button", name="Sign in", exact=True).click()
             page.get_by_role("link", name="Profile", exact=True).click()
             expect(page.get_by_label("Display name", exact=True)).to_be_visible()
-            expect(page.get_by_label("Professional headline", exact=True)).to_be_visible()
+            expect(page.get_by_label("Highlight / tagline (optional)", exact=True)).to_be_visible()
             expect(page.get_by_label("Display name", exact=True)).to_have_value(
                 snapshot["display_name"]
             )
-            expect(page.get_by_label("Professional headline", exact=True)).to_have_value(
+            expect(page.get_by_label("Highlight / tagline (optional)", exact=True)).to_have_value(
                 snapshot["headline"]
+            )
+            expect(page.get_by_label("Description (optional)", exact=True)).to_be_visible()
+            expect(page.get_by_label("Description (optional)", exact=True)).to_have_value(
+                snapshot.get("description", "")
             )
             require(
                 any(
@@ -898,12 +902,16 @@ class Proof:
             )
             page.reload()
             expect(page.get_by_label("Display name", exact=True)).to_be_visible()
-            expect(page.get_by_label("Professional headline", exact=True)).to_be_visible()
+            expect(page.get_by_label("Highlight / tagline (optional)", exact=True)).to_be_visible()
             expect(page.get_by_label("Display name", exact=True)).to_have_value(
                 snapshot["display_name"]
             )
-            expect(page.get_by_label("Professional headline", exact=True)).to_have_value(
+            expect(page.get_by_label("Highlight / tagline (optional)", exact=True)).to_have_value(
                 snapshot["headline"]
+            )
+            expect(page.get_by_label("Description (optional)", exact=True)).to_be_visible()
+            expect(page.get_by_label("Description (optional)", exact=True)).to_have_value(
+                snapshot.get("description", "")
             )
             browser.close()
         self.checked("actual_chromium_secure_localhost_login_and_reload")
