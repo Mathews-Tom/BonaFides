@@ -306,6 +306,11 @@ def _metric_quoted(metric: ClaimMetric, excerpt: str) -> bool:
     return re.search(amount, excerpt.replace(",", ""), re.IGNORECASE) is not None
 
 
+# An ISO date starts at a boundary or after a complete ISO date and a range hyphen
+# ("2021-03-2021-05"), never inside another date component.
+_ISO_START = r"(?:(?<![0-9-])|(?<=[0-9]{4}-[0-9]{2}-)|(?<=[0-9]{4}-[0-9]{2}-[0-9]{2}-))"
+
+
 def _date_quoted(value: str, excerpt: str) -> bool:
     """The excerpt names the year and, when the claim supplies one, that month of that year."""
     year, _, month = value.partition("-")
@@ -321,7 +326,7 @@ def _date_quoted(value: str, excerpt: str) -> bool:
         (
             rf"\b{name}(?:\s+{day})?,?\s+{year}(?![0-9])",
             rf"\b{day}\s+{name},?\s+{year}(?![0-9])",
-            rf"(?<![0-9-]){year}-{month}(?![0-9])",
+            rf"{_ISO_START}{year}-{month}(?![0-9])",
             rf"(?<![0-9/])0?{index}/(?:[0-9]{{1,2}}/)?{year}(?![0-9])",
         )
     )
