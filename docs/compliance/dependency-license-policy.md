@@ -29,8 +29,8 @@ Sources reviewed 2026-10-24: [SPDX expressions](https://spdx.github.io/spdx-spec
 
 ## pypdf security update — 2026-10-31
 
-The runtime dependency is pinned to **pypdf 6.21.3** in `pyproject.toml` and
-`uv.lock`, replacing 6.21.2 to address CVE-2026-119206, CVE-2026-119207,
+At this historical checkpoint, the runtime dependency was pinned to **pypdf 6.21.3**
+in `pyproject.toml` and `uv.lock`, replacing 6.21.2 to address CVE-2026-119206, CVE-2026-119207,
 CVE-2026-119208 and CVE-2026-119209. Package identity:
 `pkg:pypi/pypdf@6.21.3`; [official upstream](https://github.com/py-pdf/pypdf/tree/6.21.3),
 [license text](https://github.com/py-pdf/pypdf/blob/6.21.3/LICENSE).
@@ -56,3 +56,29 @@ The committed `compliance/locked-components.json` remains the historical
 exact-image collection, not a current 6.21.3 inventory. CI generates a fresh
 inventory under `artifacts/`; the historical image and its records are not
 rewritten by this source-only dependency update.
+
+## pypdf 6.21.4 security update — 2026-10-31
+
+The current runtime pin is **pypdf 6.21.4**, replacing 6.21.3 after the merged
+main CI advisory report identified CVE-2026-119203, CVE-2026-119204 and
+CVE-2026-119205 (GHSA-5849-834g-hvw5, GHSA-cggf-277g-3q54 and
+GHSA-mfr5-77xh-9j7h). Package identity: `pkg:pypi/pypdf@6.21.4`;
+[official upstream](https://github.com/py-pdf/pypdf/tree/6.21.4),
+[license text](https://github.com/py-pdf/pypdf/blob/6.21.4/LICENSE).
+The upstream declaration remains BSD-3-Clause. Locked wheel SHA-256:
+`33e4fb41ca352810eb4e9838aa0d82d6888a5f8bf682f43e99cce5faa666255c`;
+source archive SHA-256:
+`c8817e3f888d47a087872ded69812c1ef30cacb871d6e053e0c00bbaf0bc2163`.
+There are no new dependency edges or local upstream modifications. Runtime
+scope, BSD notice obligations and pending dependency-reviewer rights/notice
+reconciliation remain as recorded above; this update grants no legal approval.
+
+The [6.21.4 changelog](https://github.com/py-pdf/pypdf/blob/6.21.4/CHANGELOG.md)
+limits copied page attributes during flattening, detects EOF while reading an
+incomplete standard cross-reference trailer, and fixes dictionary-cloning loop
+detection. Page-tree limits and incomplete-trailer rejection affect PDF import;
+existing `LimitReachedError` and invalid-PDF mappings handle those boundaries.
+Dictionary cloning also affects PDF-producing test fixtures. No public parser
+API changes or application adaptations are needed. The previous 6.21.3 entry
+and committed exact-image inventory remain historical; CI collects current
+artifacts separately.
