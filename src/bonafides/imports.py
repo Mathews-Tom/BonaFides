@@ -19,7 +19,7 @@ from sqlalchemy.engine import RowMapping
 from starlette.concurrency import run_in_threadpool
 
 from bonafides.auth import Owner, StrictModel, require_owner
-from bonafides.claim_mapping import UnparsedPart, map_line
+from bonafides.claim_mapping import UnparsedPart, map_line, statement_text
 from bonafides.claims import STRUCTURED_KINDS, StructuredClaim
 from bonafides.commands import append_outbox, canonical_json, command, lock_installation
 from bonafides.config import Settings
@@ -880,12 +880,14 @@ def _statement_claims(
     context = decision.payload.model_dump(mode="json", exclude_none=True, exclude={"text"})
     statements: list[tuple[dict[str, object], str]] = []
     for proposal in entry.claim_proposals:
+        # The bullet marker is layout, not part of the statement or its quoted excerpt.
+        quote = statement_text(proposal.quote)
         payload: StructuredClaimPayload | ClaimPayload
         if proposal.claim is not None and not proposal.unparsed:
             payload = StructuredClaimPayload.model_validate({**context, "claim": proposal.claim})
         else:
-            payload = ClaimPayload.model_validate({**context, "text": proposal.quote})
-        statements.append((payload.model_dump(mode="json", exclude_none=True), proposal.quote))
+            payload = ClaimPayload.model_validate({**context, "text": quote})
+        statements.append((payload.model_dump(mode="json", exclude_none=True), quote))
     return statements
 
 

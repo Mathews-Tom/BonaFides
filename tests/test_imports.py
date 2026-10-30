@@ -1641,19 +1641,21 @@ def test_reviewed_import_adds_structured_claims_only_after_approval(
     claims = importing.profile()["current_revision"]["claims"]
     assert [(item["rendering"], item["needs_attention"]) for item in claims] == [
         ("Reduced batch runtime by 30% across 3 warehouses", False),
-        ("- Saved $90K in synthetic licensing costs", True),
+        ("Saved $90K in synthetic licensing costs", True),
     ]
     structured = claims[0]["revision"]["payload"]
     assert structured["role"] == "Platform Engineer"
     assert structured["organization"] == "Fictional Freight"
     assert structured["claim"]["metric"] == {"value": "30", "unit": "percent", "change": "decrease"}
     assert "text" not in structured
-    assert claims[0]["revision"]["evidence_links"][0]["excerpt"] == proposals[0]["quote"]
+    assert proposals[0]["quote"] == "- Reduced batch runtime by 30% across 3 warehouses"
+    assert claims[0]["revision"]["evidence_links"][0]["excerpt"] == proposals[0]["quote"][2:]
+    assert claims[1]["revision"]["payload"]["text"] == "Saved $90K in synthetic licensing costs"
     with importing.identity.admin.transaction() as conn:
         prepared = prepare_synthetic(
             conn, importing.owner_id, UUID(importing.profile()["current_revision"]["id"])
         )
     assert [block.text for block in prepared.body.sections[0].blocks] == [
         "Reduced batch runtime by 30% across 3 warehouses",
-        "- Saved $90K in synthetic licensing costs",
+        "Saved $90K in synthetic licensing costs",
     ]

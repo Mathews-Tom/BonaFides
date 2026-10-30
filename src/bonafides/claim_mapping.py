@@ -286,10 +286,15 @@ def _verb(line: str) -> tuple[OwnershipVerb, MetricChange | None, str] | None:
     return None
 
 
+def statement_text(line: str) -> str:
+    """The line without its bullet marker or surrounding whitespace, still a verbatim slice."""
+    return _BULLET.sub("", line, count=1).strip()
+
+
 def map_line(line: str) -> ClaimMapping:
     """Map one line; unplaced parts are reported, never dropped or invented."""
     unparsed: list[UnparsedPart] = []
-    statement = _BULLET.sub("", line, count=1).strip().rstrip(".;").strip()
+    statement = statement_text(line).rstrip(".;").strip()
     head, separator, rest = statement.partition(";")
     if separator and rest.strip():
         unparsed.append(UnparsedPart(text=rest.strip(), reason="multiple_statements"))
