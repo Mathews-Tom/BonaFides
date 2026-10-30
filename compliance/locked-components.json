@@ -69,8 +69,8 @@
     },
     {
       "kind": "exported image filesystem",
-      "path": "/var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-wavf6cf9/rootfs.tar",
-      "sha256": "a72ae00649663ac9eb3582bc84e9a31a23d4245f5670455657cfd180a499a8a3"
+      "path": "/var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-0vd7sbby/rootfs.tar",
+      "sha256": "ccf6892f5fbb4f3c7408bef48aac99f3d234eb9a084fa210942e3edebf75b617"
     },
     {
       "kind": "third-party ASVS attribution manifest",
@@ -30633,29 +30633,29 @@
         {
           "date": "2026-10-30",
           "kind": "license-or-notice-file",
-          "sha256": "d357583e6621fb390c6c72dc684e92a32d1c0e5b022e3b3e17a5af73662420f8",
-          "text": "MIT License\n\nCopyright (c) 2026 Offerloom contributors\n\nPermission is hereby granted, free of charge, to any person obtaining a copy\nof this software and associated documentation files (the \"Software\"), to deal\nin the Software without restriction, including without limitation the rights\nto use, copy, modify, merge, publish, distribute, sublicense, and/or sell\ncopies of the Software, and to permit persons to whom the Software is\nfurnished to do so, subject to the following conditions:\n\nThe above copyright notice and this permission notice shall be included in all\ncopies or substantial portions of the Software.\n\nTHE SOFTWARE IS PROVIDED \"AS IS\", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR\nIMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,\nFITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE\nAUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER\nLIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,\nOUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE\nSOFTWARE.\n",
+          "sha256": "b9c30da1858c04720182f4942e12f86203e0139395861644429d47d775da9c2f",
+          "text": "MIT License\n\nCopyright (c) 2026 BonaFides contributors\n\nPermission is hereby granted, free of charge, to any person obtaining a copy\nof this software and associated documentation files (the \"Software\"), to deal\nin the Software without restriction, including without limitation the rights\nto use, copy, modify, merge, publish, distribute, sublicense, and/or sell\ncopies of the Software, and to permit persons to whom the Software is\nfurnished to do so, subject to the following conditions:\n\nThe above copyright notice and this permission notice shall be included in all\ncopies or substantial portions of the Software.\n\nTHE SOFTWARE IS PROVIDED \"AS IS\", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR\nIMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,\nFITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE\nAUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER\nLIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,\nOUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE\nSOFTWARE.\n",
           "url": "file:///Users/druk/WorkSpace/AetherForge/.worktrees/bonafides/bonafides-identity/.venv/lib/python3.12/site-packages/bonafides-0.1.0.dist-info/licenses/LICENSE-MIT"
         },
         {
           "date": "2026-10-30",
           "kind": "license-or-notice-file",
-          "sha256": "fecedc67cad33754537475bc16b355ed4dc10eb296645feeb9ab6c221fb9371e",
-          "text": "Offerloom\nCopyright (c) 2026 Offerloom contributors\n\nOriginal Offerloom material is offered under MIT OR Apache-2.0. Recipients\nmay choose either license. See LICENSE-MIT and LICENSE-APACHE.\n\nThis notice describes the design-stage repository. It is not a third-party\ncomponent inventory or a certification of legal independence. No application\ndistribution, bundled model weights, fonts, or dependency binaries are\nprovided by this design package. Research citations identify sources of\ntechnical facts, not incorporated third-party software.\n\nThird-party material incorporated in a future distribution retains its own\nlicense. Its required notices and license texts must accompany that exact\ndistribution. Do not add attribution for components merely proposed in an\narchitecture, and do not remove obligations from components actually shipped.\n\nThis NOTICE is informational and does not modify either license.\n",
+          "sha256": "69a48eec47ada8f482981aa8a0893ec9c8f80145a30c86e42cb835e381649933",
+          "text": "BonaFides\nCopyright (c) 2026 BonaFides contributors\n\nOriginal BonaFides material is offered under MIT OR Apache-2.0. Recipients\nmay choose either license. See LICENSE-MIT and LICENSE-APACHE.\n\nThis notice describes the design-stage repository. It is not a third-party\ncomponent inventory or a certification of legal independence. No application\ndistribution, bundled model weights, fonts, or dependency binaries are\nprovided by this design package. Research citations identify sources of\ntechnical facts, not incorporated third-party software.\n\nThird-party material incorporated in a future distribution retains its own\nlicense. Its required notices and license texts must accompany that exact\ndistribution. Do not add attribution for components merely proposed in an\narchitecture, and do not remove obligations from components actually shipped.\n\nThis NOTICE is informational and does not modify either license.\n",
           "url": "file:///Users/druk/WorkSpace/AetherForge/.worktrees/bonafides/bonafides-identity/.venv/lib/python3.12/site-packages/bonafides-0.1.0.dist-info/licenses/NOTICE"
         },
         {
           "date": "2026-10-30",
           "kind": "installed-core-metadata",
-          "sha256": "7f2cab2c2e52b99cbe7936e6ebc20e9633435ad46cbd5087deaea12c60aed016",
+          "sha256": "bc9b4609b886f1cdea8c0c5fb97ceeaa54360a9c8f7b3bd492d05a9c8b2d28e4",
           "url": "file:///Users/druk/WorkSpace/AetherForge/.worktrees/bonafides/bonafides-identity/.venv/lib/python3.12/site-packages/bonafides-0.1.0.dist-info/METADATA"
         }
       ],
       "files": [
         {
           "path": "../../../bin/bonafides",
-          "sha256": "4a86ebc776d125244d925618a0a9610900c7f6d5f7812c6249910c42dbe615fb",
-          "size": 370
+          "sha256": "2ec904168b355bdb0b21d4abed30f2759fa3937d6030c505e65fe38fa15a7c12",
+          "size": 369
         },
         {
           "path": "_editable_impl_bonafides.pth",
@@ -30669,13 +30669,13 @@
         },
         {
           "path": "bonafides-0.1.0.dist-info/METADATA",
-          "sha256": "7f2cab2c2e52b99cbe7936e6ebc20e9633435ad46cbd5087deaea12c60aed016",
-          "size": 9641
+          "sha256": "bc9b4609b886f1cdea8c0c5fb97ceeaa54360a9c8f7b3bd492d05a9c8b2d28e4",
+          "size": 9850
         },
         {
           "path": "bonafides-0.1.0.dist-info/RECORD",
-          "sha256": "0fb631462ac4c9d01140cd729ca9dcfadfb6cdcd53f310a4e9954efb797e8f79",
-          "size": 1147
+          "sha256": "277f02c1b8f11a3321d25629f8be37f0e4a72171d71a4b1bae93c841b87bb2fa",
+          "size": 1240
         },
         {
           "path": "bonafides-0.1.0.dist-info/REQUESTED",
@@ -30704,13 +30704,18 @@
         },
         {
           "path": "bonafides-0.1.0.dist-info/licenses/LICENSE-MIT",
-          "sha256": "d357583e6621fb390c6c72dc684e92a32d1c0e5b022e3b3e17a5af73662420f8",
+          "sha256": "b9c30da1858c04720182f4942e12f86203e0139395861644429d47d775da9c2f",
           "size": 1079
         },
         {
           "path": "bonafides-0.1.0.dist-info/licenses/NOTICE",
-          "sha256": "fecedc67cad33754537475bc16b355ed4dc10eb296645feeb9ab6c221fb9371e",
+          "sha256": "69a48eec47ada8f482981aa8a0893ec9c8f80145a30c86e42cb835e381649933",
           "size": 911
+        },
+        {
+          "path": "bonafides-0.1.0.dist-info/uv_build.json",
+          "sha256": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+          "size": 2
         },
         {
           "path": "bonafides-0.1.0.dist-info/uv_cache.json",
@@ -30834,7 +30839,7 @@
       "rights_confirmed": false,
       "scope": "installed Python environment (development; not asserted shipped)",
       "selected_license": null,
-      "sha256": "c899753cd8d7f5865607a8471bfe5c650bc6c458371e6c8eb25dca3f9de1447e",
+      "sha256": "e0f849ea0d6571ced261aa6aaf193653d7d818644b9d36de8d1836abedf180f4",
       "source": {
         "editable": "."
       },
@@ -154332,8 +154337,8 @@
         {
           "date": "2026-10-30",
           "kind": "docker-export",
-          "sha256": "a72ae00649663ac9eb3582bc84e9a31a23d4245f5670455657cfd180a499a8a3",
-          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-wavf6cf9/rootfs.tar"
+          "sha256": "ccf6892f5fbb4f3c7408bef48aac99f3d234eb9a084fa210942e3edebf75b617",
+          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-0vd7sbby/rootfs.tar"
         }
       ],
       "id": "pkg:oci/bonafides@sha256%3Aaf00cb46cf5f0904dbb2cc12fea8f2da3e6f9ced40276d7400c810394c43d737",
@@ -154348,7 +154353,7 @@
       "rights_confirmed": false,
       "scope": "actual exported container filesystem",
       "selected_license": null,
-      "sha256": "a72ae00649663ac9eb3582bc84e9a31a23d4245f5670455657cfd180a499a8a3",
+      "sha256": "ccf6892f5fbb4f3c7408bef48aac99f3d234eb9a084fa210942e3edebf75b617",
       "status": "pending",
       "symlinks": [
         {
@@ -190855,8 +190860,8 @@
         {
           "date": "2026-10-30",
           "kind": "docker-export",
-          "sha256": "a72ae00649663ac9eb3582bc84e9a31a23d4245f5670455657cfd180a499a8a3",
-          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-wavf6cf9/rootfs.tar"
+          "sha256": "ccf6892f5fbb4f3c7408bef48aac99f3d234eb9a084fa210942e3edebf75b617",
+          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-0vd7sbby/rootfs.tar"
         }
       ],
       "modifications": null,
@@ -190897,8 +190902,8 @@
         {
           "date": "2026-10-30",
           "kind": "docker-export",
-          "sha256": "a72ae00649663ac9eb3582bc84e9a31a23d4245f5670455657cfd180a499a8a3",
-          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-wavf6cf9/rootfs.tar"
+          "sha256": "ccf6892f5fbb4f3c7408bef48aac99f3d234eb9a084fa210942e3edebf75b617",
+          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-0vd7sbby/rootfs.tar"
         }
       ],
       "modifications": null,
@@ -190939,8 +190944,8 @@
         {
           "date": "2026-10-30",
           "kind": "docker-export",
-          "sha256": "a72ae00649663ac9eb3582bc84e9a31a23d4245f5670455657cfd180a499a8a3",
-          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-wavf6cf9/rootfs.tar"
+          "sha256": "ccf6892f5fbb4f3c7408bef48aac99f3d234eb9a084fa210942e3edebf75b617",
+          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-0vd7sbby/rootfs.tar"
         }
       ],
       "modifications": null,
@@ -190981,8 +190986,8 @@
         {
           "date": "2026-10-30",
           "kind": "docker-export",
-          "sha256": "a72ae00649663ac9eb3582bc84e9a31a23d4245f5670455657cfd180a499a8a3",
-          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-wavf6cf9/rootfs.tar"
+          "sha256": "ccf6892f5fbb4f3c7408bef48aac99f3d234eb9a084fa210942e3edebf75b617",
+          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-0vd7sbby/rootfs.tar"
         }
       ],
       "modifications": null,
@@ -191023,8 +191028,8 @@
         {
           "date": "2026-10-30",
           "kind": "docker-export",
-          "sha256": "a72ae00649663ac9eb3582bc84e9a31a23d4245f5670455657cfd180a499a8a3",
-          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-wavf6cf9/rootfs.tar"
+          "sha256": "ccf6892f5fbb4f3c7408bef48aac99f3d234eb9a084fa210942e3edebf75b617",
+          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-0vd7sbby/rootfs.tar"
         }
       ],
       "modifications": null,
@@ -191065,8 +191070,8 @@
         {
           "date": "2026-10-30",
           "kind": "docker-export",
-          "sha256": "a72ae00649663ac9eb3582bc84e9a31a23d4245f5670455657cfd180a499a8a3",
-          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-wavf6cf9/rootfs.tar"
+          "sha256": "ccf6892f5fbb4f3c7408bef48aac99f3d234eb9a084fa210942e3edebf75b617",
+          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-0vd7sbby/rootfs.tar"
         }
       ],
       "modifications": null,
@@ -191107,8 +191112,8 @@
         {
           "date": "2026-10-30",
           "kind": "docker-export",
-          "sha256": "a72ae00649663ac9eb3582bc84e9a31a23d4245f5670455657cfd180a499a8a3",
-          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-wavf6cf9/rootfs.tar"
+          "sha256": "ccf6892f5fbb4f3c7408bef48aac99f3d234eb9a084fa210942e3edebf75b617",
+          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-0vd7sbby/rootfs.tar"
         }
       ],
       "modifications": null,
@@ -191149,8 +191154,8 @@
         {
           "date": "2026-10-30",
           "kind": "docker-export",
-          "sha256": "a72ae00649663ac9eb3582bc84e9a31a23d4245f5670455657cfd180a499a8a3",
-          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-wavf6cf9/rootfs.tar"
+          "sha256": "ccf6892f5fbb4f3c7408bef48aac99f3d234eb9a084fa210942e3edebf75b617",
+          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-0vd7sbby/rootfs.tar"
         }
       ],
       "modifications": null,
@@ -191191,8 +191196,8 @@
         {
           "date": "2026-10-30",
           "kind": "docker-export",
-          "sha256": "a72ae00649663ac9eb3582bc84e9a31a23d4245f5670455657cfd180a499a8a3",
-          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-wavf6cf9/rootfs.tar"
+          "sha256": "ccf6892f5fbb4f3c7408bef48aac99f3d234eb9a084fa210942e3edebf75b617",
+          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-0vd7sbby/rootfs.tar"
         }
       ],
       "modifications": null,
@@ -191233,8 +191238,8 @@
         {
           "date": "2026-10-30",
           "kind": "docker-export",
-          "sha256": "a72ae00649663ac9eb3582bc84e9a31a23d4245f5670455657cfd180a499a8a3",
-          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-wavf6cf9/rootfs.tar"
+          "sha256": "ccf6892f5fbb4f3c7408bef48aac99f3d234eb9a084fa210942e3edebf75b617",
+          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-0vd7sbby/rootfs.tar"
         }
       ],
       "modifications": null,
@@ -191275,8 +191280,8 @@
         {
           "date": "2026-10-30",
           "kind": "docker-export",
-          "sha256": "a72ae00649663ac9eb3582bc84e9a31a23d4245f5670455657cfd180a499a8a3",
-          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-wavf6cf9/rootfs.tar"
+          "sha256": "ccf6892f5fbb4f3c7408bef48aac99f3d234eb9a084fa210942e3edebf75b617",
+          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-0vd7sbby/rootfs.tar"
         }
       ],
       "modifications": null,
@@ -191317,8 +191322,8 @@
         {
           "date": "2026-10-30",
           "kind": "docker-export",
-          "sha256": "a72ae00649663ac9eb3582bc84e9a31a23d4245f5670455657cfd180a499a8a3",
-          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-wavf6cf9/rootfs.tar"
+          "sha256": "ccf6892f5fbb4f3c7408bef48aac99f3d234eb9a084fa210942e3edebf75b617",
+          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-0vd7sbby/rootfs.tar"
         }
       ],
       "modifications": null,
@@ -191359,8 +191364,8 @@
         {
           "date": "2026-10-30",
           "kind": "docker-export",
-          "sha256": "a72ae00649663ac9eb3582bc84e9a31a23d4245f5670455657cfd180a499a8a3",
-          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-wavf6cf9/rootfs.tar"
+          "sha256": "ccf6892f5fbb4f3c7408bef48aac99f3d234eb9a084fa210942e3edebf75b617",
+          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-0vd7sbby/rootfs.tar"
         }
       ],
       "modifications": null,
@@ -191401,8 +191406,8 @@
         {
           "date": "2026-10-30",
           "kind": "docker-export",
-          "sha256": "a72ae00649663ac9eb3582bc84e9a31a23d4245f5670455657cfd180a499a8a3",
-          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-wavf6cf9/rootfs.tar"
+          "sha256": "ccf6892f5fbb4f3c7408bef48aac99f3d234eb9a084fa210942e3edebf75b617",
+          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-0vd7sbby/rootfs.tar"
         }
       ],
       "modifications": null,
@@ -191443,8 +191448,8 @@
         {
           "date": "2026-10-30",
           "kind": "docker-export",
-          "sha256": "a72ae00649663ac9eb3582bc84e9a31a23d4245f5670455657cfd180a499a8a3",
-          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-wavf6cf9/rootfs.tar"
+          "sha256": "ccf6892f5fbb4f3c7408bef48aac99f3d234eb9a084fa210942e3edebf75b617",
+          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-0vd7sbby/rootfs.tar"
         }
       ],
       "modifications": null,
@@ -191485,8 +191490,8 @@
         {
           "date": "2026-10-30",
           "kind": "docker-export",
-          "sha256": "a72ae00649663ac9eb3582bc84e9a31a23d4245f5670455657cfd180a499a8a3",
-          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-wavf6cf9/rootfs.tar"
+          "sha256": "ccf6892f5fbb4f3c7408bef48aac99f3d234eb9a084fa210942e3edebf75b617",
+          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-0vd7sbby/rootfs.tar"
         }
       ],
       "modifications": null,
@@ -191527,8 +191532,8 @@
         {
           "date": "2026-10-30",
           "kind": "docker-export",
-          "sha256": "a72ae00649663ac9eb3582bc84e9a31a23d4245f5670455657cfd180a499a8a3",
-          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-wavf6cf9/rootfs.tar"
+          "sha256": "ccf6892f5fbb4f3c7408bef48aac99f3d234eb9a084fa210942e3edebf75b617",
+          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-0vd7sbby/rootfs.tar"
         }
       ],
       "modifications": null,
@@ -191569,8 +191574,8 @@
         {
           "date": "2026-10-30",
           "kind": "docker-export",
-          "sha256": "a72ae00649663ac9eb3582bc84e9a31a23d4245f5670455657cfd180a499a8a3",
-          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-wavf6cf9/rootfs.tar"
+          "sha256": "ccf6892f5fbb4f3c7408bef48aac99f3d234eb9a084fa210942e3edebf75b617",
+          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-0vd7sbby/rootfs.tar"
         }
       ],
       "modifications": null,
@@ -191611,8 +191616,8 @@
         {
           "date": "2026-10-30",
           "kind": "docker-export",
-          "sha256": "a72ae00649663ac9eb3582bc84e9a31a23d4245f5670455657cfd180a499a8a3",
-          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-wavf6cf9/rootfs.tar"
+          "sha256": "ccf6892f5fbb4f3c7408bef48aac99f3d234eb9a084fa210942e3edebf75b617",
+          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-0vd7sbby/rootfs.tar"
         }
       ],
       "modifications": null,
@@ -191653,8 +191658,8 @@
         {
           "date": "2026-10-30",
           "kind": "docker-export",
-          "sha256": "a72ae00649663ac9eb3582bc84e9a31a23d4245f5670455657cfd180a499a8a3",
-          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-wavf6cf9/rootfs.tar"
+          "sha256": "ccf6892f5fbb4f3c7408bef48aac99f3d234eb9a084fa210942e3edebf75b617",
+          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-0vd7sbby/rootfs.tar"
         }
       ],
       "modifications": null,
@@ -191695,8 +191700,8 @@
         {
           "date": "2026-10-30",
           "kind": "docker-export",
-          "sha256": "a72ae00649663ac9eb3582bc84e9a31a23d4245f5670455657cfd180a499a8a3",
-          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-wavf6cf9/rootfs.tar"
+          "sha256": "ccf6892f5fbb4f3c7408bef48aac99f3d234eb9a084fa210942e3edebf75b617",
+          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-0vd7sbby/rootfs.tar"
         }
       ],
       "modifications": null,
@@ -191737,8 +191742,8 @@
         {
           "date": "2026-10-30",
           "kind": "docker-export",
-          "sha256": "a72ae00649663ac9eb3582bc84e9a31a23d4245f5670455657cfd180a499a8a3",
-          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-wavf6cf9/rootfs.tar"
+          "sha256": "ccf6892f5fbb4f3c7408bef48aac99f3d234eb9a084fa210942e3edebf75b617",
+          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-0vd7sbby/rootfs.tar"
         }
       ],
       "modifications": null,
@@ -191779,8 +191784,8 @@
         {
           "date": "2026-10-30",
           "kind": "docker-export",
-          "sha256": "a72ae00649663ac9eb3582bc84e9a31a23d4245f5670455657cfd180a499a8a3",
-          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-wavf6cf9/rootfs.tar"
+          "sha256": "ccf6892f5fbb4f3c7408bef48aac99f3d234eb9a084fa210942e3edebf75b617",
+          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-0vd7sbby/rootfs.tar"
         }
       ],
       "modifications": null,
@@ -191821,8 +191826,8 @@
         {
           "date": "2026-10-30",
           "kind": "docker-export",
-          "sha256": "a72ae00649663ac9eb3582bc84e9a31a23d4245f5670455657cfd180a499a8a3",
-          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-wavf6cf9/rootfs.tar"
+          "sha256": "ccf6892f5fbb4f3c7408bef48aac99f3d234eb9a084fa210942e3edebf75b617",
+          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-0vd7sbby/rootfs.tar"
         }
       ],
       "modifications": null,
@@ -191863,8 +191868,8 @@
         {
           "date": "2026-10-30",
           "kind": "docker-export",
-          "sha256": "a72ae00649663ac9eb3582bc84e9a31a23d4245f5670455657cfd180a499a8a3",
-          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-wavf6cf9/rootfs.tar"
+          "sha256": "ccf6892f5fbb4f3c7408bef48aac99f3d234eb9a084fa210942e3edebf75b617",
+          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-0vd7sbby/rootfs.tar"
         }
       ],
       "modifications": null,
@@ -191905,8 +191910,8 @@
         {
           "date": "2026-10-30",
           "kind": "docker-export",
-          "sha256": "a72ae00649663ac9eb3582bc84e9a31a23d4245f5670455657cfd180a499a8a3",
-          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-wavf6cf9/rootfs.tar"
+          "sha256": "ccf6892f5fbb4f3c7408bef48aac99f3d234eb9a084fa210942e3edebf75b617",
+          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-0vd7sbby/rootfs.tar"
         }
       ],
       "modifications": null,
@@ -191947,8 +191952,8 @@
         {
           "date": "2026-10-30",
           "kind": "docker-export",
-          "sha256": "a72ae00649663ac9eb3582bc84e9a31a23d4245f5670455657cfd180a499a8a3",
-          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-wavf6cf9/rootfs.tar"
+          "sha256": "ccf6892f5fbb4f3c7408bef48aac99f3d234eb9a084fa210942e3edebf75b617",
+          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-0vd7sbby/rootfs.tar"
         }
       ],
       "modifications": null,
@@ -191989,8 +191994,8 @@
         {
           "date": "2026-10-30",
           "kind": "docker-export",
-          "sha256": "a72ae00649663ac9eb3582bc84e9a31a23d4245f5670455657cfd180a499a8a3",
-          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-wavf6cf9/rootfs.tar"
+          "sha256": "ccf6892f5fbb4f3c7408bef48aac99f3d234eb9a084fa210942e3edebf75b617",
+          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-0vd7sbby/rootfs.tar"
         }
       ],
       "modifications": null,
@@ -192031,8 +192036,8 @@
         {
           "date": "2026-10-30",
           "kind": "docker-export",
-          "sha256": "a72ae00649663ac9eb3582bc84e9a31a23d4245f5670455657cfd180a499a8a3",
-          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-wavf6cf9/rootfs.tar"
+          "sha256": "ccf6892f5fbb4f3c7408bef48aac99f3d234eb9a084fa210942e3edebf75b617",
+          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-0vd7sbby/rootfs.tar"
         }
       ],
       "modifications": null,
@@ -192073,8 +192078,8 @@
         {
           "date": "2026-10-30",
           "kind": "docker-export",
-          "sha256": "a72ae00649663ac9eb3582bc84e9a31a23d4245f5670455657cfd180a499a8a3",
-          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-wavf6cf9/rootfs.tar"
+          "sha256": "ccf6892f5fbb4f3c7408bef48aac99f3d234eb9a084fa210942e3edebf75b617",
+          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-0vd7sbby/rootfs.tar"
         }
       ],
       "modifications": null,
@@ -192115,8 +192120,8 @@
         {
           "date": "2026-10-30",
           "kind": "docker-export",
-          "sha256": "a72ae00649663ac9eb3582bc84e9a31a23d4245f5670455657cfd180a499a8a3",
-          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-wavf6cf9/rootfs.tar"
+          "sha256": "ccf6892f5fbb4f3c7408bef48aac99f3d234eb9a084fa210942e3edebf75b617",
+          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-0vd7sbby/rootfs.tar"
         }
       ],
       "modifications": null,
@@ -192157,8 +192162,8 @@
         {
           "date": "2026-10-30",
           "kind": "docker-export",
-          "sha256": "a72ae00649663ac9eb3582bc84e9a31a23d4245f5670455657cfd180a499a8a3",
-          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-wavf6cf9/rootfs.tar"
+          "sha256": "ccf6892f5fbb4f3c7408bef48aac99f3d234eb9a084fa210942e3edebf75b617",
+          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-0vd7sbby/rootfs.tar"
         }
       ],
       "modifications": null,
@@ -192199,8 +192204,8 @@
         {
           "date": "2026-10-30",
           "kind": "docker-export",
-          "sha256": "a72ae00649663ac9eb3582bc84e9a31a23d4245f5670455657cfd180a499a8a3",
-          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-wavf6cf9/rootfs.tar"
+          "sha256": "ccf6892f5fbb4f3c7408bef48aac99f3d234eb9a084fa210942e3edebf75b617",
+          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-0vd7sbby/rootfs.tar"
         }
       ],
       "modifications": null,
@@ -192241,8 +192246,8 @@
         {
           "date": "2026-10-30",
           "kind": "docker-export",
-          "sha256": "a72ae00649663ac9eb3582bc84e9a31a23d4245f5670455657cfd180a499a8a3",
-          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-wavf6cf9/rootfs.tar"
+          "sha256": "ccf6892f5fbb4f3c7408bef48aac99f3d234eb9a084fa210942e3edebf75b617",
+          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-0vd7sbby/rootfs.tar"
         }
       ],
       "modifications": null,
@@ -192283,8 +192288,8 @@
         {
           "date": "2026-10-30",
           "kind": "docker-export",
-          "sha256": "a72ae00649663ac9eb3582bc84e9a31a23d4245f5670455657cfd180a499a8a3",
-          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-wavf6cf9/rootfs.tar"
+          "sha256": "ccf6892f5fbb4f3c7408bef48aac99f3d234eb9a084fa210942e3edebf75b617",
+          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-0vd7sbby/rootfs.tar"
         }
       ],
       "modifications": null,
@@ -192325,8 +192330,8 @@
         {
           "date": "2026-10-30",
           "kind": "docker-export",
-          "sha256": "a72ae00649663ac9eb3582bc84e9a31a23d4245f5670455657cfd180a499a8a3",
-          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-wavf6cf9/rootfs.tar"
+          "sha256": "ccf6892f5fbb4f3c7408bef48aac99f3d234eb9a084fa210942e3edebf75b617",
+          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-0vd7sbby/rootfs.tar"
         }
       ],
       "modifications": null,
@@ -192367,8 +192372,8 @@
         {
           "date": "2026-10-30",
           "kind": "docker-export",
-          "sha256": "a72ae00649663ac9eb3582bc84e9a31a23d4245f5670455657cfd180a499a8a3",
-          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-wavf6cf9/rootfs.tar"
+          "sha256": "ccf6892f5fbb4f3c7408bef48aac99f3d234eb9a084fa210942e3edebf75b617",
+          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-0vd7sbby/rootfs.tar"
         }
       ],
       "modifications": null,
@@ -192409,8 +192414,8 @@
         {
           "date": "2026-10-30",
           "kind": "docker-export",
-          "sha256": "a72ae00649663ac9eb3582bc84e9a31a23d4245f5670455657cfd180a499a8a3",
-          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-wavf6cf9/rootfs.tar"
+          "sha256": "ccf6892f5fbb4f3c7408bef48aac99f3d234eb9a084fa210942e3edebf75b617",
+          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-0vd7sbby/rootfs.tar"
         }
       ],
       "modifications": null,
@@ -192451,8 +192456,8 @@
         {
           "date": "2026-10-30",
           "kind": "docker-export",
-          "sha256": "a72ae00649663ac9eb3582bc84e9a31a23d4245f5670455657cfd180a499a8a3",
-          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-wavf6cf9/rootfs.tar"
+          "sha256": "ccf6892f5fbb4f3c7408bef48aac99f3d234eb9a084fa210942e3edebf75b617",
+          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-0vd7sbby/rootfs.tar"
         }
       ],
       "modifications": null,
@@ -192493,8 +192498,8 @@
         {
           "date": "2026-10-30",
           "kind": "docker-export",
-          "sha256": "a72ae00649663ac9eb3582bc84e9a31a23d4245f5670455657cfd180a499a8a3",
-          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-wavf6cf9/rootfs.tar"
+          "sha256": "ccf6892f5fbb4f3c7408bef48aac99f3d234eb9a084fa210942e3edebf75b617",
+          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-0vd7sbby/rootfs.tar"
         }
       ],
       "modifications": null,
@@ -192535,8 +192540,8 @@
         {
           "date": "2026-10-30",
           "kind": "docker-export",
-          "sha256": "a72ae00649663ac9eb3582bc84e9a31a23d4245f5670455657cfd180a499a8a3",
-          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-wavf6cf9/rootfs.tar"
+          "sha256": "ccf6892f5fbb4f3c7408bef48aac99f3d234eb9a084fa210942e3edebf75b617",
+          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-0vd7sbby/rootfs.tar"
         }
       ],
       "modifications": null,
@@ -192577,8 +192582,8 @@
         {
           "date": "2026-10-30",
           "kind": "docker-export",
-          "sha256": "a72ae00649663ac9eb3582bc84e9a31a23d4245f5670455657cfd180a499a8a3",
-          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-wavf6cf9/rootfs.tar"
+          "sha256": "ccf6892f5fbb4f3c7408bef48aac99f3d234eb9a084fa210942e3edebf75b617",
+          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-0vd7sbby/rootfs.tar"
         }
       ],
       "modifications": null,
@@ -192619,8 +192624,8 @@
         {
           "date": "2026-10-30",
           "kind": "docker-export",
-          "sha256": "a72ae00649663ac9eb3582bc84e9a31a23d4245f5670455657cfd180a499a8a3",
-          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-wavf6cf9/rootfs.tar"
+          "sha256": "ccf6892f5fbb4f3c7408bef48aac99f3d234eb9a084fa210942e3edebf75b617",
+          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-0vd7sbby/rootfs.tar"
         }
       ],
       "modifications": null,
@@ -192661,8 +192666,8 @@
         {
           "date": "2026-10-30",
           "kind": "docker-export",
-          "sha256": "a72ae00649663ac9eb3582bc84e9a31a23d4245f5670455657cfd180a499a8a3",
-          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-wavf6cf9/rootfs.tar"
+          "sha256": "ccf6892f5fbb4f3c7408bef48aac99f3d234eb9a084fa210942e3edebf75b617",
+          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-0vd7sbby/rootfs.tar"
         }
       ],
       "modifications": null,
@@ -192703,8 +192708,8 @@
         {
           "date": "2026-10-30",
           "kind": "docker-export",
-          "sha256": "a72ae00649663ac9eb3582bc84e9a31a23d4245f5670455657cfd180a499a8a3",
-          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-wavf6cf9/rootfs.tar"
+          "sha256": "ccf6892f5fbb4f3c7408bef48aac99f3d234eb9a084fa210942e3edebf75b617",
+          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-0vd7sbby/rootfs.tar"
         }
       ],
       "modifications": null,
@@ -192745,8 +192750,8 @@
         {
           "date": "2026-10-30",
           "kind": "docker-export",
-          "sha256": "a72ae00649663ac9eb3582bc84e9a31a23d4245f5670455657cfd180a499a8a3",
-          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-wavf6cf9/rootfs.tar"
+          "sha256": "ccf6892f5fbb4f3c7408bef48aac99f3d234eb9a084fa210942e3edebf75b617",
+          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-0vd7sbby/rootfs.tar"
         }
       ],
       "modifications": null,
@@ -192787,8 +192792,8 @@
         {
           "date": "2026-10-30",
           "kind": "docker-export",
-          "sha256": "a72ae00649663ac9eb3582bc84e9a31a23d4245f5670455657cfd180a499a8a3",
-          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-wavf6cf9/rootfs.tar"
+          "sha256": "ccf6892f5fbb4f3c7408bef48aac99f3d234eb9a084fa210942e3edebf75b617",
+          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-0vd7sbby/rootfs.tar"
         }
       ],
       "modifications": null,
@@ -192829,8 +192834,8 @@
         {
           "date": "2026-10-30",
           "kind": "docker-export",
-          "sha256": "a72ae00649663ac9eb3582bc84e9a31a23d4245f5670455657cfd180a499a8a3",
-          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-wavf6cf9/rootfs.tar"
+          "sha256": "ccf6892f5fbb4f3c7408bef48aac99f3d234eb9a084fa210942e3edebf75b617",
+          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-0vd7sbby/rootfs.tar"
         }
       ],
       "modifications": null,
@@ -192871,8 +192876,8 @@
         {
           "date": "2026-10-30",
           "kind": "docker-export",
-          "sha256": "a72ae00649663ac9eb3582bc84e9a31a23d4245f5670455657cfd180a499a8a3",
-          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-wavf6cf9/rootfs.tar"
+          "sha256": "ccf6892f5fbb4f3c7408bef48aac99f3d234eb9a084fa210942e3edebf75b617",
+          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-0vd7sbby/rootfs.tar"
         }
       ],
       "modifications": null,
@@ -192913,8 +192918,8 @@
         {
           "date": "2026-10-30",
           "kind": "docker-export",
-          "sha256": "a72ae00649663ac9eb3582bc84e9a31a23d4245f5670455657cfd180a499a8a3",
-          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-wavf6cf9/rootfs.tar"
+          "sha256": "ccf6892f5fbb4f3c7408bef48aac99f3d234eb9a084fa210942e3edebf75b617",
+          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-0vd7sbby/rootfs.tar"
         }
       ],
       "modifications": null,
@@ -192955,8 +192960,8 @@
         {
           "date": "2026-10-30",
           "kind": "docker-export",
-          "sha256": "a72ae00649663ac9eb3582bc84e9a31a23d4245f5670455657cfd180a499a8a3",
-          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-wavf6cf9/rootfs.tar"
+          "sha256": "ccf6892f5fbb4f3c7408bef48aac99f3d234eb9a084fa210942e3edebf75b617",
+          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-0vd7sbby/rootfs.tar"
         }
       ],
       "modifications": null,
@@ -192997,8 +193002,8 @@
         {
           "date": "2026-10-30",
           "kind": "docker-export",
-          "sha256": "a72ae00649663ac9eb3582bc84e9a31a23d4245f5670455657cfd180a499a8a3",
-          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-wavf6cf9/rootfs.tar"
+          "sha256": "ccf6892f5fbb4f3c7408bef48aac99f3d234eb9a084fa210942e3edebf75b617",
+          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-0vd7sbby/rootfs.tar"
         }
       ],
       "modifications": null,
@@ -193039,8 +193044,8 @@
         {
           "date": "2026-10-30",
           "kind": "docker-export",
-          "sha256": "a72ae00649663ac9eb3582bc84e9a31a23d4245f5670455657cfd180a499a8a3",
-          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-wavf6cf9/rootfs.tar"
+          "sha256": "ccf6892f5fbb4f3c7408bef48aac99f3d234eb9a084fa210942e3edebf75b617",
+          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-0vd7sbby/rootfs.tar"
         }
       ],
       "modifications": null,
@@ -193081,8 +193086,8 @@
         {
           "date": "2026-10-30",
           "kind": "docker-export",
-          "sha256": "a72ae00649663ac9eb3582bc84e9a31a23d4245f5670455657cfd180a499a8a3",
-          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-wavf6cf9/rootfs.tar"
+          "sha256": "ccf6892f5fbb4f3c7408bef48aac99f3d234eb9a084fa210942e3edebf75b617",
+          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-0vd7sbby/rootfs.tar"
         }
       ],
       "modifications": null,
@@ -193123,8 +193128,8 @@
         {
           "date": "2026-10-30",
           "kind": "docker-export",
-          "sha256": "a72ae00649663ac9eb3582bc84e9a31a23d4245f5670455657cfd180a499a8a3",
-          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-wavf6cf9/rootfs.tar"
+          "sha256": "ccf6892f5fbb4f3c7408bef48aac99f3d234eb9a084fa210942e3edebf75b617",
+          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-0vd7sbby/rootfs.tar"
         }
       ],
       "modifications": null,
@@ -193165,8 +193170,8 @@
         {
           "date": "2026-10-30",
           "kind": "docker-export",
-          "sha256": "a72ae00649663ac9eb3582bc84e9a31a23d4245f5670455657cfd180a499a8a3",
-          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-wavf6cf9/rootfs.tar"
+          "sha256": "ccf6892f5fbb4f3c7408bef48aac99f3d234eb9a084fa210942e3edebf75b617",
+          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-0vd7sbby/rootfs.tar"
         }
       ],
       "modifications": null,
@@ -193207,8 +193212,8 @@
         {
           "date": "2026-10-30",
           "kind": "docker-export",
-          "sha256": "a72ae00649663ac9eb3582bc84e9a31a23d4245f5670455657cfd180a499a8a3",
-          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-wavf6cf9/rootfs.tar"
+          "sha256": "ccf6892f5fbb4f3c7408bef48aac99f3d234eb9a084fa210942e3edebf75b617",
+          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-0vd7sbby/rootfs.tar"
         }
       ],
       "modifications": null,
@@ -193249,8 +193254,8 @@
         {
           "date": "2026-10-30",
           "kind": "docker-export",
-          "sha256": "a72ae00649663ac9eb3582bc84e9a31a23d4245f5670455657cfd180a499a8a3",
-          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-wavf6cf9/rootfs.tar"
+          "sha256": "ccf6892f5fbb4f3c7408bef48aac99f3d234eb9a084fa210942e3edebf75b617",
+          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-0vd7sbby/rootfs.tar"
         }
       ],
       "modifications": null,
@@ -193291,8 +193296,8 @@
         {
           "date": "2026-10-30",
           "kind": "docker-export",
-          "sha256": "a72ae00649663ac9eb3582bc84e9a31a23d4245f5670455657cfd180a499a8a3",
-          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-wavf6cf9/rootfs.tar"
+          "sha256": "ccf6892f5fbb4f3c7408bef48aac99f3d234eb9a084fa210942e3edebf75b617",
+          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-0vd7sbby/rootfs.tar"
         }
       ],
       "modifications": null,
@@ -193333,8 +193338,8 @@
         {
           "date": "2026-10-30",
           "kind": "docker-export",
-          "sha256": "a72ae00649663ac9eb3582bc84e9a31a23d4245f5670455657cfd180a499a8a3",
-          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-wavf6cf9/rootfs.tar"
+          "sha256": "ccf6892f5fbb4f3c7408bef48aac99f3d234eb9a084fa210942e3edebf75b617",
+          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-0vd7sbby/rootfs.tar"
         }
       ],
       "modifications": null,
@@ -193375,8 +193380,8 @@
         {
           "date": "2026-10-30",
           "kind": "docker-export",
-          "sha256": "a72ae00649663ac9eb3582bc84e9a31a23d4245f5670455657cfd180a499a8a3",
-          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-wavf6cf9/rootfs.tar"
+          "sha256": "ccf6892f5fbb4f3c7408bef48aac99f3d234eb9a084fa210942e3edebf75b617",
+          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-0vd7sbby/rootfs.tar"
         }
       ],
       "modifications": null,
@@ -193417,8 +193422,8 @@
         {
           "date": "2026-10-30",
           "kind": "docker-export",
-          "sha256": "a72ae00649663ac9eb3582bc84e9a31a23d4245f5670455657cfd180a499a8a3",
-          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-wavf6cf9/rootfs.tar"
+          "sha256": "ccf6892f5fbb4f3c7408bef48aac99f3d234eb9a084fa210942e3edebf75b617",
+          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-0vd7sbby/rootfs.tar"
         }
       ],
       "modifications": null,
@@ -193459,8 +193464,8 @@
         {
           "date": "2026-10-30",
           "kind": "docker-export",
-          "sha256": "a72ae00649663ac9eb3582bc84e9a31a23d4245f5670455657cfd180a499a8a3",
-          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-wavf6cf9/rootfs.tar"
+          "sha256": "ccf6892f5fbb4f3c7408bef48aac99f3d234eb9a084fa210942e3edebf75b617",
+          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-0vd7sbby/rootfs.tar"
         }
       ],
       "modifications": null,
@@ -193501,8 +193506,8 @@
         {
           "date": "2026-10-30",
           "kind": "docker-export",
-          "sha256": "a72ae00649663ac9eb3582bc84e9a31a23d4245f5670455657cfd180a499a8a3",
-          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-wavf6cf9/rootfs.tar"
+          "sha256": "ccf6892f5fbb4f3c7408bef48aac99f3d234eb9a084fa210942e3edebf75b617",
+          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-0vd7sbby/rootfs.tar"
         }
       ],
       "modifications": null,
@@ -193543,8 +193548,8 @@
         {
           "date": "2026-10-30",
           "kind": "docker-export",
-          "sha256": "a72ae00649663ac9eb3582bc84e9a31a23d4245f5670455657cfd180a499a8a3",
-          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-wavf6cf9/rootfs.tar"
+          "sha256": "ccf6892f5fbb4f3c7408bef48aac99f3d234eb9a084fa210942e3edebf75b617",
+          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-0vd7sbby/rootfs.tar"
         }
       ],
       "modifications": null,
@@ -193585,8 +193590,8 @@
         {
           "date": "2026-10-30",
           "kind": "docker-export",
-          "sha256": "a72ae00649663ac9eb3582bc84e9a31a23d4245f5670455657cfd180a499a8a3",
-          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-wavf6cf9/rootfs.tar"
+          "sha256": "ccf6892f5fbb4f3c7408bef48aac99f3d234eb9a084fa210942e3edebf75b617",
+          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-0vd7sbby/rootfs.tar"
         }
       ],
       "modifications": null,
@@ -193627,8 +193632,8 @@
         {
           "date": "2026-10-30",
           "kind": "docker-export",
-          "sha256": "a72ae00649663ac9eb3582bc84e9a31a23d4245f5670455657cfd180a499a8a3",
-          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-wavf6cf9/rootfs.tar"
+          "sha256": "ccf6892f5fbb4f3c7408bef48aac99f3d234eb9a084fa210942e3edebf75b617",
+          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-0vd7sbby/rootfs.tar"
         }
       ],
       "modifications": null,
@@ -193669,8 +193674,8 @@
         {
           "date": "2026-10-30",
           "kind": "docker-export",
-          "sha256": "a72ae00649663ac9eb3582bc84e9a31a23d4245f5670455657cfd180a499a8a3",
-          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-wavf6cf9/rootfs.tar"
+          "sha256": "ccf6892f5fbb4f3c7408bef48aac99f3d234eb9a084fa210942e3edebf75b617",
+          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-0vd7sbby/rootfs.tar"
         }
       ],
       "modifications": null,
@@ -193711,8 +193716,8 @@
         {
           "date": "2026-10-30",
           "kind": "docker-export",
-          "sha256": "a72ae00649663ac9eb3582bc84e9a31a23d4245f5670455657cfd180a499a8a3",
-          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-wavf6cf9/rootfs.tar"
+          "sha256": "ccf6892f5fbb4f3c7408bef48aac99f3d234eb9a084fa210942e3edebf75b617",
+          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-0vd7sbby/rootfs.tar"
         }
       ],
       "modifications": null,
@@ -193753,8 +193758,8 @@
         {
           "date": "2026-10-30",
           "kind": "docker-export",
-          "sha256": "a72ae00649663ac9eb3582bc84e9a31a23d4245f5670455657cfd180a499a8a3",
-          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-wavf6cf9/rootfs.tar"
+          "sha256": "ccf6892f5fbb4f3c7408bef48aac99f3d234eb9a084fa210942e3edebf75b617",
+          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-0vd7sbby/rootfs.tar"
         }
       ],
       "modifications": null,
@@ -193795,8 +193800,8 @@
         {
           "date": "2026-10-30",
           "kind": "docker-export",
-          "sha256": "a72ae00649663ac9eb3582bc84e9a31a23d4245f5670455657cfd180a499a8a3",
-          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-wavf6cf9/rootfs.tar"
+          "sha256": "ccf6892f5fbb4f3c7408bef48aac99f3d234eb9a084fa210942e3edebf75b617",
+          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-0vd7sbby/rootfs.tar"
         }
       ],
       "modifications": null,
@@ -193837,8 +193842,8 @@
         {
           "date": "2026-10-30",
           "kind": "docker-export",
-          "sha256": "a72ae00649663ac9eb3582bc84e9a31a23d4245f5670455657cfd180a499a8a3",
-          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-wavf6cf9/rootfs.tar"
+          "sha256": "ccf6892f5fbb4f3c7408bef48aac99f3d234eb9a084fa210942e3edebf75b617",
+          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-0vd7sbby/rootfs.tar"
         }
       ],
       "modifications": null,
@@ -193879,8 +193884,8 @@
         {
           "date": "2026-10-30",
           "kind": "docker-export",
-          "sha256": "a72ae00649663ac9eb3582bc84e9a31a23d4245f5670455657cfd180a499a8a3",
-          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-wavf6cf9/rootfs.tar"
+          "sha256": "ccf6892f5fbb4f3c7408bef48aac99f3d234eb9a084fa210942e3edebf75b617",
+          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-0vd7sbby/rootfs.tar"
         }
       ],
       "modifications": null,
@@ -193921,8 +193926,8 @@
         {
           "date": "2026-10-30",
           "kind": "docker-export",
-          "sha256": "a72ae00649663ac9eb3582bc84e9a31a23d4245f5670455657cfd180a499a8a3",
-          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-wavf6cf9/rootfs.tar"
+          "sha256": "ccf6892f5fbb4f3c7408bef48aac99f3d234eb9a084fa210942e3edebf75b617",
+          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-0vd7sbby/rootfs.tar"
         }
       ],
       "modifications": null,
@@ -193963,8 +193968,8 @@
         {
           "date": "2026-10-30",
           "kind": "docker-export",
-          "sha256": "a72ae00649663ac9eb3582bc84e9a31a23d4245f5670455657cfd180a499a8a3",
-          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-wavf6cf9/rootfs.tar"
+          "sha256": "ccf6892f5fbb4f3c7408bef48aac99f3d234eb9a084fa210942e3edebf75b617",
+          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-0vd7sbby/rootfs.tar"
         }
       ],
       "modifications": null,
@@ -194005,8 +194010,8 @@
         {
           "date": "2026-10-30",
           "kind": "docker-export",
-          "sha256": "a72ae00649663ac9eb3582bc84e9a31a23d4245f5670455657cfd180a499a8a3",
-          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-wavf6cf9/rootfs.tar"
+          "sha256": "ccf6892f5fbb4f3c7408bef48aac99f3d234eb9a084fa210942e3edebf75b617",
+          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-0vd7sbby/rootfs.tar"
         }
       ],
       "modifications": null,
@@ -194047,8 +194052,8 @@
         {
           "date": "2026-10-30",
           "kind": "docker-export",
-          "sha256": "a72ae00649663ac9eb3582bc84e9a31a23d4245f5670455657cfd180a499a8a3",
-          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-wavf6cf9/rootfs.tar"
+          "sha256": "ccf6892f5fbb4f3c7408bef48aac99f3d234eb9a084fa210942e3edebf75b617",
+          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-0vd7sbby/rootfs.tar"
         }
       ],
       "modifications": null,
@@ -194089,8 +194094,8 @@
         {
           "date": "2026-10-30",
           "kind": "docker-export",
-          "sha256": "a72ae00649663ac9eb3582bc84e9a31a23d4245f5670455657cfd180a499a8a3",
-          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-wavf6cf9/rootfs.tar"
+          "sha256": "ccf6892f5fbb4f3c7408bef48aac99f3d234eb9a084fa210942e3edebf75b617",
+          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-0vd7sbby/rootfs.tar"
         }
       ],
       "modifications": null,
@@ -194131,8 +194136,8 @@
         {
           "date": "2026-10-30",
           "kind": "docker-export",
-          "sha256": "a72ae00649663ac9eb3582bc84e9a31a23d4245f5670455657cfd180a499a8a3",
-          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-wavf6cf9/rootfs.tar"
+          "sha256": "ccf6892f5fbb4f3c7408bef48aac99f3d234eb9a084fa210942e3edebf75b617",
+          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-0vd7sbby/rootfs.tar"
         }
       ],
       "modifications": null,
@@ -194173,8 +194178,8 @@
         {
           "date": "2026-10-30",
           "kind": "docker-export",
-          "sha256": "a72ae00649663ac9eb3582bc84e9a31a23d4245f5670455657cfd180a499a8a3",
-          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-wavf6cf9/rootfs.tar"
+          "sha256": "ccf6892f5fbb4f3c7408bef48aac99f3d234eb9a084fa210942e3edebf75b617",
+          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-0vd7sbby/rootfs.tar"
         }
       ],
       "modifications": null,
@@ -194215,8 +194220,8 @@
         {
           "date": "2026-10-30",
           "kind": "docker-export",
-          "sha256": "a72ae00649663ac9eb3582bc84e9a31a23d4245f5670455657cfd180a499a8a3",
-          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-wavf6cf9/rootfs.tar"
+          "sha256": "ccf6892f5fbb4f3c7408bef48aac99f3d234eb9a084fa210942e3edebf75b617",
+          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-0vd7sbby/rootfs.tar"
         }
       ],
       "modifications": null,
@@ -194257,8 +194262,8 @@
         {
           "date": "2026-10-30",
           "kind": "docker-export",
-          "sha256": "a72ae00649663ac9eb3582bc84e9a31a23d4245f5670455657cfd180a499a8a3",
-          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-wavf6cf9/rootfs.tar"
+          "sha256": "ccf6892f5fbb4f3c7408bef48aac99f3d234eb9a084fa210942e3edebf75b617",
+          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-0vd7sbby/rootfs.tar"
         }
       ],
       "modifications": null,
@@ -194299,8 +194304,8 @@
         {
           "date": "2026-10-30",
           "kind": "docker-export",
-          "sha256": "a72ae00649663ac9eb3582bc84e9a31a23d4245f5670455657cfd180a499a8a3",
-          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-wavf6cf9/rootfs.tar"
+          "sha256": "ccf6892f5fbb4f3c7408bef48aac99f3d234eb9a084fa210942e3edebf75b617",
+          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-0vd7sbby/rootfs.tar"
         }
       ],
       "modifications": null,
@@ -194341,8 +194346,8 @@
         {
           "date": "2026-10-30",
           "kind": "docker-export",
-          "sha256": "a72ae00649663ac9eb3582bc84e9a31a23d4245f5670455657cfd180a499a8a3",
-          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-wavf6cf9/rootfs.tar"
+          "sha256": "ccf6892f5fbb4f3c7408bef48aac99f3d234eb9a084fa210942e3edebf75b617",
+          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-0vd7sbby/rootfs.tar"
         }
       ],
       "modifications": null,
@@ -194383,8 +194388,8 @@
         {
           "date": "2026-10-30",
           "kind": "docker-export",
-          "sha256": "a72ae00649663ac9eb3582bc84e9a31a23d4245f5670455657cfd180a499a8a3",
-          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-wavf6cf9/rootfs.tar"
+          "sha256": "ccf6892f5fbb4f3c7408bef48aac99f3d234eb9a084fa210942e3edebf75b617",
+          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-0vd7sbby/rootfs.tar"
         }
       ],
       "modifications": null,
@@ -194425,8 +194430,8 @@
         {
           "date": "2026-10-30",
           "kind": "docker-export",
-          "sha256": "a72ae00649663ac9eb3582bc84e9a31a23d4245f5670455657cfd180a499a8a3",
-          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-wavf6cf9/rootfs.tar"
+          "sha256": "ccf6892f5fbb4f3c7408bef48aac99f3d234eb9a084fa210942e3edebf75b617",
+          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-0vd7sbby/rootfs.tar"
         }
       ],
       "modifications": null,
@@ -194467,8 +194472,8 @@
         {
           "date": "2026-10-30",
           "kind": "docker-export",
-          "sha256": "a72ae00649663ac9eb3582bc84e9a31a23d4245f5670455657cfd180a499a8a3",
-          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-wavf6cf9/rootfs.tar"
+          "sha256": "ccf6892f5fbb4f3c7408bef48aac99f3d234eb9a084fa210942e3edebf75b617",
+          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-0vd7sbby/rootfs.tar"
         }
       ],
       "modifications": null,
@@ -194509,8 +194514,8 @@
         {
           "date": "2026-10-30",
           "kind": "docker-export",
-          "sha256": "a72ae00649663ac9eb3582bc84e9a31a23d4245f5670455657cfd180a499a8a3",
-          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-wavf6cf9/rootfs.tar"
+          "sha256": "ccf6892f5fbb4f3c7408bef48aac99f3d234eb9a084fa210942e3edebf75b617",
+          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-0vd7sbby/rootfs.tar"
         }
       ],
       "modifications": null,
@@ -194551,8 +194556,8 @@
         {
           "date": "2026-10-30",
           "kind": "docker-export",
-          "sha256": "a72ae00649663ac9eb3582bc84e9a31a23d4245f5670455657cfd180a499a8a3",
-          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-wavf6cf9/rootfs.tar"
+          "sha256": "ccf6892f5fbb4f3c7408bef48aac99f3d234eb9a084fa210942e3edebf75b617",
+          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-0vd7sbby/rootfs.tar"
         }
       ],
       "modifications": null,
@@ -194593,8 +194598,8 @@
         {
           "date": "2026-10-30",
           "kind": "docker-export",
-          "sha256": "a72ae00649663ac9eb3582bc84e9a31a23d4245f5670455657cfd180a499a8a3",
-          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-wavf6cf9/rootfs.tar"
+          "sha256": "ccf6892f5fbb4f3c7408bef48aac99f3d234eb9a084fa210942e3edebf75b617",
+          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-0vd7sbby/rootfs.tar"
         }
       ],
       "modifications": null,
@@ -194635,8 +194640,8 @@
         {
           "date": "2026-10-30",
           "kind": "docker-export",
-          "sha256": "a72ae00649663ac9eb3582bc84e9a31a23d4245f5670455657cfd180a499a8a3",
-          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-wavf6cf9/rootfs.tar"
+          "sha256": "ccf6892f5fbb4f3c7408bef48aac99f3d234eb9a084fa210942e3edebf75b617",
+          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-0vd7sbby/rootfs.tar"
         }
       ],
       "modifications": null,
@@ -194677,8 +194682,8 @@
         {
           "date": "2026-10-30",
           "kind": "docker-export",
-          "sha256": "a72ae00649663ac9eb3582bc84e9a31a23d4245f5670455657cfd180a499a8a3",
-          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-wavf6cf9/rootfs.tar"
+          "sha256": "ccf6892f5fbb4f3c7408bef48aac99f3d234eb9a084fa210942e3edebf75b617",
+          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-0vd7sbby/rootfs.tar"
         }
       ],
       "modifications": null,
@@ -194719,8 +194724,8 @@
         {
           "date": "2026-10-30",
           "kind": "docker-export",
-          "sha256": "a72ae00649663ac9eb3582bc84e9a31a23d4245f5670455657cfd180a499a8a3",
-          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-wavf6cf9/rootfs.tar"
+          "sha256": "ccf6892f5fbb4f3c7408bef48aac99f3d234eb9a084fa210942e3edebf75b617",
+          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-0vd7sbby/rootfs.tar"
         }
       ],
       "modifications": null,
@@ -194761,8 +194766,8 @@
         {
           "date": "2026-10-30",
           "kind": "docker-export",
-          "sha256": "a72ae00649663ac9eb3582bc84e9a31a23d4245f5670455657cfd180a499a8a3",
-          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-wavf6cf9/rootfs.tar"
+          "sha256": "ccf6892f5fbb4f3c7408bef48aac99f3d234eb9a084fa210942e3edebf75b617",
+          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-0vd7sbby/rootfs.tar"
         }
       ],
       "modifications": null,
@@ -194803,8 +194808,8 @@
         {
           "date": "2026-10-30",
           "kind": "docker-export",
-          "sha256": "a72ae00649663ac9eb3582bc84e9a31a23d4245f5670455657cfd180a499a8a3",
-          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-wavf6cf9/rootfs.tar"
+          "sha256": "ccf6892f5fbb4f3c7408bef48aac99f3d234eb9a084fa210942e3edebf75b617",
+          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-0vd7sbby/rootfs.tar"
         }
       ],
       "modifications": null,
@@ -194845,8 +194850,8 @@
         {
           "date": "2026-10-30",
           "kind": "docker-export",
-          "sha256": "a72ae00649663ac9eb3582bc84e9a31a23d4245f5670455657cfd180a499a8a3",
-          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-wavf6cf9/rootfs.tar"
+          "sha256": "ccf6892f5fbb4f3c7408bef48aac99f3d234eb9a084fa210942e3edebf75b617",
+          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-0vd7sbby/rootfs.tar"
         }
       ],
       "modifications": null,
@@ -194887,8 +194892,8 @@
         {
           "date": "2026-10-30",
           "kind": "docker-export",
-          "sha256": "a72ae00649663ac9eb3582bc84e9a31a23d4245f5670455657cfd180a499a8a3",
-          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-wavf6cf9/rootfs.tar"
+          "sha256": "ccf6892f5fbb4f3c7408bef48aac99f3d234eb9a084fa210942e3edebf75b617",
+          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-0vd7sbby/rootfs.tar"
         }
       ],
       "modifications": null,
@@ -194929,8 +194934,8 @@
         {
           "date": "2026-10-30",
           "kind": "docker-export",
-          "sha256": "a72ae00649663ac9eb3582bc84e9a31a23d4245f5670455657cfd180a499a8a3",
-          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-wavf6cf9/rootfs.tar"
+          "sha256": "ccf6892f5fbb4f3c7408bef48aac99f3d234eb9a084fa210942e3edebf75b617",
+          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-0vd7sbby/rootfs.tar"
         }
       ],
       "modifications": null,
@@ -194971,8 +194976,8 @@
         {
           "date": "2026-10-30",
           "kind": "docker-export",
-          "sha256": "a72ae00649663ac9eb3582bc84e9a31a23d4245f5670455657cfd180a499a8a3",
-          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-wavf6cf9/rootfs.tar"
+          "sha256": "ccf6892f5fbb4f3c7408bef48aac99f3d234eb9a084fa210942e3edebf75b617",
+          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-0vd7sbby/rootfs.tar"
         }
       ],
       "modifications": null,
@@ -195013,8 +195018,8 @@
         {
           "date": "2026-10-30",
           "kind": "docker-export",
-          "sha256": "a72ae00649663ac9eb3582bc84e9a31a23d4245f5670455657cfd180a499a8a3",
-          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-wavf6cf9/rootfs.tar"
+          "sha256": "ccf6892f5fbb4f3c7408bef48aac99f3d234eb9a084fa210942e3edebf75b617",
+          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-0vd7sbby/rootfs.tar"
         }
       ],
       "modifications": null,
@@ -195055,8 +195060,8 @@
         {
           "date": "2026-10-30",
           "kind": "docker-export",
-          "sha256": "a72ae00649663ac9eb3582bc84e9a31a23d4245f5670455657cfd180a499a8a3",
-          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-wavf6cf9/rootfs.tar"
+          "sha256": "ccf6892f5fbb4f3c7408bef48aac99f3d234eb9a084fa210942e3edebf75b617",
+          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-0vd7sbby/rootfs.tar"
         }
       ],
       "modifications": null,
@@ -195097,8 +195102,8 @@
         {
           "date": "2026-10-30",
           "kind": "docker-export",
-          "sha256": "a72ae00649663ac9eb3582bc84e9a31a23d4245f5670455657cfd180a499a8a3",
-          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-wavf6cf9/rootfs.tar"
+          "sha256": "ccf6892f5fbb4f3c7408bef48aac99f3d234eb9a084fa210942e3edebf75b617",
+          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-0vd7sbby/rootfs.tar"
         }
       ],
       "modifications": null,
@@ -195139,8 +195144,8 @@
         {
           "date": "2026-10-30",
           "kind": "docker-export",
-          "sha256": "a72ae00649663ac9eb3582bc84e9a31a23d4245f5670455657cfd180a499a8a3",
-          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-wavf6cf9/rootfs.tar"
+          "sha256": "ccf6892f5fbb4f3c7408bef48aac99f3d234eb9a084fa210942e3edebf75b617",
+          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-0vd7sbby/rootfs.tar"
         }
       ],
       "modifications": null,
@@ -195181,8 +195186,8 @@
         {
           "date": "2026-10-30",
           "kind": "docker-export",
-          "sha256": "a72ae00649663ac9eb3582bc84e9a31a23d4245f5670455657cfd180a499a8a3",
-          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-wavf6cf9/rootfs.tar"
+          "sha256": "ccf6892f5fbb4f3c7408bef48aac99f3d234eb9a084fa210942e3edebf75b617",
+          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-0vd7sbby/rootfs.tar"
         }
       ],
       "modifications": null,
@@ -195223,8 +195228,8 @@
         {
           "date": "2026-10-30",
           "kind": "docker-export",
-          "sha256": "a72ae00649663ac9eb3582bc84e9a31a23d4245f5670455657cfd180a499a8a3",
-          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-wavf6cf9/rootfs.tar"
+          "sha256": "ccf6892f5fbb4f3c7408bef48aac99f3d234eb9a084fa210942e3edebf75b617",
+          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-0vd7sbby/rootfs.tar"
         }
       ],
       "modifications": null,
@@ -195265,8 +195270,8 @@
         {
           "date": "2026-10-30",
           "kind": "docker-export",
-          "sha256": "a72ae00649663ac9eb3582bc84e9a31a23d4245f5670455657cfd180a499a8a3",
-          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-wavf6cf9/rootfs.tar"
+          "sha256": "ccf6892f5fbb4f3c7408bef48aac99f3d234eb9a084fa210942e3edebf75b617",
+          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-0vd7sbby/rootfs.tar"
         }
       ],
       "modifications": null,
@@ -195307,8 +195312,8 @@
         {
           "date": "2026-10-30",
           "kind": "docker-export",
-          "sha256": "a72ae00649663ac9eb3582bc84e9a31a23d4245f5670455657cfd180a499a8a3",
-          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-wavf6cf9/rootfs.tar"
+          "sha256": "ccf6892f5fbb4f3c7408bef48aac99f3d234eb9a084fa210942e3edebf75b617",
+          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-0vd7sbby/rootfs.tar"
         }
       ],
       "modifications": null,
@@ -195349,8 +195354,8 @@
         {
           "date": "2026-10-30",
           "kind": "docker-export",
-          "sha256": "a72ae00649663ac9eb3582bc84e9a31a23d4245f5670455657cfd180a499a8a3",
-          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-wavf6cf9/rootfs.tar"
+          "sha256": "ccf6892f5fbb4f3c7408bef48aac99f3d234eb9a084fa210942e3edebf75b617",
+          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-0vd7sbby/rootfs.tar"
         }
       ],
       "modifications": null,
@@ -195391,8 +195396,8 @@
         {
           "date": "2026-10-30",
           "kind": "docker-export",
-          "sha256": "a72ae00649663ac9eb3582bc84e9a31a23d4245f5670455657cfd180a499a8a3",
-          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-wavf6cf9/rootfs.tar"
+          "sha256": "ccf6892f5fbb4f3c7408bef48aac99f3d234eb9a084fa210942e3edebf75b617",
+          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-0vd7sbby/rootfs.tar"
         }
       ],
       "modifications": null,
@@ -195433,8 +195438,8 @@
         {
           "date": "2026-10-30",
           "kind": "docker-export",
-          "sha256": "a72ae00649663ac9eb3582bc84e9a31a23d4245f5670455657cfd180a499a8a3",
-          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-wavf6cf9/rootfs.tar"
+          "sha256": "ccf6892f5fbb4f3c7408bef48aac99f3d234eb9a084fa210942e3edebf75b617",
+          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-0vd7sbby/rootfs.tar"
         }
       ],
       "modifications": null,
@@ -195475,8 +195480,8 @@
         {
           "date": "2026-10-30",
           "kind": "docker-export",
-          "sha256": "a72ae00649663ac9eb3582bc84e9a31a23d4245f5670455657cfd180a499a8a3",
-          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-wavf6cf9/rootfs.tar"
+          "sha256": "ccf6892f5fbb4f3c7408bef48aac99f3d234eb9a084fa210942e3edebf75b617",
+          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-0vd7sbby/rootfs.tar"
         }
       ],
       "modifications": null,
@@ -195517,8 +195522,8 @@
         {
           "date": "2026-10-30",
           "kind": "docker-export",
-          "sha256": "a72ae00649663ac9eb3582bc84e9a31a23d4245f5670455657cfd180a499a8a3",
-          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-wavf6cf9/rootfs.tar"
+          "sha256": "ccf6892f5fbb4f3c7408bef48aac99f3d234eb9a084fa210942e3edebf75b617",
+          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-0vd7sbby/rootfs.tar"
         }
       ],
       "modifications": null,
@@ -195559,8 +195564,8 @@
         {
           "date": "2026-10-30",
           "kind": "docker-export",
-          "sha256": "a72ae00649663ac9eb3582bc84e9a31a23d4245f5670455657cfd180a499a8a3",
-          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-wavf6cf9/rootfs.tar"
+          "sha256": "ccf6892f5fbb4f3c7408bef48aac99f3d234eb9a084fa210942e3edebf75b617",
+          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-0vd7sbby/rootfs.tar"
         }
       ],
       "modifications": null,
@@ -195601,8 +195606,8 @@
         {
           "date": "2026-10-30",
           "kind": "docker-export",
-          "sha256": "a72ae00649663ac9eb3582bc84e9a31a23d4245f5670455657cfd180a499a8a3",
-          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-wavf6cf9/rootfs.tar"
+          "sha256": "ccf6892f5fbb4f3c7408bef48aac99f3d234eb9a084fa210942e3edebf75b617",
+          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-0vd7sbby/rootfs.tar"
         }
       ],
       "modifications": null,
@@ -195643,8 +195648,8 @@
         {
           "date": "2026-10-30",
           "kind": "docker-export",
-          "sha256": "a72ae00649663ac9eb3582bc84e9a31a23d4245f5670455657cfd180a499a8a3",
-          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-wavf6cf9/rootfs.tar"
+          "sha256": "ccf6892f5fbb4f3c7408bef48aac99f3d234eb9a084fa210942e3edebf75b617",
+          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-0vd7sbby/rootfs.tar"
         }
       ],
       "modifications": null,
@@ -195685,8 +195690,8 @@
         {
           "date": "2026-10-30",
           "kind": "docker-export",
-          "sha256": "a72ae00649663ac9eb3582bc84e9a31a23d4245f5670455657cfd180a499a8a3",
-          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-wavf6cf9/rootfs.tar"
+          "sha256": "ccf6892f5fbb4f3c7408bef48aac99f3d234eb9a084fa210942e3edebf75b617",
+          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-0vd7sbby/rootfs.tar"
         }
       ],
       "modifications": null,
@@ -195727,8 +195732,8 @@
         {
           "date": "2026-10-30",
           "kind": "docker-export",
-          "sha256": "a72ae00649663ac9eb3582bc84e9a31a23d4245f5670455657cfd180a499a8a3",
-          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-wavf6cf9/rootfs.tar"
+          "sha256": "ccf6892f5fbb4f3c7408bef48aac99f3d234eb9a084fa210942e3edebf75b617",
+          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-0vd7sbby/rootfs.tar"
         }
       ],
       "modifications": null,
@@ -195769,8 +195774,8 @@
         {
           "date": "2026-10-30",
           "kind": "docker-export",
-          "sha256": "a72ae00649663ac9eb3582bc84e9a31a23d4245f5670455657cfd180a499a8a3",
-          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-wavf6cf9/rootfs.tar"
+          "sha256": "ccf6892f5fbb4f3c7408bef48aac99f3d234eb9a084fa210942e3edebf75b617",
+          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-0vd7sbby/rootfs.tar"
         }
       ],
       "modifications": null,
@@ -195811,8 +195816,8 @@
         {
           "date": "2026-10-30",
           "kind": "docker-export",
-          "sha256": "a72ae00649663ac9eb3582bc84e9a31a23d4245f5670455657cfd180a499a8a3",
-          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-wavf6cf9/rootfs.tar"
+          "sha256": "ccf6892f5fbb4f3c7408bef48aac99f3d234eb9a084fa210942e3edebf75b617",
+          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-0vd7sbby/rootfs.tar"
         }
       ],
       "modifications": null,
@@ -195853,8 +195858,8 @@
         {
           "date": "2026-10-30",
           "kind": "docker-export",
-          "sha256": "a72ae00649663ac9eb3582bc84e9a31a23d4245f5670455657cfd180a499a8a3",
-          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-wavf6cf9/rootfs.tar"
+          "sha256": "ccf6892f5fbb4f3c7408bef48aac99f3d234eb9a084fa210942e3edebf75b617",
+          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-0vd7sbby/rootfs.tar"
         }
       ],
       "modifications": null,
@@ -195895,8 +195900,8 @@
         {
           "date": "2026-10-30",
           "kind": "docker-export",
-          "sha256": "a72ae00649663ac9eb3582bc84e9a31a23d4245f5670455657cfd180a499a8a3",
-          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-wavf6cf9/rootfs.tar"
+          "sha256": "ccf6892f5fbb4f3c7408bef48aac99f3d234eb9a084fa210942e3edebf75b617",
+          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-0vd7sbby/rootfs.tar"
         }
       ],
       "modifications": null,
@@ -195937,8 +195942,8 @@
         {
           "date": "2026-10-30",
           "kind": "docker-export",
-          "sha256": "a72ae00649663ac9eb3582bc84e9a31a23d4245f5670455657cfd180a499a8a3",
-          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-wavf6cf9/rootfs.tar"
+          "sha256": "ccf6892f5fbb4f3c7408bef48aac99f3d234eb9a084fa210942e3edebf75b617",
+          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-0vd7sbby/rootfs.tar"
         }
       ],
       "modifications": null,
@@ -195979,8 +195984,8 @@
         {
           "date": "2026-10-30",
           "kind": "docker-export",
-          "sha256": "a72ae00649663ac9eb3582bc84e9a31a23d4245f5670455657cfd180a499a8a3",
-          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-wavf6cf9/rootfs.tar"
+          "sha256": "ccf6892f5fbb4f3c7408bef48aac99f3d234eb9a084fa210942e3edebf75b617",
+          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-0vd7sbby/rootfs.tar"
         }
       ],
       "modifications": null,
@@ -196021,8 +196026,8 @@
         {
           "date": "2026-10-30",
           "kind": "docker-export",
-          "sha256": "a72ae00649663ac9eb3582bc84e9a31a23d4245f5670455657cfd180a499a8a3",
-          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-wavf6cf9/rootfs.tar"
+          "sha256": "ccf6892f5fbb4f3c7408bef48aac99f3d234eb9a084fa210942e3edebf75b617",
+          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-0vd7sbby/rootfs.tar"
         }
       ],
       "modifications": null,
@@ -196063,8 +196068,8 @@
         {
           "date": "2026-10-30",
           "kind": "docker-export",
-          "sha256": "a72ae00649663ac9eb3582bc84e9a31a23d4245f5670455657cfd180a499a8a3",
-          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-wavf6cf9/rootfs.tar"
+          "sha256": "ccf6892f5fbb4f3c7408bef48aac99f3d234eb9a084fa210942e3edebf75b617",
+          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-0vd7sbby/rootfs.tar"
         }
       ],
       "modifications": null,
@@ -196105,8 +196110,8 @@
         {
           "date": "2026-10-30",
           "kind": "docker-export",
-          "sha256": "a72ae00649663ac9eb3582bc84e9a31a23d4245f5670455657cfd180a499a8a3",
-          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-wavf6cf9/rootfs.tar"
+          "sha256": "ccf6892f5fbb4f3c7408bef48aac99f3d234eb9a084fa210942e3edebf75b617",
+          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-0vd7sbby/rootfs.tar"
         }
       ],
       "modifications": null,
@@ -196147,8 +196152,8 @@
         {
           "date": "2026-10-30",
           "kind": "docker-export",
-          "sha256": "a72ae00649663ac9eb3582bc84e9a31a23d4245f5670455657cfd180a499a8a3",
-          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-wavf6cf9/rootfs.tar"
+          "sha256": "ccf6892f5fbb4f3c7408bef48aac99f3d234eb9a084fa210942e3edebf75b617",
+          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-0vd7sbby/rootfs.tar"
         }
       ],
       "modifications": null,
@@ -196189,8 +196194,8 @@
         {
           "date": "2026-10-30",
           "kind": "docker-export",
-          "sha256": "a72ae00649663ac9eb3582bc84e9a31a23d4245f5670455657cfd180a499a8a3",
-          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-wavf6cf9/rootfs.tar"
+          "sha256": "ccf6892f5fbb4f3c7408bef48aac99f3d234eb9a084fa210942e3edebf75b617",
+          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-0vd7sbby/rootfs.tar"
         }
       ],
       "modifications": null,
@@ -196231,8 +196236,8 @@
         {
           "date": "2026-10-30",
           "kind": "docker-export",
-          "sha256": "a72ae00649663ac9eb3582bc84e9a31a23d4245f5670455657cfd180a499a8a3",
-          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-wavf6cf9/rootfs.tar"
+          "sha256": "ccf6892f5fbb4f3c7408bef48aac99f3d234eb9a084fa210942e3edebf75b617",
+          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-0vd7sbby/rootfs.tar"
         }
       ],
       "modifications": null,
@@ -196273,8 +196278,8 @@
         {
           "date": "2026-10-30",
           "kind": "docker-export",
-          "sha256": "a72ae00649663ac9eb3582bc84e9a31a23d4245f5670455657cfd180a499a8a3",
-          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-wavf6cf9/rootfs.tar"
+          "sha256": "ccf6892f5fbb4f3c7408bef48aac99f3d234eb9a084fa210942e3edebf75b617",
+          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-0vd7sbby/rootfs.tar"
         }
       ],
       "modifications": null,
@@ -196315,8 +196320,8 @@
         {
           "date": "2026-10-30",
           "kind": "docker-export",
-          "sha256": "a72ae00649663ac9eb3582bc84e9a31a23d4245f5670455657cfd180a499a8a3",
-          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-wavf6cf9/rootfs.tar"
+          "sha256": "ccf6892f5fbb4f3c7408bef48aac99f3d234eb9a084fa210942e3edebf75b617",
+          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-0vd7sbby/rootfs.tar"
         }
       ],
       "modifications": null,
@@ -196357,8 +196362,8 @@
         {
           "date": "2026-10-30",
           "kind": "docker-export",
-          "sha256": "a72ae00649663ac9eb3582bc84e9a31a23d4245f5670455657cfd180a499a8a3",
-          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-wavf6cf9/rootfs.tar"
+          "sha256": "ccf6892f5fbb4f3c7408bef48aac99f3d234eb9a084fa210942e3edebf75b617",
+          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-0vd7sbby/rootfs.tar"
         }
       ],
       "modifications": null,
@@ -196399,8 +196404,8 @@
         {
           "date": "2026-10-30",
           "kind": "docker-export",
-          "sha256": "a72ae00649663ac9eb3582bc84e9a31a23d4245f5670455657cfd180a499a8a3",
-          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-wavf6cf9/rootfs.tar"
+          "sha256": "ccf6892f5fbb4f3c7408bef48aac99f3d234eb9a084fa210942e3edebf75b617",
+          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-0vd7sbby/rootfs.tar"
         }
       ],
       "modifications": null,
@@ -196441,8 +196446,8 @@
         {
           "date": "2026-10-30",
           "kind": "docker-export",
-          "sha256": "a72ae00649663ac9eb3582bc84e9a31a23d4245f5670455657cfd180a499a8a3",
-          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-wavf6cf9/rootfs.tar"
+          "sha256": "ccf6892f5fbb4f3c7408bef48aac99f3d234eb9a084fa210942e3edebf75b617",
+          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-0vd7sbby/rootfs.tar"
         }
       ],
       "modifications": null,
@@ -196483,8 +196488,8 @@
         {
           "date": "2026-10-30",
           "kind": "docker-export",
-          "sha256": "a72ae00649663ac9eb3582bc84e9a31a23d4245f5670455657cfd180a499a8a3",
-          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-wavf6cf9/rootfs.tar"
+          "sha256": "ccf6892f5fbb4f3c7408bef48aac99f3d234eb9a084fa210942e3edebf75b617",
+          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-0vd7sbby/rootfs.tar"
         }
       ],
       "modifications": null,
@@ -196525,8 +196530,8 @@
         {
           "date": "2026-10-30",
           "kind": "docker-export",
-          "sha256": "a72ae00649663ac9eb3582bc84e9a31a23d4245f5670455657cfd180a499a8a3",
-          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-wavf6cf9/rootfs.tar"
+          "sha256": "ccf6892f5fbb4f3c7408bef48aac99f3d234eb9a084fa210942e3edebf75b617",
+          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-0vd7sbby/rootfs.tar"
         }
       ],
       "modifications": null,
@@ -196567,8 +196572,8 @@
         {
           "date": "2026-10-30",
           "kind": "docker-export",
-          "sha256": "a72ae00649663ac9eb3582bc84e9a31a23d4245f5670455657cfd180a499a8a3",
-          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-wavf6cf9/rootfs.tar"
+          "sha256": "ccf6892f5fbb4f3c7408bef48aac99f3d234eb9a084fa210942e3edebf75b617",
+          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-0vd7sbby/rootfs.tar"
         }
       ],
       "modifications": null,
@@ -196609,8 +196614,8 @@
         {
           "date": "2026-10-30",
           "kind": "docker-export",
-          "sha256": "a72ae00649663ac9eb3582bc84e9a31a23d4245f5670455657cfd180a499a8a3",
-          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-wavf6cf9/rootfs.tar"
+          "sha256": "ccf6892f5fbb4f3c7408bef48aac99f3d234eb9a084fa210942e3edebf75b617",
+          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-0vd7sbby/rootfs.tar"
         }
       ],
       "modifications": null,
@@ -196651,8 +196656,8 @@
         {
           "date": "2026-10-30",
           "kind": "docker-export",
-          "sha256": "a72ae00649663ac9eb3582bc84e9a31a23d4245f5670455657cfd180a499a8a3",
-          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-wavf6cf9/rootfs.tar"
+          "sha256": "ccf6892f5fbb4f3c7408bef48aac99f3d234eb9a084fa210942e3edebf75b617",
+          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-0vd7sbby/rootfs.tar"
         }
       ],
       "modifications": null,
@@ -196693,8 +196698,8 @@
         {
           "date": "2026-10-30",
           "kind": "docker-export",
-          "sha256": "a72ae00649663ac9eb3582bc84e9a31a23d4245f5670455657cfd180a499a8a3",
-          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-wavf6cf9/rootfs.tar"
+          "sha256": "ccf6892f5fbb4f3c7408bef48aac99f3d234eb9a084fa210942e3edebf75b617",
+          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-0vd7sbby/rootfs.tar"
         }
       ],
       "modifications": null,
@@ -204925,8 +204930,8 @@
         {
           "date": "2026-10-30",
           "kind": "docker-export",
-          "sha256": "a72ae00649663ac9eb3582bc84e9a31a23d4245f5670455657cfd180a499a8a3",
-          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-wavf6cf9/rootfs.tar"
+          "sha256": "ccf6892f5fbb4f3c7408bef48aac99f3d234eb9a084fa210942e3edebf75b617",
+          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-0vd7sbby/rootfs.tar"
         }
       ],
       "modifications": null,
@@ -204967,8 +204972,8 @@
         {
           "date": "2026-10-30",
           "kind": "docker-export",
-          "sha256": "a72ae00649663ac9eb3582bc84e9a31a23d4245f5670455657cfd180a499a8a3",
-          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-wavf6cf9/rootfs.tar"
+          "sha256": "ccf6892f5fbb4f3c7408bef48aac99f3d234eb9a084fa210942e3edebf75b617",
+          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-0vd7sbby/rootfs.tar"
         }
       ],
       "modifications": null,
@@ -205009,8 +205014,8 @@
         {
           "date": "2026-10-30",
           "kind": "docker-export",
-          "sha256": "a72ae00649663ac9eb3582bc84e9a31a23d4245f5670455657cfd180a499a8a3",
-          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-wavf6cf9/rootfs.tar"
+          "sha256": "ccf6892f5fbb4f3c7408bef48aac99f3d234eb9a084fa210942e3edebf75b617",
+          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-0vd7sbby/rootfs.tar"
         }
       ],
       "modifications": null,
@@ -205051,8 +205056,8 @@
         {
           "date": "2026-10-30",
           "kind": "docker-export",
-          "sha256": "a72ae00649663ac9eb3582bc84e9a31a23d4245f5670455657cfd180a499a8a3",
-          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-wavf6cf9/rootfs.tar"
+          "sha256": "ccf6892f5fbb4f3c7408bef48aac99f3d234eb9a084fa210942e3edebf75b617",
+          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-0vd7sbby/rootfs.tar"
         }
       ],
       "modifications": null,
@@ -205093,8 +205098,8 @@
         {
           "date": "2026-10-30",
           "kind": "docker-export",
-          "sha256": "a72ae00649663ac9eb3582bc84e9a31a23d4245f5670455657cfd180a499a8a3",
-          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-wavf6cf9/rootfs.tar"
+          "sha256": "ccf6892f5fbb4f3c7408bef48aac99f3d234eb9a084fa210942e3edebf75b617",
+          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-0vd7sbby/rootfs.tar"
         }
       ],
       "modifications": null,
@@ -205135,8 +205140,8 @@
         {
           "date": "2026-10-30",
           "kind": "docker-export",
-          "sha256": "a72ae00649663ac9eb3582bc84e9a31a23d4245f5670455657cfd180a499a8a3",
-          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-wavf6cf9/rootfs.tar"
+          "sha256": "ccf6892f5fbb4f3c7408bef48aac99f3d234eb9a084fa210942e3edebf75b617",
+          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-0vd7sbby/rootfs.tar"
         }
       ],
       "modifications": null,
@@ -205177,8 +205182,8 @@
         {
           "date": "2026-10-30",
           "kind": "docker-export",
-          "sha256": "a72ae00649663ac9eb3582bc84e9a31a23d4245f5670455657cfd180a499a8a3",
-          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-wavf6cf9/rootfs.tar"
+          "sha256": "ccf6892f5fbb4f3c7408bef48aac99f3d234eb9a084fa210942e3edebf75b617",
+          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-0vd7sbby/rootfs.tar"
         }
       ],
       "modifications": null,
@@ -205219,8 +205224,8 @@
         {
           "date": "2026-10-30",
           "kind": "docker-export",
-          "sha256": "a72ae00649663ac9eb3582bc84e9a31a23d4245f5670455657cfd180a499a8a3",
-          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-wavf6cf9/rootfs.tar"
+          "sha256": "ccf6892f5fbb4f3c7408bef48aac99f3d234eb9a084fa210942e3edebf75b617",
+          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-0vd7sbby/rootfs.tar"
         }
       ],
       "modifications": null,
@@ -205261,8 +205266,8 @@
         {
           "date": "2026-10-30",
           "kind": "docker-export",
-          "sha256": "a72ae00649663ac9eb3582bc84e9a31a23d4245f5670455657cfd180a499a8a3",
-          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-wavf6cf9/rootfs.tar"
+          "sha256": "ccf6892f5fbb4f3c7408bef48aac99f3d234eb9a084fa210942e3edebf75b617",
+          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-0vd7sbby/rootfs.tar"
         }
       ],
       "modifications": null,
@@ -205303,8 +205308,8 @@
         {
           "date": "2026-10-30",
           "kind": "docker-export",
-          "sha256": "a72ae00649663ac9eb3582bc84e9a31a23d4245f5670455657cfd180a499a8a3",
-          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-wavf6cf9/rootfs.tar"
+          "sha256": "ccf6892f5fbb4f3c7408bef48aac99f3d234eb9a084fa210942e3edebf75b617",
+          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-0vd7sbby/rootfs.tar"
         }
       ],
       "modifications": null,
@@ -205345,8 +205350,8 @@
         {
           "date": "2026-10-30",
           "kind": "docker-export",
-          "sha256": "a72ae00649663ac9eb3582bc84e9a31a23d4245f5670455657cfd180a499a8a3",
-          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-wavf6cf9/rootfs.tar"
+          "sha256": "ccf6892f5fbb4f3c7408bef48aac99f3d234eb9a084fa210942e3edebf75b617",
+          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-0vd7sbby/rootfs.tar"
         }
       ],
       "modifications": null,
@@ -205387,8 +205392,8 @@
         {
           "date": "2026-10-30",
           "kind": "docker-export",
-          "sha256": "a72ae00649663ac9eb3582bc84e9a31a23d4245f5670455657cfd180a499a8a3",
-          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-wavf6cf9/rootfs.tar"
+          "sha256": "ccf6892f5fbb4f3c7408bef48aac99f3d234eb9a084fa210942e3edebf75b617",
+          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-0vd7sbby/rootfs.tar"
         }
       ],
       "modifications": null,
@@ -205429,8 +205434,8 @@
         {
           "date": "2026-10-30",
           "kind": "docker-export",
-          "sha256": "a72ae00649663ac9eb3582bc84e9a31a23d4245f5670455657cfd180a499a8a3",
-          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-wavf6cf9/rootfs.tar"
+          "sha256": "ccf6892f5fbb4f3c7408bef48aac99f3d234eb9a084fa210942e3edebf75b617",
+          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-0vd7sbby/rootfs.tar"
         }
       ],
       "modifications": null,
@@ -205471,8 +205476,8 @@
         {
           "date": "2026-10-30",
           "kind": "docker-export",
-          "sha256": "a72ae00649663ac9eb3582bc84e9a31a23d4245f5670455657cfd180a499a8a3",
-          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-wavf6cf9/rootfs.tar"
+          "sha256": "ccf6892f5fbb4f3c7408bef48aac99f3d234eb9a084fa210942e3edebf75b617",
+          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-0vd7sbby/rootfs.tar"
         }
       ],
       "modifications": null,
@@ -205513,8 +205518,8 @@
         {
           "date": "2026-10-30",
           "kind": "docker-export",
-          "sha256": "a72ae00649663ac9eb3582bc84e9a31a23d4245f5670455657cfd180a499a8a3",
-          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-wavf6cf9/rootfs.tar"
+          "sha256": "ccf6892f5fbb4f3c7408bef48aac99f3d234eb9a084fa210942e3edebf75b617",
+          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-0vd7sbby/rootfs.tar"
         }
       ],
       "modifications": null,
@@ -205555,8 +205560,8 @@
         {
           "date": "2026-10-30",
           "kind": "docker-export",
-          "sha256": "a72ae00649663ac9eb3582bc84e9a31a23d4245f5670455657cfd180a499a8a3",
-          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-wavf6cf9/rootfs.tar"
+          "sha256": "ccf6892f5fbb4f3c7408bef48aac99f3d234eb9a084fa210942e3edebf75b617",
+          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-0vd7sbby/rootfs.tar"
         }
       ],
       "modifications": null,
@@ -205597,8 +205602,8 @@
         {
           "date": "2026-10-30",
           "kind": "docker-export",
-          "sha256": "a72ae00649663ac9eb3582bc84e9a31a23d4245f5670455657cfd180a499a8a3",
-          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-wavf6cf9/rootfs.tar"
+          "sha256": "ccf6892f5fbb4f3c7408bef48aac99f3d234eb9a084fa210942e3edebf75b617",
+          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-0vd7sbby/rootfs.tar"
         }
       ],
       "modifications": null,
@@ -205639,8 +205644,8 @@
         {
           "date": "2026-10-30",
           "kind": "docker-export",
-          "sha256": "a72ae00649663ac9eb3582bc84e9a31a23d4245f5670455657cfd180a499a8a3",
-          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-wavf6cf9/rootfs.tar"
+          "sha256": "ccf6892f5fbb4f3c7408bef48aac99f3d234eb9a084fa210942e3edebf75b617",
+          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-0vd7sbby/rootfs.tar"
         }
       ],
       "modifications": null,
@@ -205681,8 +205686,8 @@
         {
           "date": "2026-10-30",
           "kind": "docker-export",
-          "sha256": "a72ae00649663ac9eb3582bc84e9a31a23d4245f5670455657cfd180a499a8a3",
-          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-wavf6cf9/rootfs.tar"
+          "sha256": "ccf6892f5fbb4f3c7408bef48aac99f3d234eb9a084fa210942e3edebf75b617",
+          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-0vd7sbby/rootfs.tar"
         }
       ],
       "modifications": null,
@@ -205723,8 +205728,8 @@
         {
           "date": "2026-10-30",
           "kind": "docker-export",
-          "sha256": "a72ae00649663ac9eb3582bc84e9a31a23d4245f5670455657cfd180a499a8a3",
-          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-wavf6cf9/rootfs.tar"
+          "sha256": "ccf6892f5fbb4f3c7408bef48aac99f3d234eb9a084fa210942e3edebf75b617",
+          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-0vd7sbby/rootfs.tar"
         }
       ],
       "modifications": null,
@@ -205765,8 +205770,8 @@
         {
           "date": "2026-10-30",
           "kind": "docker-export",
-          "sha256": "a72ae00649663ac9eb3582bc84e9a31a23d4245f5670455657cfd180a499a8a3",
-          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-wavf6cf9/rootfs.tar"
+          "sha256": "ccf6892f5fbb4f3c7408bef48aac99f3d234eb9a084fa210942e3edebf75b617",
+          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-0vd7sbby/rootfs.tar"
         }
       ],
       "modifications": null,
@@ -205807,8 +205812,8 @@
         {
           "date": "2026-10-30",
           "kind": "docker-export",
-          "sha256": "a72ae00649663ac9eb3582bc84e9a31a23d4245f5670455657cfd180a499a8a3",
-          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-wavf6cf9/rootfs.tar"
+          "sha256": "ccf6892f5fbb4f3c7408bef48aac99f3d234eb9a084fa210942e3edebf75b617",
+          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-0vd7sbby/rootfs.tar"
         }
       ],
       "modifications": null,
@@ -205849,8 +205854,8 @@
         {
           "date": "2026-10-30",
           "kind": "docker-export",
-          "sha256": "a72ae00649663ac9eb3582bc84e9a31a23d4245f5670455657cfd180a499a8a3",
-          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-wavf6cf9/rootfs.tar"
+          "sha256": "ccf6892f5fbb4f3c7408bef48aac99f3d234eb9a084fa210942e3edebf75b617",
+          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-0vd7sbby/rootfs.tar"
         }
       ],
       "modifications": null,
@@ -205891,8 +205896,8 @@
         {
           "date": "2026-10-30",
           "kind": "docker-export",
-          "sha256": "a72ae00649663ac9eb3582bc84e9a31a23d4245f5670455657cfd180a499a8a3",
-          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-wavf6cf9/rootfs.tar"
+          "sha256": "ccf6892f5fbb4f3c7408bef48aac99f3d234eb9a084fa210942e3edebf75b617",
+          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-0vd7sbby/rootfs.tar"
         }
       ],
       "modifications": null,
@@ -205933,8 +205938,8 @@
         {
           "date": "2026-10-30",
           "kind": "docker-export",
-          "sha256": "a72ae00649663ac9eb3582bc84e9a31a23d4245f5670455657cfd180a499a8a3",
-          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-wavf6cf9/rootfs.tar"
+          "sha256": "ccf6892f5fbb4f3c7408bef48aac99f3d234eb9a084fa210942e3edebf75b617",
+          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-0vd7sbby/rootfs.tar"
         }
       ],
       "modifications": null,
@@ -205975,8 +205980,8 @@
         {
           "date": "2026-10-30",
           "kind": "docker-export",
-          "sha256": "a72ae00649663ac9eb3582bc84e9a31a23d4245f5670455657cfd180a499a8a3",
-          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-wavf6cf9/rootfs.tar"
+          "sha256": "ccf6892f5fbb4f3c7408bef48aac99f3d234eb9a084fa210942e3edebf75b617",
+          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-0vd7sbby/rootfs.tar"
         }
       ],
       "modifications": null,
@@ -206017,8 +206022,8 @@
         {
           "date": "2026-10-30",
           "kind": "docker-export",
-          "sha256": "a72ae00649663ac9eb3582bc84e9a31a23d4245f5670455657cfd180a499a8a3",
-          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-wavf6cf9/rootfs.tar"
+          "sha256": "ccf6892f5fbb4f3c7408bef48aac99f3d234eb9a084fa210942e3edebf75b617",
+          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-0vd7sbby/rootfs.tar"
         }
       ],
       "modifications": null,
@@ -206059,8 +206064,8 @@
         {
           "date": "2026-10-30",
           "kind": "docker-export",
-          "sha256": "a72ae00649663ac9eb3582bc84e9a31a23d4245f5670455657cfd180a499a8a3",
-          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-wavf6cf9/rootfs.tar"
+          "sha256": "ccf6892f5fbb4f3c7408bef48aac99f3d234eb9a084fa210942e3edebf75b617",
+          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-0vd7sbby/rootfs.tar"
         }
       ],
       "modifications": null,
@@ -206101,8 +206106,8 @@
         {
           "date": "2026-10-30",
           "kind": "docker-export",
-          "sha256": "a72ae00649663ac9eb3582bc84e9a31a23d4245f5670455657cfd180a499a8a3",
-          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-wavf6cf9/rootfs.tar"
+          "sha256": "ccf6892f5fbb4f3c7408bef48aac99f3d234eb9a084fa210942e3edebf75b617",
+          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-0vd7sbby/rootfs.tar"
         }
       ],
       "modifications": null,
@@ -206143,8 +206148,8 @@
         {
           "date": "2026-10-30",
           "kind": "docker-export",
-          "sha256": "a72ae00649663ac9eb3582bc84e9a31a23d4245f5670455657cfd180a499a8a3",
-          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-wavf6cf9/rootfs.tar"
+          "sha256": "ccf6892f5fbb4f3c7408bef48aac99f3d234eb9a084fa210942e3edebf75b617",
+          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-0vd7sbby/rootfs.tar"
         }
       ],
       "modifications": null,
@@ -206185,8 +206190,8 @@
         {
           "date": "2026-10-30",
           "kind": "docker-export",
-          "sha256": "a72ae00649663ac9eb3582bc84e9a31a23d4245f5670455657cfd180a499a8a3",
-          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-wavf6cf9/rootfs.tar"
+          "sha256": "ccf6892f5fbb4f3c7408bef48aac99f3d234eb9a084fa210942e3edebf75b617",
+          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-0vd7sbby/rootfs.tar"
         }
       ],
       "modifications": null,
@@ -206227,8 +206232,8 @@
         {
           "date": "2026-10-30",
           "kind": "docker-export",
-          "sha256": "a72ae00649663ac9eb3582bc84e9a31a23d4245f5670455657cfd180a499a8a3",
-          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-wavf6cf9/rootfs.tar"
+          "sha256": "ccf6892f5fbb4f3c7408bef48aac99f3d234eb9a084fa210942e3edebf75b617",
+          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-0vd7sbby/rootfs.tar"
         }
       ],
       "modifications": null,
@@ -206269,8 +206274,8 @@
         {
           "date": "2026-10-30",
           "kind": "docker-export",
-          "sha256": "a72ae00649663ac9eb3582bc84e9a31a23d4245f5670455657cfd180a499a8a3",
-          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-wavf6cf9/rootfs.tar"
+          "sha256": "ccf6892f5fbb4f3c7408bef48aac99f3d234eb9a084fa210942e3edebf75b617",
+          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-0vd7sbby/rootfs.tar"
         }
       ],
       "modifications": null,
@@ -206311,8 +206316,8 @@
         {
           "date": "2026-10-30",
           "kind": "docker-export",
-          "sha256": "a72ae00649663ac9eb3582bc84e9a31a23d4245f5670455657cfd180a499a8a3",
-          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-wavf6cf9/rootfs.tar"
+          "sha256": "ccf6892f5fbb4f3c7408bef48aac99f3d234eb9a084fa210942e3edebf75b617",
+          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-0vd7sbby/rootfs.tar"
         }
       ],
       "modifications": null,
@@ -206353,8 +206358,8 @@
         {
           "date": "2026-10-30",
           "kind": "docker-export",
-          "sha256": "a72ae00649663ac9eb3582bc84e9a31a23d4245f5670455657cfd180a499a8a3",
-          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-wavf6cf9/rootfs.tar"
+          "sha256": "ccf6892f5fbb4f3c7408bef48aac99f3d234eb9a084fa210942e3edebf75b617",
+          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-0vd7sbby/rootfs.tar"
         }
       ],
       "modifications": null,
@@ -206395,8 +206400,8 @@
         {
           "date": "2026-10-30",
           "kind": "docker-export",
-          "sha256": "a72ae00649663ac9eb3582bc84e9a31a23d4245f5670455657cfd180a499a8a3",
-          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-wavf6cf9/rootfs.tar"
+          "sha256": "ccf6892f5fbb4f3c7408bef48aac99f3d234eb9a084fa210942e3edebf75b617",
+          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-0vd7sbby/rootfs.tar"
         }
       ],
       "modifications": null,
@@ -206437,8 +206442,8 @@
         {
           "date": "2026-10-30",
           "kind": "docker-export",
-          "sha256": "a72ae00649663ac9eb3582bc84e9a31a23d4245f5670455657cfd180a499a8a3",
-          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-wavf6cf9/rootfs.tar"
+          "sha256": "ccf6892f5fbb4f3c7408bef48aac99f3d234eb9a084fa210942e3edebf75b617",
+          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-0vd7sbby/rootfs.tar"
         }
       ],
       "modifications": null,
@@ -206479,8 +206484,8 @@
         {
           "date": "2026-10-30",
           "kind": "docker-export",
-          "sha256": "a72ae00649663ac9eb3582bc84e9a31a23d4245f5670455657cfd180a499a8a3",
-          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-wavf6cf9/rootfs.tar"
+          "sha256": "ccf6892f5fbb4f3c7408bef48aac99f3d234eb9a084fa210942e3edebf75b617",
+          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-0vd7sbby/rootfs.tar"
         }
       ],
       "modifications": null,
@@ -206521,8 +206526,8 @@
         {
           "date": "2026-10-30",
           "kind": "docker-export",
-          "sha256": "a72ae00649663ac9eb3582bc84e9a31a23d4245f5670455657cfd180a499a8a3",
-          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-wavf6cf9/rootfs.tar"
+          "sha256": "ccf6892f5fbb4f3c7408bef48aac99f3d234eb9a084fa210942e3edebf75b617",
+          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-0vd7sbby/rootfs.tar"
         }
       ],
       "modifications": null,
@@ -206563,8 +206568,8 @@
         {
           "date": "2026-10-30",
           "kind": "docker-export",
-          "sha256": "a72ae00649663ac9eb3582bc84e9a31a23d4245f5670455657cfd180a499a8a3",
-          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-wavf6cf9/rootfs.tar"
+          "sha256": "ccf6892f5fbb4f3c7408bef48aac99f3d234eb9a084fa210942e3edebf75b617",
+          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-0vd7sbby/rootfs.tar"
         }
       ],
       "modifications": null,
@@ -206605,8 +206610,8 @@
         {
           "date": "2026-10-30",
           "kind": "docker-export",
-          "sha256": "a72ae00649663ac9eb3582bc84e9a31a23d4245f5670455657cfd180a499a8a3",
-          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-wavf6cf9/rootfs.tar"
+          "sha256": "ccf6892f5fbb4f3c7408bef48aac99f3d234eb9a084fa210942e3edebf75b617",
+          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-0vd7sbby/rootfs.tar"
         }
       ],
       "modifications": null,
@@ -206647,8 +206652,8 @@
         {
           "date": "2026-10-30",
           "kind": "docker-export",
-          "sha256": "a72ae00649663ac9eb3582bc84e9a31a23d4245f5670455657cfd180a499a8a3",
-          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-wavf6cf9/rootfs.tar"
+          "sha256": "ccf6892f5fbb4f3c7408bef48aac99f3d234eb9a084fa210942e3edebf75b617",
+          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-0vd7sbby/rootfs.tar"
         }
       ],
       "modifications": null,
@@ -206689,8 +206694,8 @@
         {
           "date": "2026-10-30",
           "kind": "docker-export",
-          "sha256": "a72ae00649663ac9eb3582bc84e9a31a23d4245f5670455657cfd180a499a8a3",
-          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-wavf6cf9/rootfs.tar"
+          "sha256": "ccf6892f5fbb4f3c7408bef48aac99f3d234eb9a084fa210942e3edebf75b617",
+          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-0vd7sbby/rootfs.tar"
         }
       ],
       "modifications": null,
@@ -206731,8 +206736,8 @@
         {
           "date": "2026-10-30",
           "kind": "docker-export",
-          "sha256": "a72ae00649663ac9eb3582bc84e9a31a23d4245f5670455657cfd180a499a8a3",
-          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-wavf6cf9/rootfs.tar"
+          "sha256": "ccf6892f5fbb4f3c7408bef48aac99f3d234eb9a084fa210942e3edebf75b617",
+          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-0vd7sbby/rootfs.tar"
         }
       ],
       "modifications": null,
@@ -206773,8 +206778,8 @@
         {
           "date": "2026-10-30",
           "kind": "docker-export",
-          "sha256": "a72ae00649663ac9eb3582bc84e9a31a23d4245f5670455657cfd180a499a8a3",
-          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-wavf6cf9/rootfs.tar"
+          "sha256": "ccf6892f5fbb4f3c7408bef48aac99f3d234eb9a084fa210942e3edebf75b617",
+          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-0vd7sbby/rootfs.tar"
         }
       ],
       "modifications": null,
@@ -206815,8 +206820,8 @@
         {
           "date": "2026-10-30",
           "kind": "docker-export",
-          "sha256": "a72ae00649663ac9eb3582bc84e9a31a23d4245f5670455657cfd180a499a8a3",
-          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-wavf6cf9/rootfs.tar"
+          "sha256": "ccf6892f5fbb4f3c7408bef48aac99f3d234eb9a084fa210942e3edebf75b617",
+          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-0vd7sbby/rootfs.tar"
         }
       ],
       "modifications": null,
@@ -206857,8 +206862,8 @@
         {
           "date": "2026-10-30",
           "kind": "docker-export",
-          "sha256": "a72ae00649663ac9eb3582bc84e9a31a23d4245f5670455657cfd180a499a8a3",
-          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-wavf6cf9/rootfs.tar"
+          "sha256": "ccf6892f5fbb4f3c7408bef48aac99f3d234eb9a084fa210942e3edebf75b617",
+          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-0vd7sbby/rootfs.tar"
         }
       ],
       "modifications": null,
@@ -206899,8 +206904,8 @@
         {
           "date": "2026-10-30",
           "kind": "docker-export",
-          "sha256": "a72ae00649663ac9eb3582bc84e9a31a23d4245f5670455657cfd180a499a8a3",
-          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-wavf6cf9/rootfs.tar"
+          "sha256": "ccf6892f5fbb4f3c7408bef48aac99f3d234eb9a084fa210942e3edebf75b617",
+          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-0vd7sbby/rootfs.tar"
         }
       ],
       "modifications": null,
@@ -206941,8 +206946,8 @@
         {
           "date": "2026-10-30",
           "kind": "docker-export",
-          "sha256": "a72ae00649663ac9eb3582bc84e9a31a23d4245f5670455657cfd180a499a8a3",
-          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-wavf6cf9/rootfs.tar"
+          "sha256": "ccf6892f5fbb4f3c7408bef48aac99f3d234eb9a084fa210942e3edebf75b617",
+          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-0vd7sbby/rootfs.tar"
         }
       ],
       "modifications": null,
@@ -206983,8 +206988,8 @@
         {
           "date": "2026-10-30",
           "kind": "docker-export",
-          "sha256": "a72ae00649663ac9eb3582bc84e9a31a23d4245f5670455657cfd180a499a8a3",
-          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-wavf6cf9/rootfs.tar"
+          "sha256": "ccf6892f5fbb4f3c7408bef48aac99f3d234eb9a084fa210942e3edebf75b617",
+          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-0vd7sbby/rootfs.tar"
         }
       ],
       "modifications": null,
@@ -207025,8 +207030,8 @@
         {
           "date": "2026-10-30",
           "kind": "docker-export",
-          "sha256": "a72ae00649663ac9eb3582bc84e9a31a23d4245f5670455657cfd180a499a8a3",
-          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-wavf6cf9/rootfs.tar"
+          "sha256": "ccf6892f5fbb4f3c7408bef48aac99f3d234eb9a084fa210942e3edebf75b617",
+          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-0vd7sbby/rootfs.tar"
         }
       ],
       "modifications": null,
@@ -207067,8 +207072,8 @@
         {
           "date": "2026-10-30",
           "kind": "docker-export",
-          "sha256": "a72ae00649663ac9eb3582bc84e9a31a23d4245f5670455657cfd180a499a8a3",
-          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-wavf6cf9/rootfs.tar"
+          "sha256": "ccf6892f5fbb4f3c7408bef48aac99f3d234eb9a084fa210942e3edebf75b617",
+          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-0vd7sbby/rootfs.tar"
         }
       ],
       "modifications": null,
@@ -207109,8 +207114,8 @@
         {
           "date": "2026-10-30",
           "kind": "docker-export",
-          "sha256": "a72ae00649663ac9eb3582bc84e9a31a23d4245f5670455657cfd180a499a8a3",
-          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-wavf6cf9/rootfs.tar"
+          "sha256": "ccf6892f5fbb4f3c7408bef48aac99f3d234eb9a084fa210942e3edebf75b617",
+          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-0vd7sbby/rootfs.tar"
         }
       ],
       "modifications": null,
@@ -207151,8 +207156,8 @@
         {
           "date": "2026-10-30",
           "kind": "docker-export",
-          "sha256": "a72ae00649663ac9eb3582bc84e9a31a23d4245f5670455657cfd180a499a8a3",
-          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-wavf6cf9/rootfs.tar"
+          "sha256": "ccf6892f5fbb4f3c7408bef48aac99f3d234eb9a084fa210942e3edebf75b617",
+          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-0vd7sbby/rootfs.tar"
         }
       ],
       "modifications": null,
@@ -207193,8 +207198,8 @@
         {
           "date": "2026-10-30",
           "kind": "docker-export",
-          "sha256": "a72ae00649663ac9eb3582bc84e9a31a23d4245f5670455657cfd180a499a8a3",
-          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-wavf6cf9/rootfs.tar"
+          "sha256": "ccf6892f5fbb4f3c7408bef48aac99f3d234eb9a084fa210942e3edebf75b617",
+          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-0vd7sbby/rootfs.tar"
         }
       ],
       "modifications": null,
@@ -207235,8 +207240,8 @@
         {
           "date": "2026-10-30",
           "kind": "docker-export",
-          "sha256": "a72ae00649663ac9eb3582bc84e9a31a23d4245f5670455657cfd180a499a8a3",
-          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-wavf6cf9/rootfs.tar"
+          "sha256": "ccf6892f5fbb4f3c7408bef48aac99f3d234eb9a084fa210942e3edebf75b617",
+          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-0vd7sbby/rootfs.tar"
         }
       ],
       "modifications": null,
@@ -207277,8 +207282,8 @@
         {
           "date": "2026-10-30",
           "kind": "docker-export",
-          "sha256": "a72ae00649663ac9eb3582bc84e9a31a23d4245f5670455657cfd180a499a8a3",
-          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-wavf6cf9/rootfs.tar"
+          "sha256": "ccf6892f5fbb4f3c7408bef48aac99f3d234eb9a084fa210942e3edebf75b617",
+          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-0vd7sbby/rootfs.tar"
         }
       ],
       "modifications": null,
@@ -207319,8 +207324,8 @@
         {
           "date": "2026-10-30",
           "kind": "docker-export",
-          "sha256": "a72ae00649663ac9eb3582bc84e9a31a23d4245f5670455657cfd180a499a8a3",
-          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-wavf6cf9/rootfs.tar"
+          "sha256": "ccf6892f5fbb4f3c7408bef48aac99f3d234eb9a084fa210942e3edebf75b617",
+          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-0vd7sbby/rootfs.tar"
         }
       ],
       "modifications": null,
@@ -207361,8 +207366,8 @@
         {
           "date": "2026-10-30",
           "kind": "docker-export",
-          "sha256": "a72ae00649663ac9eb3582bc84e9a31a23d4245f5670455657cfd180a499a8a3",
-          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-wavf6cf9/rootfs.tar"
+          "sha256": "ccf6892f5fbb4f3c7408bef48aac99f3d234eb9a084fa210942e3edebf75b617",
+          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-0vd7sbby/rootfs.tar"
         }
       ],
       "modifications": null,
@@ -207403,8 +207408,8 @@
         {
           "date": "2026-10-30",
           "kind": "docker-export",
-          "sha256": "a72ae00649663ac9eb3582bc84e9a31a23d4245f5670455657cfd180a499a8a3",
-          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-wavf6cf9/rootfs.tar"
+          "sha256": "ccf6892f5fbb4f3c7408bef48aac99f3d234eb9a084fa210942e3edebf75b617",
+          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-0vd7sbby/rootfs.tar"
         }
       ],
       "modifications": null,
@@ -207445,8 +207450,8 @@
         {
           "date": "2026-10-30",
           "kind": "docker-export",
-          "sha256": "a72ae00649663ac9eb3582bc84e9a31a23d4245f5670455657cfd180a499a8a3",
-          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-wavf6cf9/rootfs.tar"
+          "sha256": "ccf6892f5fbb4f3c7408bef48aac99f3d234eb9a084fa210942e3edebf75b617",
+          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-0vd7sbby/rootfs.tar"
         }
       ],
       "modifications": null,
@@ -207487,8 +207492,8 @@
         {
           "date": "2026-10-30",
           "kind": "docker-export",
-          "sha256": "a72ae00649663ac9eb3582bc84e9a31a23d4245f5670455657cfd180a499a8a3",
-          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-wavf6cf9/rootfs.tar"
+          "sha256": "ccf6892f5fbb4f3c7408bef48aac99f3d234eb9a084fa210942e3edebf75b617",
+          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-0vd7sbby/rootfs.tar"
         }
       ],
       "modifications": null,
@@ -207529,8 +207534,8 @@
         {
           "date": "2026-10-30",
           "kind": "docker-export",
-          "sha256": "a72ae00649663ac9eb3582bc84e9a31a23d4245f5670455657cfd180a499a8a3",
-          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-wavf6cf9/rootfs.tar"
+          "sha256": "ccf6892f5fbb4f3c7408bef48aac99f3d234eb9a084fa210942e3edebf75b617",
+          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-0vd7sbby/rootfs.tar"
         }
       ],
       "modifications": null,
@@ -207571,8 +207576,8 @@
         {
           "date": "2026-10-30",
           "kind": "docker-export",
-          "sha256": "a72ae00649663ac9eb3582bc84e9a31a23d4245f5670455657cfd180a499a8a3",
-          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-wavf6cf9/rootfs.tar"
+          "sha256": "ccf6892f5fbb4f3c7408bef48aac99f3d234eb9a084fa210942e3edebf75b617",
+          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-0vd7sbby/rootfs.tar"
         }
       ],
       "modifications": null,
@@ -207613,8 +207618,8 @@
         {
           "date": "2026-10-30",
           "kind": "docker-export",
-          "sha256": "a72ae00649663ac9eb3582bc84e9a31a23d4245f5670455657cfd180a499a8a3",
-          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-wavf6cf9/rootfs.tar"
+          "sha256": "ccf6892f5fbb4f3c7408bef48aac99f3d234eb9a084fa210942e3edebf75b617",
+          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-0vd7sbby/rootfs.tar"
         }
       ],
       "modifications": null,
@@ -207655,8 +207660,8 @@
         {
           "date": "2026-10-30",
           "kind": "docker-export",
-          "sha256": "a72ae00649663ac9eb3582bc84e9a31a23d4245f5670455657cfd180a499a8a3",
-          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-wavf6cf9/rootfs.tar"
+          "sha256": "ccf6892f5fbb4f3c7408bef48aac99f3d234eb9a084fa210942e3edebf75b617",
+          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-0vd7sbby/rootfs.tar"
         }
       ],
       "modifications": null,
@@ -207697,8 +207702,8 @@
         {
           "date": "2026-10-30",
           "kind": "docker-export",
-          "sha256": "a72ae00649663ac9eb3582bc84e9a31a23d4245f5670455657cfd180a499a8a3",
-          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-wavf6cf9/rootfs.tar"
+          "sha256": "ccf6892f5fbb4f3c7408bef48aac99f3d234eb9a084fa210942e3edebf75b617",
+          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-0vd7sbby/rootfs.tar"
         }
       ],
       "modifications": null,
@@ -207739,8 +207744,8 @@
         {
           "date": "2026-10-30",
           "kind": "docker-export",
-          "sha256": "a72ae00649663ac9eb3582bc84e9a31a23d4245f5670455657cfd180a499a8a3",
-          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-wavf6cf9/rootfs.tar"
+          "sha256": "ccf6892f5fbb4f3c7408bef48aac99f3d234eb9a084fa210942e3edebf75b617",
+          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-0vd7sbby/rootfs.tar"
         }
       ],
       "modifications": null,
@@ -207781,8 +207786,8 @@
         {
           "date": "2026-10-30",
           "kind": "docker-export",
-          "sha256": "a72ae00649663ac9eb3582bc84e9a31a23d4245f5670455657cfd180a499a8a3",
-          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-wavf6cf9/rootfs.tar"
+          "sha256": "ccf6892f5fbb4f3c7408bef48aac99f3d234eb9a084fa210942e3edebf75b617",
+          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-0vd7sbby/rootfs.tar"
         }
       ],
       "modifications": null,
@@ -207823,8 +207828,8 @@
         {
           "date": "2026-10-30",
           "kind": "docker-export",
-          "sha256": "a72ae00649663ac9eb3582bc84e9a31a23d4245f5670455657cfd180a499a8a3",
-          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-wavf6cf9/rootfs.tar"
+          "sha256": "ccf6892f5fbb4f3c7408bef48aac99f3d234eb9a084fa210942e3edebf75b617",
+          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-0vd7sbby/rootfs.tar"
         }
       ],
       "modifications": null,
@@ -207865,8 +207870,8 @@
         {
           "date": "2026-10-30",
           "kind": "docker-export",
-          "sha256": "a72ae00649663ac9eb3582bc84e9a31a23d4245f5670455657cfd180a499a8a3",
-          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-wavf6cf9/rootfs.tar"
+          "sha256": "ccf6892f5fbb4f3c7408bef48aac99f3d234eb9a084fa210942e3edebf75b617",
+          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-0vd7sbby/rootfs.tar"
         }
       ],
       "modifications": null,
@@ -207907,8 +207912,8 @@
         {
           "date": "2026-10-30",
           "kind": "docker-export",
-          "sha256": "a72ae00649663ac9eb3582bc84e9a31a23d4245f5670455657cfd180a499a8a3",
-          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-wavf6cf9/rootfs.tar"
+          "sha256": "ccf6892f5fbb4f3c7408bef48aac99f3d234eb9a084fa210942e3edebf75b617",
+          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-0vd7sbby/rootfs.tar"
         }
       ],
       "modifications": null,
@@ -207949,8 +207954,8 @@
         {
           "date": "2026-10-30",
           "kind": "docker-export",
-          "sha256": "a72ae00649663ac9eb3582bc84e9a31a23d4245f5670455657cfd180a499a8a3",
-          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-wavf6cf9/rootfs.tar"
+          "sha256": "ccf6892f5fbb4f3c7408bef48aac99f3d234eb9a084fa210942e3edebf75b617",
+          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-0vd7sbby/rootfs.tar"
         }
       ],
       "modifications": null,
@@ -207991,8 +207996,8 @@
         {
           "date": "2026-10-30",
           "kind": "docker-export",
-          "sha256": "a72ae00649663ac9eb3582bc84e9a31a23d4245f5670455657cfd180a499a8a3",
-          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-wavf6cf9/rootfs.tar"
+          "sha256": "ccf6892f5fbb4f3c7408bef48aac99f3d234eb9a084fa210942e3edebf75b617",
+          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-0vd7sbby/rootfs.tar"
         }
       ],
       "modifications": null,
@@ -208033,8 +208038,8 @@
         {
           "date": "2026-10-30",
           "kind": "docker-export",
-          "sha256": "a72ae00649663ac9eb3582bc84e9a31a23d4245f5670455657cfd180a499a8a3",
-          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-wavf6cf9/rootfs.tar"
+          "sha256": "ccf6892f5fbb4f3c7408bef48aac99f3d234eb9a084fa210942e3edebf75b617",
+          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-0vd7sbby/rootfs.tar"
         }
       ],
       "modifications": null,
@@ -208075,8 +208080,8 @@
         {
           "date": "2026-10-30",
           "kind": "docker-export",
-          "sha256": "a72ae00649663ac9eb3582bc84e9a31a23d4245f5670455657cfd180a499a8a3",
-          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-wavf6cf9/rootfs.tar"
+          "sha256": "ccf6892f5fbb4f3c7408bef48aac99f3d234eb9a084fa210942e3edebf75b617",
+          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-0vd7sbby/rootfs.tar"
         }
       ],
       "modifications": null,
@@ -208117,8 +208122,8 @@
         {
           "date": "2026-10-30",
           "kind": "docker-export",
-          "sha256": "a72ae00649663ac9eb3582bc84e9a31a23d4245f5670455657cfd180a499a8a3",
-          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-wavf6cf9/rootfs.tar"
+          "sha256": "ccf6892f5fbb4f3c7408bef48aac99f3d234eb9a084fa210942e3edebf75b617",
+          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-0vd7sbby/rootfs.tar"
         }
       ],
       "modifications": null,
@@ -208159,8 +208164,8 @@
         {
           "date": "2026-10-30",
           "kind": "docker-export",
-          "sha256": "a72ae00649663ac9eb3582bc84e9a31a23d4245f5670455657cfd180a499a8a3",
-          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-wavf6cf9/rootfs.tar"
+          "sha256": "ccf6892f5fbb4f3c7408bef48aac99f3d234eb9a084fa210942e3edebf75b617",
+          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-0vd7sbby/rootfs.tar"
         }
       ],
       "modifications": null,
@@ -208201,8 +208206,8 @@
         {
           "date": "2026-10-30",
           "kind": "docker-export",
-          "sha256": "a72ae00649663ac9eb3582bc84e9a31a23d4245f5670455657cfd180a499a8a3",
-          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-wavf6cf9/rootfs.tar"
+          "sha256": "ccf6892f5fbb4f3c7408bef48aac99f3d234eb9a084fa210942e3edebf75b617",
+          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-0vd7sbby/rootfs.tar"
         }
       ],
       "modifications": null,
@@ -208243,8 +208248,8 @@
         {
           "date": "2026-10-30",
           "kind": "docker-export",
-          "sha256": "a72ae00649663ac9eb3582bc84e9a31a23d4245f5670455657cfd180a499a8a3",
-          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-wavf6cf9/rootfs.tar"
+          "sha256": "ccf6892f5fbb4f3c7408bef48aac99f3d234eb9a084fa210942e3edebf75b617",
+          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-0vd7sbby/rootfs.tar"
         }
       ],
       "modifications": null,
@@ -208285,8 +208290,8 @@
         {
           "date": "2026-10-30",
           "kind": "docker-export",
-          "sha256": "a72ae00649663ac9eb3582bc84e9a31a23d4245f5670455657cfd180a499a8a3",
-          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-wavf6cf9/rootfs.tar"
+          "sha256": "ccf6892f5fbb4f3c7408bef48aac99f3d234eb9a084fa210942e3edebf75b617",
+          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-0vd7sbby/rootfs.tar"
         }
       ],
       "modifications": null,
@@ -208327,8 +208332,8 @@
         {
           "date": "2026-10-30",
           "kind": "docker-export",
-          "sha256": "a72ae00649663ac9eb3582bc84e9a31a23d4245f5670455657cfd180a499a8a3",
-          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-wavf6cf9/rootfs.tar"
+          "sha256": "ccf6892f5fbb4f3c7408bef48aac99f3d234eb9a084fa210942e3edebf75b617",
+          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-0vd7sbby/rootfs.tar"
         }
       ],
       "modifications": null,
@@ -208369,8 +208374,8 @@
         {
           "date": "2026-10-30",
           "kind": "docker-export",
-          "sha256": "a72ae00649663ac9eb3582bc84e9a31a23d4245f5670455657cfd180a499a8a3",
-          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-wavf6cf9/rootfs.tar"
+          "sha256": "ccf6892f5fbb4f3c7408bef48aac99f3d234eb9a084fa210942e3edebf75b617",
+          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-0vd7sbby/rootfs.tar"
         }
       ],
       "modifications": null,
@@ -208411,8 +208416,8 @@
         {
           "date": "2026-10-30",
           "kind": "docker-export",
-          "sha256": "a72ae00649663ac9eb3582bc84e9a31a23d4245f5670455657cfd180a499a8a3",
-          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-wavf6cf9/rootfs.tar"
+          "sha256": "ccf6892f5fbb4f3c7408bef48aac99f3d234eb9a084fa210942e3edebf75b617",
+          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-0vd7sbby/rootfs.tar"
         }
       ],
       "modifications": null,
@@ -208453,8 +208458,8 @@
         {
           "date": "2026-10-30",
           "kind": "docker-export",
-          "sha256": "a72ae00649663ac9eb3582bc84e9a31a23d4245f5670455657cfd180a499a8a3",
-          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-wavf6cf9/rootfs.tar"
+          "sha256": "ccf6892f5fbb4f3c7408bef48aac99f3d234eb9a084fa210942e3edebf75b617",
+          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-0vd7sbby/rootfs.tar"
         }
       ],
       "modifications": null,
@@ -208495,8 +208500,8 @@
         {
           "date": "2026-10-30",
           "kind": "docker-export",
-          "sha256": "a72ae00649663ac9eb3582bc84e9a31a23d4245f5670455657cfd180a499a8a3",
-          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-wavf6cf9/rootfs.tar"
+          "sha256": "ccf6892f5fbb4f3c7408bef48aac99f3d234eb9a084fa210942e3edebf75b617",
+          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-0vd7sbby/rootfs.tar"
         }
       ],
       "modifications": null,
@@ -208537,8 +208542,8 @@
         {
           "date": "2026-10-30",
           "kind": "docker-export",
-          "sha256": "a72ae00649663ac9eb3582bc84e9a31a23d4245f5670455657cfd180a499a8a3",
-          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-wavf6cf9/rootfs.tar"
+          "sha256": "ccf6892f5fbb4f3c7408bef48aac99f3d234eb9a084fa210942e3edebf75b617",
+          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-0vd7sbby/rootfs.tar"
         }
       ],
       "modifications": null,
@@ -208579,8 +208584,8 @@
         {
           "date": "2026-10-30",
           "kind": "docker-export",
-          "sha256": "a72ae00649663ac9eb3582bc84e9a31a23d4245f5670455657cfd180a499a8a3",
-          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-wavf6cf9/rootfs.tar"
+          "sha256": "ccf6892f5fbb4f3c7408bef48aac99f3d234eb9a084fa210942e3edebf75b617",
+          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-0vd7sbby/rootfs.tar"
         }
       ],
       "modifications": null,
@@ -208621,8 +208626,8 @@
         {
           "date": "2026-10-30",
           "kind": "docker-export",
-          "sha256": "a72ae00649663ac9eb3582bc84e9a31a23d4245f5670455657cfd180a499a8a3",
-          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-wavf6cf9/rootfs.tar"
+          "sha256": "ccf6892f5fbb4f3c7408bef48aac99f3d234eb9a084fa210942e3edebf75b617",
+          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-0vd7sbby/rootfs.tar"
         }
       ],
       "modifications": null,
@@ -208663,8 +208668,8 @@
         {
           "date": "2026-10-30",
           "kind": "docker-export",
-          "sha256": "a72ae00649663ac9eb3582bc84e9a31a23d4245f5670455657cfd180a499a8a3",
-          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-wavf6cf9/rootfs.tar"
+          "sha256": "ccf6892f5fbb4f3c7408bef48aac99f3d234eb9a084fa210942e3edebf75b617",
+          "url": "file:///var/folders/yr/1rcvpjws5mjfcq327shzrrz00000gn/T/bonafides-inventory-0vd7sbby/rootfs.tar"
         }
       ],
       "modifications": null,
