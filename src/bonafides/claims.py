@@ -13,7 +13,7 @@ from collections.abc import Callable, Mapping
 from datetime import date
 from typing import Literal, get_args
 
-from pydantic import Field, ValidationInfo, field_validator
+from pydantic import Field, ValidationInfo, field_validator, model_validator
 
 from bonafides.auth import StrictModel
 
@@ -129,6 +129,19 @@ class StructuredClaim(StrictModel):
     def single_line(cls, value: str | None) -> str | None:
         return None if value is None else _phrase(value)
 
+    @model_validator(mode="after")
+    def metric_direction_matches_verb(self) -> StructuredClaim:
+        # "Reduced latency, increasing it by 30%" contradicts itself; a distinct measure does not.
+        expected = _VERB_DIRECTION.get(self.verb)
+        metric = self.metric
+        if (
+            metric is not None
+            and {expected, metric.change} == {"increase", "decrease"}
+            and (metric.measure is None or metric.measure.casefold() == self.subject.casefold())
+        ):
+            raise ValueError("metric_direction_contradicts_verb")
+        return self
+
 
 _EN_VERBS: dict[OwnershipVerb, str] = {
     "led": "Led",
@@ -240,19 +253,77 @@ def needs_attention(kind: str, payload: Mapping[str, object]) -> bool:
     return kind in STRUCTURED_KINDS and payload.get("claim") is None
 
 
+_EN_MAGNITUDE_PATTERNS: dict[Magnitude, str] = {
+    "thousand": r"\s?(?:[kK]|thousand)\b",
+    "million": r"\s?(?:[mM]|mn|million)\b",
+    "billion": r"\s?(?:[bB]|bn|billion)\b",
+}
+_EN_UNIT_PREFIXES: dict[str, str] = {
+    "usd": r"(?:US\$|\$|USD\s?)",
+    "eur": r"(?:€|EUR\s?)",
+    "gbp": r"(?:£|GBP\s?)",
+}
+_EN_UNIT_SUFFIXES: dict[MetricUnit, str] = {
+    "percent": r"\s?(?:%|percent\b|per cent\b)",
+    "times": r"\s?(?:[x×](?![A-Za-z0-9])|times\b|-?fold\b)",
+    "points": r"\s?(?:points?|pts|pp)\b",
+    "milliseconds": r"\s?(?:ms|milliseconds?)\b",
+    "seconds": r"\s?(?:s|secs?|seconds?)\b",
+    "minutes": r"\s?(?:mins?|minutes?)\b",
+    "hours": r"\s?(?:hrs?|hours?)\b",
+    "days": r"\s?days?\b",
+    "weeks": r"\s?weeks?\b",
+    "months": r"\s?months?\b",
+}
+_EN_RATE_PATTERNS: dict[MetricRate, str] = {
+    "day": r"\b(?:(?:per|a|an|each|every)\s+day|daily)\b",
+    "week": r"\b(?:(?:per|a|an|each|every)\s+week|weekly)\b",
+    "month": r"\b(?:(?:per|a|an|each|every)\s+month|monthly)\b",
+    "quarter": r"\b(?:(?:per|a|an|each|every)\s+quarter|quarterly)\b",
+    "year": r"\b(?:(?:per|a|an|each|every)\s+year|yearly|annually)\b",
+}
+
+
+def _metric_quoted(metric: ClaimMetric, excerpt: str) -> bool:
+    """The excerpt states this value with its unit, magnitude and rate, not a longer number."""
+    amount = (
+        _EN_UNIT_PREFIXES.get(metric.unit, "")
+        + rf"(?<![0-9.]){re.escape(metric.value)}(?![0-9]|\.[0-9])"
+        + (_EN_MAGNITUDE_PATTERNS[metric.magnitude] if metric.magnitude else "")
+        + _EN_UNIT_SUFFIXES.get(metric.unit, "")
+    )
+    if re.search(amount, excerpt.replace(",", ""), re.IGNORECASE) is None:
+        return False
+    return (
+        metric.per is None
+        or re.search(_EN_RATE_PATTERNS[metric.per], excerpt, re.IGNORECASE) is not None
+    )
+
+
+def _date_quoted(value: str, excerpt: str) -> bool:
+    """The excerpt names the year and, when the claim supplies one, the month."""
+    year, _, month = value.partition("-")
+    if re.search(rf"(?<![0-9]){year}(?![0-9])", excerpt) is None:
+        return False
+    if not month:
+        return True
+    index = int(month)
+    names = {calendar.month_name[index].casefold(), calendar.month_abbr[index].casefold()}
+    if names & set(re.findall(r"[a-z]+", excerpt.casefold())):
+        return True
+    return re.search(rf"\b{year}-{month}\b|\b0?{index}/{year}\b", excerpt) is not None
+
+
 def grounded(claim: StructuredClaim, excerpt: str) -> bool:
     """Every literal part of a structured claim must appear in its quoted evidence excerpt."""
     folded = excerpt.casefold()
     phrases = [claim.subject, claim.scope, claim.metric.measure if claim.metric else None]
     if any(phrase is not None and phrase.casefold() not in folded for phrase in phrases):
         return False
-    digits = excerpt.replace(",", "")
-    if claim.metric is not None and not re.search(
-        rf"(?<![0-9.]){re.escape(claim.metric.value)}(?![0-9])", digits
-    ):
+    if claim.metric is not None and not _metric_quoted(claim.metric, excerpt):
         return False
     if claim.period is not None:
-        years = {claim.period.start[:4], claim.period.end[:4]}
-        if any(year not in excerpt for year in years):
+        bounds = {claim.period.start, claim.period.end}
+        if not all(_date_quoted(bound, excerpt) for bound in bounds):
             return False
     return True

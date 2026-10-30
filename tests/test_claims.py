@@ -148,6 +148,81 @@ def test_grounding_requires_every_literal_part_in_the_excerpt() -> None:
     assert grounded(_claim(), "led THE BILLING MIGRATION") is True
 
 
+@pytest.mark.parametrize(
+    ("metric", "quoted", "unquoted"),
+    [
+        ({"value": "30", "unit": "percent"}, "by 30% overall", "by 30 seconds overall"),
+        ({"value": "30", "unit": "percent"}, "by 30 percent", "by 30.5% overall"),
+        ({"value": "1.2", "unit": "usd", "magnitude": "million"}, "saving $1.2M", "saving $1.2K"),
+        ({"value": "6", "unit": "hours", "per": "week"}, "6 hours per week", "6 hours per day"),
+        ({"value": "3", "unit": "times"}, "grew 3x", "grew 3 teams"),
+    ],
+)
+def test_grounding_requires_the_complete_metric(
+    metric: dict[str, object], quoted: str, unquoted: str
+) -> None:
+    claim = _claim(subject="the migration", metric=metric)
+    assert grounded(claim, f"Led the migration {quoted}") is True
+    assert grounded(claim, f"Led the migration {unquoted}") is False
+
+
+def test_grounding_checks_months_when_the_period_supplies_them() -> None:
+    claim = _claim(period={"start": "2021-03", "end": "2022-04"})
+    assert grounded(claim, "Led the billing migration (Mar 2021 – April 2022)") is True
+    assert grounded(claim, "Led the billing migration (2021-03 to 2022-04)") is True
+    assert grounded(claim, "Led the billing migration (May 2021 – Dec 2022)") is False
+    assert grounded(
+        _claim(period={"start": "2021", "end": "2022"}), "Led the billing migration 2021-2022"
+    )
+
+
+@pytest.mark.parametrize(
+    ("fields", "valid"),
+    [
+        (
+            {"verb": "reduced", "metric": {"value": "30", "unit": "percent", "change": "increase"}},
+            False,
+        ),
+        (
+            {
+                "verb": "reduced",
+                "metric": {
+                    "value": "30",
+                    "unit": "percent",
+                    "change": "increase",
+                    "measure": "the billing migration",
+                },
+            },
+            False,
+        ),
+        (
+            {
+                "verb": "reduced",
+                "metric": {
+                    "value": "30",
+                    "unit": "percent",
+                    "change": "increase",
+                    "measure": "revenue",
+                },
+            },
+            True,
+        ),
+        (
+            {"verb": "increased", "metric": {"value": "2", "unit": "times", "change": "increase"}},
+            True,
+        ),
+    ],
+)
+def test_metric_direction_must_not_contradict_the_verb(
+    fields: dict[str, object], valid: bool
+) -> None:
+    if valid:
+        _claim(**fields)
+    else:
+        with pytest.raises(ValidationError, match="metric_direction_contradicts_verb"):
+            _claim(**fields)
+
+
 def _structured_body(evidence_id: str, kind: str = "experience") -> dict[str, object]:
     return {
         "kind": kind,
