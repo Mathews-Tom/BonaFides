@@ -516,6 +516,32 @@ describe('maintenance and preserved-workspace reconnection', () => {
     expect(screen.queryByRole('button', { name: 'Check connection and compare saved workspace' })).not.toBeInTheDocument();
   });
 
+  it('does not let a poll started before another request failed reopen writes', async () => {
+    const user = userEvent.setup(); const api = new Api(); let holdPoll = false;
+    let completePoll: ((value: InstallationStatus) => void) | undefined;
+    mockRequest(api, async path => {
+      if (path === '/session') return session;
+      if (path === '/profile') return profile;
+      throw new ApiError(404, 'not_found');
+    }, null, [], async () => holdPoll ? new Promise<InstallationStatus>(resolve => { completePoll = resolve; }) : installation);
+    render(<App api={api} />);
+    const input = await screen.findByLabelText('Highlight / tagline (optional)');
+    await waitFor(() => expect(api.writeBlock).toBeNull());
+    await user.clear(input); await user.type(input, 'Draft retained while a stale poll settles');
+    holdPoll = true; fireEvent(document, new Event('visibilitychange'));
+    await waitFor(() => expect(completePoll).toBeTypeOf('function'));
+    act(() => { api.onUnavailable?.(new TypeError('Failed to fetch')); });
+    await screen.findByText('The installation could not be reached.');
+    await act(async () => { completePoll!(installation); });
+    expect(api.writeBlock).toBe('workspace_reconnect_required');
+    expect(screen.getByRole('button', { name: 'Save profile' })).toBeDisabled();
+    expect(screen.getByText('The installation could not be reached.')).toBeVisible();
+    holdPoll = false; fireEvent(document, new Event('visibilitychange'));
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Save profile' })).toBeEnabled());
+    expect(api.writeBlock).toBeNull();
+    expect(input).toHaveValue('Draft retained while a stale poll settles');
+  });
+
   it.each([
     ['workspace version', { workspace_version: installation.workspace_version + 1 }],
     ['namespace', { namespace_id: 'replacement-namespace' }],

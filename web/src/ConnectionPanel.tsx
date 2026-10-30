@@ -39,6 +39,7 @@ export function ConnectionPanel({ api, session, profile, initialStatus, reloadDi
   }, [api]);
   const unavailable = useCallback((failure: unknown) => {
     if (!mounted.current) return;
+    generation.current++;
     transition(failure instanceof ApiError && failure.status === 401 ? 'expired' : failure instanceof ApiError && failure.status === 503 ? 'maintenance' : failure instanceof ApiError && failure.status === 409 ? 'review' : 'offline');
     setComparison(null); setDiscard(false);
   }, [transition]);
