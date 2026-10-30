@@ -1,6 +1,6 @@
 # Contributing to BonaFides
 
-BonaFides contains a local M0 proof-of-architecture implementation, not a production-qualified application. Start with the public [development guide](docs/development/README.md) for frozen installation, checks and the disposable proof, and the [architecture overview](docs/architecture/README.md) for boundaries and limitations. Detailed implementation planning is maintained locally and is not included in repository clones. Distinguish commands and implemented controls from observed qualification evidence. External contributions must satisfy the policies below before acceptance.
+BonaFides contains a local architecture-proof implementation, not a production-qualified application. Start with the public [development guide](docs/development/README.md) for frozen installation, checks and the disposable proof, and the [architecture overview](docs/architecture/README.md) for boundaries and limitations. Detailed implementation planning is maintained locally and is not included in repository clones. Distinguish commands and implemented controls from observed qualification evidence. External contributions must satisfy the policies below before acceptance.
 
 ## Licensing authorization
 

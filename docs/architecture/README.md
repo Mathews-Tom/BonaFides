@@ -30,7 +30,7 @@ API, migrator and PostgreSQL attach only to the internal `private` network; the 
 
 Both relays use the application image and Python standard library, run nonroot with a read-only root, all capabilities dropped and no-new-privileges, and have no mounts or application secret environment. Each is bounded to 128 MiB, 32 PIDs, half a CPU, 64 concurrent connections, a 64 KiB stream buffer/read chunk, a five-second upstream connection timeout, 60-second read/drain timeouts and a five-minute total connection lifetime. Asyncio stream drain provides backpressure; shutdown cancels active connections and closes sockets. The ingress container itself has a normal network route and is not an egress firewall; it carries no database credentials, keys, blob data or spool mounts. The restored API's actual outbound-socket refusal remains a separate probe requirement, alongside inspection of its internal-only network.
 
-## OL-007 — Reviewed source transport boundary
+## Job sources — Reviewed source transport boundary
 
 The worker reaches `source-egress:8766` only over the internal `sources` network. The relay joins that network and a separate outbound bridge, not `private`; it has no database credentials, keyring, blobs, parser/render spools, persistent mounts or published host port. It uses the same immutable application image, nonroot read-only root, dropped capabilities and no-new-privileges, bounded to 256 MiB, 32 PIDs and half a CPU. Starting the relay does not load application settings or secrets. Its outage cannot prevent manual posting or unrelated durable work.
 
