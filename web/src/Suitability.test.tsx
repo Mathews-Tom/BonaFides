@@ -453,18 +453,24 @@ describe('reviewed suitability boundaries', () => {
     fireEvent.click(await screen.findByRole('button', { name: 'Request extraction proposal' }));
     const adopt = await screen.findByRole('button', { name: 'Load extraction proposal into review buffer' });
     await waitFor(() => expect(adopt).toBeEnabled());
+    const reread = screen.getByRole('button', { name: 'Read Engineer at Synthetic North' });
+    // Proposal readiness can precede the child's busy-state update unlocking the parent catalog.
+    await waitFor(() => expect(reread).toBeEnabled());
     let releaseRead!: () => void;
     // ES2022 library: keep this response pending to observe the invalidation before reconciliation.
     state.reviewReadWait = new Promise<void>(resolve => { releaseRead = resolve; });
     state.postingContentSha256 = 'd'.repeat(64);
     state.view = { ...state.view, version: 3, source_text: 'A changed posting requires Rust.', source_sha256: 'b'.repeat(64), current_revision: { ...state.view.current_revision!, stale: true }, latest_assessment: { ...state.view.latest_assessment!, stale: true, stale_reasons: ['posting_source_changed'] } };
-    fireEvent.click(screen.getByRole('button', { name: 'Read Engineer at Synthetic North' }));
-    await waitFor(() => expect(state.reviewReads).toBeGreaterThanOrEqual(3));
-    expect(screen.getByText('Stale historical snapshot — not a current eligibility assertion')).toBeVisible();
+    fireEvent.click(reread);
+    expect(await screen.findByText('Stale historical snapshot — not a current eligibility assertion')).toBeVisible();
     expect(adopt).toBeDisabled();
     expect(screen.getByRole('region', { name: 'Current suitability task' })).toHaveTextContent('task-one');
-    await act(async () => { state.reviewReadWait = null; releaseRead(); });
-    await waitFor(() => expect(screen.getByRole('region', { name: 'Requirements and explainable suitability' })).toHaveTextContent('b'.repeat(64)));
+    const review = screen.getByRole('region', { name: 'Requirements and explainable suitability' });
+    expect(review).toHaveTextContent('😀 SQL and Kubernetes.');
+    expect(review).not.toHaveTextContent(state.view.source_text);
+    await act(async () => { releaseRead(); });
+    await waitFor(() => expect(review).toHaveTextContent(state.view.source_text));
+    expect(review).toHaveTextContent('b'.repeat(64));
     expect(screen.getByRole('button', { name: 'Load extraction proposal into review buffer' })).toBeDisabled();
     expect(screen.getByText(/Proposal source differs/)).toBeVisible();
     expect(state.submissions).toHaveLength(1);
