@@ -39,6 +39,7 @@ export function ConnectionPanel({ api, session, profile, initialStatus, reloadDi
   }, [api]);
   const unavailable = useCallback((failure: unknown) => {
     if (!mounted.current) return;
+    generation.current++;
     transition(failure instanceof ApiError && failure.status === 401 ? 'expired' : failure instanceof ApiError && failure.status === 503 ? 'maintenance' : failure instanceof ApiError && failure.status === 409 ? 'review' : 'offline');
     setComparison(null); setDiscard(false);
   }, [transition]);
@@ -81,9 +82,9 @@ export function ConnectionPanel({ api, session, profile, initialStatus, reloadDi
         }
         if (!retained && phaseRef.current === 'checking' && !value.maintenance_active) return;
         if (value.maintenance_active) { transition('maintenance'); setComparison(null); setDiscard(false); }
-        else if (['online', 'checking'].includes(phaseRef.current) && baseline.current.owner === current.current.session.owner_id && value.namespace_id === baseline.current.status.namespace_id && value.maintenance_epoch === baseline.current.status.maintenance_epoch && retained) {
-          // Ordinary versioned writes advance workspace_version; they do not replace the namespace.
-          if (phaseRef.current === 'checking' && value.workspace_version !== baseline.current.status.workspace_version) transition('review');
+        else if (['online', 'checking', 'offline'].includes(phaseRef.current) && baseline.current.owner === current.current.session.owner_id && value.namespace_id === baseline.current.status.namespace_id && value.maintenance_epoch === baseline.current.status.maintenance_epoch && retained) {
+          // Only an uninterrupted connection may adopt ordinary versioned writes.
+          if (phaseRef.current !== 'online' && value.workspace_version !== baseline.current.status.workspace_version) transition('review');
           else {
             baseline.current = { status: value, owner: current.current.session.owner_id, profileId: retained.id, profileVersion: retained.version };
             transition('online');
