@@ -239,3 +239,68 @@
 - Processed 150 benefit applications per week
 - Supported 40 families through housing applications
 - Collaborated with city agencies to expand shelter capacity
+
+Designed and implemented a self-service onboarding flow for new merchants.
+Developed and maintained internal tooling for the finance team.
+Built and deployed a fraud scoring service handling 2M requests per day.
+Led a 12-person team through a full rewrite of the billing platform.
+Successfully migrated 300 customer accounts to the new CRM.
+Successfully delivered the warehouse routing project two weeks early.
+Drove a 35% increase in trial-to-paid conversion.
+Achieved a 20% reduction in support ticket volume.
+Delivered a 15% improvement in page load time.
+Saved $250K annually by consolidating cloud vendors.
+Saved 10 hours per week of manual reporting.
+Generated $1.2M in new pipeline through partner campaigns.
+Generated 400 qualified leads per quarter.
+Reduced onboarding time from 14 days to 5 days.
+Improved test coverage from 45% to 80%.
+Increased monthly active users from 20K to 55K.
+Redesigned the checkout page, resulting in a 12% lift in conversion.
+Automated invoice reconciliation, resulting in 30% fewer errors.
+Implemented caching for the search API, resulting in a 40% latency reduction.
+Managed a portfolio of 25 enterprise accounts.
+Mentored 6 junior engineers.
+Wrote technical documentation for the payments API.
+Collaborated with product and design to launch a mobile app.
+Partnered with sales to define pricing for the new tier.
+Analyzed churn data to identify at-risk customers.
+Conducted user interviews with 40 customers.
+Created dashboards in Looker for executive reporting.
+Established a weekly incident review process.
+Coordinated release planning across 5 teams.
+Responsible for the on-call rotation for core services.
+Oversaw vendor relationships for logistics partners.
+Streamlined the hiring process, cutting time-to-hire by 25%.
+Optimized SQL queries, reducing report runtime by 60%.
+Introduced code review guidelines adopted by 4 teams.
+Spearheaded the adoption of infrastructure as code.
+Contributed to the open-source logging library.
+Supported customers across 3 time zones.
+Assisted with quarterly financial audits.
+Maintained CI pipelines for 20 repositories.
+Trained 50 support agents on the new ticketing system.
+Presented quarterly results to the leadership team.
+Negotiated contracts with 3 shipping carriers, saving $80K per year.
+Resolved 95% of escalated tickets within 24 hours.
+Launched a referral program that generated 1,500 sign-ups.
+Scaled the data platform to process 5TB per day.
+Owned the end-to-end delivery of the analytics module.
+Directed a cross-functional team of 9 people.
+Increased email open rates by 18%.
+Decreased infrastructure costs by $120K per year.
+Grew the newsletter audience to 30,000 subscribers.
+Boosted NPS by 14 points.
+Lowered the defect escape rate by 22%.
+Shortened the release cycle from 6 weeks to 2 weeks.
+Enhanced accessibility of the customer portal.
+Built a data pipeline in Python and Airflow.
+Developed REST APIs for the inventory service.
+Designed a database schema for multi-tenant reporting.
+Implemented single sign-on for internal tools.
+Planned and executed a data center migration.
+Researched and evaluated three observability vendors.
+Reviewed pull requests for the platform team.
+Facilitated sprint retrospectives for two squads.
+Organized a company-wide hackathon with 120 participants.
+Completed the migration of legacy reports ahead of schedule.

@@ -13,15 +13,16 @@ from bonafides.claim_coverage import coverage
 CORPUS = Path(__file__).parent / "fixtures" / "claim-corpus.txt"
 
 
-def test_claims_coverage_committed_corpus_reports_at_least_95_percent(
+def test_claims_coverage_committed_corpus_reports_its_measured_share(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
+    # The corpus ends with a held-out block of ordinary bullets written before any mapper change.
+    # The share is pinned so a mapper change that alters it is a visible, reviewed decision.
     assert cli.main(["claims", "coverage", str(CORPUS)]) == 0
     first = capsys.readouterr().out.splitlines()[0]
     report = coverage(CORPUS.read_text(encoding="utf-8"))
     assert report.total >= 200
-    assert report.share >= 0.95
-    assert first.startswith(f"Representable: {report.representable} of {report.total} bullets (")
+    assert first == "Representable: 228 of 305 bullets (74.7%)"
 
 
 def test_claims_coverage_counts_non_blank_lines_and_lists_reasons(
