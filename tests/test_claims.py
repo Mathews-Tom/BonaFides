@@ -156,6 +156,13 @@ def test_grounding_requires_every_literal_part_in_the_excerpt() -> None:
         ({"value": "1.2", "unit": "usd", "magnitude": "million"}, "saving $1.2M", "saving $1.2K"),
         ({"value": "6", "unit": "hours", "per": "week"}, "6 hours per week", "6 hours per day"),
         ({"value": "3", "unit": "times"}, "grew 3x", "grew 3 teams"),
+        ({"value": "3", "unit": "count"}, "for 3 clients", "for 3M clients"),
+        ({"value": "3", "unit": "count"}, "for 3 monthly clients", "for 3 billion clients"),
+        (
+            {"value": "6", "unit": "hours", "per": "week"},
+            "6 hours weekly",
+            "6 hours per day; weekly reporting",
+        ),
     ],
 )
 def test_grounding_requires_the_complete_metric(

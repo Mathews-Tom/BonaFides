@@ -258,6 +258,7 @@ _EN_MAGNITUDE_PATTERNS: dict[Magnitude, str] = {
     "million": r"\s?(?:[mM]|mn|million)\b",
     "billion": r"\s?(?:[bB]|bn|billion)\b",
 }
+_EN_ANY_MAGNITUDE = r"\s?(?:[kmb]|mn|bn|thousand|million|billion)\b"
 _EN_UNIT_PREFIXES: dict[str, str] = {
     "usd": r"(?:US\$|\$|USD\s?)",
     "eur": r"(?:€|EUR\s?)",
@@ -285,19 +286,24 @@ _EN_RATE_PATTERNS: dict[MetricRate, str] = {
 
 
 def _metric_quoted(metric: ClaimMetric, excerpt: str) -> bool:
-    """The excerpt states this value with its unit, magnitude and rate, not a longer number."""
+    """The excerpt states this amount with its unit, magnitude and rate, not a longer number.
+
+    An absent magnitude rejects a magnitude suffix ("3" is not "3M"), and the rate must follow
+    the amount it qualifies ("6 hours per week", not "6 hours per day; weekly").
+    """
+    magnitude = (
+        _EN_MAGNITUDE_PATTERNS[metric.magnitude]
+        if metric.magnitude
+        else rf"(?!{_EN_ANY_MAGNITUDE})"
+    )
     amount = (
         _EN_UNIT_PREFIXES.get(metric.unit, "")
         + rf"(?<![0-9.]){re.escape(metric.value)}(?![0-9]|\.[0-9])"
-        + (_EN_MAGNITUDE_PATTERNS[metric.magnitude] if metric.magnitude else "")
+        + magnitude
         + _EN_UNIT_SUFFIXES.get(metric.unit, "")
+        + (r"\s*" + _EN_RATE_PATTERNS[metric.per] if metric.per else "")
     )
-    if re.search(amount, excerpt.replace(",", ""), re.IGNORECASE) is None:
-        return False
-    return (
-        metric.per is None
-        or re.search(_EN_RATE_PATTERNS[metric.per], excerpt, re.IGNORECASE) is not None
-    )
+    return re.search(amount, excerpt.replace(",", ""), re.IGNORECASE) is not None
 
 
 def _date_quoted(value: str, excerpt: str) -> bool:
