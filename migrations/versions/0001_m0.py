@@ -34,21 +34,21 @@ def upgrade() -> None:
         if version == 1:
             connection.execute(
                 text(
-                    "ALTER TABLE offerloom.schema_migrations ADD COLUMN source_sha256 text CHECK(source_sha256 ~ '^[0-9a-f]{64}$')"
+                    "ALTER TABLE bonafides.schema_migrations ADD COLUMN source_sha256 text CHECK(source_sha256 ~ '^[0-9a-f]{64}$')"
                 )
             )
         connection.execute(
             text(
-                "UPDATE offerloom.schema_migrations SET source_sha256=:sha WHERE version=:version"
+                "UPDATE bonafides.schema_migrations SET source_sha256=:sha WHERE version=:version"
             ),
             {"sha": hashlib.sha256(source.encode()).hexdigest(), "version": version},
         )
     connection.execute(
-        text("ALTER TABLE offerloom.schema_migrations ALTER COLUMN source_sha256 SET NOT NULL")
+        text("ALTER TABLE bonafides.schema_migrations ALTER COLUMN source_sha256 SET NOT NULL")
     )
     connection.execute(
         text(
-            "REVOKE ALL ON TABLE offerloom_migrations.alembic_version FROM PUBLIC,offerloom_runtime"
+            "REVOKE ALL ON TABLE bonafides_migrations.alembic_version FROM PUBLIC,bonafides_runtime"
         )
     )
 

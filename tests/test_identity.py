@@ -18,8 +18,8 @@ from fastapi.testclient import TestClient
 from sqlalchemy import text
 from sqlalchemy.engine import make_url
 
-from offerloom.api import create_app
-from offerloom.auth import (
+from bonafides.api import create_app
+from bonafides.auth import (
     HASH_SLOTS,
     SESSION_COOKIE,
     check_password,
@@ -27,11 +27,11 @@ from offerloom.auth import (
     init_bootstrap,
     recover_password,
 )
-from offerloom.config import MigrationSettings, Settings, read_secret
-from offerloom.crypto import Keyring
-from offerloom.db import Database
-from offerloom.problems import Problem
-from offerloom.workflows import migrate
+from bonafides.config import MigrationSettings, Settings, read_secret
+from bonafides.crypto import Keyring
+from bonafides.db import Database
+from bonafides.problems import Problem
+from bonafides.workflows import migrate
 
 PASSWORD = "Synthetic proof phrase 817!"
 NEW_PASSWORD = "Distinct recovery phrase 924!"
@@ -47,7 +47,7 @@ def _test_dsn(name: str, fallback: str | None = None) -> str:
     if fallback:
         return _test_dsn(fallback)
     pytest.fail(
-        "PostgreSQL acceptance requires a disposable offerloom_test database: set OFFERLOOM_TEST_MIGRATION_DSN and OFFERLOOM_TEST_RUNTIME_DSN (or OFFERLOOM_TEST_DSN). No SQLite or silent skip is permitted."
+        "PostgreSQL acceptance requires a disposable bonafides_test database: set BONAFIDES_TEST_MIGRATION_DSN and BONAFIDES_TEST_RUNTIME_DSN (or BONAFIDES_TEST_DSN). No SQLite or silent skip is permitted."
     )
 
 
@@ -64,25 +64,25 @@ class IdentityContext:
 
 @pytest.fixture
 def identity(tmp_path: Path) -> Iterator[IdentityContext]:
-    migration_dsn = _test_dsn("OFFERLOOM_TEST_MIGRATION_DSN", "OFFERLOOM_TEST_DSN")
-    runtime_dsn = _test_dsn("OFFERLOOM_TEST_RUNTIME_DSN", "OFFERLOOM_TEST_DSN")
+    migration_dsn = _test_dsn("BONAFIDES_TEST_MIGRATION_DSN", "BONAFIDES_TEST_DSN")
+    runtime_dsn = _test_dsn("BONAFIDES_TEST_RUNTIME_DSN", "BONAFIDES_TEST_DSN")
     database = make_url(migration_dsn).database or ""
     if not (
-        database == "offerloom_test" or database.startswith("test_") or database.endswith("_test")
+        database == "bonafides_test" or database.startswith("test_") or database.endswith("_test")
     ):
         pytest.fail("Identity tests require an explicitly named disposable test database.")
     migrate(MigrationSettings(migration_dsn))
     admin = Database(migration_dsn)
     with admin.transaction() as conn:
-        if conn.execute(text("SELECT id FROM offerloom.owners")).first() is not None:
+        if conn.execute(text("SELECT id FROM bonafides.owners")).first() is not None:
             pytest.fail(
                 "Identity singleton tests require an empty disposable test database; refusing to remove an existing owner."
             )
         conn.execute(
-            text("UPDATE offerloom.installation_state SET execution_guard_id=NULL WHERE singleton")
+            text("UPDATE bonafides.installation_state SET execution_guard_id=NULL WHERE singleton")
         )
-        conn.execute(text("DELETE FROM offerloom.auth_challenges"))
-        conn.execute(text("DELETE FROM offerloom.auth_throttles"))
+        conn.execute(text("DELETE FROM bonafides.auth_challenges"))
+        conn.execute(text("DELETE FROM bonafides.auth_throttles"))
     blob, spool, import_spool = (
         tmp_path / "blobs",
         tmp_path / "spool",
@@ -120,22 +120,22 @@ def identity(tmp_path: Path) -> Iterator[IdentityContext]:
     finally:
         with admin.transaction() as conn:
             # Defer only the new lifecycle edge in the document/model/consent cycle.
-            conn.execute(text("SET CONSTRAINTS offerloom.hosted_consent_approval_binding DEFERRED"))
+            conn.execute(text("SET CONSTRAINTS bonafides.hosted_consent_approval_binding DEFERRED"))
             conn.execute(
-                text("""UPDATE offerloom.installation_state SET maintenance_active=false
+                text("""UPDATE bonafides.installation_state SET maintenance_active=false
                 WHERE singleton AND EXISTS(
-                SELECT 1 FROM offerloom.installation_controls c JOIN offerloom.owners o
+                SELECT 1 FROM bonafides.installation_controls c JOIN bonafides.owners o
                 ON o.id=c.owner_id WHERE o.login_name=:login)"""),
                 {"login": context.login_name},
             )
             conn.execute(
-                text("DELETE FROM offerloom.maintenance_recoveries WHERE control_id IS NULL")
+                text("DELETE FROM bonafides.maintenance_recoveries WHERE control_id IS NULL")
             )
             # RESTRICT preserves evidence pins; remove this fixture's links before its owner.
             conn.execute(
-                text("""UPDATE offerloom.local_model_reservations SET owner_id=NULL,
+                text("""UPDATE bonafides.local_model_reservations SET owner_id=NULL,
                 workflow_run_id=NULL,fence=NULL,reserved_until='-infinity'
-                WHERE owner_id=(SELECT id FROM offerloom.owners WHERE login_name=:login)"""),
+                WHERE owner_id=(SELECT id FROM bonafides.owners WHERE login_name=:login)"""),
                 {"login": context.login_name},
             )
             for table in (
@@ -165,44 +165,44 @@ def identity(tmp_path: Path) -> Iterator[IdentityContext]:
             ):
                 conn.execute(
                     text(
-                        f"DELETE FROM offerloom.{table} WHERE owner_id="
-                        "(SELECT id FROM offerloom.owners WHERE login_name=:login)"
+                        f"DELETE FROM bonafides.{table} WHERE owner_id="
+                        "(SELECT id FROM bonafides.owners WHERE login_name=:login)"
                     ),
                     {"login": context.login_name},
                 )
             conn.execute(
                 text(
-                    "DELETE FROM offerloom.workflow_runs WHERE kind='source_refresh' AND owner_id="
-                    "(SELECT id FROM offerloom.owners WHERE login_name=:login)"
+                    "DELETE FROM bonafides.workflow_runs WHERE kind='source_refresh' AND owner_id="
+                    "(SELECT id FROM bonafides.owners WHERE login_name=:login)"
                 ),
                 {"login": context.login_name},
             )
             conn.execute(
                 text(
-                    "UPDATE offerloom.source_configs SET current_policy_review_id=NULL,"
+                    "UPDATE bonafides.source_configs SET current_policy_review_id=NULL,"
                     "terms_reviewed_at=NULL,enabled=false,version=version+1,"
                     "policy_version=policy_version+1 WHERE removed_at IS NULL AND owner_id="
-                    "(SELECT id FROM offerloom.owners WHERE login_name=:login)"
+                    "(SELECT id FROM bonafides.owners WHERE login_name=:login)"
                 ),
                 {"login": context.login_name},
             )
             for table in ("source_policy_reviews", "source_configs"):
                 conn.execute(
                     text(
-                        f"DELETE FROM offerloom.{table} WHERE owner_id="
-                        "(SELECT id FROM offerloom.owners WHERE login_name=:login)"
+                        f"DELETE FROM bonafides.{table} WHERE owner_id="
+                        "(SELECT id FROM bonafides.owners WHERE login_name=:login)"
                     ),
                     {"login": context.login_name},
                 )
             conn.execute(
-                text("DELETE FROM offerloom.owners WHERE login_name=:login"),
+                text("DELETE FROM bonafides.owners WHERE login_name=:login"),
                 {"login": context.login_name},
             )
-            conn.execute(text("DELETE FROM offerloom.auth_challenges"))
-            conn.execute(text("DELETE FROM offerloom.auth_throttles"))
+            conn.execute(text("DELETE FROM bonafides.auth_challenges"))
+            conn.execute(text("DELETE FROM bonafides.auth_throttles"))
             conn.execute(
                 text(
-                    "UPDATE offerloom.installation_state SET bootstrap_token_sha256=NULL,bootstrap_expires_at=NULL,bootstrap_consumed_at=NULL WHERE singleton"
+                    "UPDATE bonafides.installation_state SET bootstrap_token_sha256=NULL,bootstrap_expires_at=NULL,bootstrap_consumed_at=NULL WHERE singleton"
                 )
             )
         admin.close()
@@ -271,12 +271,12 @@ def test_bootstrap_is_atomic_single_use_with_empty_profile(identity: IdentityCon
         replay = _bootstrap(identity, client)
         assert replay.status_code == 404
     with identity.admin.transaction() as conn:
-        assert conn.execute(text("SELECT count(*) FROM offerloom.owners")).scalar_one() == 1
-        assert conn.execute(text("SELECT count(*) FROM offerloom.owner_settings")).scalar_one() == 1
+        assert conn.execute(text("SELECT count(*) FROM bonafides.owners")).scalar_one() == 1
+        assert conn.execute(text("SELECT count(*) FROM bonafides.owner_settings")).scalar_one() == 1
         assert (
             conn.execute(
                 text(
-                    "SELECT bootstrap_token_sha256 IS NULL AND bootstrap_consumed_at IS NOT NULL FROM offerloom.installation_state WHERE singleton"
+                    "SELECT bootstrap_token_sha256 IS NULL AND bootstrap_consumed_at IS NOT NULL FROM bonafides.installation_state WHERE singleton"
                 )
             ).scalar_one()
             is True
@@ -302,8 +302,8 @@ def test_actual_postgres_concurrent_bootstrap(identity: IdentityContext) -> None
             statuses = sorted(future.result().status_code for future in futures)
         assert statuses == [201, 404]
     with identity.admin.transaction() as conn:
-        assert conn.execute(text("SELECT count(*) FROM offerloom.owners")).scalar_one() == 1
-        assert conn.execute(text("SELECT count(*) FROM offerloom.profiles")).scalar_one() == 1
+        assert conn.execute(text("SELECT count(*) FROM bonafides.owners")).scalar_one() == 1
+        assert conn.execute(text("SELECT count(*) FROM bonafides.profiles")).scalar_one() == 1
 
 
 @pytest.mark.postgres
@@ -323,12 +323,12 @@ def test_expired_bootstrap_and_wrong_token_never_create_owner(identity: Identity
         with identity.admin.transaction() as conn:
             conn.execute(
                 text(
-                    "UPDATE offerloom.installation_state SET bootstrap_expires_at=now()-interval '1 second'"
+                    "UPDATE bonafides.installation_state SET bootstrap_expires_at=now()-interval '1 second'"
                 )
             )
         assert _bootstrap(identity, client).status_code == 401
     with identity.admin.transaction() as conn:
-        assert conn.execute(text("SELECT count(*) FROM offerloom.owners")).scalar_one() == 0
+        assert conn.execute(text("SELECT count(*) FROM bonafides.owners")).scalar_one() == 0
 
 
 @pytest.mark.postgres
@@ -416,18 +416,18 @@ def test_database_authoritative_session_expiry(identity: IdentityContext, expiry
         with identity.admin.transaction() as conn:
             if expiry == "idle":
                 conn.execute(
-                    text("UPDATE offerloom.sessions SET last_seen_at=now()-interval '13 hours'")
+                    text("UPDATE bonafides.sessions SET last_seen_at=now()-interval '13 hours'")
                 )
             elif expiry == "absolute":
                 conn.execute(
                     text(
-                        "UPDATE offerloom.sessions SET created_at=now()-interval '8 days',expires_at=now()-interval '1 day'"
+                        "UPDATE bonafides.sessions SET created_at=now()-interval '8 days',expires_at=now()-interval '1 day'"
                     )
                 )
             elif expiry == "revoked":
-                conn.execute(text("UPDATE offerloom.sessions SET revoked_at=now()"))
+                conn.execute(text("UPDATE bonafides.sessions SET revoked_at=now()"))
             else:
-                conn.execute(text("UPDATE offerloom.owners SET auth_epoch=auth_epoch+1"))
+                conn.execute(text("UPDATE bonafides.owners SET auth_epoch=auth_epoch+1"))
         assert client.get("/api/v1/session").status_code == 401
         assert client.get("/api/v1/profile").status_code == 401
 
@@ -442,7 +442,7 @@ def test_throttles_persist_across_app_instances(identity: IdentityContext) -> No
         assert _login(identity, restarted).status_code == 429
     with identity.admin.transaction() as conn:
         counters = (
-            conn.execute(text("SELECT scope,attempts FROM offerloom.auth_throttles"))
+            conn.execute(text("SELECT scope,attempts FROM bonafides.auth_throttles"))
             .mappings()
             .all()
         )
@@ -533,13 +533,13 @@ def test_profile_revision_ifmatch_and_fixture_idempotency(identity: IdentityCont
         assert len(cast(list[object], value["claim_revision_ids"])) == 2
     with identity.admin.transaction() as conn:
         assert (
-            conn.execute(text("SELECT count(*) FROM offerloom.profile_revisions")).scalar_one() == 3
+            conn.execute(text("SELECT count(*) FROM bonafides.profile_revisions")).scalar_one() == 3
         )
         assert (
-            conn.execute(text("SELECT count(*) FROM offerloom.claim_revisions")).scalar_one() == 2
+            conn.execute(text("SELECT count(*) FROM bonafides.claim_revisions")).scalar_one() == 2
         )
         assert (
-            conn.execute(text("SELECT count(*) FROM offerloom.evidence_revisions")).scalar_one()
+            conn.execute(text("SELECT count(*) FROM bonafides.evidence_revisions")).scalar_one()
             == 2
         )
 

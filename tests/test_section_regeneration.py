@@ -31,13 +31,13 @@ from test_sources import SourceContext
 from test_sources import catalog as catalog
 from test_suitability import FixtureModel, _profile, _requirement, _route, _write
 
-from offerloom import document_generation as generation
-from offerloom import documents, local_model, section_regeneration, suitability
-from offerloom.commands import canonical_json
-from offerloom.problems import Problem
-from offerloom.storage import BlobStore
-from offerloom.worker import Worker
-from offerloom.workflows import Claim, cancel_workflow, publish, reap
+from bonafides import document_generation as generation
+from bonafides import documents, local_model, section_regeneration, suitability
+from bonafides.commands import canonical_json
+from bonafides.problems import Problem
+from bonafides.storage import BlobStore
+from bonafides.worker import Worker
+from bonafides.workflows import Claim, cancel_workflow, publish, reap
 
 
 def _setup(
@@ -192,7 +192,7 @@ def test_proposal_is_immutable_apply_only_one_section_and_retains_old_pdf(
     with catalog.runtime.transaction() as conn:
         original_row = conn.execute(
             text(
-                "SELECT row_to_json(r) FROM offerloom.document_revisions r WHERE owner_id=:owner AND id=:id"
+                "SELECT row_to_json(r) FROM bonafides.document_revisions r WHERE owner_id=:owner AND id=:id"
             ),
             {"owner": catalog.owner_id, "id": UUID(revision["id"])},
         ).scalar_one()
@@ -235,15 +235,15 @@ def test_proposal_is_immutable_apply_only_one_section_and_retains_old_pdf(
         assert (
             conn.execute(
                 text(
-                    "SELECT row_to_json(r) FROM offerloom.document_revisions r WHERE owner_id=:owner AND id=:id"
+                    "SELECT row_to_json(r) FROM bonafides.document_revisions r WHERE owner_id=:owner AND id=:id"
                 ),
                 {"owner": catalog.owner_id, "id": UUID(revision["id"])},
             ).scalar_one()
             == original_row
         )
     for statement in (
-        "UPDATE offerloom.document_regeneration_proposals SET section_key='changed' WHERE owner_id=:owner AND id=:id",
-        "DELETE FROM offerloom.document_regeneration_proposals WHERE owner_id=:owner AND id=:id",
+        "UPDATE bonafides.document_regeneration_proposals SET section_key='changed' WHERE owner_id=:owner AND id=:id",
+        "DELETE FROM bonafides.document_regeneration_proposals WHERE owner_id=:owner AND id=:id",
     ):
         with pytest.raises(DBAPIError), catalog.runtime.transaction() as conn:
             conn.execute(text(statement), {"owner": catalog.owner_id, "id": UUID(proposal["id"])})
@@ -388,14 +388,14 @@ def test_malformed_or_unpinned_candidate_quarantines_only_regeneration_stage(
         assert (
             conn.execute(
                 text(
-                    "SELECT count(*) FROM offerloom.document_regeneration_proposals WHERE owner_id=:owner"
+                    "SELECT count(*) FROM bonafides.document_regeneration_proposals WHERE owner_id=:owner"
                 ),
                 {"owner": catalog.owner_id},
             ).scalar_one()
             == 0
         )
         assert conn.execute(
-            text("SELECT stage FROM offerloom.local_model_route_blocks WHERE owner_id=:owner"),
+            text("SELECT stage FROM bonafides.local_model_route_blocks WHERE owner_id=:owner"),
             {"owner": catalog.owner_id},
         ).scalars().all() == ["regenerate_section"]
     assert _section_preview(catalog, document)["generation_route"]["status"] == "unqualified"
@@ -463,35 +463,35 @@ def test_late_output_is_fenced_by_target_and_original_context_changes(
                 if race == "lease":
                     conn.execute(
                         text(
-                            "UPDATE offerloom.workflow_runs SET lease_expires_at=clock_timestamp()-interval '1 second' WHERE owner_id=:owner AND id=:id"
+                            "UPDATE bonafides.workflow_runs SET lease_expires_at=clock_timestamp()-interval '1 second' WHERE owner_id=:owner AND id=:id"
                         ),
                         {"owner": catalog.owner_id, "id": task.id},
                     )
                 elif race == "delete":
                     conn.execute(
                         text(
-                            "UPDATE offerloom.document_drafts SET deleted_at=clock_timestamp(),version=version+1 WHERE owner_id=:owner AND id=:id"
+                            "UPDATE bonafides.document_drafts SET deleted_at=clock_timestamp(),version=version+1 WHERE owner_id=:owner AND id=:id"
                         ),
                         {"owner": catalog.owner_id, "id": UUID(document["id"])},
                     )
                 elif race == "posting":
                     conn.execute(
                         text(
-                            "UPDATE offerloom.job_postings SET description_text=description_text||' Changed context',version=version+1 WHERE owner_id=:owner AND id=:id"
+                            "UPDATE bonafides.job_postings SET description_text=description_text||' Changed context',version=version+1 WHERE owner_id=:owner AND id=:id"
                         ),
                         {"owner": catalog.owner_id, "id": UUID(application["posting_id"])},
                     )
                 elif race == "archive":
                     conn.execute(
                         text(
-                            "UPDATE offerloom.applications SET archived_at=clock_timestamp(),version=version+1 WHERE owner_id=:owner AND id=:id"
+                            "UPDATE bonafides.applications SET archived_at=clock_timestamp(),version=version+1 WHERE owner_id=:owner AND id=:id"
                         ),
                         {"owner": catalog.owner_id, "id": UUID(application["id"])},
                     )
                 else:
                     conn.execute(
                         text(
-                            "UPDATE offerloom.owner_settings SET version=version+1 WHERE owner_id=:owner"
+                            "UPDATE bonafides.owner_settings SET version=version+1 WHERE owner_id=:owner"
                         ),
                         {"owner": catalog.owner_id},
                     )
@@ -505,7 +505,7 @@ def test_late_output_is_fenced_by_target_and_original_context_changes(
             str(
                 conn.execute(
                     text(
-                        "SELECT current_revision_id FROM offerloom.document_drafts WHERE owner_id=:owner AND id=:id"
+                        "SELECT current_revision_id FROM bonafides.document_drafts WHERE owner_id=:owner AND id=:id"
                     ),
                     {"owner": catalog.owner_id, "id": UUID(document["id"])},
                 ).scalar_one()
@@ -515,7 +515,7 @@ def test_late_output_is_fenced_by_target_and_original_context_changes(
         assert (
             conn.execute(
                 text(
-                    "SELECT count(*) FROM offerloom.document_regeneration_proposals WHERE owner_id=:owner"
+                    "SELECT count(*) FROM bonafides.document_regeneration_proposals WHERE owner_id=:owner"
                 ),
                 {"owner": catalog.owner_id},
             ).scalar_one()
@@ -524,7 +524,7 @@ def test_late_output_is_fenced_by_target_and_original_context_changes(
         assert (
             conn.execute(
                 text(
-                    "SELECT status FROM offerloom.model_runs WHERE owner_id=:owner AND workflow_run_id=:id"
+                    "SELECT status FROM bonafides.model_runs WHERE owner_id=:owner AND workflow_run_id=:id"
                 ),
                 {"owner": catalog.owner_id, "id": task.id},
             ).scalar_one()
@@ -619,7 +619,7 @@ def test_apply_rechecks_identity_and_current_source_eligibility(
         with catalog.identity.admin.transaction() as conn:
             conn.execute(
                 text(
-                    "UPDATE offerloom.document_drafts SET deleted_at=clock_timestamp(),version=version+1 WHERE owner_id=:owner AND id=:id"
+                    "UPDATE bonafides.document_drafts SET deleted_at=clock_timestamp(),version=version+1 WHERE owner_id=:owner AND id=:id"
                 ),
                 {"owner": catalog.owner_id, "id": UUID(document["id"])},
             )
@@ -720,7 +720,7 @@ def test_base_has_no_provider_lookup_and_unqualified_section_stage_cannot_enqueu
     with catalog.runtime.transaction() as conn:
         assert (
             conn.execute(
-                text("SELECT count(*) FROM offerloom.model_runs WHERE owner_id=:owner"),
+                text("SELECT count(*) FROM bonafides.model_runs WHERE owner_id=:owner"),
                 {"owner": catalog.owner_id},
             ).scalar_one()
             == 0
@@ -781,7 +781,7 @@ def test_preview_context_admission_rejects_changed_profile_and_stale_document(
         assert (
             conn.execute(
                 text(
-                    "SELECT count(*) FROM offerloom.workflow_runs WHERE owner_id=:owner AND input->>'mode'='section_regeneration'"
+                    "SELECT count(*) FROM bonafides.workflow_runs WHERE owner_id=:owner AND input->>'mode'='section_regeneration'"
                 ),
                 {"owner": catalog.owner_id},
             ).scalar_one()
@@ -807,13 +807,13 @@ def test_section_model_attempt_budget_is_cumulative_across_reclaims(
         with catalog.identity.admin.transaction() as conn:
             conn.execute(
                 text(
-                    "UPDATE offerloom.local_model_reservations SET reserved_until=clock_timestamp()-interval '1 second' WHERE singleton"
+                    "UPDATE bonafides.local_model_reservations SET reserved_until=clock_timestamp()-interval '1 second' WHERE singleton"
                 )
             )
             if index == 0:
                 conn.execute(
                     text(
-                        "UPDATE offerloom.workflow_runs SET lease_expires_at=clock_timestamp()-interval '1 second' WHERE owner_id=:owner AND id=:id"
+                        "UPDATE bonafides.workflow_runs SET lease_expires_at=clock_timestamp()-interval '1 second' WHERE owner_id=:owner AND id=:id"
                     ),
                     {"owner": catalog.owner_id, "id": task.id},
                 )
@@ -823,7 +823,7 @@ def test_section_model_attempt_budget_is_cumulative_across_reclaims(
             with catalog.identity.admin.transaction() as conn:
                 conn.execute(
                     text(
-                        "UPDATE offerloom.workflow_runs SET next_attempt_at=clock_timestamp() WHERE owner_id=:owner AND id=:id"
+                        "UPDATE bonafides.workflow_runs SET next_attempt_at=clock_timestamp() WHERE owner_id=:owner AND id=:id"
                     ),
                     {"owner": catalog.owner_id, "id": task.id},
                 )
@@ -835,7 +835,7 @@ def test_section_model_attempt_budget_is_cumulative_across_reclaims(
         assert (
             conn.execute(
                 text(
-                    "SELECT model_network_attempts FROM offerloom.workflow_runs WHERE owner_id=:owner AND id=:id"
+                    "SELECT model_network_attempts FROM bonafides.workflow_runs WHERE owner_id=:owner AND id=:id"
                 ),
                 {"owner": catalog.owner_id, "id": task.id},
             ).scalar_one()
@@ -844,7 +844,7 @@ def test_section_model_attempt_budget_is_cumulative_across_reclaims(
         assert (
             conn.execute(
                 text(
-                    "SELECT count(*) FROM offerloom.document_regeneration_proposals WHERE owner_id=:owner"
+                    "SELECT count(*) FROM bonafides.document_regeneration_proposals WHERE owner_id=:owner"
                 ),
                 {"owner": catalog.owner_id},
             ).scalar_one()
@@ -920,7 +920,7 @@ def test_pinned_posting_context_refuses_preview_instead_of_rebasing(
         assert (
             conn.execute(
                 text(
-                    "SELECT count(*) FROM offerloom.workflow_runs WHERE owner_id=:owner AND input->>'mode'='section_regeneration'"
+                    "SELECT count(*) FROM bonafides.workflow_runs WHERE owner_id=:owner AND input->>'mode'='section_regeneration'"
                 ),
                 {"owner": catalog.owner_id},
             ).scalar_one()

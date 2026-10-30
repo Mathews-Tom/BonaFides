@@ -24,16 +24,16 @@ from test_sources import SourceContext
 from test_sources import catalog as catalog
 from test_suitability import _posting, _queue, _view
 
-from offerloom import local_model, suitability
-from offerloom.local_model import LocalRoute, ModelFailure, OllamaClient
-from offerloom.maintenance import ProviderExecution
-from offerloom.problems import Problem
-from offerloom.workflows import Claim, assert_fence, reap
+from bonafides import local_model, suitability
+from bonafides.local_model import LocalRoute, ModelFailure, OllamaClient
+from bonafides.maintenance import ProviderExecution
+from bonafides.problems import Problem
+from bonafides.workflows import Claim, assert_fence, reap
 
 
 def _pending(context: SourceContext) -> list[UUID]:
     with context.runtime.transaction() as conn:
-        return list(conn.execute(text("SELECT id FROM offerloom.provider_executions")).scalars())
+        return list(conn.execute(text("SELECT id FROM bonafides.provider_executions")).scalars())
 
 
 def _prepare(
@@ -74,7 +74,7 @@ def test_production_inference_records_before_transmission_and_acknowledges_termi
     assert _pending(catalog) == []
     with catalog.runtime.transaction() as conn:
         model = conn.execute(
-            text("SELECT status,output_sha256 FROM offerloom.model_runs WHERE workflow_run_id=:id"),
+            text("SELECT status,output_sha256 FROM bonafides.model_runs WHERE workflow_run_id=:id"),
             {"id": task.id},
         ).one()
     assert model.status == "succeeded" and len(model.output_sha256) == 64
@@ -194,24 +194,24 @@ def test_local_timeout_or_cancel_cannot_acknowledge_still_running_remote_request
             # another inference while the earlier remote execution is unknown.
             with catalog.identity.admin.transaction() as conn:
                 conn.execute(
-                    text("UPDATE offerloom.local_model_reservations SET reserved_until='-infinity'")
+                    text("UPDATE bonafides.local_model_reservations SET reserved_until='-infinity'")
                 )
                 conn.execute(
                     text(
-                        "UPDATE offerloom.provider_executions SET started_at=now()-interval '1 year'"
+                        "UPDATE bonafides.provider_executions SET started_at=now()-interval '1 year'"
                     )
                 )
             with catalog.runtime.transaction() as conn:
                 assert suitability._reserve_call(conn, task, catalog.identity.settings, 1) is None
                 attempts = conn.execute(
-                    text("SELECT model_network_attempts FROM offerloom.workflow_runs WHERE id=:id"),
+                    text("SELECT model_network_attempts FROM bonafides.workflow_runs WHERE id=:id"),
                     {"id": task.id},
                 ).scalar_one()
             assert attempts == 1
             with catalog.identity.admin.transaction() as conn:
                 conn.execute(
                     text(
-                        "UPDATE offerloom.workflow_runs SET lease_expires_at=now()-interval '1 second' WHERE id=:id"
+                        "UPDATE bonafides.workflow_runs SET lease_expires_at=now()-interval '1 second' WHERE id=:id"
                     ),
                     {"id": task.id},
                 )

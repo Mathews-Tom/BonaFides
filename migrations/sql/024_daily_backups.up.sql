@@ -1,5 +1,5 @@
 -- SPDX-License-Identifier: MIT OR Apache-2.0
-SET search_path=offerloom,pg_catalog;
+SET search_path=bonafides,pg_catalog;
 
 -- Byte verification and copy receipts never confer native recovery authority.
 ALTER TABLE installation_backups
@@ -8,7 +8,7 @@ ALTER TABLE installation_backups
  ADD COLUMN pruned_at timestamptz,
  ADD COLUMN copy_pruned_at timestamptz;
 GRANT UPDATE(cipher_verified_at,copy_verified_at,pruned_at,copy_pruned_at)
- ON installation_backups TO offerloom_runtime;
+ ON installation_backups TO bonafides_runtime;
 
 CREATE TABLE backup_daily_runs (
  id uuid PRIMARY KEY,
@@ -36,6 +36,6 @@ CREATE TABLE backup_daily_runs (
 CREATE INDEX backup_daily_runs_retention ON backup_daily_runs(namespace_id,storage_sha256,slot_date DESC);
 CREATE UNIQUE INDEX backup_daily_runs_active ON backup_daily_runs(namespace_id)
  WHERE finished_at IS NULL;
-REVOKE ALL ON backup_daily_runs FROM PUBLIC,offerloom_runtime;
-GRANT SELECT,INSERT,UPDATE ON backup_daily_runs TO offerloom_runtime;
+REVOKE ALL ON backup_daily_runs FROM PUBLIC,bonafides_runtime;
+GRANT SELECT,INSERT,UPDATE ON backup_daily_runs TO bonafides_runtime;
 INSERT INTO schema_migrations(version,source_sha256) VALUES(24,repeat('0',64));

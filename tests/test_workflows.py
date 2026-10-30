@@ -7,9 +7,9 @@ from sqlalchemy.exc import DBAPIError
 from test_database import PGContext
 from test_database import pg_context as pg_context
 
-from offerloom.commands import append_outbox, canonical_json, require_if_match
-from offerloom.problems import Problem
-from offerloom.workflows import (
+from bonafides.commands import append_outbox, canonical_json, require_if_match
+from bonafides.problems import Problem
+from bonafides.workflows import (
     Claim,
     cancel_workflow,
     claim,
@@ -59,7 +59,7 @@ def _expire(pg: PGContext, task: Claim) -> None:
     with pg.migrator.begin() as conn:
         conn.execute(
             text(
-                "UPDATE offerloom.workflow_runs SET lease_expires_at=clock_timestamp()-interval '1 second' WHERE owner_id=:owner AND id=:id"
+                "UPDATE bonafides.workflow_runs SET lease_expires_at=clock_timestamp()-interval '1 second' WHERE owner_id=:owner AND id=:id"
             ),
             {"owner": task.owner_id, "id": task.id},
         )
@@ -68,7 +68,7 @@ def _expire(pg: PGContext, task: Claim) -> None:
     with pg.migrator.begin() as conn:
         conn.execute(
             text(
-                "UPDATE offerloom.workflow_runs SET next_attempt_at=clock_timestamp() WHERE owner_id=:owner AND id=:id"
+                "UPDATE bonafides.workflow_runs SET next_attempt_at=clock_timestamp() WHERE owner_id=:owner AND id=:id"
             ),
             {"owner": task.owner_id, "id": task.id},
         )
@@ -108,7 +108,7 @@ def test_stale_fence_and_heartbeat_rejected_after_reclaim(pg_context: PGContext)
         assert (
             conn.execute(
                 text(
-                    "SELECT count(*) FROM offerloom.workflow_steps WHERE owner_id=:owner AND workflow_run_id=:id AND step_key='publish'"
+                    "SELECT count(*) FROM bonafides.workflow_steps WHERE owner_id=:owner AND workflow_run_id=:id AND step_key='publish'"
                 ),
                 {"owner": current.owner_id, "id": current.id},
             ).scalar_one()
@@ -124,7 +124,7 @@ def test_domain_effect_outbox_atomic_rollback(pg_context: PGContext) -> None:
     def effect(conn: Connection) -> dict[str, object]:
         conn.execute(
             text(
-                "UPDATE offerloom.owner_settings SET settings=CAST(:settings AS jsonb) WHERE owner_id=:owner"
+                "UPDATE bonafides.owner_settings SET settings=CAST(:settings AS jsonb) WHERE owner_id=:owner"
             ),
             {"owner": task.owner_id, "settings": '{"must_rollback":true}'},
         )
@@ -138,7 +138,7 @@ def test_domain_effect_outbox_atomic_rollback(pg_context: PGContext) -> None:
     with pg_context.runtime.begin() as conn:
         assert (
             conn.execute(
-                text("SELECT settings FROM offerloom.owner_settings WHERE owner_id=:owner"),
+                text("SELECT settings FROM bonafides.owner_settings WHERE owner_id=:owner"),
                 {"owner": task.owner_id},
             ).scalar_one()
             == {}
@@ -146,7 +146,7 @@ def test_domain_effect_outbox_atomic_rollback(pg_context: PGContext) -> None:
         assert (
             conn.execute(
                 text(
-                    "SELECT count(*) FROM offerloom.outbox_events WHERE owner_id=:owner AND event_type='workflow.succeeded'"
+                    "SELECT count(*) FROM bonafides.outbox_events WHERE owner_id=:owner AND event_type='workflow.succeeded'"
                 ),
                 {"owner": task.owner_id},
             ).scalar_one()
@@ -155,7 +155,7 @@ def test_domain_effect_outbox_atomic_rollback(pg_context: PGContext) -> None:
         assert (
             conn.execute(
                 text(
-                    "SELECT count(*) FROM offerloom.outbox_events WHERE owner_id=:owner AND event_type='rollback.proof'"
+                    "SELECT count(*) FROM bonafides.outbox_events WHERE owner_id=:owner AND event_type='rollback.proof'"
                 ),
                 {"owner": task.owner_id},
             ).scalar_one()
@@ -171,7 +171,7 @@ def test_cancellation_revokes_publication_and_preserves_prior_result(pg_context:
     with pg_context.migrator.begin() as conn:
         conn.execute(
             text(
-                'UPDATE offerloom.workflow_runs SET result=\'{"checkpoint":"preserved"}\' WHERE owner_id=:owner AND id=:id'
+                'UPDATE bonafides.workflow_runs SET result=\'{"checkpoint":"preserved"}\' WHERE owner_id=:owner AND id=:id'
             ),
             {"owner": task.owner_id, "id": task.id},
         )
@@ -187,7 +187,7 @@ def test_cancellation_revokes_publication_and_preserves_prior_result(pg_context:
             "reason": "local_publication_revoked_provider_may_continue",
         }
         assert conn.execute(
-            text("""SELECT event,error_code FROM offerloom.workflow_attempt_events
+            text("""SELECT event,error_code FROM bonafides.workflow_attempt_events
             WHERE owner_id=:owner AND workflow_run_id=:id ORDER BY created_at,id"""),
             {"owner": task.owner_id, "id": workflow_id},
         ).tuples().all() == [("claimed", None), ("cancelled", "cancelled")]
@@ -206,7 +206,7 @@ def test_deterministic_poison_is_visible_and_not_retried_forever(pg_context: PGC
     with pg_context.migrator.begin() as conn:
         conn.execute(
             text(
-                "UPDATE offerloom.workflow_runs SET next_attempt_at=clock_timestamp() WHERE owner_id=:owner AND id=:id"
+                "UPDATE bonafides.workflow_runs SET next_attempt_at=clock_timestamp() WHERE owner_id=:owner AND id=:id"
             ),
             {"owner": first.owner_id, "id": first.id},
         )
@@ -230,7 +230,7 @@ def test_outbox_independent_fence_and_duplicate_consumer_receipt(pg_context: PGC
     with pg_context.migrator.begin() as conn:
         conn.execute(
             text(
-                "UPDATE offerloom.outbox_events SET lease_expires_at=clock_timestamp()-interval '1 second' WHERE owner_id=:owner AND id=:id"
+                "UPDATE bonafides.outbox_events SET lease_expires_at=clock_timestamp()-interval '1 second' WHERE owner_id=:owner AND id=:id"
             ),
             {"owner": first.owner_id, "id": first.id},
         )
@@ -245,7 +245,7 @@ def test_outbox_independent_fence_and_duplicate_consumer_receipt(pg_context: PGC
     with pg_context.migrator.begin() as conn:
         conn.execute(
             text(
-                "UPDATE offerloom.outbox_events SET delivered_at=NULL WHERE owner_id=:owner AND id=:id"
+                "UPDATE bonafides.outbox_events SET delivered_at=NULL WHERE owner_id=:owner AND id=:id"
             ),
             {"owner": first.owner_id, "id": first.id},
         )
@@ -257,7 +257,7 @@ def test_outbox_independent_fence_and_duplicate_consumer_receipt(pg_context: PGC
         assert (
             conn.execute(
                 text(
-                    "SELECT count(*) FROM offerloom.event_receipts WHERE owner_id=:owner AND event_id=:id"
+                    "SELECT count(*) FROM bonafides.event_receipts WHERE owner_id=:owner AND event_id=:id"
                 ),
                 {"owner": first.owner_id, "id": first.id},
             ).scalar_one()
@@ -266,7 +266,7 @@ def test_outbox_independent_fence_and_duplicate_consumer_receipt(pg_context: PGC
         assert (
             conn.execute(
                 text(
-                    "SELECT count(*) FROM offerloom.event_metadata WHERE owner_id=:owner AND event_id=:id"
+                    "SELECT count(*) FROM bonafides.event_metadata WHERE owner_id=:owner AND event_id=:id"
                 ),
                 {"owner": first.owner_id, "id": first.id},
             ).scalar_one()
@@ -283,7 +283,7 @@ def test_failure_preserves_prior_result_and_attempt_cap(pg_context: PGContext) -
         with pg_context.migrator.begin() as conn:
             conn.execute(
                 text(
-                    'UPDATE offerloom.workflow_runs SET result=\'{"checkpoint":"preserved"}\' WHERE owner_id=:owner AND id=:id'
+                    'UPDATE bonafides.workflow_runs SET result=\'{"checkpoint":"preserved"}\' WHERE owner_id=:owner AND id=:id'
                 ),
                 {"owner": current.owner_id, "id": current.id},
             )
@@ -292,7 +292,7 @@ def test_failure_preserves_prior_result_and_attempt_cap(pg_context: PGContext) -
         with pg_context.migrator.begin() as conn:
             conn.execute(
                 text(
-                    "UPDATE offerloom.workflow_runs SET next_attempt_at=clock_timestamp() WHERE owner_id=:owner AND id=:id"
+                    "UPDATE bonafides.workflow_runs SET next_attempt_at=clock_timestamp() WHERE owner_id=:owner AND id=:id"
                 ),
                 {"owner": current.owner_id, "id": current.id},
             )
@@ -312,7 +312,7 @@ def test_deadline_reaper_revokes_claim(pg_context: PGContext) -> None:
     # synthetic timestamps to a fully elapsed execution segment.
     with pg_context.migrator.begin() as conn:
         conn.execute(
-            text("""UPDATE offerloom.workflow_runs SET
+            text("""UPDATE bonafides.workflow_runs SET
             created_at=clock_timestamp()-interval '181 seconds',
             deadline_at=clock_timestamp()-interval '1 second'
             WHERE owner_id=:owner AND id=:id"""),
@@ -325,7 +325,7 @@ def test_deadline_reaper_revokes_claim(pg_context: PGContext) -> None:
         assert result["state"] == "permanent_failure"
         assert result["last_error_code"] == "deadline_exceeded"
         assert conn.execute(
-            text("""SELECT event,error_code FROM offerloom.workflow_attempt_events
+            text("""SELECT event,error_code FROM bonafides.workflow_attempt_events
             WHERE owner_id=:owner AND workflow_run_id=:id ORDER BY created_at,id"""),
             {"owner": current.owner_id, "id": current.id},
         ).tuples().all() == [

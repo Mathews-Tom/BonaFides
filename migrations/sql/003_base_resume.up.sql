@@ -3,7 +3,7 @@
 BEGIN;
 SET LOCAL lock_timeout='5s';
 SET LOCAL statement_timeout='60s';
-SET LOCAL search_path=offerloom,pg_catalog;
+SET LOCAL search_path=bonafides,pg_catalog;
 ALTER TABLE document_drafts ADD COLUMN scope text NOT NULL DEFAULT 'tailored';
 ALTER TABLE document_drafts ALTER COLUMN application_id DROP NOT NULL;
 ALTER TABLE document_drafts ADD CONSTRAINT document_drafts_scope_check CHECK(scope IN ('base','tailored'));
@@ -22,10 +22,10 @@ ALTER TABLE document_revisions ADD CONSTRAINT document_revisions_base_context_ch
 -- Replace only the original origin enum-like check, without relying on an
 -- automatically generated constraint name. Existing values remain accepted.
 DO $$ DECLARE c record; BEGIN
- FOR c IN SELECT conname FROM pg_constraint WHERE conrelid='offerloom.document_revisions'::regclass
+ FOR c IN SELECT conname FROM pg_constraint WHERE conrelid='bonafides.document_revisions'::regclass
  AND contype='c' AND pg_get_constraintdef(oid) LIKE '%origin%'
  AND conname<>'document_revisions_base_context_check' LOOP
- EXECUTE format('ALTER TABLE offerloom.document_revisions DROP CONSTRAINT %I',c.conname);
+ EXECUTE format('ALTER TABLE bonafides.document_revisions DROP CONSTRAINT %I',c.conname);
  END LOOP;
 END $$;
 ALTER TABLE document_revisions ADD CONSTRAINT document_revisions_origin_check CHECK(origin IN ('generated','deterministic','manual','restore'));

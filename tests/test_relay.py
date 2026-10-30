@@ -12,7 +12,7 @@ from typing import cast
 
 import pytest
 
-from offerloom import relay
+from bonafides import relay
 
 
 @dataclass

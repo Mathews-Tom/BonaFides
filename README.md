@@ -26,7 +26,7 @@ uv sync --frozen --python 3.12.15 --only-group build --no-build
 uv sync --frozen --python 3.12.15 --group build --no-build-isolation
 uv run --frozen python -m tools.dev_setup --benchmark
 docker compose up --build --detach --wait
-docker compose exec api python -m offerloom init-bootstrap
+docker compose exec api python -m bonafides init-bootstrap
 ```
 
 Open **http://localhost:8000** (not a replacement remote host). Reveal the one-use token deliberately in a private local terminal, then enter it in the browser with a login name and a strong 15–128-character password:

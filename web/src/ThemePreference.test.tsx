@@ -3,7 +3,7 @@ import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ThemePreference } from './ThemePreference';
 
-const STORAGE_KEY = 'offerloom.theme';
+const STORAGE_KEY = 'bonafides.theme';
 const YEAR = 365 * 24 * 60 * 60 * 1000;
 const NOW = Date.parse('2026-10-25T12:00:00Z');
 

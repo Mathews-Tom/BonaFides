@@ -24,7 +24,7 @@ uv run --frozen python -m tools.inventory \
   --uv-lock uv.lock \
   --python-root .venv \
   --web-root web \
-  --image offerloom-m0:local \
+  --image bonafides:local \
   --output compliance/locked-components.json
 
 uv run --frozen python -m tools.compliance sbom \

@@ -1,6 +1,6 @@
 -- SPDX-License-Identifier: MIT OR Apache-2.0
 -- Additive M0 security15/session and workflow14 observability requirements.
-SET LOCAL search_path=offerloom,pg_catalog;
+SET LOCAL search_path=bonafides,pg_catalog;
 ALTER TABLE installation_state ADD COLUMN bootstrap_expires_at timestamptz;
 ALTER TABLE installation_state ADD COLUMN auth_epoch bigint NOT NULL DEFAULT 1 CHECK(auth_epoch>0);
 ALTER TABLE owners ADD COLUMN auth_epoch bigint NOT NULL DEFAULT 1 CHECK(auth_epoch>0);
@@ -28,12 +28,12 @@ CREATE TABLE event_metadata (
  created_at timestamptz NOT NULL DEFAULT now(), PRIMARY KEY(owner_id,event_id),
  FOREIGN KEY(owner_id,event_id) REFERENCES outbox_events(owner_id,id)
 );
-REVOKE ALL ON SCHEMA offerloom FROM PUBLIC;
-REVOKE ALL ON ALL TABLES IN SCHEMA offerloom FROM PUBLIC;
-REVOKE ALL ON ALL FUNCTIONS IN SCHEMA offerloom FROM PUBLIC;
-GRANT USAGE ON SCHEMA offerloom TO offerloom_runtime;
-GRANT SELECT,INSERT,UPDATE,DELETE ON ALL TABLES IN SCHEMA offerloom TO offerloom_runtime;
-REVOKE INSERT,UPDATE,DELETE ON schema_migrations FROM offerloom_runtime;
-REVOKE UPDATE,DELETE ON audit_events FROM offerloom_runtime;
-GRANT EXECUTE ON FUNCTION assert_workflow_fence(uuid,uuid,uuid,bigint) TO offerloom_runtime;
+REVOKE ALL ON SCHEMA bonafides FROM PUBLIC;
+REVOKE ALL ON ALL TABLES IN SCHEMA bonafides FROM PUBLIC;
+REVOKE ALL ON ALL FUNCTIONS IN SCHEMA bonafides FROM PUBLIC;
+GRANT USAGE ON SCHEMA bonafides TO bonafides_runtime;
+GRANT SELECT,INSERT,UPDATE,DELETE ON ALL TABLES IN SCHEMA bonafides TO bonafides_runtime;
+REVOKE INSERT,UPDATE,DELETE ON schema_migrations FROM bonafides_runtime;
+REVOKE UPDATE,DELETE ON audit_events FROM bonafides_runtime;
+GRANT EXECUTE ON FUNCTION assert_workflow_fence(uuid,uuid,uuid,bigint) TO bonafides_runtime;
 INSERT INTO schema_migrations(version) VALUES(4);

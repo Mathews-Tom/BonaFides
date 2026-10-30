@@ -4,7 +4,7 @@ requires = ["hatchling==1.27.0"]
 build-backend = "hatchling.build"
 
 [project]
-name = "offerloom"
+name = "bonafides"
 version = "0.1.0"
 description = "Local-first, evidence-grounded career workspace architecture proof"
 readme = "README.md"
@@ -27,7 +27,7 @@ dependencies = [
 ]
 
 [project.scripts]
-offerloom = "offerloom.cli:main"
+bonafides = "bonafides.cli:main"
 
 [dependency-groups]
 build = [
@@ -54,7 +54,7 @@ default-groups = ["dev", "build"]
 no-build-isolation = true
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/offerloom"]
+packages = ["src/bonafides"]
 
 [tool.mypy]
 python_version = "3.12"
@@ -64,4 +64,4 @@ files = ["src", "tools", "tests", "migrations"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["."]
-markers = ["postgres: requires disposable PostgreSQL 18 configured by OFFERLOOM_TEST_DSN"]
+markers = ["postgres: requires disposable PostgreSQL 18 configured by BONAFIDES_TEST_DSN"]

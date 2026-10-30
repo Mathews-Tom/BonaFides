@@ -29,8 +29,8 @@ from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
 from cryptography.x509.oid import NameOID
 
-from offerloom.greenhouse import UPSTREAM_HOST, GreenhouseClient
-from offerloom.source_gateway import SourceGatewayServer
+from bonafides.greenhouse import UPSTREAM_HOST, GreenhouseClient
+from bonafides.source_gateway import SourceGatewayServer
 
 
 def example_job(identity: int = 101, *, content: str | None = None) -> dict[str, object]:
@@ -42,7 +42,7 @@ def example_job(identity: int = 101, *, content: str | None = None) -> dict[str,
         "content": content
         if content is not None
         else '&lt;p&gt;Build reliable tools &amp;amp; services.&lt;/p&gt;&lt;script&gt;window.fixtureAttack=true&lt;/script&gt;&lt;img src="http://127.0.0.1/private"&gt;',
-        "absolute_url": "https://careers.offerloom-fixture.org/jobs/101",
+        "absolute_url": "https://careers.bonafides-fixture.org/jobs/101",
         "updated_at": "2026-10-25T08:00:00Z",
         "metadata": [
             {"id": 1, "name": "Team", "value": "Infrastructure", "value_type": "short_text"}
@@ -185,7 +185,7 @@ class FixtureUpstream:
         self.request_received = threading.Event()
         self.client_disconnected = threading.Event()
         self.stopping = threading.Event()
-        self._directory = tempfile.TemporaryDirectory(prefix="offerloom-test-tls-")
+        self._directory = tempfile.TemporaryDirectory(prefix="bonafides-test-tls-")
         root = Path(self._directory.name)
         key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
         name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, UPSTREAM_HOST)])

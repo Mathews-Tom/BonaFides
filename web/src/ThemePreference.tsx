@@ -5,7 +5,7 @@ type Theme = 'light' | 'dark';
 type Preference = 'system' | Theme;
 type ThemeState = { preference: Preference; expiresAt: number | null; storageUnavailable: boolean };
 
-const STORAGE_KEY = 'offerloom.theme';
+const STORAGE_KEY = 'bonafides.theme';
 // One year means exactly 365 days, measured from the explicit selection, not reload.
 const PREFERENCE_LIFETIME = 365 * 24 * 60 * 60 * 1000;
 const MAX_TIMEOUT = 2_147_483_647;

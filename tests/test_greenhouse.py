@@ -15,8 +15,8 @@ from typing import cast
 import pytest
 from greenhouse_fixture import FixtureUpstream, Scenario, example_job
 
-from offerloom import greenhouse
-from offerloom.greenhouse import (
+from bonafides import greenhouse
+from bonafides.greenhouse import (
     MAX_DESCRIPTION,
     MAX_GATEWAY_BYTES,
     MAX_JOBS,
@@ -28,7 +28,7 @@ from offerloom.greenhouse import (
     safe_reference_url,
     validate_board_token,
 )
-from offerloom.source_gateway import MAX_IN_FLIGHT, SourceGatewayServer
+from bonafides.source_gateway import MAX_IN_FLIGHT, SourceGatewayServer
 
 
 @pytest.fixture
@@ -91,8 +91,8 @@ def test_reference_is_canonical_inert_and_never_resolved(monkeypatch: pytest.Mon
 
     monkeypatch.setattr(socket, "getaddrinfo", deny_resolution)
     assert (
-        safe_reference_url("https://Careers.Offerloom.org:443/jobs/4?q=role#details")
-        == "https://careers.offerloom.org/jobs/4?q=role#details"
+        safe_reference_url("https://Careers.BonaFides.org:443/jobs/4?q=role#details")
+        == "https://careers.bonafides.org/jobs/4?q=role#details"
     )
     assert safe_reference_url("") is None
     assert validate_board_token("Board-123_abc") == "Board-123_abc"
@@ -111,7 +111,7 @@ def test_real_tls_published_jobs_original_snapshot_inert_html_and_hash(
     assert job.external_id == "101"
     assert job.title == "Fictional infrastructure engineer"
     assert job.description_text == "Build reliable tools & services."
-    assert job.canonical_url == "https://careers.offerloom-fixture.org/jobs/101"
+    assert job.canonical_url == "https://careers.bonafides-fixture.org/jobs/101"
     assert job.source_updated_at == "2026-10-25T08:00:00Z"
     assert job.snapshot == example_job()
     assert len(job.source_content_sha256) == 64
@@ -507,7 +507,7 @@ def test_gateway_revalidates_normalized_data_not_just_schema(
 
     with pytest.raises(SourceFailure, match="source_invalid_response"):
         greenhouse.deserialize_board(tampered(good), greenhouse._Budget(None))
-    monkeypatch.setattr("offerloom.source_gateway.serialize_board", tampered)
+    monkeypatch.setattr("bonafides.source_gateway.serialize_board", tampered)
     _failure(client, "source_invalid_response")
 
 

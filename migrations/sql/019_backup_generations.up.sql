@@ -1,5 +1,5 @@
 -- SPDX-License-Identifier: MIT OR Apache-2.0
-SET search_path=offerloom,pg_catalog;
+SET search_path=bonafides,pg_catalog;
 
 -- A created ciphertext is not a restore drill. Only the offline migration role
 -- may record the latter; ordinary API/worker credentials cannot forge it.
@@ -30,33 +30,33 @@ CREATE TABLE installation_backups (
   OR (restore_verified_at IS NOT NULL AND restore_receipt_sha256 IS NOT NULL
       AND restore_target_namespace IS NOT NULL AND restore_target_namespace<>namespace_id))
 );
-REVOKE ALL ON installation_backups FROM PUBLIC,offerloom_runtime;
-GRANT SELECT ON installation_backups TO offerloom_runtime;
+REVOKE ALL ON installation_backups FROM PUBLIC,bonafides_runtime;
+GRANT SELECT ON installation_backups TO bonafides_runtime;
 
 CREATE FUNCTION register_installation_backup(p_id uuid,p_holder uuid,p_fence bigint,p_record jsonb)
- RETURNS void LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog,offerloom AS $$
-DECLARE c offerloom.installation_controls%ROWTYPE;
+ RETURNS void LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog,bonafides AS $$
+DECLARE c bonafides.installation_controls%ROWTYPE;
 BEGIN
- SELECT * INTO STRICT c FROM offerloom.assert_installation_control(p_id,p_holder,p_fence);
+ SELECT * INTO STRICT c FROM bonafides.assert_installation_control(p_id,p_holder,p_fence);
  IF c.phase<>'quiescent' OR c.purpose<>'backup'
  OR jsonb_typeof(p_record) IS DISTINCT FROM 'object'
  OR octet_length(p_record::text)>131072
- OR EXISTS(SELECT 1 FROM offerloom.installation_activities)
- OR EXISTS(SELECT 1 FROM offerloom.provider_executions)
+ OR EXISTS(SELECT 1 FROM bonafides.installation_activities)
+ OR EXISTS(SELECT 1 FROM bonafides.provider_executions)
  OR (p_record->>'namespace_id')::uuid IS DISTINCT FROM c.namespace_id
  OR (p_record->>'maintenance_epoch')::bigint IS DISTINCT FROM c.maintenance_epoch
  OR (p_record->>'workspace_version')::bigint IS DISTINCT FROM (
-  SELECT workspace_version FROM offerloom.owner_settings WHERE owner_id=c.owner_id)
+  SELECT workspace_version FROM bonafides.owner_settings WHERE owner_id=c.owner_id)
  OR (p_record->>'installation_auth_epoch')::bigint IS DISTINCT FROM (
-  SELECT auth_epoch FROM offerloom.installation_state WHERE singleton)
+  SELECT auth_epoch FROM bonafides.installation_state WHERE singleton)
  OR (p_record->>'owner_auth_epoch')::bigint IS DISTINCT FROM (
-  SELECT auth_epoch FROM offerloom.owners WHERE id=c.owner_id)
+  SELECT auth_epoch FROM bonafides.owners WHERE id=c.owner_id)
  OR p_record->'schema_versions' IS DISTINCT FROM (
-  SELECT jsonb_object_agg(version::text,source_sha256) FROM offerloom.schema_migrations)
+  SELECT jsonb_object_agg(version::text,source_sha256) FROM bonafides.schema_migrations)
  THEN
   RAISE EXCEPTION 'backup generation registration refused' USING ERRCODE='55000';
  END IF;
- INSERT INTO offerloom.installation_backups(
+ INSERT INTO bonafides.installation_backups(
   id,owner_id,namespace_id,maintenance_epoch,workspace_version,installation_auth_epoch,owner_auth_epoch,
   schema_versions,image_sha256,source_sha256,config_sha256,keyring_sha256,recipient_sha256,
   file_name,cipher_sha256,manifest_sha256,byte_length,captured_at
@@ -70,5 +70,5 @@ BEGIN
  );
 END $$;
 REVOKE ALL ON FUNCTION register_installation_backup(uuid,uuid,bigint,jsonb) FROM PUBLIC;
-GRANT EXECUTE ON FUNCTION register_installation_backup(uuid,uuid,bigint,jsonb) TO offerloom_runtime;
+GRANT EXECUTE ON FUNCTION register_installation_backup(uuid,uuid,bigint,jsonb) TO bonafides_runtime;
 INSERT INTO schema_migrations(version,source_sha256) VALUES(19,repeat('0',64));

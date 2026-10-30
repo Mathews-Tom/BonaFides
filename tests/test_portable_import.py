@@ -25,14 +25,14 @@ from test_sources import SourceContext
 from test_sources import catalog as catalog
 from test_suitability import _profile
 
-from offerloom.approvals import consume_action_approval, prepare_action_approval
-from offerloom.commands import canonical_json
-from offerloom.import_parser import ImportParserClient
-from offerloom.installation_control import InstallationMaintenance, begin_control
-from offerloom.portable_archive import ArchiveError, BlobMember, PortableArchive
-from offerloom.portable_import import import_controlled_owner_data
-from offerloom.storage import BlobStore
-from offerloom.workflows import claim_control
+from bonafides.approvals import consume_action_approval, prepare_action_approval
+from bonafides.commands import canonical_json
+from bonafides.import_parser import ImportParserClient
+from bonafides.installation_control import InstallationMaintenance, begin_control
+from bonafides.portable_archive import ArchiveError, BlobMember, PortableArchive
+from bonafides.portable_import import import_controlled_owner_data
+from bonafides.storage import BlobStore
+from bonafides.workflows import claim_control
 
 
 def _source(context: SourceContext) -> tuple[PortableArchive, bytes]:
@@ -76,14 +76,14 @@ def _approved_import(context: SourceContext, payload: bytes) -> Prepared:
     with context.runtime.transaction() as conn:
         owner = _owner(conn, context.owner_id)
         namespace = conn.execute(
-            text("SELECT namespace_id FROM offerloom.installation_state WHERE singleton")
+            text("SELECT namespace_id FROM bonafides.installation_state WHERE singleton")
         ).scalar_one()
         conn.execute(
-            text("""INSERT INTO offerloom.workflow_runs
+            text("""INSERT INTO bonafides.workflow_runs
         (owner_id,id,kind,input,dedupe_key,request_sha256,deadline_at,maintenance_epoch)
         SELECT :owner,:id,'portable_import',CAST(:input AS jsonb),:dedupe,:sha,
         clock_timestamp()+interval '5 minutes',maintenance_epoch
-        FROM offerloom.installation_state WHERE singleton"""),
+        FROM bonafides.installation_state WHERE singleton"""),
             {
                 "owner": context.owner_id,
                 "id": identifier,
@@ -113,7 +113,7 @@ def _approved_import(context: SourceContext, payload: bytes) -> Prepared:
     # are production code. The owner-facing replacement producer is not qualified.
     with context.identity.admin.transaction() as conn:
         conn.execute(
-            text("""UPDATE offerloom.workflow_runs SET state='pending',
+            text("""UPDATE bonafides.workflow_runs SET state='pending',
         version=version+1,last_error_code=NULL WHERE owner_id=:owner AND id=:id"""),
             {"owner": context.owner_id, "id": identifier},
         )
@@ -144,7 +144,7 @@ def test_foreign_historical_import_preserves_native_rows_and_bytes_without_autho
     )
     with catalog.runtime.transaction() as conn:
         conn.execute(
-            text("""INSERT INTO offerloom.blobs(owner_id,id,sha256,byte_length,media_type,storage_key)
+            text("""INSERT INTO bonafides.blobs(owner_id,id,sha256,byte_length,media_type,storage_key)
             VALUES(:owner,:id,:sha,:size,:media,:key)"""),
             {
                 "owner": catalog.owner_id,
@@ -214,32 +214,32 @@ def test_foreign_historical_import_preserves_native_rows_and_bytes_without_autho
             )
         maintenance.finish(result)
     with catalog.runtime.transaction() as conn:
-        assert conn.execute(text("SELECT count(*) FROM offerloom.model_runs")).scalar_one() == 0
+        assert conn.execute(text("SELECT count(*) FROM bonafides.model_runs")).scalar_one() == 0
         assert (
-            conn.execute(text("SELECT count(*) FROM offerloom.hosted_egress_consents")).scalar_one()
+            conn.execute(text("SELECT count(*) FROM bonafides.hosted_egress_consents")).scalar_one()
             == 0
         )
         history = (
-            conn.execute(text("SELECT * FROM offerloom.portable_model_history")).mappings().one()
+            conn.execute(text("SELECT * FROM bonafides.portable_model_history")).mappings().one()
         )
         original = archive.manifest.records["model_run_provenance"][0]
         assert history["owner_id"] == catalog.owner_id
         assert history["source_owner_id"] == archive.manifest.source_owner_id
         assert history["record"] == original["record"]
         proposal = (
-            conn.execute(text("SELECT * FROM offerloom.document_regeneration_proposals"))
+            conn.execute(text("SELECT * FROM bonafides.document_regeneration_proposals"))
             .mappings()
             .one()
         )
         assert proposal["model_run_id"] is None and proposal["workflow_run_id"] is None
         assert proposal["historical_model_run_id"] == history["id"]
         current = conn.execute(
-            text("SELECT current_revision_id FROM offerloom.profiles")
+            text("SELECT current_revision_id FROM bonafides.profiles")
         ).scalar_one()
         assert current == archive.manifest.current_profile_revision_id
         assert (
             conn.execute(
-                text("""SELECT outcome FROM offerloom.portable_purge_items
+                text("""SELECT outcome FROM bonafides.portable_purge_items
             WHERE control_id=:id AND kind='cas' AND storage_key=:key"""),
                 {"id": control.id, "key": shared_stored.storage_key},
             ).scalar_one()
@@ -300,7 +300,7 @@ def test_foreign_historical_import_preserves_native_rows_and_bytes_without_autho
 @pytest.mark.postgres
 def test_import_without_exact_live_control_cannot_publish(catalog: SourceContext) -> None:
 
-    from offerloom.installation_control import Control
+    from bonafides.installation_control import Control
 
     archive, payload = _source(catalog)
     before = _export(catalog).manifest.records
@@ -328,7 +328,7 @@ def test_replacement_publication_failure_rolls_back_erasure_and_preserves_origin
     original_blob = store.put_bytes(catalog.owner_id, original_bytes)
     with catalog.runtime.transaction() as conn:
         conn.execute(
-            text("""INSERT INTO offerloom.blobs(owner_id,sha256,byte_length,media_type,storage_key)
+            text("""INSERT INTO bonafides.blobs(owner_id,sha256,byte_length,media_type,storage_key)
             VALUES(:owner,:sha,:size,'text/plain',:key)"""),
             {
                 "owner": catalog.owner_id,
@@ -357,7 +357,7 @@ def test_replacement_publication_failure_rolls_back_erasure_and_preserves_origin
             return {
                 name: conn.execute(
                     text(f"""SELECT coalesce(jsonb_agg(to_jsonb(r) ORDER BY to_jsonb(r)::text),'[]')
-                    FROM offerloom.{name} r WHERE owner_id=:owner"""),
+                    FROM bonafides.{name} r WHERE owner_id=:owner"""),
                     {"owner": catalog.owner_id},
                 ).scalar_one()
                 for name in (
@@ -377,12 +377,12 @@ def test_replacement_publication_failure_rolls_back_erasure_and_preserves_origin
         with catalog.identity.admin.transaction() as conn:
             # A real native trigger faults publication after the eraser ran.
             # LIKE-based quarantine does not copy triggers, so validation passes.
-            conn.exec_driver_sql("""CREATE FUNCTION offerloom.test_portable_publication_failure()
+            conn.exec_driver_sql("""CREATE FUNCTION bonafides.test_portable_publication_failure()
             RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN
              RAISE EXCEPTION 'synthetic portable publication failure' USING ERRCODE='55000';
             END $$;
-            CREATE TRIGGER test_portable_publication_failure BEFORE INSERT ON offerloom.document_revisions
-            FOR EACH ROW EXECUTE FUNCTION offerloom.test_portable_publication_failure();""")
+            CREATE TRIGGER test_portable_publication_failure BEFORE INSERT ON bonafides.document_revisions
+            FOR EACH ROW EXECUTE FUNCTION bonafides.test_portable_publication_failure();""")
         try:
             with pytest.raises(DBAPIError, match="synthetic portable publication failure"):
                 import_controlled_owner_data(
@@ -407,17 +407,17 @@ def test_replacement_publication_failure_rolls_back_erasure_and_preserves_origin
             with catalog.runtime.transaction() as conn:
                 assert (
                     conn.execute(
-                        text("SELECT count(*) FROM offerloom.portable_purges")
+                        text("SELECT count(*) FROM bonafides.portable_purges")
                     ).scalar_one()
                     == 0
                 )
                 assert (
                     conn.execute(
-                        text("SELECT maintenance_active FROM offerloom.installation_state")
+                        text("SELECT maintenance_active FROM bonafides.installation_state")
                     ).scalar_one()
                     is True
                 )
         finally:
             with catalog.identity.admin.transaction() as conn:
-                conn.exec_driver_sql("""DROP TRIGGER test_portable_publication_failure ON offerloom.document_revisions;
-                DROP FUNCTION offerloom.test_portable_publication_failure();""")
+                conn.exec_driver_sql("""DROP TRIGGER test_portable_publication_failure ON bonafides.document_revisions;
+                DROP FUNCTION bonafides.test_portable_publication_failure();""")

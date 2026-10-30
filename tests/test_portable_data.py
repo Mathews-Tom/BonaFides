@@ -15,17 +15,17 @@ from test_sources import SourceContext
 from test_sources import catalog as catalog
 from test_suitability import _profile
 
-from offerloom.commands import canonical_json
-from offerloom.portable_archive import (
+from bonafides.commands import canonical_json
+from bonafides.portable_archive import (
     ArchiveError,
     PortableArchive,
     decode_archive,
     encode_archive,
     manifest_digest,
 )
-from offerloom.portable_data import collect_owner_data, export_owner_data, quarantine_records
-from offerloom.profiles import content_hash
-from offerloom.storage import BlobStore
+from bonafides.portable_data import collect_owner_data, export_owner_data, quarantine_records
+from bonafides.profiles import content_hash
+from bonafides.storage import BlobStore
 
 
 def _export(context: SourceContext) -> PortableArchive:
@@ -48,11 +48,11 @@ def _snapshot(context: SourceContext) -> object:
     with context.identity.admin.transaction() as conn:
         return conn.execute(
             text("""SELECT jsonb_build_object(
-            'profiles',(SELECT jsonb_agg(to_jsonb(p)) FROM offerloom.profiles p),
-            'profile_revisions',(SELECT jsonb_agg(to_jsonb(r)) FROM offerloom.profile_revisions r),
-            'documents',(SELECT jsonb_agg(to_jsonb(d)) FROM offerloom.document_revisions d),
-            'blobs',(SELECT jsonb_agg(to_jsonb(b)) FROM offerloom.blobs b),
-            'sessions',(SELECT jsonb_agg(to_jsonb(s)) FROM offerloom.sessions s))""")
+            'profiles',(SELECT jsonb_agg(to_jsonb(p)) FROM bonafides.profiles p),
+            'profile_revisions',(SELECT jsonb_agg(to_jsonb(r)) FROM bonafides.profile_revisions r),
+            'documents',(SELECT jsonb_agg(to_jsonb(d)) FROM bonafides.document_revisions d),
+            'blobs',(SELECT jsonb_agg(to_jsonb(b)) FROM bonafides.blobs b),
+            'sessions',(SELECT jsonb_agg(to_jsonb(s)) FROM bonafides.sessions s))""")
         ).scalar_one()
 
 
@@ -89,7 +89,7 @@ def test_nonempty_document_evidence_and_blob_survive_byte_and_relational_validat
     evidence = {"text": "Synthetic attached evidence", "source": "Owner supplied"}
     with catalog.runtime.transaction() as conn:
         conn.execute(
-            text("""INSERT INTO offerloom.blobs(owner_id,id,sha256,byte_length,media_type,storage_key)
+            text("""INSERT INTO bonafides.blobs(owner_id,id,sha256,byte_length,media_type,storage_key)
             VALUES(:owner,:id,:sha,:bytes,'text/plain',:key)"""),
             {
                 "owner": catalog.owner_id,
@@ -100,12 +100,12 @@ def test_nonempty_document_evidence_and_blob_survive_byte_and_relational_validat
             },
         )
         conn.execute(
-            text("""INSERT INTO offerloom.evidence_records(owner_id,id,current_revision_id)
+            text("""INSERT INTO bonafides.evidence_records(owner_id,id,current_revision_id)
             VALUES(:owner,:id,:revision)"""),
             {"owner": catalog.owner_id, "id": evidence_id, "revision": revision_id},
         )
         conn.execute(
-            text("""INSERT INTO offerloom.evidence_revisions(owner_id,id,evidence_id,revision_no,payload,blob_id,content_sha256)
+            text("""INSERT INTO bonafides.evidence_revisions(owner_id,id,evidence_id,revision_no,payload,blob_id,content_sha256)
             VALUES(:owner,:id,:evidence,1,CAST(:payload AS jsonb),:blob,:sha)"""),
             {
                 "owner": catalog.owner_id,
@@ -178,7 +178,7 @@ def test_nonempty_document_evidence_and_blob_survive_byte_and_relational_validat
     assert archive.blobs[stored.sha256] == payload
     with catalog.identity.admin.transaction() as conn:
         session_hash = conn.execute(
-            text("SELECT token_sha256 FROM offerloom.sessions WHERE owner_id=:owner"),
+            text("SELECT token_sha256 FROM bonafides.sessions WHERE owner_id=:owner"),
             {"owner": catalog.owner_id},
         ).scalar_one()
     assert session_hash not in canonical_json(archive.manifest.model_dump(mode="json"))
@@ -278,7 +278,7 @@ def test_foreign_source_archive_validates_without_granting_authority_to_its_owne
         quarantine_records(conn, archive)
         assert (
             conn.execute(
-                text("SELECT count(*) FROM offerloom.owners WHERE id=:id"), {"id": source_owner}
+                text("SELECT count(*) FROM bonafides.owners WHERE id=:id"), {"id": source_owner}
             ).scalar_one()
             == 0
         )
@@ -357,14 +357,14 @@ def test_historical_hosted_model_validates_without_restoring_execution_or_consen
     before = _snapshot(catalog)
     with catalog.runtime.transaction() as conn:
         counts_before = conn.execute(
-            text("""SELECT (SELECT count(*) FROM offerloom.model_runs),
-            (SELECT count(*) FROM offerloom.hosted_egress_consents)""")
+            text("""SELECT (SELECT count(*) FROM bonafides.model_runs),
+            (SELECT count(*) FROM bonafides.hosted_egress_consents)""")
         ).one()
         quarantine_records(conn, archive)
         assert (
             conn.execute(
-                text("""SELECT (SELECT count(*) FROM offerloom.model_runs),
-            (SELECT count(*) FROM offerloom.hosted_egress_consents)""")
+                text("""SELECT (SELECT count(*) FROM bonafides.model_runs),
+            (SELECT count(*) FROM bonafides.hosted_egress_consents)""")
             ).one()
             == counts_before
         )

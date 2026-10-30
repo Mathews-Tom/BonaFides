@@ -24,11 +24,11 @@ from pypdf.generic import (
     NameObject,
 )
 
-from offerloom import render_service
-from offerloom.document_frame import PrintableFrame, ProfileContact, template_digest
-from offerloom.documents import DocumentBlock, DocumentBody, DocumentSection
-from offerloom.render_service import RenderClient, RenderFailure, RenderReceipt, render_pdf
-from offerloom.storage import MAX_PDF_BYTES, atomic_file, directory, read_file
+from bonafides import render_service
+from bonafides.document_frame import PrintableFrame, ProfileContact, template_digest
+from bonafides.documents import DocumentBlock, DocumentBody, DocumentSection
+from bonafides.render_service import RenderClient, RenderFailure, RenderReceipt, render_pdf
+from bonafides.storage import MAX_PDF_BYTES, atomic_file, directory, read_file
 
 
 def _body(*texts: str) -> DocumentBody:
@@ -158,7 +158,7 @@ def test_frozen_frame_contact_is_part_of_exact_text_postcondition(
     _engine(monkeypatch, _pdf("Resume Evidence First fact"))
     frame = PrintableFrame(display_name="Synthetic Name", contact=ProfileContact(phone="123456"))
     with pytest.raises(RenderFailure, match="^render_text_unsupported$"):
-        render_pdf(_body("First fact"), "offerloom-evidence-v1", frame)
+        render_pdf(_body("First fact"), "bonafides-evidence-v1", frame)
 
 
 @pytest.mark.parametrize("data", [b"", b"%PDF-1.7\nnot a PDF", b"%PDF-" + b"x" * MAX_PDF_BYTES])
@@ -175,7 +175,7 @@ def test_child_does_not_publish_rejected_pdf(
 ) -> None:
     job_id = "a" * 64
     request = render_service.RenderRequest(
-        schema_version=1, template_version="offerloom-base-v1", body=_body("First fact")
+        schema_version=1, template_version="bonafides-base-v1", body=_body("First fact")
     )
     _engine(monkeypatch, _pdf("Resume Evidence First fat"))
     monkeypatch.setattr(render_service, "_child_limits", lambda: None)
@@ -261,11 +261,11 @@ def actual_renderer(
     # Glyph support is a property of the shipped image's font set, not the test
     # host's: CI runners carry extra CJK/Unifont fonts. Always paint through the
     # sealed production renderer image; never fall back to host fonts.
-    image = os.environ.get("OFFERLOOM_TEST_PARSER_IMAGE")
+    image = os.environ.get("BONAFIDES_TEST_PARSER_IMAGE")
     if not image:
-        pytest.fail("Actual renderer tests require OFFERLOOM_TEST_PARSER_IMAGE and Docker.")
+        pytest.fail("Actual renderer tests require BONAFIDES_TEST_PARSER_IMAGE and Docker.")
     spool = tmp_path_factory.mktemp("actual-renderer")
-    container = "offerloom-renderer-test-" + uuid4().hex
+    container = "bonafides-renderer-test-" + uuid4().hex
     process = subprocess.Popen(
         [
             "docker",
@@ -293,12 +293,12 @@ def actual_renderer(
             "--mount",
             f"type=bind,src={spool},dst=/spool",
             "--env",
-            "OFFERLOOM_RENDERER_SPOOL=/spool",
+            "BONAFIDES_RENDERER_SPOOL=/spool",
             "--entrypoint",
             "python",
             image,
             "-m",
-            "offerloom.render_service",
+            "bonafides.render_service",
             "serve",
         ],
         stdin=subprocess.DEVNULL,
@@ -345,11 +345,11 @@ def actual_renderer(
 @pytest.mark.parametrize(
     "template",
     [
-        "offerloom-base-v1",
-        "offerloom-evidence-v1",
-        "offerloom-compact-v1",
-        "offerloom-evidence-letter-v1",
-        "offerloom-compact-letter-v1",
+        "bonafides-base-v1",
+        "bonafides-evidence-v1",
+        "bonafides-compact-v1",
+        "bonafides-evidence-letter-v1",
+        "bonafides-compact-letter-v1",
     ],
 )
 def test_actual_renderer_preserves_supported_unicode_long_literal_text_and_order(
@@ -365,7 +365,7 @@ def test_actual_renderer_preserves_supported_unicode_long_literal_text_and_order
     body = _body(*texts)
     frame = (
         None
-        if template == "offerloom-base-v1"
+        if template == "bonafides-base-v1"
         else PrintableFrame(
             display_name="José Noe\u0308l Δέσποινα Иванова",
             contact=ProfileContact(email="synthetic@example.invalid", location="München"),
@@ -388,10 +388,10 @@ def test_actual_renderer_preserves_supported_unicode_long_literal_text_and_order
 @pytest.mark.parametrize(
     ("template", "width", "height"),
     [
-        ("offerloom-evidence-v1", 210 / 25.4 * 72, 297 / 25.4 * 72),
-        ("offerloom-compact-v1", 210 / 25.4 * 72, 297 / 25.4 * 72),
-        ("offerloom-evidence-letter-v1", 612, 792),
-        ("offerloom-compact-letter-v1", 612, 792),
+        ("bonafides-evidence-v1", 210 / 25.4 * 72, 297 / 25.4 * 72),
+        ("bonafides-compact-v1", 210 / 25.4 * 72, 297 / 25.4 * 72),
+        ("bonafides-evidence-letter-v1", 612, 792),
+        ("bonafides-compact-letter-v1", 612, 792),
     ],
 )
 def test_actual_renderer_uses_selected_paper_geometry_and_preserves_frame_and_body(
@@ -423,7 +423,7 @@ def test_actual_renderer_uses_selected_paper_geometry_and_preserves_frame_and_bo
 
 
 @pytest.mark.parametrize("text", ["王小明", "unassigned \u0378", "noncharacter \U0010ffff"])
-@pytest.mark.parametrize("template", ["offerloom-evidence-v1", "offerloom-compact-v1"])
+@pytest.mark.parametrize("template", ["bonafides-evidence-v1", "bonafides-compact-v1"])
 def test_actual_renderer_rejects_unsupported_glyphs_without_silent_text_loss(
     text: str,
     template: str,

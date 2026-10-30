@@ -1,9 +1,9 @@
 -- SPDX-License-Identifier: MIT OR Apache-2.0
 -- OL-009 immutable owner review, evidence coverage and bounded local inference.
-SET LOCAL search_path=offerloom,pg_catalog;
+SET LOCAL search_path=bonafides,pg_catalog;
 -- A changed source invalidates the mutable current projection, never its history.
 CREATE FUNCTION invalidate_posting_requirement_projection() RETURNS trigger
-LANGUAGE plpgsql SET search_path=offerloom,pg_catalog AS $$
+LANGUAGE plpgsql SET search_path=bonafides,pg_catalog AS $$
 BEGIN
  IF ROW(NEW.title,NEW.company,NEW.location_text,NEW.description_text,NEW.canonical_url,NEW.content_sha256)
  IS DISTINCT FROM ROW(OLD.title,OLD.company,OLD.location_text,OLD.description_text,OLD.canonical_url,OLD.content_sha256)
@@ -60,8 +60,8 @@ CREATE TABLE local_model_route_blocks (
  error_code text NOT NULL, created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
  PRIMARY KEY(owner_id,route_sha256,stage)
 );
-GRANT SELECT,INSERT ON local_model_route_blocks TO offerloom_runtime;
-GRANT SELECT,INSERT ON posting_requirement_revisions,match_assessments TO offerloom_runtime;
-REVOKE UPDATE,DELETE ON posting_requirement_revisions,match_assessments FROM offerloom_runtime;
-GRANT SELECT,UPDATE ON local_model_reservations TO offerloom_runtime;
+GRANT SELECT,INSERT ON local_model_route_blocks TO bonafides_runtime;
+GRANT SELECT,INSERT ON posting_requirement_revisions,match_assessments TO bonafides_runtime;
+REVOKE UPDATE,DELETE ON posting_requirement_revisions,match_assessments FROM bonafides_runtime;
+GRANT SELECT,UPDATE ON local_model_reservations TO bonafides_runtime;
 INSERT INTO schema_migrations(version,source_sha256) VALUES(9,repeat('0',64));

@@ -3,7 +3,7 @@
 BEGIN;
 SET LOCAL lock_timeout = '5s';
 SET LOCAL statement_timeout = '60s';
-SET LOCAL search_path=offerloom,pg_catalog;
+SET LOCAL search_path=bonafides,pg_catalog;
 CREATE TABLE hosted_egress_consents (
  owner_id uuid NOT NULL REFERENCES owners(id) ON DELETE CASCADE,
  id uuid NOT NULL DEFAULT gen_random_uuid(), workflow_run_id uuid NOT NULL,

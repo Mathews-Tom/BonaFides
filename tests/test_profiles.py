@@ -14,11 +14,11 @@ from sqlalchemy import text
 from test_identity import IdentityContext, _bootstrap
 from test_identity import identity as identity
 
-from offerloom.documents import prepare_synthetic, publish_document
-from offerloom.portable_data import collect_owner_data, quarantine_records
-from offerloom.problems import Problem
-from offerloom.profile_entries import evidence_revision, hydrate_claim
-from offerloom.profiles import ProfileSnapshot, _save, canonical, content_hash
+from bonafides.documents import prepare_synthetic, publish_document
+from bonafides.portable_data import collect_owner_data, quarantine_records
+from bonafides.problems import Problem
+from bonafides.profile_entries import evidence_revision, hydrate_claim
+from bonafides.profiles import ProfileSnapshot, _save, canonical, content_hash
 
 
 @pytest.fixture
@@ -28,16 +28,16 @@ def profile_owner(identity: IdentityContext) -> Iterator[IdentityContext]:
     # before the shared owner fixture removes immutable profile/evidence links.
     with identity.admin.transaction() as conn:
         owner = conn.execute(
-            text("SELECT id FROM offerloom.owners WHERE login_name=:login"),
+            text("SELECT id FROM bonafides.owners WHERE login_name=:login"),
             {"login": identity.login_name},
         ).scalar_one_or_none()
         if owner is not None:
             conn.execute(
-                text("DELETE FROM offerloom.document_claim_links WHERE owner_id=:owner"),
+                text("DELETE FROM bonafides.document_claim_links WHERE owner_id=:owner"),
                 {"owner": owner},
             )
             conn.execute(
-                text("DELETE FROM offerloom.document_drafts WHERE owner_id=:owner"),
+                text("DELETE FROM bonafides.document_drafts WHERE owner_id=:owner"),
                 {"owner": owner},
             )
 
@@ -214,11 +214,11 @@ def test_legacy_profile_text_survives_edits_portable_validation_and_historical_r
         # Insert an immutable pre-description snapshot, not a normalized model dump.
         with profile_owner.admin.transaction() as conn:
             profile_id = conn.execute(
-                text("SELECT id FROM offerloom.profiles WHERE owner_id=:owner"),
+                text("SELECT id FROM bonafides.profiles WHERE owner_id=:owner"),
                 {"owner": owner_id},
             ).scalar_one()
             conn.execute(
-                text("""INSERT INTO offerloom.profile_revisions
+                text("""INSERT INTO bonafides.profile_revisions
                 (owner_id,id,profile_id,revision_no,snapshot,content_sha256,reason)
                 VALUES(:owner,:id,:profile,2,CAST(:snapshot AS jsonb),:sha,'owner_save')"""),
                 {
@@ -230,7 +230,7 @@ def test_legacy_profile_text_survives_edits_portable_validation_and_historical_r
                 },
             )
             conn.execute(
-                text("""UPDATE offerloom.profiles SET current_revision_id=:id,version=version+1
+                text("""UPDATE bonafides.profiles SET current_revision_id=:id,version=version+1
                 WHERE owner_id=:owner"""),
                 {"owner": owner_id, "id": revision_id},
             )
@@ -658,14 +658,14 @@ def test_upstream_change_marks_document_stale_without_mutating_saved_body_or_pin
             document = publish_document(conn, owner_id, uuid4(), prepared)
             before = conn.execute(
                 text(
-                    "SELECT row_to_json(r) FROM offerloom.document_revisions r WHERE owner_id=:owner"
+                    "SELECT row_to_json(r) FROM bonafides.document_revisions r WHERE owner_id=:owner"
                 ),
                 {"owner": owner_id},
             ).scalar_one()
             pins_before = (
                 conn.execute(
                     text(
-                        "SELECT row_to_json(l) FROM offerloom.document_claim_links l WHERE owner_id=:owner ORDER BY id"
+                        "SELECT row_to_json(l) FROM bonafides.document_claim_links l WHERE owner_id=:owner ORDER BY id"
                     ),
                     {"owner": owner_id},
                 )
@@ -689,14 +689,14 @@ def test_upstream_change_marks_document_stale_without_mutating_saved_body_or_pin
         with profile_owner.admin.transaction() as conn:
             after = conn.execute(
                 text(
-                    "SELECT row_to_json(r) FROM offerloom.document_revisions r WHERE owner_id=:owner"
+                    "SELECT row_to_json(r) FROM bonafides.document_revisions r WHERE owner_id=:owner"
                 ),
                 {"owner": owner_id},
             ).scalar_one()
             pins_after = (
                 conn.execute(
                     text(
-                        "SELECT row_to_json(l) FROM offerloom.document_claim_links l WHERE owner_id=:owner ORDER BY id"
+                        "SELECT row_to_json(l) FROM bonafides.document_claim_links l WHERE owner_id=:owner ORDER BY id"
                     ),
                     {"owner": owner_id},
                 )
@@ -768,7 +768,7 @@ def test_unattached_evidence_history_restore_and_post_delete_replay(
             pins = (
                 conn.execute(
                     text(
-                        "SELECT evidence_revision_id FROM offerloom.profile_revision_evidence WHERE owner_id=:owner AND profile_revision_id=:revision"
+                        "SELECT evidence_revision_id FROM bonafides.profile_revision_evidence WHERE owner_id=:owner AND profile_revision_id=:revision"
                     ),
                     {"owner": owner_id, "revision": UUID(revision_id)},
                 )

@@ -1,5 +1,5 @@
 -- SPDX-License-Identifier: MIT OR Apache-2.0
-SET search_path=offerloom,pg_catalog;
+SET search_path=bonafides,pg_catalog;
 
 -- A lease start is not a heartbeat; old runs have no invented observation.
 ALTER TABLE workflow_runs ADD COLUMN last_heartbeat_at timestamptz;
@@ -22,8 +22,8 @@ CREATE INDEX workflow_attempt_history_idx
  ON workflow_attempt_events(owner_id,workflow_run_id,created_at DESC,id DESC);
 CREATE TRIGGER immutable_update BEFORE UPDATE ON workflow_attempt_events
  FOR EACH ROW EXECUTE FUNCTION reject_revision_update();
-REVOKE ALL ON workflow_attempt_events FROM PUBLIC,offerloom_runtime;
-GRANT SELECT,INSERT ON workflow_attempt_events TO offerloom_runtime;
+REVOKE ALL ON workflow_attempt_events FROM PUBLIC,bonafides_runtime;
+GRANT SELECT,INSERT ON workflow_attempt_events TO bonafides_runtime;
 
 -- Legacy unbound rows retain their historical bytes but cannot authorize execution.
 ALTER TABLE action_approvals DROP CONSTRAINT action_approvals_action_kind_check;
@@ -48,7 +48,7 @@ ALTER TABLE action_approvals ADD CONSTRAINT action_approvals_workflow_identity_u
  UNIQUE(owner_id,id,workflow_run_id);
 
 CREATE FUNCTION protect_action_approval_binding() RETURNS trigger
- LANGUAGE plpgsql SET search_path=offerloom,pg_catalog AS $$
+ LANGUAGE plpgsql SET search_path=bonafides,pg_catalog AS $$
 BEGIN
  IF ROW(NEW.owner_id,NEW.id,NEW.workflow_run_id,NEW.action_kind,NEW.payload_sha256,
         NEW.recipient_sha256,NEW.document_revision_id,NEW.expires_at,NEW.created_at,
@@ -76,9 +76,9 @@ END $$;
 CREATE TRIGGER immutable_action_binding BEFORE UPDATE ON action_approvals
  FOR EACH ROW EXECUTE FUNCTION protect_action_approval_binding();
 REVOKE ALL ON FUNCTION protect_action_approval_binding() FROM PUBLIC;
-REVOKE UPDATE,DELETE ON action_approvals FROM offerloom_runtime;
+REVOKE UPDATE,DELETE ON action_approvals FROM bonafides_runtime;
 GRANT UPDATE(approved_at,consumed_at,revoked_at,approved_session_id,approved_auth_epoch,version)
- ON action_approvals TO offerloom_runtime;
+ ON action_approvals TO bonafides_runtime;
 
 CREATE TABLE approval_audit_events (
  owner_id uuid NOT NULL,
@@ -97,8 +97,8 @@ CREATE INDEX approval_audit_history_idx
  ON approval_audit_events(owner_id,workflow_run_id,created_at DESC,id DESC);
 CREATE TRIGGER immutable_update BEFORE UPDATE ON approval_audit_events
  FOR EACH ROW EXECUTE FUNCTION reject_revision_update();
-REVOKE ALL ON approval_audit_events FROM PUBLIC,offerloom_runtime;
-GRANT SELECT,INSERT ON approval_audit_events TO offerloom_runtime;
+REVOKE ALL ON approval_audit_events FROM PUBLIC,bonafides_runtime;
+GRANT SELECT,INSERT ON approval_audit_events TO bonafides_runtime;
 
 ALTER TABLE hosted_egress_consents ADD COLUMN approval_id uuid;
 ALTER TABLE hosted_egress_consents ADD COLUMN transmission_count integer NOT NULL DEFAULT 0
@@ -108,7 +108,7 @@ ALTER TABLE hosted_egress_consents ADD CONSTRAINT hosted_consent_approval_bindin
  REFERENCES action_approvals(owner_id,id,workflow_run_id)
  ON DELETE NO ACTION DEFERRABLE INITIALLY IMMEDIATE;
 CREATE FUNCTION protect_hosted_consent_binding() RETURNS trigger
- LANGUAGE plpgsql SET search_path=offerloom,pg_catalog AS $$
+ LANGUAGE plpgsql SET search_path=bonafides,pg_catalog AS $$
 BEGIN
  IF ROW(NEW.owner_id,NEW.id,NEW.workflow_run_id,NEW.provider_key,NEW.model_id,NEW.purpose,
         NEW.input_scope_sha256,NEW.settings_version,NEW.acknowledged_at,NEW.expires_at,
@@ -133,6 +133,6 @@ END $$;
 CREATE TRIGGER immutable_hosted_binding BEFORE UPDATE ON hosted_egress_consents
  FOR EACH ROW EXECUTE FUNCTION protect_hosted_consent_binding();
 REVOKE ALL ON FUNCTION protect_hosted_consent_binding() FROM PUBLIC;
-REVOKE UPDATE,DELETE ON hosted_egress_consents FROM offerloom_runtime;
-GRANT UPDATE(revoked_at,transmission_count) ON hosted_egress_consents TO offerloom_runtime;
+REVOKE UPDATE,DELETE ON hosted_egress_consents FROM bonafides_runtime;
+GRANT UPDATE(revoked_at,transmission_count) ON hosted_egress_consents TO bonafides_runtime;
 INSERT INTO schema_migrations(version,source_sha256) VALUES(13,repeat('0',64));

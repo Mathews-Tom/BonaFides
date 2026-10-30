@@ -17,14 +17,14 @@ from test_maintenance_recovery import _configuration, _stop_ordinary
 from test_sources import SourceContext
 from test_sources import catalog as catalog
 
-from offerloom.backup_archive import BackupError
-from offerloom.db import Database
-from offerloom.execution_guard import ExecutionGuard
-from offerloom.import_parser import ImportParserClient
-from offerloom.installation_open import RestoredOpenConfiguration, open_restored_target
-from offerloom.installation_restore import _revoke_restored_authority
-from offerloom.maintenance_operator import recover
-from offerloom.spool_guard import pause_spool
+from bonafides.backup_archive import BackupError
+from bonafides.db import Database
+from bonafides.execution_guard import ExecutionGuard
+from bonafides.import_parser import ImportParserClient
+from bonafides.installation_open import RestoredOpenConfiguration, open_restored_target
+from bonafides.installation_restore import _revoke_restored_authority
+from bonafides.maintenance_operator import recover
+from bonafides.spool_guard import pause_spool
 
 
 def _restored(
@@ -82,7 +82,7 @@ def test_open_refuses_wrong_target_receipt_or_unrevoked_authority(
                 _revoke_restored_authority(conn, namespace, uuid4())
                 epoch = conn.execute(
                     text(
-                        "SELECT maintenance_epoch FROM offerloom.installation_state WHERE singleton"
+                        "SELECT maintenance_epoch FROM bonafides.installation_state WHERE singleton"
                     )
                 ).scalar_one()
             finally:
@@ -93,7 +93,7 @@ def test_open_refuses_wrong_target_receipt_or_unrevoked_authority(
             assert (
                 conn.execute(
                     text(
-                        "UPDATE offerloom.sessions SET revoked_at=NULL WHERE revoked_at IS NOT NULL"
+                        "UPDATE bonafides.sessions SET revoked_at=NULL WHERE revoked_at IS NOT NULL"
                     )
                 ).rowcount
                 > 0
@@ -104,12 +104,12 @@ def test_open_refuses_wrong_target_receipt_or_unrevoked_authority(
         open_restored_target(config)
     with catalog.identity.admin.transaction() as conn:
         assert conn.execute(
-            text("SELECT maintenance_active FROM offerloom.installation_state WHERE singleton")
+            text("SELECT maintenance_active FROM bonafides.installation_state WHERE singleton")
         ).scalar_one()
         assert (
             conn.execute(
                 text(
-                    "SELECT count(*) FROM offerloom.audit_events WHERE action='restored_admission_opened'"
+                    "SELECT count(*) FROM bonafides.audit_events WHERE action='restored_admission_opened'"
                 )
             ).scalar_one()
             == 0
@@ -168,7 +168,7 @@ def test_explicit_open_requires_stopped_actors_and_resumes_revoked_local_owner(
         )
     with catalog.identity.admin.transaction() as conn:
         audit = conn.execute(
-            text("""SELECT detail FROM offerloom.audit_events
+            text("""SELECT detail FROM bonafides.audit_events
             WHERE action='restored_admission_opened' AND request_id=:operation"""),
             {"operation": config.operation_id},
         ).scalar_one()
@@ -176,7 +176,7 @@ def test_explicit_open_requires_stopped_actors_and_resumes_revoked_local_owner(
         assert audit["parser_nonce"] != audit["renderer_nonce"]
         assert (
             conn.execute(
-                text("SELECT count(*) FROM offerloom.source_configs WHERE enabled")
+                text("SELECT count(*) FROM bonafides.source_configs WHERE enabled")
             ).scalar_one()
             == 0
         )
@@ -192,7 +192,7 @@ def test_consumed_restore_receipt_cannot_open_an_interrupted_orphan_recovery(
     config = _restored(catalog, tmp_path, parser.spool, renderer_spool)
     with catalog.identity.admin.transaction() as conn:
         expected_revision = conn.execute(
-            text("SELECT current_revision_id FROM offerloom.profiles WHERE owner_id=:owner"),
+            text("SELECT current_revision_id FROM bonafides.profiles WHERE owner_id=:owner"),
             {"owner": catalog.owner_id},
         ).scalar_one()
     open_restored_target(config)
@@ -208,7 +208,7 @@ def test_consumed_restore_receipt_cannot_open_an_interrupted_orphan_recovery(
         conn.info["execution_guard"] = guard
         try:
             conn.execute(
-                text("""SELECT * FROM offerloom.begin_maintenance_recovery(
+                text("""SELECT * FROM bonafides.begin_maintenance_recovery(
                 :recovery,:namespace,:epoch,NULL,NULL,NULL,:guard,:parser,:renderer,:holder)"""),
                 {
                     "recovery": recovery_id,
@@ -226,18 +226,18 @@ def test_consumed_restore_receipt_cannot_open_an_interrupted_orphan_recovery(
         open_restored_target(config)
     with catalog.identity.admin.transaction() as conn:
         assert conn.execute(
-            text("SELECT maintenance_active FROM offerloom.installation_state WHERE singleton")
+            text("SELECT maintenance_active FROM bonafides.installation_state WHERE singleton")
         ).scalar_one()
         assert (
             conn.execute(
-                text("SELECT outcome FROM offerloom.maintenance_recoveries WHERE id=:id"),
+                text("SELECT outcome FROM bonafides.maintenance_recoveries WHERE id=:id"),
                 {"id": recovery_id},
             ).scalar_one()
             is None
         )
         assert (
             conn.execute(
-                text("""SELECT count(*) FROM offerloom.audit_events
+                text("""SELECT count(*) FROM bonafides.audit_events
             WHERE action='restored_admission_opened' AND request_id=:operation"""),
                 {"operation": config.operation_id},
             ).scalar_one()

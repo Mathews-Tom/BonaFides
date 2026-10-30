@@ -63,7 +63,7 @@ export function DataPortability({ api, profile, disabled, onBusyChange }: {
     setError('');
     const link = document.createElement('a');
     link.href = `/api/v1/portable-exports/${encodeURIComponent(copy.id)}/download`;
-    link.download = 'offerloom-owner-data.zip';
+    link.download = 'bonafides-owner-data.zip';
     link.click();
     setNotice('Owner-data download requested. The server verifies the stored archive before streaming it; check browser downloads for completion or failure. Protect this unencrypted personal-data file; it is not an installation backup.');
   }

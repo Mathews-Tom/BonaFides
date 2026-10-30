@@ -31,7 +31,7 @@ from test_identity import (
 )
 from test_identity import identity as identity
 
-from offerloom.approvals import (
+from bonafides.approvals import (
     ActionKind,
     ApprovalDecision,
     approve_action,
@@ -41,10 +41,10 @@ from offerloom.approvals import (
     prepare_action_approval,
     verify_hosted_consent,
 )
-from offerloom.auth import Owner, recover_password
-from offerloom.commands import canonical_json, command
-from offerloom.problems import Problem
-from offerloom.workflows import Claim, cancel_workflow, claim, claim_control, get_workflow
+from bonafides.auth import Owner, recover_password
+from bonafides.commands import canonical_json, command
+from bonafides.problems import Problem
+from bonafides.workflows import Claim, cancel_workflow, claim, claim_control, get_workflow
 
 
 @dataclass(frozen=True)
@@ -65,7 +65,7 @@ class Prepared:
 def _owner(conn: Connection, owner_id: UUID, session_id: UUID | None = None) -> Owner:
     row = (
         conn.execute(
-            text("""SELECT o.login_name,s.* FROM offerloom.sessions s JOIN offerloom.owners o ON o.id=s.owner_id
+            text("""SELECT o.login_name,s.* FROM bonafides.sessions s JOIN bonafides.owners o ON o.id=s.owner_id
         WHERE s.owner_id=:owner AND (CAST(:session AS uuid) IS NULL OR s.id=CAST(:session AS uuid))
         ORDER BY s.created_at DESC LIMIT 1"""),
             {"owner": owner_id, "session": session_id},
@@ -89,9 +89,9 @@ def approvals(pg_context: PGContext) -> Iterator[ApprovalContext]:
     session_id = uuid4()
     with pg_context.migrator.begin() as conn:
         conn.execute(
-            text("""INSERT INTO offerloom.sessions(owner_id,id,token_sha256,csrf_sha256,csrf_token,
+            text("""INSERT INTO bonafides.sessions(owner_id,id,token_sha256,csrf_sha256,csrf_token,
             auth_epoch,expires_at) SELECT id,:session,:token,:csrf,'synthetic-csrf',auth_epoch,
-            clock_timestamp()+interval '1 hour' FROM offerloom.owners WHERE id=:owner"""),
+            clock_timestamp()+interval '1 hour' FROM bonafides.owners WHERE id=:owner"""),
             {
                 "owner": pg_context.owner_id,
                 "session": session_id,
@@ -105,20 +105,20 @@ def approvals(pg_context: PGContext) -> Iterator[ApprovalContext]:
     finally:
         # Defer only the new approval edge; old evidence FK definitions stay intact.
         with pg_context.migrator.begin() as conn:
-            conn.execute(text("SET CONSTRAINTS offerloom.hosted_consent_approval_binding DEFERRED"))
+            conn.execute(text("SET CONSTRAINTS bonafides.hosted_consent_approval_binding DEFERRED"))
             conn.execute(
-                text("DELETE FROM offerloom.action_approvals WHERE owner_id=:owner"),
+                text("DELETE FROM bonafides.action_approvals WHERE owner_id=:owner"),
                 {"owner": owner.id},
             )
             conn.execute(
-                text("DELETE FROM offerloom.document_drafts WHERE owner_id=:owner"),
+                text("DELETE FROM bonafides.document_drafts WHERE owner_id=:owner"),
                 {"owner": owner.id},
             )
             conn.execute(
-                text("DELETE FROM offerloom.model_runs WHERE owner_id=:owner"), {"owner": owner.id}
+                text("DELETE FROM bonafides.model_runs WHERE owner_id=:owner"), {"owner": owner.id}
             )
             conn.execute(
-                text("DELETE FROM offerloom.hosted_egress_consents WHERE owner_id=:owner"),
+                text("DELETE FROM bonafides.hosted_egress_consents WHERE owner_id=:owner"),
                 {"owner": owner.id},
             )
 
@@ -138,12 +138,12 @@ def _prepare(
         if kind == "hosted_egress":
             conn.execute(
                 text(
-                    "UPDATE offerloom.owner_settings SET privacy_mode='hosted_opt_in' WHERE owner_id=:owner"
+                    "UPDATE bonafides.owner_settings SET privacy_mode='hosted_opt_in' WHERE owner_id=:owner"
                 ),
                 {"owner": owner.id},
             )
         namespace = conn.execute(
-            text("SELECT namespace_id FROM offerloom.installation_state WHERE singleton")
+            text("SELECT namespace_id FROM bonafides.installation_state WHERE singleton")
         ).scalar_one()
         destination: dict[str, object] = {"namespace_id": str(namespace)}
         payload: dict[str, object] = {"preview_sha256": "2" * 64, "categories": ["documents"]}
@@ -166,10 +166,10 @@ def _prepare(
                 "cost_limit_microunits": 100,
             }
         conn.execute(
-            text("""INSERT INTO offerloom.workflow_runs(owner_id,id,kind,input,dedupe_key,request_sha256,
+            text("""INSERT INTO bonafides.workflow_runs(owner_id,id,kind,input,dedupe_key,request_sha256,
             deadline_at,maintenance_epoch,token_budget,cost_budget_microunits)
             SELECT :owner,:id,:kind,CAST(:input AS jsonb),:dedupe,:sha,clock_timestamp()+interval '120 seconds',
-            maintenance_epoch,100,100 FROM offerloom.installation_state WHERE singleton"""),
+            maintenance_epoch,100,100 FROM bonafides.installation_state WHERE singleton"""),
             {
                 "owner": owner.id,
                 "id": workflow_id,
@@ -238,10 +238,10 @@ def _trusted_dispatch(context: ApprovalContext, prepared: Prepared) -> Claim:
     """
     with context.pg.migrator.begin() as conn:
         changed = conn.execute(
-            text("""UPDATE offerloom.workflow_runs w SET state='pending',version=w.version+1,
+            text("""UPDATE bonafides.workflow_runs w SET state='pending',version=w.version+1,
             deadline_at=LEAST(a.expires_at,clock_timestamp()+make_interval(secs=>
             (a.intent->>'remaining_execution_seconds')::integer))
-            FROM offerloom.action_approvals a WHERE w.owner_id=:owner AND w.id=:id
+            FROM bonafides.action_approvals a WHERE w.owner_id=:owner AND w.id=:id
             AND a.owner_id=w.owner_id AND a.workflow_run_id=w.id AND a.approved_at IS NOT NULL
             AND a.revoked_at IS NULL AND w.state='waiting_for_approval' RETURNING w.id"""),
             {"owner": context.owner.id, "id": prepared.workflow_id},
@@ -324,7 +324,7 @@ def test_exact_positive_review_consume_is_single_use_without_execution(
         assert (
             conn.execute(
                 text(
-                    "SELECT workspace_version FROM offerloom.owner_settings WHERE owner_id=:owner"
+                    "SELECT workspace_version FROM bonafides.owner_settings WHERE owner_id=:owner"
                 ),
                 {"owner": approvals.owner.id},
             ).scalar_one()
@@ -338,7 +338,7 @@ def test_exact_positive_review_consume_is_single_use_without_execution(
         assert (receipt["consent_id"] is not None) == (kind == "hosted_egress")
         assert (
             conn.execute(
-                text("SELECT count(*) FROM offerloom.profiles WHERE owner_id=:owner"),
+                text("SELECT count(*) FROM bonafides.profiles WHERE owner_id=:owner"),
                 {"owner": task.owner_id},
             ).scalar_one()
             == 1
@@ -349,7 +349,7 @@ def test_exact_positive_review_consume_is_single_use_without_execution(
         events = (
             conn.execute(
                 text(
-                    "SELECT event FROM offerloom.approval_audit_events WHERE owner_id=:owner AND approval_id=:id ORDER BY created_at,id"
+                    "SELECT event FROM bonafides.approval_audit_events WHERE owner_id=:owner AND approval_id=:id ORDER BY created_at,id"
                 ),
                 {"owner": task.owner_id, "id": UUID(str(prepared.approval["id"]))},
             )
@@ -418,14 +418,14 @@ def test_review_rechecks_current_binding_pins(
 ) -> None:
     prepared = _prepare(approvals.pg.runtime, approvals.owner)
     updates = {
-        "input": "UPDATE offerloom.workflow_runs SET input='{}' WHERE owner_id=:owner AND id=:id",
-        "request": "UPDATE offerloom.workflow_runs SET request_sha256=repeat('f',64) WHERE owner_id=:owner AND id=:id",
-        "workspace": "UPDATE offerloom.owner_settings SET workspace_version=workspace_version+1 WHERE owner_id=:owner",
-        "settings": "UPDATE offerloom.owner_settings SET version=version+1 WHERE owner_id=:owner",
-        "settings_bytes": 'UPDATE offerloom.owner_settings SET settings=\'{"changed":"yes"}\' WHERE owner_id=:owner',
-        "auth": "UPDATE offerloom.owners SET auth_epoch=auth_epoch+1 WHERE id=:owner",
-        "session": "UPDATE offerloom.sessions SET revoked_at=clock_timestamp() WHERE owner_id=:owner",
-        "budget": "UPDATE offerloom.workflow_runs SET token_budget=token_budget+1 WHERE owner_id=:owner AND id=:id",
+        "input": "UPDATE bonafides.workflow_runs SET input='{}' WHERE owner_id=:owner AND id=:id",
+        "request": "UPDATE bonafides.workflow_runs SET request_sha256=repeat('f',64) WHERE owner_id=:owner AND id=:id",
+        "workspace": "UPDATE bonafides.owner_settings SET workspace_version=workspace_version+1 WHERE owner_id=:owner",
+        "settings": "UPDATE bonafides.owner_settings SET version=version+1 WHERE owner_id=:owner",
+        "settings_bytes": 'UPDATE bonafides.owner_settings SET settings=\'{"changed":"yes"}\' WHERE owner_id=:owner',
+        "auth": "UPDATE bonafides.owners SET auth_epoch=auth_epoch+1 WHERE id=:owner",
+        "session": "UPDATE bonafides.sessions SET revoked_at=clock_timestamp() WHERE owner_id=:owner",
+        "budget": "UPDATE bonafides.workflow_runs SET token_budget=token_budget+1 WHERE owner_id=:owner AND id=:id",
     }
     with approvals.pg.migrator.begin() as conn:
         conn.execute(
@@ -457,11 +457,11 @@ def test_installation_identity_drift_refuses_without_rebinding(
     prepared = _prepare(approvals.pg.runtime, approvals.owner)
     with approvals.pg.migrator.begin() as conn:
         original = conn.execute(
-            text(f"SELECT {field} FROM offerloom.installation_state WHERE singleton")
+            text(f"SELECT {field} FROM bonafides.installation_state WHERE singleton")
         ).scalar_one()
         changed = uuid4() if field == "namespace_id" else int(original) + 1
         conn.execute(
-            text(f"UPDATE offerloom.installation_state SET {field}=:value WHERE singleton"),
+            text(f"UPDATE bonafides.installation_state SET {field}=:value WHERE singleton"),
             {"value": changed},
         )
     try:
@@ -474,7 +474,7 @@ def test_installation_identity_drift_refuses_without_rebinding(
     finally:
         with approvals.pg.migrator.begin() as conn:
             conn.execute(
-                text(f"UPDATE offerloom.installation_state SET {field}=:value WHERE singleton"),
+                text(f"UPDATE bonafides.installation_state SET {field}=:value WHERE singleton"),
                 {"value": original},
             )
 
@@ -511,7 +511,7 @@ def test_expiry_is_db_clock_bounded_immutable_and_durably_revoked(
     with pytest.raises(DBAPIError), approvals.pg.runtime.begin() as conn:
         conn.execute(
             text(
-                "UPDATE offerloom.action_approvals SET expires_at=expires_at+interval '1 hour' WHERE owner_id=:owner"
+                "UPDATE bonafides.action_approvals SET expires_at=expires_at+interval '1 hour' WHERE owner_id=:owner"
             ),
             {"owner": approvals.owner.id},
         )
@@ -526,7 +526,7 @@ def test_expiry_is_db_clock_bounded_immutable_and_durably_revoked(
         assert (
             conn.execute(
                 text(
-                    "SELECT count(*) FROM offerloom.approval_audit_events WHERE owner_id=:owner AND event='expired'"
+                    "SELECT count(*) FROM bonafides.approval_audit_events WHERE owner_id=:owner AND event='expired'"
                 ),
                 {"owner": approvals.owner.id},
             ).scalar_one()
@@ -534,7 +534,7 @@ def test_expiry_is_db_clock_bounded_immutable_and_durably_revoked(
         )
         assert (
             conn.execute(
-                text("SELECT expires_at FROM offerloom.action_approvals WHERE owner_id=:owner"),
+                text("SELECT expires_at FROM bonafides.action_approvals WHERE owner_id=:owner"),
                 {"owner": approvals.owner.id},
             )
             .scalar_one()
@@ -556,7 +556,7 @@ def test_recent_reauthentication_is_rechecked_from_live_session(approvals: Appro
     with approvals.pg.migrator.begin() as conn:
         conn.execute(
             text(
-                "UPDATE offerloom.sessions SET authenticated_at=clock_timestamp()-interval '5 minutes' WHERE owner_id=:owner"
+                "UPDATE bonafides.sessions SET authenticated_at=clock_timestamp()-interval '5 minutes' WHERE owner_id=:owner"
             ),
             {"owner": approvals.owner.id},
         )
@@ -583,12 +583,12 @@ def test_legacy_unbound_approval_and_cross_owner_never_authorize(
             get_action_approval(conn, uuid4(), prepared.workflow_id)
         workflow_id = uuid4()
         conn.execute(
-            text("""INSERT INTO offerloom.workflow_runs(owner_id,id,kind,dedupe_key,request_sha256,deadline_at)
+            text("""INSERT INTO bonafides.workflow_runs(owner_id,id,kind,dedupe_key,request_sha256,deadline_at)
         VALUES(:owner,:id,'privacy_delete',:key,repeat('0',64),clock_timestamp()+interval '1 minute')"""),
             {"owner": approvals.owner.id, "id": workflow_id, "key": str(workflow_id)},
         )
         conn.execute(
-            text("""INSERT INTO offerloom.action_approvals(owner_id,workflow_run_id,action_kind,payload_sha256,expires_at)
+            text("""INSERT INTO bonafides.action_approvals(owner_id,workflow_run_id,action_kind,payload_sha256,expires_at)
         VALUES(:owner,:id,'privacy_delete',repeat('0',64),clock_timestamp()+interval '1 minute')"""),
             {"owner": approvals.owner.id, "id": workflow_id},
         )
@@ -614,7 +614,7 @@ def test_runtime_cannot_rebind_prepared_intent(
     with pytest.raises(DBAPIError), approvals.pg.runtime.begin() as conn:
         conn.execute(
             text(
-                f"UPDATE offerloom.action_approvals SET {column}={expression} WHERE owner_id=:owner"
+                f"UPDATE bonafides.action_approvals SET {column}={expression} WHERE owner_id=:owner"
             ),
             {"owner": approvals.owner.id},
         )
@@ -678,7 +678,7 @@ def test_hosted_checks_exact_projection_destination_purpose_and_caps_before_rese
     with approvals.pg.runtime.begin() as conn:
         assert (
             conn.execute(
-                text("SELECT count(*) FROM offerloom.model_runs WHERE owner_id=:owner"),
+                text("SELECT count(*) FROM bonafides.model_runs WHERE owner_id=:owner"),
                 {"owner": approvals.owner.id},
             ).scalar_one()
             == 0
@@ -686,7 +686,7 @@ def test_hosted_checks_exact_projection_destination_purpose_and_caps_before_rese
         assert (
             conn.execute(
                 text(
-                    "SELECT transmission_count FROM offerloom.hosted_egress_consents WHERE owner_id=:owner"
+                    "SELECT transmission_count FROM bonafides.hosted_egress_consents WHERE owner_id=:owner"
                 ),
                 {"owner": approvals.owner.id},
             ).scalar_one()
@@ -710,7 +710,7 @@ def test_each_hosted_transmission_reserves_once_and_rechecks_revocation(
         row = (
             conn.execute(
                 text(
-                    "SELECT input_tokens,output_tokens,actual_cost_microunits,usage_status FROM offerloom.model_runs WHERE owner_id=:owner"
+                    "SELECT input_tokens,output_tokens,actual_cost_microunits,usage_status FROM bonafides.model_runs WHERE owner_id=:owner"
                 ),
                 {"owner": approvals.owner.id},
             )
@@ -721,7 +721,7 @@ def test_each_hosted_transmission_reserves_once_and_rechecks_revocation(
         assert row["actual_cost_microunits"] is None and row["usage_status"] == "unknown"
         conn.execute(
             text(
-                "UPDATE offerloom.hosted_egress_consents SET revoked_at=clock_timestamp() WHERE owner_id=:owner AND id=:id"
+                "UPDATE bonafides.hosted_egress_consents SET revoked_at=clock_timestamp() WHERE owner_id=:owner AND id=:id"
             ),
             {"owner": approvals.owner.id, "id": consent_id},
         )
@@ -733,7 +733,7 @@ def test_each_hosted_transmission_reserves_once_and_rechecks_revocation(
     with approvals.pg.runtime.begin() as conn:
         assert (
             conn.execute(
-                text("SELECT count(*) FROM offerloom.model_runs WHERE owner_id=:owner"),
+                text("SELECT count(*) FROM bonafides.model_runs WHERE owner_id=:owner"),
                 {"owner": approvals.owner.id},
             ).scalar_one()
             == 1
@@ -741,7 +741,7 @@ def test_each_hosted_transmission_reserves_once_and_rechecks_revocation(
         assert (
             conn.execute(
                 text(
-                    "SELECT model_network_attempts FROM offerloom.workflow_runs WHERE owner_id=:owner AND id=:id"
+                    "SELECT model_network_attempts FROM bonafides.workflow_runs WHERE owner_id=:owner AND id=:id"
                 ),
                 {"owner": approvals.owner.id, "id": task.id},
             ).scalar_one()
@@ -768,7 +768,7 @@ def test_hosted_transmission_budget_is_cumulative_not_reset_by_retries(
     with approvals.pg.runtime.begin() as conn:
         assert (
             conn.execute(
-                text("SELECT count(*) FROM offerloom.model_runs WHERE owner_id=:owner"),
+                text("SELECT count(*) FROM bonafides.model_runs WHERE owner_id=:owner"),
                 {"owner": approvals.owner.id},
             ).scalar_one()
             == 2
@@ -783,7 +783,7 @@ def test_http_denial_is_durable_and_same_key_success_is_review_only(
         bootstrap = _bootstrap(identity, client)
         assert bootstrap.status_code == 201
         with identity.admin.transaction() as conn:
-            owner_id = conn.execute(text("SELECT id FROM offerloom.owners")).scalar_one()
+            owner_id = conn.execute(text("SELECT id FROM bonafides.owners")).scalar_one()
             owner = _owner(conn, owner_id)
         prepared = _prepare(identity.admin.engine, owner)
         route = f"/api/v1/workflows/{prepared.workflow_id}/approval"
@@ -804,7 +804,7 @@ def test_http_denial_is_durable_and_same_key_success_is_review_only(
             assert (
                 conn.execute(
                     text(
-                        "SELECT error_code FROM offerloom.approval_audit_events WHERE owner_id=:owner AND event='denied'"
+                        "SELECT error_code FROM bonafides.approval_audit_events WHERE owner_id=:owner AND event='denied'"
                     ),
                     {"owner": owner.id},
                 ).scalar_one()
@@ -832,7 +832,7 @@ def test_http_denial_is_durable_and_same_key_success_is_review_only(
             assert (
                 conn.execute(
                     text(
-                        "SELECT count(*) FROM offerloom.approval_audit_events WHERE owner_id=:owner AND event='approved'"
+                        "SELECT count(*) FROM bonafides.approval_audit_events WHERE owner_id=:owner AND event='approved'"
                     ),
                     {"owner": owner.id},
                 ).scalar_one()
@@ -840,7 +840,7 @@ def test_http_denial_is_durable_and_same_key_success_is_review_only(
             )
             assert (
                 conn.execute(
-                    text("SELECT count(*) FROM offerloom.model_runs WHERE owner_id=:owner"),
+                    text("SELECT count(*) FROM bonafides.model_runs WHERE owner_id=:owner"),
                     {"owner": owner.id},
                 ).scalar_one()
                 == 0
@@ -848,7 +848,7 @@ def test_http_denial_is_durable_and_same_key_success_is_review_only(
             assert (
                 conn.execute(
                     text(
-                        "SELECT consumed_at FROM offerloom.action_approvals WHERE owner_id=:owner"
+                        "SELECT consumed_at FROM bonafides.action_approvals WHERE owner_id=:owner"
                     ),
                     {"owner": owner.id},
                 ).scalar_one()
@@ -865,7 +865,7 @@ def test_password_rotation_and_recovery_revoke_bound_approval_and_hosted_consent
         bootstrap = _bootstrap(identity, client)
         assert bootstrap.status_code == 201
         with identity.admin.transaction() as conn:
-            owner_id = conn.execute(text("SELECT id FROM offerloom.owners")).scalar_one()
+            owner_id = conn.execute(text("SELECT id FROM bonafides.owners")).scalar_one()
             owner = _owner(conn, owner_id)
         prepared = _prepare(identity.admin.engine, owner, kind="hosted_egress")
         _approve(identity.admin.engine, owner, prepared)
@@ -873,7 +873,7 @@ def test_password_rotation_and_recovery_revoke_bound_approval_and_hosted_consent
         with identity.admin.transaction() as conn:
             conn.execute(
                 text(
-                    "UPDATE offerloom.workflow_runs SET state='pending' WHERE owner_id=:owner AND id=:id"
+                    "UPDATE bonafides.workflow_runs SET state='pending' WHERE owner_id=:owner AND id=:id"
                 ),
                 {"owner": owner.id, "id": prepared.workflow_id},
             )
@@ -897,7 +897,7 @@ def test_password_rotation_and_recovery_revoke_bound_approval_and_hosted_consent
             consent = (
                 conn.execute(
                     text(
-                        "SELECT revoked_at,transmission_count FROM offerloom.hosted_egress_consents WHERE owner_id=:owner AND id=:id"
+                        "SELECT revoked_at,transmission_count FROM bonafides.hosted_egress_consents WHERE owner_id=:owner AND id=:id"
                     ),
                     {"owner": owner.id, "id": consent_id},
                 )
@@ -912,7 +912,7 @@ def test_password_rotation_and_recovery_revoke_bound_approval_and_hosted_consent
                 row = (
                     conn.execute(
                         text(
-                            "SELECT revoked_at,consumed_at FROM offerloom.action_approvals WHERE owner_id=:owner AND workflow_run_id=:id"
+                            "SELECT revoked_at,consumed_at FROM bonafides.action_approvals WHERE owner_id=:owner AND workflow_run_id=:id"
                         ),
                         {"owner": owner.id, "id": other.workflow_id},
                     )
@@ -922,7 +922,7 @@ def test_password_rotation_and_recovery_revoke_bound_approval_and_hosted_consent
                 assert row["revoked_at"] is not None and row["consumed_at"] is None
                 audit = conn.execute(
                     text(
-                        "SELECT error_code FROM offerloom.approval_audit_events WHERE owner_id=:owner AND workflow_run_id=:id AND event='revoked'"
+                        "SELECT error_code FROM bonafides.approval_audit_events WHERE owner_id=:owner AND workflow_run_id=:id AND event='revoked'"
                     ),
                     {"owner": owner.id, "id": other.workflow_id},
                 ).scalar_one()
@@ -932,13 +932,13 @@ def test_password_rotation_and_recovery_revoke_bound_approval_and_hosted_consent
         with identity.admin.transaction() as conn:
             assert (
                 conn.execute(
-                    text("SELECT count(*) FROM offerloom.model_runs WHERE owner_id=:owner"),
+                    text("SELECT count(*) FROM bonafides.model_runs WHERE owner_id=:owner"),
                     {"owner": owner.id},
                 ).scalar_one()
                 == 0
             )
             conn.execute(
-                text("DELETE FROM offerloom.hosted_egress_consents WHERE owner_id=:owner"),
+                text("DELETE FROM bonafides.hosted_egress_consents WHERE owner_id=:owner"),
                 {"owner": owner.id},
             )
 
@@ -947,12 +947,12 @@ def _seed_document(context: ApprovalContext) -> UUID:
     document_id, revision_id = uuid4(), uuid4()
     with context.pg.runtime.begin() as conn:
         conn.execute(
-            text("""INSERT INTO offerloom.document_drafts(owner_id,id,kind,scope,profile_revision_id)
+            text("""INSERT INTO bonafides.document_drafts(owner_id,id,kind,scope,profile_revision_id)
             VALUES(:owner,:id,'resume','base',:profile)"""),
             {"owner": context.owner.id, "id": document_id, "profile": context.pg.revision_id},
         )
         conn.execute(
-            text("""INSERT INTO offerloom.document_revisions(owner_id,id,document_draft_id,revision_no,
+            text("""INSERT INTO bonafides.document_revisions(owner_id,id,document_draft_id,revision_no,
             profile_revision_id,scope,body,posting_snapshot,provenance_snapshot,template_version,
             content_sha256,origin,reason)
             VALUES(:owner,:id,:document,1,:profile,'base','{}',NULL,'{}','synthetic',repeat('a',64),
@@ -966,7 +966,7 @@ def _seed_document(context: ApprovalContext) -> UUID:
         )
         conn.execute(
             text(
-                "UPDATE offerloom.document_drafts SET current_revision_id=:revision WHERE owner_id=:owner AND id=:id"
+                "UPDATE bonafides.document_drafts SET current_revision_id=:revision WHERE owner_id=:owner AND id=:id"
             ),
             {"owner": context.owner.id, "id": document_id, "revision": revision_id},
         )
@@ -985,7 +985,7 @@ def test_actual_document_revision_and_version_remain_exact_at_consume(
     task = _trusted_dispatch(approvals, prepared)
     with approvals.pg.runtime.begin() as conn:
         conn.execute(
-            text("""INSERT INTO offerloom.document_revisions(owner_id,id,document_draft_id,revision_no,
+            text("""INSERT INTO bonafides.document_revisions(owner_id,id,document_draft_id,revision_no,
             profile_revision_id,scope,body,posting_snapshot,provenance_snapshot,template_version,
             content_sha256,origin,reason)
             VALUES(:owner,:revision,:document,2,:profile,'base','{"changed":"yes"}',NULL,'{}','synthetic',
@@ -999,7 +999,7 @@ def test_actual_document_revision_and_version_remain_exact_at_consume(
         )
         conn.execute(
             text(
-                "UPDATE offerloom.document_drafts SET current_revision_id=:revision,version=version+1 WHERE owner_id=:owner AND id=:id"
+                "UPDATE bonafides.document_drafts SET current_revision_id=:revision,version=version+1 WHERE owner_id=:owner AND id=:id"
             ),
             {"owner": approvals.owner.id, "revision": revision_id, "id": document_id},
         )
@@ -1029,10 +1029,10 @@ def test_consumption_rechecks_live_pins_after_successful_review(
     _approve(approvals.pg.runtime, approvals.owner, prepared)
     task = _trusted_dispatch(approvals, prepared)
     updates = {
-        "workspace": "UPDATE offerloom.owner_settings SET workspace_version=workspace_version+1 WHERE owner_id=:owner",
-        "settings": "UPDATE offerloom.owner_settings SET version=version+1 WHERE owner_id=:owner",
-        "input": "UPDATE offerloom.workflow_runs SET input='{}' WHERE owner_id=:owner AND id=:id",
-        "session": "UPDATE offerloom.sessions SET revoked_at=clock_timestamp() WHERE owner_id=:owner",
+        "workspace": "UPDATE bonafides.owner_settings SET workspace_version=workspace_version+1 WHERE owner_id=:owner",
+        "settings": "UPDATE bonafides.owner_settings SET version=version+1 WHERE owner_id=:owner",
+        "input": "UPDATE bonafides.workflow_runs SET input='{}' WHERE owner_id=:owner AND id=:id",
+        "session": "UPDATE bonafides.sessions SET revoked_at=clock_timestamp() WHERE owner_id=:owner",
     }
     with approvals.pg.migrator.begin() as conn:
         conn.execute(text(updates[drift]), {"owner": approvals.owner.id, "id": task.id})
@@ -1068,7 +1068,7 @@ def test_approved_expiry_cannot_be_consumed_even_with_a_live_worker(
         # Keep the real workflow lease/deadline valid while approval itself expires.
         conn.execute(
             text(
-                "UPDATE offerloom.workflow_runs SET deadline_at=clock_timestamp()+interval '1 minute' WHERE owner_id=:owner AND id=:id"
+                "UPDATE bonafides.workflow_runs SET deadline_at=clock_timestamp()+interval '1 minute' WHERE owner_id=:owner AND id=:id"
             ),
             {"owner": approvals.owner.id, "id": task.id},
         )
@@ -1085,7 +1085,7 @@ def test_unknown_delivery_never_expires_into_automatic_execution(
     prepared = _prepare(approvals.pg.runtime, approvals.owner, ttl=1)
     with approvals.pg.migrator.begin() as conn:
         conn.execute(
-            text("""INSERT INTO offerloom.workflow_steps(owner_id,workflow_run_id,step_key,attempt,fence,
+            text("""INSERT INTO bonafides.workflow_steps(owner_id,workflow_run_id,step_key,attempt,fence,
             state,delivery_state) VALUES(:owner,:id,'unknown-external-boundary',1,1,'waiting_for_approval','unknown')"""),
             {"owner": approvals.owner.id, "id": prepared.workflow_id},
         )
@@ -1097,7 +1097,7 @@ def test_unknown_delivery_never_expires_into_automatic_execution(
         assert approval is not None and approval["applicable"] is False
     with approvals.pg.runtime.begin() as conn:
         row = conn.execute(
-            text("SELECT revoked_at FROM offerloom.action_approvals WHERE owner_id=:owner"),
+            text("SELECT revoked_at FROM bonafides.action_approvals WHERE owner_id=:owner"),
             {"owner": approvals.owner.id},
         ).one()
         assert row.revoked_at is None
@@ -1111,9 +1111,9 @@ def test_another_live_recent_session_cannot_rebind_prepared_session(
     new_id = uuid4()
     with approvals.pg.migrator.begin() as conn:
         conn.execute(
-            text("""INSERT INTO offerloom.sessions(owner_id,id,token_sha256,csrf_sha256,csrf_token,
+            text("""INSERT INTO bonafides.sessions(owner_id,id,token_sha256,csrf_sha256,csrf_token,
             auth_epoch,expires_at) SELECT id,:session,:token,repeat('2',64),'another-csrf',auth_epoch,
-            clock_timestamp()+interval '1 hour' FROM offerloom.owners WHERE id=:owner"""),
+            clock_timestamp()+interval '1 hour' FROM bonafides.owners WHERE id=:owner"""),
             {
                 "owner": approvals.owner.id,
                 "session": new_id,
@@ -1163,10 +1163,10 @@ def test_missing_real_prepared_intent_is_http_404_not_fabricated_proposal(
         absent = client.get(f"/api/v1/workflows/{uuid4()}/approval")
         assert absent.status_code == 404
         with identity.admin.transaction() as conn:
-            owner_id = conn.execute(text("SELECT id FROM offerloom.owners")).scalar_one()
+            owner_id = conn.execute(text("SELECT id FROM bonafides.owners")).scalar_one()
             workflow_id = uuid4()
             conn.execute(
-                text("""INSERT INTO offerloom.workflow_runs(owner_id,id,kind,dedupe_key,request_sha256,deadline_at)
+                text("""INSERT INTO bonafides.workflow_runs(owner_id,id,kind,dedupe_key,request_sha256,deadline_at)
                 VALUES(:owner,:id,'privacy_delete',:key,repeat('0',64),clock_timestamp()+interval '1 minute')"""),
                 {"owner": owner_id, "id": workflow_id, "key": str(workflow_id)},
             )
@@ -1195,7 +1195,7 @@ def test_hosted_consent_binding_cannot_be_rewritten(
     with pytest.raises(DBAPIError), approvals.pg.runtime.begin() as conn:
         conn.execute(
             text(
-                f"UPDATE offerloom.hosted_egress_consents SET {column}={expression} WHERE owner_id=:owner"
+                f"UPDATE bonafides.hosted_egress_consents SET {column}={expression} WHERE owner_id=:owner"
             ),
             {"owner": approvals.owner.id},
         )
@@ -1211,7 +1211,7 @@ def test_hosted_count_and_revocation_cannot_be_reset(approvals: ApprovalContext)
         _hosted(conn, task, consent_id, prepared)
         conn.execute(
             text(
-                "UPDATE offerloom.hosted_egress_consents SET revoked_at=clock_timestamp() WHERE owner_id=:owner"
+                "UPDATE bonafides.hosted_egress_consents SET revoked_at=clock_timestamp() WHERE owner_id=:owner"
             ),
             {"owner": approvals.owner.id},
         )
@@ -1219,7 +1219,7 @@ def test_hosted_count_and_revocation_cannot_be_reset(approvals: ApprovalContext)
         with pytest.raises(DBAPIError), approvals.pg.runtime.begin() as conn:
             conn.execute(
                 text(
-                    f"UPDATE offerloom.hosted_egress_consents SET {assignment} WHERE owner_id=:owner"
+                    f"UPDATE bonafides.hosted_egress_consents SET {assignment} WHERE owner_id=:owner"
                 ),
                 {"owner": approvals.owner.id},
             )
@@ -1227,7 +1227,7 @@ def test_hosted_count_and_revocation_cannot_be_reset(approvals: ApprovalContext)
         row = (
             conn.execute(
                 text(
-                    "SELECT transmission_count,revoked_at FROM offerloom.hosted_egress_consents WHERE owner_id=:owner"
+                    "SELECT transmission_count,revoked_at FROM bonafides.hosted_egress_consents WHERE owner_id=:owner"
                 ),
                 {"owner": approvals.owner.id},
             )
@@ -1245,7 +1245,7 @@ def test_same_owner_wrong_parent_audit_and_consent_bindings_are_rejected(
     second = _prepare(approvals.pg.runtime, approvals.owner)
     with pytest.raises(DBAPIError), approvals.pg.runtime.begin() as conn:
         conn.execute(
-            text("""INSERT INTO offerloom.approval_audit_events(owner_id,approval_id,workflow_run_id,event)
+            text("""INSERT INTO bonafides.approval_audit_events(owner_id,approval_id,workflow_run_id,event)
             VALUES(:owner,:approval,:workflow,'denied')"""),
             {
                 "owner": approvals.owner.id,
@@ -1255,7 +1255,7 @@ def test_same_owner_wrong_parent_audit_and_consent_bindings_are_rejected(
         )
     with pytest.raises(DBAPIError), approvals.pg.runtime.begin() as conn:
         conn.execute(
-            text("""INSERT INTO offerloom.hosted_egress_consents(owner_id,workflow_run_id,provider_key,
+            text("""INSERT INTO bonafides.hosted_egress_consents(owner_id,workflow_run_id,provider_key,
             model_id,purpose,input_scope_sha256,settings_version,expires_at,approval_id)
             VALUES(:owner,:workflow,'synthetic_provider','bounded-model','document_generate',
             repeat('1',64),1,clock_timestamp()+interval '1 minute',:approval)"""),
@@ -1274,7 +1274,7 @@ def test_http_success_receipt_cannot_be_replayed_from_another_live_session(
     with identity.client() as first, identity.client() as second:
         assert _bootstrap(identity, first).status_code == 201
         with identity.admin.transaction() as conn:
-            owner_id = conn.execute(text("SELECT id FROM offerloom.owners")).scalar_one()
+            owner_id = conn.execute(text("SELECT id FROM bonafides.owners")).scalar_one()
             owner = _owner(conn, owner_id)
         prepared = _prepare(identity.admin.engine, owner)
         route = f"/api/v1/workflows/{prepared.workflow_id}/approval/approve"
@@ -1300,14 +1300,14 @@ def test_http_success_receipt_cannot_be_replayed_from_another_live_session(
         assert original_replay.status_code == 200 and original_replay.json() == accepted.json()
         with identity.admin.transaction() as conn:
             approval = conn.execute(
-                text("""SELECT approved_session_id,consumed_at FROM offerloom.action_approvals
+                text("""SELECT approved_session_id,consumed_at FROM bonafides.action_approvals
                 WHERE owner_id=:owner AND workflow_run_id=:workflow"""),
                 {"owner": owner.id, "workflow": prepared.workflow_id},
             ).one()
             assert approval.approved_session_id == owner.session_id and approval.consumed_at is None
             events = (
                 conn.execute(
-                    text("""SELECT event,error_code FROM offerloom.approval_audit_events
+                    text("""SELECT event,error_code FROM bonafides.approval_audit_events
                 WHERE owner_id=:owner AND workflow_run_id=:workflow ORDER BY created_at,id"""),
                     {"owner": owner.id, "workflow": prepared.workflow_id},
                 )
@@ -1321,7 +1321,7 @@ def test_http_success_receipt_cannot_be_replayed_from_another_live_session(
             ]
             assert (
                 conn.execute(
-                    text("SELECT count(*) FROM offerloom.model_runs WHERE owner_id=:owner"),
+                    text("SELECT count(*) FROM bonafides.model_runs WHERE owner_id=:owner"),
                     {"owner": owner.id},
                 ).scalar_one()
                 == 0

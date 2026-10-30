@@ -24,12 +24,12 @@ from test_sources import SourceContext
 from test_sources import catalog as catalog
 from test_suitability import _profile
 
-from offerloom.approvals import get_action_approval
-from offerloom.commands import canonical_json, lock_installation
-from offerloom.import_parser import ImportParserClient
-from offerloom.portable_exports import LifecycleWorker, expire_exports
-from offerloom.profiles import content_hash
-from offerloom.storage import BlobStore
+from bonafides.approvals import get_action_approval
+from bonafides.commands import canonical_json, lock_installation
+from bonafides.import_parser import ImportParserClient
+from bonafides.portable_exports import LifecycleWorker, expire_exports
+from bonafides.profiles import content_hash
+from bonafides.storage import BlobStore
 
 
 def _queue(context: SourceContext, key: str | None = None) -> dict[str, object]:
@@ -70,7 +70,7 @@ def test_owner_can_download_nonempty_blocked_document_and_exact_evidence_bytes(
     blob_id, evidence_id, revision_id = uuid4(), uuid4(), uuid4()
     with catalog.runtime.transaction() as conn:
         conn.execute(
-            text("""INSERT INTO offerloom.blobs(owner_id,id,sha256,byte_length,media_type,storage_key)
+            text("""INSERT INTO bonafides.blobs(owner_id,id,sha256,byte_length,media_type,storage_key)
             VALUES(:owner,:id,:sha,:length,'text/plain',:key)"""),
             {
                 "owner": catalog.owner_id,
@@ -81,12 +81,12 @@ def test_owner_can_download_nonempty_blocked_document_and_exact_evidence_bytes(
             },
         )
         conn.execute(
-            text("""INSERT INTO offerloom.evidence_records(owner_id,id,current_revision_id)
+            text("""INSERT INTO bonafides.evidence_records(owner_id,id,current_revision_id)
             VALUES(:owner,:id,:revision)"""),
             {"owner": catalog.owner_id, "id": evidence_id, "revision": revision_id},
         )
         conn.execute(
-            text("""INSERT INTO offerloom.evidence_revisions
+            text("""INSERT INTO bonafides.evidence_revisions
             (owner_id,id,evidence_id,revision_no,payload,blob_id,content_sha256)
             VALUES(:owner,:id,:evidence,1,CAST(:payload AS jsonb),:blob,:sha)"""),
             {
@@ -123,7 +123,7 @@ def test_owner_can_download_nonempty_blocked_document_and_exact_evidence_bytes(
         with catalog.runtime.transaction() as conn:
             original = (
                 conn.execute(
-                    text("""SELECT body,validation_issues,content_sha256 FROM offerloom.document_revisions
+                    text("""SELECT body,validation_issues,content_sha256 FROM bonafides.document_revisions
                 WHERE owner_id=:owner AND id=:id"""),
                     {"owner": catalog.owner_id, "id": UUID(revision["id"])},
                 )
@@ -153,7 +153,7 @@ def test_owner_can_download_nonempty_blocked_document_and_exact_evidence_bytes(
         actual_retention_seconds = float(
             conn.execute(
                 text("""SELECT extract(epoch FROM expires_at-created_at)
-                FROM offerloom.portable_exports
+                FROM bonafides.portable_exports
                 WHERE owner_id=:owner AND workflow_run_id=:workflow"""),
                 {"owner": catalog.owner_id, "workflow": UUID(str(task["id"]))},
             ).scalar_one()
@@ -183,7 +183,7 @@ def test_corruption_owner_binding_and_actual_expiry(
     assert catalog.client.get(f"/api/v1/portable-exports/{uuid4()}/download").status_code == 404
     with catalog.identity.admin.transaction() as conn:
         conn.execute(
-            text("""UPDATE offerloom.portable_exports SET created_at=clock_timestamp()-interval '2 days',
+            text("""UPDATE bonafides.portable_exports SET created_at=clock_timestamp()-interval '2 days',
             expires_at=clock_timestamp()-interval '1 day' WHERE owner_id=:owner AND workflow_run_id=:id"""),
             {"owner": catalog.owner_id, "id": UUID(str(task["id"]))},
         )
@@ -217,18 +217,18 @@ def test_missing_live_blob_fails_export_without_false_success_or_leaving_writers
     }
     with catalog.runtime.transaction() as conn:
         conn.execute(
-            text("""INSERT INTO offerloom.blobs
+            text("""INSERT INTO bonafides.blobs
             (owner_id,id,sha256,byte_length,media_type,storage_key)
             VALUES(:owner,:blob,:sha,:length,'text/plain',:key)"""),
             parameters,
         )
         conn.execute(
-            text("""INSERT INTO offerloom.evidence_records
+            text("""INSERT INTO bonafides.evidence_records
             (owner_id,id,current_revision_id) VALUES(:owner,:evidence,:revision)"""),
             parameters,
         )
         conn.execute(
-            text("""INSERT INTO offerloom.evidence_revisions
+            text("""INSERT INTO bonafides.evidence_revisions
             (owner_id,id,evidence_id,revision_no,payload,blob_id,content_sha256)
             VALUES(:owner,:revision,:evidence,1,CAST(:payload AS jsonb),:blob,:content)"""),
             parameters,
@@ -292,7 +292,7 @@ def test_export_can_begin_while_a_workflow_reader_holds_admission(
         assert worker.run_once() is False
         row = (
             reader.execute(
-                text("""SELECT state,attempt,lease_holder FROM offerloom.workflow_runs
+                text("""SELECT state,attempt,lease_holder FROM bonafides.workflow_runs
             WHERE owner_id=:owner AND id=:id"""),
                 {"owner": catalog.owner_id, "id": identifier},
             )
@@ -324,7 +324,7 @@ def test_invalid_backup_configuration_does_not_stall_export_or_expired_copy_clea
     )
     with catalog.identity.admin.transaction() as conn:
         conn.execute(
-            text("""UPDATE offerloom.portable_exports
+            text("""UPDATE bonafides.portable_exports
             SET created_at=clock_timestamp()-interval '2 days',
                 expires_at=clock_timestamp()-interval '1 day'
             WHERE owner_id=:owner AND workflow_run_id=:id"""),
@@ -363,10 +363,10 @@ def test_invalid_backup_configuration_does_not_stall_export_or_expired_copy_clea
             "-c",
             """import json,sys
 from pathlib import Path
-from offerloom.config import Settings
-from offerloom.crypto import Keyring
-from offerloom.db import Database
-from offerloom.portable_exports import LifecycleWorker
+from bonafides.config import Settings
+from bonafides.crypto import Keyring
+from bonafides.db import Database
+from bonafides.portable_exports import LifecycleWorker
 config=json.loads(Path(sys.argv[1]).read_text())
 settings=Settings(database_dsn=config['database_dsn'],origin=config['origin'],
     keyring=Keyring.parse(json.dumps(config['keyring'])),mode='benchmark',

@@ -23,19 +23,19 @@ from sqlalchemy.exc import DBAPIError
 from test_identity import IdentityContext, _bootstrap
 from test_identity import identity as identity
 
-from offerloom import imports
-from offerloom.commands import canonical_json
-from offerloom.db import Database
-from offerloom.import_parser import (
+from bonafides import imports
+from bonafides.commands import canonical_json
+from bonafides.db import Database
+from bonafides.import_parser import (
     MAX_UPLOAD_BYTES,
     ImportFailure,
     ImportParserClient,
     ParsedImport,
 )
-from offerloom.problems import Problem
-from offerloom.profiles import ProfileSnapshot, _save
-from offerloom.worker import Worker
-from offerloom.workflows import Claim, cancel_workflow, claim, reap
+from bonafides.problems import Problem
+from bonafides.profiles import ProfileSnapshot, _save
+from bonafides.worker import Worker
+from bonafides.workflows import Claim, cancel_workflow, claim, reap
 
 SOURCE = "Skills\nMaintained fictional Linux services\nLanguages\nEnglish — professional\n"
 
@@ -377,7 +377,7 @@ def _counts(context: ImportContext) -> tuple[int, int, int, int]:
             tuple(
                 int(
                     conn.execute(
-                        text(f"SELECT count(*) FROM offerloom.{table} WHERE owner_id=:owner"),
+                        text(f"SELECT count(*) FROM bonafides.{table} WHERE owner_id=:owner"),
                         {"owner": context.owner_id},
                     ).scalar_one()
                 )
@@ -447,7 +447,7 @@ def test_repeat_import_unchanged_completes_without_profile_or_evidence_mutation(
         row = (
             conn.execute(
                 text("""SELECT b.merged_profile_revision_id,b.parsed_text,o.byte_length
-            FROM offerloom.import_batches b JOIN offerloom.blobs o
+            FROM bonafides.import_batches b JOIN bonafides.blobs o
             ON o.owner_id=b.owner_id AND o.id=b.blob_id
             WHERE b.owner_id=:owner AND b.id=:id"""),
                 {"owner": importing.owner_id, "id": UUID(repeated["id"])},
@@ -610,7 +610,7 @@ def test_replace_all_preserves_unchanged_claim_and_source_but_archives_displaced
     with importing.identity.admin.transaction() as conn:
         assert (
             conn.execute(
-                text("""SELECT archived_at IS NOT NULL FROM offerloom.evidence_records
+                text("""SELECT archived_at IS NOT NULL FROM bonafides.evidence_records
             WHERE owner_id=:owner AND id=:id"""),
                 {"owner": importing.owner_id, "id": UUID(displaced_evidence)},
             ).scalar_one()
@@ -704,13 +704,13 @@ def test_upload_stages_without_canonical_mutation_and_atomic_review_is_idempoten
     assert importing.profile() == original
     with importing.identity.admin.transaction() as conn:
         immutable_input = conn.execute(
-            text("SELECT input FROM offerloom.workflow_runs WHERE id=:id"),
+            text("SELECT input FROM bonafides.workflow_runs WHERE id=:id"),
             {"id": UUID(batch["workflow_id"])},
         ).scalar_one()
         assert (
             conn.execute(
                 text(
-                    "SELECT lease_holder IS NULL AND lease_expires_at IS NULL FROM offerloom.workflow_runs WHERE id=:id"
+                    "SELECT lease_holder IS NULL AND lease_expires_at IS NULL FROM bonafides.workflow_runs WHERE id=:id"
                 ),
                 {"id": UUID(batch["workflow_id"])},
             ).scalar_one()
@@ -745,14 +745,14 @@ def test_upload_stages_without_canonical_mutation_and_atomic_review_is_idempoten
     with importing.identity.admin.transaction() as conn:
         assert (
             conn.execute(
-                text("SELECT input FROM offerloom.workflow_runs WHERE id=:id"),
+                text("SELECT input FROM bonafides.workflow_runs WHERE id=:id"),
                 {"id": UUID(batch["workflow_id"])},
             ).scalar_one()
             == immutable_input
         )
         metadata = str(
             conn.execute(
-                text("SELECT payload FROM offerloom.outbox_events WHERE owner_id=:owner"),
+                text("SELECT payload FROM bonafides.outbox_events WHERE owner_id=:owner"),
                 {"owner": importing.owner_id},
             )
             .scalars()
@@ -904,7 +904,7 @@ def test_replace_all_archives_displaced_facts_and_sources_preserving_identity_an
             assert (
                 conn.execute(
                     text(
-                        f"SELECT bool_and(archived_at IS NOT NULL) FROM offerloom.{table} WHERE id=ANY(CAST(:ids AS uuid[]))"
+                        f"SELECT bool_and(archived_at IS NOT NULL) FROM bonafides.{table} WHERE id=ANY(CAST(:ids AS uuid[]))"
                     ),
                     {"ids": ids},
                 ).scalar_one()
@@ -1012,7 +1012,7 @@ def test_skill_splitting_over_source_limit_fails_before_staging(
             conn.execute(
                 text("""SELECT parsed_text,source_sha256,proposals,warnings,review,
                 review_expires_at,reviewed_at,merged_profile_revision_id
-                FROM offerloom.import_batches WHERE owner_id=:owner AND id=:id"""),
+                FROM bonafides.import_batches WHERE owner_id=:owner AND id=:id"""),
                 {"owner": importing.owner_id, "id": UUID(identifier)},
             )
             .mappings()
@@ -1052,7 +1052,7 @@ def test_skill_splitting_at_source_limit_stages_readable_immutable_evidence(
     assert all(source[part["start"] : part["end"]] == part["quote"] == "a" for part in parts)
     with importing.identity.admin.transaction() as conn:
         proposals = conn.execute(
-            text("SELECT proposals FROM offerloom.import_batches WHERE owner_id=:owner AND id=:id"),
+            text("SELECT proposals FROM bonafides.import_batches WHERE owner_id=:owner AND id=:id"),
             {"owner": importing.owner_id, "id": UUID(batch["id"])},
         ).scalar_one()
     expected, _ = imports.extract_proposals(_parsed(source))
@@ -1119,7 +1119,7 @@ def test_busy_parser_retries_only_within_three_attempts(
         assert batch["text"] is None
         with importing.identity.admin.transaction() as conn:
             conn.execute(
-                text("""UPDATE offerloom.workflow_runs
+                text("""UPDATE bonafides.workflow_runs
                 SET next_attempt_at=clock_timestamp()-interval '1 second'
                 WHERE owner_id=:owner AND id=:id"""),
                 {"owner": importing.owner_id, "id": task.id},
@@ -1165,8 +1165,8 @@ def test_upload_security_owner_scope_limits_and_retry_fingerprint(
     with importing.identity.admin.transaction() as conn:
         stored = (
             conn.execute(
-                text("""SELECT o.sha256,o.media_type,o.byte_length,o.storage_key FROM offerloom.blobs o
-            JOIN offerloom.import_batches b ON b.owner_id=o.owner_id AND b.blob_id=o.id WHERE b.id=:id"""),
+                text("""SELECT o.sha256,o.media_type,o.byte_length,o.storage_key FROM bonafides.blobs o
+            JOIN bonafides.import_batches b ON b.owner_id=o.owner_id AND b.blob_id=o.id WHERE b.id=:id"""),
                 {"id": UUID(accepted.json()["import_id"])},
             )
             .mappings()
@@ -1196,7 +1196,7 @@ def test_review_expiry_is_independent_and_reaper_visible(importing: ImportContex
         # Move only test workflow clock boundary; immutable stored source/review stays intact.
         conn.execute(
             text(
-                "UPDATE offerloom.workflow_runs SET deadline_at=created_at+interval '1 millisecond',created_at=created_at-interval '1 hour' WHERE id=:id"
+                "UPDATE bonafides.workflow_runs SET deadline_at=created_at+interval '1 millisecond',created_at=created_at-interval '1 hour' WHERE id=:id"
             ),
             {"id": UUID(batch["workflow_id"])},
         )
@@ -1215,7 +1215,7 @@ def test_staged_source_and_review_are_immutable_database_phases(importing: Impor
     with pytest.raises(DBAPIError), importing.runtime.transaction() as conn:
         conn.execute(
             text(
-                "UPDATE offerloom.import_batches SET parsed_text='forged text' WHERE owner_id=:owner AND id=:id"
+                "UPDATE bonafides.import_batches SET parsed_text='forged text' WHERE owner_id=:owner AND id=:id"
             ),
             {"owner": importing.owner_id, "id": UUID(batch["id"])},
         )
@@ -1223,7 +1223,7 @@ def test_staged_source_and_review_are_immutable_database_phases(importing: Impor
     with pytest.raises(DBAPIError), importing.runtime.transaction() as conn:
         conn.execute(
             text(
-                "UPDATE offerloom.import_batches SET review='{}' WHERE owner_id=:owner AND id=:id"
+                "UPDATE bonafides.import_batches SET review='{}' WHERE owner_id=:owner AND id=:id"
             ),
             {"owner": importing.owner_id, "id": UUID(batch["id"])},
         )
@@ -1266,7 +1266,7 @@ def test_commit_rechecks_target_tombstone_even_without_profile_version_change(
     with importing.identity.admin.transaction() as conn:
         conn.execute(
             text(
-                "UPDATE offerloom.professional_claims SET archived_at=clock_timestamp() WHERE owner_id=:owner AND id=:id"
+                "UPDATE bonafides.professional_claims SET archived_at=clock_timestamp() WHERE owner_id=:owner AND id=:id"
             ),
             {"owner": importing.owner_id, "id": UUID(target["id"])},
         )
@@ -1284,8 +1284,8 @@ def test_claim_quota_is_rechecked_at_final_commit(importing: ImportContext) -> N
     # profile version; the final quota guard must not rely on acceptance-time counts.
     with importing.identity.admin.transaction() as conn:
         conn.execute(
-            text("""INSERT INTO offerloom.professional_claims(owner_id,id,profile_id,kind)
-            SELECT :owner,gen_random_uuid(),p.id,'other' FROM offerloom.profiles p,
+            text("""INSERT INTO bonafides.professional_claims(owner_id,id,profile_id,kind)
+            SELECT :owner,gen_random_uuid(),p.id,'other' FROM bonafides.profiles p,
             generate_series(1,100) WHERE p.owner_id=:owner"""),
             {"owner": importing.owner_id},
         )
@@ -1309,7 +1309,7 @@ def test_expired_source_review_refuses_approval_without_consuming_profile(
         # Initial phase insertion allows constructing an already expired review without
         # bypassing the immutable phase trigger or waiting seven days in a test.
         conn.execute(
-            text("""UPDATE offerloom.import_batches SET parsed_text=:source,source_sha256=:sha,
+            text("""UPDATE bonafides.import_batches SET parsed_text=:source,source_sha256=:sha,
             proposals=CAST(:proposals AS jsonb),warnings=CAST(:warnings AS jsonb),
             review_expires_at=clock_timestamp()-interval '1 second' WHERE id=:id"""),
             {
@@ -1321,7 +1321,7 @@ def test_expired_source_review_refuses_approval_without_consuming_profile(
             },
         )
         conn.execute(
-            text("UPDATE offerloom.workflow_runs SET state='waiting_for_approval' WHERE id=:id"),
+            text("UPDATE bonafides.workflow_runs SET state='waiting_for_approval' WHERE id=:id"),
             {"id": UUID(response.json()["workflow_id"])},
         )
     batch = importing.batch(import_id)
@@ -1339,14 +1339,14 @@ def test_third_parse_attempt_can_resume_without_resetting_fixed_attempt_or_budge
     workflow_id = UUID(response.json()["workflow_id"])
     with importing.identity.admin.transaction() as conn:
         conn.execute(
-            text("UPDATE offerloom.workflow_runs SET attempt=2 WHERE id=:id"), {"id": workflow_id}
+            text("UPDATE bonafides.workflow_runs SET attempt=2 WHERE id=:id"), {"id": workflow_id}
         )
     parsed_task = importing.run()
     assert parsed_task.attempt == 3
     batch = importing.batch(response.json()["import_id"])
     assert batch["state"] == "waiting_for_approval"
     query = text("""SELECT attempt,max_attempts,token_budget,tokens_used,cost_budget_microunits,
-        cost_used_microunits,input FROM offerloom.workflow_runs WHERE id=:id""")
+        cost_used_microunits,input FROM bonafides.workflow_runs WHERE id=:id""")
     with importing.identity.admin.transaction() as conn:
         before = conn.execute(query, {"id": workflow_id}).one()
     assert before.attempt == 3 and before.max_attempts == 4
@@ -1355,7 +1355,7 @@ def test_third_parse_attempt_can_resume_without_resetting_fixed_attempt_or_budge
         assert conn.execute(query, {"id": workflow_id}).one() == before
         seconds = conn.execute(
             text(
-                "SELECT extract(epoch FROM deadline_at-clock_timestamp()) FROM offerloom.workflow_runs WHERE id=:id"
+                "SELECT extract(epoch FROM deadline_at-clock_timestamp()) FROM bonafides.workflow_runs WHERE id=:id"
             ),
             {"id": workflow_id},
         ).scalar_one()
@@ -1376,7 +1376,7 @@ def test_staged_projection_is_read_only_and_user_grouping_and_splitting_keep_all
         "Skills\nSystems design | SQL; Systems design\n"
     )
     query = text("""SELECT b.proposals,b.source_sha256,b.parsed_text,b.review,w.version,
-        w.state,b.profile_version FROM offerloom.import_batches b JOIN offerloom.workflow_runs w
+        w.state,b.profile_version FROM bonafides.import_batches b JOIN bonafides.workflow_runs w
         ON w.owner_id=b.owner_id AND w.id=b.workflow_run_id WHERE b.owner_id=:owner AND b.id=:id""")
     params = {"owner": importing.owner_id, "id": UUID(batch["id"])}
     with importing.identity.admin.transaction() as conn:

@@ -24,7 +24,7 @@ from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
 from cryptography.x509.oid import NameOID
 
-from offerloom.local_model import (
+from bonafides.local_model import (
     PROMPT_VERSIONS,
     LocalRoute,
     ModelFailure,
@@ -887,7 +887,7 @@ def test_transport_protocol_change_invalidates_existing_qualification_receipts(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from offerloom import local_model
+    from bonafides import local_model
 
     data = route_data("http://127.0.0.1:1")
     with monkeypatch.context() as previous:
@@ -947,7 +947,7 @@ def _section_context() -> dict[str, object]:
 def test_section_stage_sends_exact_minimized_projection_and_section_only_schema(
     tmp_path: Path,
 ) -> None:
-    from offerloom import local_model
+    from bonafides import local_model
 
     context = _section_context()
     output = {
@@ -1029,7 +1029,7 @@ def test_section_projection_rejects_extra_unbounded_or_unpinned_input_before_htt
 def test_section_qualification_is_separate_from_pair_and_prior_capability_receipts(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from offerloom import local_model
+    from bonafides import local_model
 
     data = route_data("http://127.0.0.1:1")
     qualified_route(tmp_path, data)
@@ -1071,7 +1071,7 @@ def test_section_qualification_is_separate_from_pair_and_prior_capability_receip
 def test_section_prompt_or_schema_change_invalidates_all_existing_receipts(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from offerloom import local_model
+    from bonafides import local_model
 
     data = route_data("http://127.0.0.1:1")
     original = qualified_route(tmp_path, data)

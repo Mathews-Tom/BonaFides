@@ -13,8 +13,8 @@ from uuid import uuid4
 
 import pytest
 
-from offerloom.commands import canonical_json
-from offerloom.portable_archive import (
+from bonafides.commands import canonical_json
+from bonafides.portable_archive import (
     EXCLUSIONS,
     MAX_BLOB_BYTES,
     ArchiveError,
@@ -31,7 +31,7 @@ def sample() -> tuple[Manifest, dict[str, bytes]]:
     payload = b"Synthetic private attachment\n"
     digest = hashlib.sha256(payload).hexdigest()
     manifest = Manifest(
-        format="offerloom-portable",
+        format="bonafides-portable",
         format_version=2,
         source_schema_version=13,
         created_at=datetime(2026, 10, 25, tzinfo=UTC),

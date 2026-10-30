@@ -436,7 +436,7 @@ def make_sbom(inventory: JsonObject) -> Sbom:
             parse_expression(expression)
             item["licenses"] = [{"expression": expression}]
         item["properties"] = [
-            {"name": "offerloom:review-status", "value": str(record.get("status", "unknown"))}
+            {"name": "bonafides:review-status", "value": str(record.get("status", "unknown"))}
         ]
         components.append(item)
     return {

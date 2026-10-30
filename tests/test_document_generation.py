@@ -27,15 +27,15 @@ from test_sources import catalog as catalog
 from test_suitability import SOURCE, FixtureModel, _profile, _requirement, _route, _write
 from test_tracking import _application, _get
 
-from offerloom import document_generation as generation
-from offerloom import documents, local_model, suitability
-from offerloom.commands import canonical_json
-from offerloom.document_frame import PrintableFrame, ProfileContact, template_digest
-from offerloom.problems import Problem
-from offerloom.render_service import render_html
-from offerloom.storage import BlobStore
-from offerloom.worker import Worker
-from offerloom.workflows import Claim, cancel_workflow, claim, publish, reap
+from bonafides import document_generation as generation
+from bonafides import documents, local_model, suitability
+from bonafides.commands import canonical_json
+from bonafides.document_frame import PrintableFrame, ProfileContact, template_digest
+from bonafides.problems import Problem
+from bonafides.render_service import render_html
+from bonafides.storage import BlobStore
+from bonafides.worker import Worker
+from bonafides.workflows import Claim, cancel_workflow, claim, publish, reap
 
 
 def _document(context: SourceContext, identifier: str) -> dict[str, Any]:
@@ -54,7 +54,7 @@ def _claim(context: SourceContext, workflow: str) -> Claim:
 
 
 def _queue_base(
-    context: SourceContext, profile: dict[str, Any], template: str = "offerloom-evidence-v1"
+    context: SourceContext, profile: dict[str, Any], template: str = "bonafides-evidence-v1"
 ) -> Claim:
     response = context.client.post(
         "/api/v1/profile/base-resume",
@@ -126,7 +126,7 @@ def _preview(
         f"/api/v1/applications/{application['id']}/generation-context",
         params={
             "profile_revision_id": profile["current_revision"]["id"],
-            "template_version": "offerloom-evidence-v1",
+            "template_version": "bonafides-evidence-v1",
             "tone": "professional",
             "language": "en",
         },
@@ -212,7 +212,7 @@ def test_production_base_no_model_posting_application_or_accounting_and_explicit
     )
     assert (
         revision["origin"] == "deterministic"
-        and revision["template_version"] == "offerloom-evidence-v1"
+        and revision["template_version"] == "bonafides-evidence-v1"
     )
     provenance = revision["provenance_snapshot"]
     assert provenance["mode"] == "deterministic_base" and provenance["model_run"] is None
@@ -226,14 +226,14 @@ def test_production_base_no_model_posting_application_or_accounting_and_explicit
     with catalog.runtime.transaction() as conn:
         assert (
             conn.execute(
-                text("SELECT count(*) FROM offerloom.model_runs WHERE owner_id=:owner"),
+                text("SELECT count(*) FROM bonafides.model_runs WHERE owner_id=:owner"),
                 {"owner": catalog.owner_id},
             ).scalar_one()
             == 0
         )
         assert (
             conn.execute(
-                text("SELECT count(*) FROM offerloom.applications WHERE owner_id=:owner"),
+                text("SELECT count(*) FROM bonafides.applications WHERE owner_id=:owner"),
                 {"owner": catalog.owner_id},
             ).scalar_one()
             == 0
@@ -241,7 +241,7 @@ def test_production_base_no_model_posting_application_or_accounting_and_explicit
         assert (
             conn.execute(
                 text(
-                    "SELECT sum(model_network_attempts) FROM offerloom.workflow_runs WHERE owner_id=:owner"
+                    "SELECT sum(model_network_attempts) FROM bonafides.workflow_runs WHERE owner_id=:owner"
                 ),
                 {"owner": catalog.owner_id},
             ).scalar_one()
@@ -251,7 +251,7 @@ def test_production_base_no_model_posting_application_or_accounting_and_explicit
             documents.prepare_render(
                 conn, catalog.owner_id, UUID(document["id"]), UUID(revision["id"])
             ).template_version
-            == "offerloom-evidence-v1"
+            == "bonafides-evidence-v1"
         )
 
 
@@ -263,7 +263,7 @@ def test_base_empty_foreign_pins_template_auth_csrf_etag_and_payload_idempotency
     path = "/api/v1/profile/base-resume"
     body = {
         "profile_revision_id": profile["current_revision"]["id"],
-        "template_version": "offerloom-evidence-v1",
+        "template_version": "bonafides-evidence-v1",
     }
     empty = catalog.client.post(path, json=body, headers=catalog.headers(profile["version"]))
     assert empty.status_code == 409 and empty.json()["code"] == "profile_content_required"
@@ -299,7 +299,7 @@ def test_base_empty_foreign_pins_template_auth_csrf_etag_and_payload_idempotency
     assert accepted.status_code == 202, accepted.text
     assert catalog.client.post(path, json=body, headers=headers).json() == accepted.json()
     changed = catalog.client.post(
-        path, json={**body, "template_version": "offerloom-compact-v1"}, headers=headers
+        path, json={**body, "template_version": "bonafides-compact-v1"}, headers=headers
     )
     assert changed.status_code == 409 and changed.json()["code"] == "idempotency_payload_mismatch"
 
@@ -573,7 +573,7 @@ def test_invalid_pair_publishes_neither_document_and_blocks_route(
         run = (
             conn.execute(
                 text(
-                    "SELECT status,usage_status,input_tokens,output_tokens FROM offerloom.model_runs WHERE owner_id=:owner AND workflow_run_id=:id"
+                    "SELECT status,usage_status,input_tokens,output_tokens FROM bonafides.model_runs WHERE owner_id=:owner AND workflow_run_id=:id"
                 ),
                 {"owner": catalog.owner_id, "id": task.id},
             )
@@ -657,21 +657,21 @@ def test_pair_late_output_preserves_existing_pair(
                 if race == "archive":
                     conn.execute(
                         text(
-                            "UPDATE offerloom.applications SET archived_at=clock_timestamp(),version=version+1 WHERE owner_id=:owner AND id=:id"
+                            "UPDATE bonafides.applications SET archived_at=clock_timestamp(),version=version+1 WHERE owner_id=:owner AND id=:id"
                         ),
                         {"owner": catalog.owner_id, "id": UUID(application["id"])},
                     )
                 elif race == "dismiss":
                     conn.execute(
                         text(
-                            "UPDATE offerloom.saved_opportunities SET disposition='dismissed',version=version+1 WHERE owner_id=:owner AND id=:id"
+                            "UPDATE bonafides.saved_opportunities SET disposition='dismissed',version=version+1 WHERE owner_id=:owner AND id=:id"
                         ),
                         {"owner": catalog.owner_id, "id": UUID(application["opportunity_id"])},
                     )
                 else:
                     conn.execute(
                         text(
-                            "UPDATE offerloom.document_drafts SET deleted_at=clock_timestamp() WHERE owner_id=:owner AND id=:id"
+                            "UPDATE bonafides.document_drafts SET deleted_at=clock_timestamp() WHERE owner_id=:owner AND id=:id"
                         ),
                         {"owner": catalog.owner_id, "id": UUID(old[0]["id"])},
                     )
@@ -694,7 +694,7 @@ def test_pair_late_output_preserves_existing_pair(
             row[0]: row[1]
             for row in conn.execute(
                 text(
-                    "SELECT id,current_revision_id FROM offerloom.document_drafts WHERE owner_id=:owner AND application_id=:id"
+                    "SELECT id,current_revision_id FROM bonafides.document_drafts WHERE owner_id=:owner AND application_id=:id"
                 ),
                 {"owner": catalog.owner_id, "id": UUID(application["id"])},
             ).all()
@@ -722,14 +722,14 @@ def test_durable_generation_attempt_cap_survives_reclaims(
         with catalog.identity.admin.transaction() as conn:
             conn.execute(
                 text(
-                    "UPDATE offerloom.local_model_reservations SET reserved_until=clock_timestamp()-interval '1 second' WHERE singleton"
+                    "UPDATE bonafides.local_model_reservations SET reserved_until=clock_timestamp()-interval '1 second' WHERE singleton"
                 )
             )
         if attempt == 0:
             with catalog.identity.admin.transaction() as conn:
                 conn.execute(
                     text(
-                        "UPDATE offerloom.workflow_runs SET lease_expires_at=clock_timestamp()-interval '1 second' WHERE owner_id=:owner AND id=:id"
+                        "UPDATE bonafides.workflow_runs SET lease_expires_at=clock_timestamp()-interval '1 second' WHERE owner_id=:owner AND id=:id"
                     ),
                     {"owner": catalog.owner_id, "id": task.id},
                 )
@@ -738,7 +738,7 @@ def test_durable_generation_attempt_cap_survives_reclaims(
             with catalog.identity.admin.transaction() as conn:
                 conn.execute(
                     text(
-                        "UPDATE offerloom.workflow_runs SET next_attempt_at=clock_timestamp()-interval '1 second' WHERE owner_id=:owner AND id=:id"
+                        "UPDATE bonafides.workflow_runs SET next_attempt_at=clock_timestamp()-interval '1 second' WHERE owner_id=:owner AND id=:id"
                     ),
                     {"owner": catalog.owner_id, "id": task.id},
                 )
@@ -752,7 +752,7 @@ def test_durable_generation_attempt_cap_survives_reclaims(
         assert (
             conn.execute(
                 text(
-                    "SELECT model_network_attempts FROM offerloom.workflow_runs WHERE owner_id=:owner AND id=:id"
+                    "SELECT model_network_attempts FROM bonafides.workflow_runs WHERE owner_id=:owner AND id=:id"
                 ),
                 {"owner": catalog.owner_id, "id": task.id},
             ).scalar_one()
@@ -761,7 +761,7 @@ def test_durable_generation_attempt_cap_survives_reclaims(
         assert (
             conn.execute(
                 text(
-                    "SELECT count(*) FROM offerloom.model_runs WHERE owner_id=:owner AND workflow_run_id=:id"
+                    "SELECT count(*) FROM bonafides.model_runs WHERE owner_id=:owner AND workflow_run_id=:id"
                 ),
                 {"owner": catalog.owner_id, "id": task.id},
             ).scalar_one()
@@ -791,20 +791,20 @@ def test_legacy_revision_digest_template_and_review_identity_survive_new_lifecyc
     with catalog.runtime.transaction() as conn:
         old = conn.execute(
             text(
-                "SELECT row_to_json(r) FROM offerloom.document_revisions r WHERE owner_id=:owner AND id=:id"
+                "SELECT row_to_json(r) FROM bonafides.document_revisions r WHERE owner_id=:owner AND id=:id"
             ),
             {"owner": catalog.owner_id, "id": UUID(revision["id"])},
         ).scalar_one()
         review = conn.execute(
             text(
-                "SELECT row_to_json(r) FROM offerloom.document_reviews r WHERE owner_id=:owner AND document_revision_id=:id"
+                "SELECT row_to_json(r) FROM bonafides.document_reviews r WHERE owner_id=:owner AND document_revision_id=:id"
             ),
             {"owner": catalog.owner_id, "id": UUID(revision["id"])},
         ).scalar_one()
     rebuilt = _base(catalog, profile)
     assert (
         rebuilt["id"] == document["id"]
-        and rebuilt["current_revision"]["template_version"] == "offerloom-evidence-v1"
+        and rebuilt["current_revision"]["template_version"] == "bonafides-evidence-v1"
     )
     historical = catalog.client.get(
         f"/api/v1/documents/{document['id']}/revisions/{revision['id']}"
@@ -814,7 +814,7 @@ def test_legacy_revision_digest_template_and_review_identity_survive_new_lifecyc
         assert (
             conn.execute(
                 text(
-                    "SELECT row_to_json(r) FROM offerloom.document_revisions r WHERE owner_id=:owner AND id=:id"
+                    "SELECT row_to_json(r) FROM bonafides.document_revisions r WHERE owner_id=:owner AND id=:id"
                 ),
                 {"owner": catalog.owner_id, "id": UUID(revision["id"])},
             ).scalar_one()
@@ -823,7 +823,7 @@ def test_legacy_revision_digest_template_and_review_identity_survive_new_lifecyc
         assert (
             conn.execute(
                 text(
-                    "SELECT row_to_json(r) FROM offerloom.document_reviews r WHERE owner_id=:owner AND document_revision_id=:id"
+                    "SELECT row_to_json(r) FROM bonafides.document_reviews r WHERE owner_id=:owner AND document_revision_id=:id"
                 ),
                 {"owner": catalog.owner_id, "id": UUID(revision["id"])},
             ).scalar_one()
@@ -857,19 +857,19 @@ def test_new_template_frame_digest_and_html_are_literal_and_legacy_hash_stays_bo
     provenance: dict[str, object] = {
         "schema_version": 2,
         "frame": frame.model_dump(mode="json"),
-        "template_sha256": template_digest("offerloom-evidence-v1"),
+        "template_sha256": template_digest("bonafides-evidence-v1"),
     }
-    first = generation.revision_digest(body, "offerloom-evidence-v1", provenance)
-    assert first != generation.revision_digest(body, "offerloom-compact-v1", provenance)
+    first = generation.revision_digest(body, "bonafides-evidence-v1", provenance)
+    assert first != generation.revision_digest(body, "bonafides-compact-v1", provenance)
     other = {
         **provenance,
         "frame": frame.model_copy(update={"display_name": "Other owner"}).model_dump(mode="json"),
     }
-    assert first != generation.revision_digest(body, "offerloom-evidence-v1", other)
+    assert first != generation.revision_digest(body, "bonafides-evidence-v1", other)
     assert generation.revision_digest(
         body, documents.TEMPLATE_VERSION, {"schema_version": 1}
     ) == documents.body_digest(body)
-    for template in ("offerloom-evidence-v1", "offerloom-compact-v1"):
+    for template in ("bonafides-evidence-v1", "bonafides-compact-v1"):
         html = render_html(body, template, frame)
         assert "&lt;script&gt;inert()&lt;/script&gt;" in html and "&lt;img" in html
         assert '<img src="https://no-fetch.test">' not in html and "mira@example.test" in html
@@ -930,7 +930,7 @@ def test_second_half_database_failure_rolls_back_both_target_revisions(
         assert (
             conn.execute(
                 text(
-                    "SELECT count(*) FROM offerloom.document_revisions r JOIN offerloom.document_drafts d ON d.owner_id=r.owner_id AND d.id=r.document_draft_id WHERE d.owner_id=:owner AND d.application_id=:id"
+                    "SELECT count(*) FROM bonafides.document_revisions r JOIN bonafides.document_drafts d ON d.owner_id=r.owner_id AND d.id=r.document_draft_id WHERE d.owner_id=:owner AND d.application_id=:id"
                 ),
                 {"owner": catalog.owner_id, "id": UUID(application["id"])},
             ).scalar_one()
@@ -1271,7 +1271,7 @@ def test_active_historical_profile_selection_pins_old_contacts_but_not_withdrawn
         "/api/v1/profile/base-resume",
         json={
             "profile_revision_id": historical["current_revision"]["id"],
-            "template_version": "offerloom-evidence-v1",
+            "template_version": "bonafides-evidence-v1",
         },
         headers=catalog.headers(withdrawn["version"]),
     )

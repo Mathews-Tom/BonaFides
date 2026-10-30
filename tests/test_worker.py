@@ -16,10 +16,10 @@ from test_sources import SourceContext
 from test_sources import catalog as catalog
 from test_suitability import _posting, _queue, _view
 
-from offerloom import local_model
-from offerloom.problems import Problem
-from offerloom.worker import Worker
-from offerloom.workflows import claim, reap
+from bonafides import local_model
+from bonafides.problems import Problem
+from bonafides.worker import Worker
+from bonafides.workflows import claim, reap
 
 
 @pytest.mark.postgres
@@ -31,7 +31,7 @@ def test_real_worker_shutdown_keeps_model_execution_under_database_recovery_auth
     recovery: str,
 ) -> None:
     # Exercise run()'s actual shutdown Event path, without changing process handlers.
-    monkeypatch.setattr("offerloom.worker.signal.signal", lambda *_args: None)
+    monkeypatch.setattr("bonafides.worker.signal.signal", lambda *_args: None)
     worker = Worker(catalog.runtime, catalog.identity.settings)
     release_response = Event()
     worker_finished = Event()
@@ -96,7 +96,7 @@ def test_real_worker_shutdown_keeps_model_execution_under_database_recovery_auth
         with catalog.runtime.transaction() as conn:
             runs = (
                 conn.execute(
-                    text("""SELECT status,metadata FROM offerloom.model_runs
+                    text("""SELECT status,metadata FROM bonafides.model_runs
                 WHERE owner_id=:owner AND workflow_run_id=:id"""),
                     {"owner": catalog.owner_id, "id": workflow_id},
                 )
@@ -108,7 +108,7 @@ def test_real_worker_shutdown_keeps_model_execution_under_database_recovery_auth
             assert runs[0]["metadata"]["error_code"] == "model_interrupted"
             assert (
                 conn.execute(
-                    text("""SELECT model_network_attempts FROM offerloom.workflow_runs
+                    text("""SELECT model_network_attempts FROM bonafides.workflow_runs
                 WHERE owner_id=:owner AND id=:id"""),
                     {"owner": catalog.owner_id, "id": workflow_id},
                 ).scalar_one()
@@ -116,7 +116,7 @@ def test_real_worker_shutdown_keeps_model_execution_under_database_recovery_auth
             )
             reservation = conn.execute(
                 text(
-                    "SELECT workflow_run_id FROM offerloom.local_model_reservations WHERE singleton"
+                    "SELECT workflow_run_id FROM bonafides.local_model_reservations WHERE singleton"
                 )
             ).scalar_one()
             assert reservation == workflow_id
@@ -125,18 +125,18 @@ def test_real_worker_shutdown_keeps_model_execution_under_database_recovery_auth
         # Advance only persisted clocks/allowance, not production timers or policy.
         with catalog.identity.admin.transaction() as conn:
             conn.execute(
-                text("""UPDATE offerloom.workflow_runs
+                text("""UPDATE bonafides.workflow_runs
                 SET lease_expires_at=clock_timestamp()-interval '1 second'
                 WHERE owner_id=:owner AND id=:id AND state='running'"""),
                 {"owner": catalog.owner_id, "id": workflow_id},
             )
             conn.execute(
-                text("""UPDATE offerloom.local_model_reservations
+                text("""UPDATE bonafides.local_model_reservations
                 SET reserved_until=clock_timestamp()-interval '1 second' WHERE singleton"""),
             )
             if recovery == "deadline":
                 conn.execute(
-                    text("""UPDATE offerloom.workflow_runs
+                    text("""UPDATE bonafides.workflow_runs
                     SET created_at=clock_timestamp()-interval '181 seconds',
                     deadline_at=clock_timestamp()-interval '1 second'
                     WHERE owner_id=:owner AND id=:id"""),
@@ -144,7 +144,7 @@ def test_real_worker_shutdown_keeps_model_execution_under_database_recovery_auth
                 )
             if recovery == "exhausted":
                 conn.execute(
-                    text("""UPDATE offerloom.workflow_runs SET model_network_attempts=2
+                    text("""UPDATE bonafides.workflow_runs SET model_network_attempts=2
                     WHERE owner_id=:owner AND id=:id"""),
                     {"owner": catalog.owner_id, "id": workflow_id},
                 )
@@ -152,7 +152,7 @@ def test_real_worker_shutdown_keeps_model_execution_under_database_recovery_auth
             assert reap(conn) == (0 if recovery == "cancel" else 1)
         with catalog.identity.admin.transaction() as conn:
             conn.execute(
-                text("""UPDATE offerloom.workflow_runs SET next_attempt_at=clock_timestamp()
+                text("""UPDATE bonafides.workflow_runs SET next_attempt_at=clock_timestamp()
                 WHERE owner_id=:owner AND id=:id"""),
                 {"owner": catalog.owner_id, "id": workflow_id},
             )
@@ -181,8 +181,8 @@ def test_real_worker_shutdown_keeps_model_execution_under_database_recovery_auth
             with catalog.runtime.transaction() as conn:
                 assert (
                     conn.execute(
-                        text("""SELECT count(*) FROM offerloom.provider_executions e
-                    JOIN offerloom.model_runs m ON m.owner_id=e.owner_id AND m.id=e.model_run_id
+                        text("""SELECT count(*) FROM bonafides.provider_executions e
+                    JOIN bonafides.model_runs m ON m.owner_id=e.owner_id AND m.id=e.model_run_id
                     WHERE m.owner_id=:owner AND m.workflow_run_id=:workflow
                       AND m.status='unknown_usage'"""),
                         {"owner": catalog.owner_id, "workflow": workflow_id},
@@ -191,7 +191,7 @@ def test_real_worker_shutdown_keeps_model_execution_under_database_recovery_auth
                 )
         with catalog.runtime.transaction() as conn:
             assert conn.execute(
-                text("""SELECT model_network_attempts FROM offerloom.workflow_runs
+                text("""SELECT model_network_attempts FROM bonafides.workflow_runs
                 WHERE owner_id=:owner AND id=:id"""),
                 {"owner": catalog.owner_id, "id": workflow_id},
             ).scalar_one() == (2 if recovery == "exhausted" else 1)
@@ -217,7 +217,7 @@ def test_postflight_model_mapping_drift_blocks_worker_publication_and_route_reus
         with catalog.runtime.transaction() as conn:
             blocked = (
                 conn.execute(
-                    text("""SELECT stage,error_code FROM offerloom.local_model_route_blocks
+                    text("""SELECT stage,error_code FROM bonafides.local_model_route_blocks
                 WHERE owner_id=:owner"""),
                     {"owner": catalog.owner_id},
                 )
@@ -247,7 +247,7 @@ def test_live_worker_maintenance_drains_terminal_response_without_overriding_own
 ) -> None:
     from test_maintenance import _barrier
 
-    monkeypatch.setattr("offerloom.worker.signal.signal", lambda *_args: None)
+    monkeypatch.setattr("bonafides.worker.signal.signal", lambda *_args: None)
     worker = Worker(catalog.runtime, catalog.identity.settings)
     monkeypatch.setattr(worker, "HEARTBEAT_SECONDS", 0)
     inference_started, release_response, maintenance_seen = Event(), Event(), Event()
@@ -292,8 +292,8 @@ def test_live_worker_maintenance_drains_terminal_response_without_overriding_own
             with catalog.runtime.transaction() as conn:
                 row = conn.execute(
                     text("""SELECT
-                    (SELECT count(*) FROM offerloom.provider_executions WHERE owner_id=:owner),
-                    (SELECT count(*) FROM offerloom.installation_activities
+                    (SELECT count(*) FROM bonafides.provider_executions WHERE owner_id=:owner),
+                    (SELECT count(*) FROM bonafides.installation_activities
                      WHERE kind='worker' AND execution_id=:workflow)"""),
                     {"owner": catalog.owner_id, "workflow": workflow_id},
                 ).one()

@@ -1,5 +1,5 @@
 -- SPDX-License-Identifier: MIT OR Apache-2.0
-SET search_path=offerloom,pg_catalog;
+SET search_path=bonafides,pg_catalog;
 
 -- One live preview per owner bounds retained uploads independently of HTTP limits.
 -- Candidate bytes are operational state, not portable owner-export records.
@@ -24,22 +24,22 @@ CREATE TABLE portable_previews (
 );
 CREATE UNIQUE INDEX portable_previews_one_live_owner ON portable_previews(owner_id)
  WHERE cleared_at IS NULL;
-REVOKE ALL ON portable_previews FROM PUBLIC,offerloom_runtime;
-GRANT SELECT,INSERT ON portable_previews TO offerloom_runtime;
-GRANT UPDATE(candidate_bytes,cleared_at,clear_reason) ON portable_previews TO offerloom_runtime;
+REVOKE ALL ON portable_previews FROM PUBLIC,bonafides_runtime;
+GRANT SELECT,INSERT ON portable_previews TO bonafides_runtime;
+GRANT UPDATE(candidate_bytes,cleared_at,clear_reason) ON portable_previews TO bonafides_runtime;
 
 -- Every candidate contains the whole workspace. Even application-only erasure
 -- must remove all retained candidates in the SAME transaction as domain erasure.
 -- Only the existing privileged erasure function can create this journal row.
 CREATE FUNCTION clear_erased_portable_previews() RETURNS trigger
-LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog,offerloom AS $$
+LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog,bonafides AS $$
 BEGIN
- UPDATE offerloom.portable_previews SET candidate_bytes=NULL,
+ UPDATE bonafides.portable_previews SET candidate_bytes=NULL,
   cleared_at=clock_timestamp(),clear_reason='erased'
  WHERE owner_id=NEW.owner_id AND cleared_at IS NULL;
  RETURN NEW;
 END $$;
-REVOKE ALL ON FUNCTION clear_erased_portable_previews() FROM PUBLIC,offerloom_runtime;
+REVOKE ALL ON FUNCTION clear_erased_portable_previews() FROM PUBLIC,bonafides_runtime;
 CREATE TRIGGER portable_erasure_clears_previews AFTER INSERT ON portable_purges
  FOR EACH ROW EXECUTE FUNCTION clear_erased_portable_previews();
 INSERT INTO schema_migrations(version,source_sha256) VALUES(22,repeat('0',64));

@@ -1,5 +1,5 @@
 -- SPDX-License-Identifier: MIT OR Apache-2.0
-SET search_path=offerloom,pg_catalog;
+SET search_path=bonafides,pg_catalog;
 
 ALTER TABLE applications ADD COLUMN attempt_no bigint;
 WITH numbered AS (

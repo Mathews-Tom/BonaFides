@@ -1,6 +1,6 @@
 -- SPDX-License-Identifier: MIT OR Apache-2.0
 -- OL-008 keeps owner disposition and conservative review separate from identity.
-SET LOCAL search_path=offerloom,pg_catalog;
+SET LOCAL search_path=bonafides,pg_catalog;
 ALTER TABLE saved_opportunities DROP CONSTRAINT saved_opportunities_disposition_check;
 ALTER TABLE saved_opportunities ADD CONSTRAINT saved_opportunities_disposition_check
  CHECK(disposition IN ('saved','dismissed','archived','unmarked'));
@@ -33,7 +33,7 @@ CREATE INDEX duplicate_decision_reverse ON posting_duplicate_decisions(owner_id,
 ALTER TABLE source_configs ADD COLUMN removed_at timestamptz;
 ALTER TABLE source_configs ADD CONSTRAINT source_retired_shape CHECK
  (removed_at IS NULL OR (source_kind='greenhouse' AND NOT enabled));
-CREATE OR REPLACE FUNCTION guard_source_identity() RETURNS trigger LANGUAGE plpgsql SET search_path=offerloom,pg_catalog AS $$
+CREATE OR REPLACE FUNCTION guard_source_identity() RETURNS trigger LANGUAGE plpgsql SET search_path=bonafides,pg_catalog AS $$
 BEGIN
  IF ROW(NEW.owner_id,NEW.id,NEW.source_kind,NEW.board_token,NEW.created_at)
  IS DISTINCT FROM ROW(OLD.owner_id,OLD.id,OLD.source_kind,OLD.board_token,OLD.created_at)
@@ -58,5 +58,5 @@ BEGIN
  THEN RAISE EXCEPTION 'source policy version required' USING ERRCODE='55000'; END IF;
  RETURN NEW;
 END $$;
-GRANT SELECT,INSERT,UPDATE ON posting_duplicate_decisions TO offerloom_runtime;
+GRANT SELECT,INSERT,UPDATE ON posting_duplicate_decisions TO bonafides_runtime;
 INSERT INTO schema_migrations(version,source_sha256) VALUES(8,repeat('0',64));

@@ -22,13 +22,13 @@ from test_identity import identity as identity
 from test_sources import MANUAL, BoardClient, SourceContext, _job, _source_body
 from test_sources import catalog as catalog
 
-from offerloom import catalog as catalog_api
-from offerloom import sources
-from offerloom.commands import canonical_json
-from offerloom.crypto import Keyring
-from offerloom.greenhouse import BoardRead, SourceFailure
-from offerloom.problems import Problem
-from offerloom.workflows import claim
+from bonafides import catalog as catalog_api
+from bonafides import sources
+from bonafides.commands import canonical_json
+from bonafides.crypto import Keyring
+from bonafides.greenhouse import BoardRead, SourceFailure
+from bonafides.problems import Problem
+from bonafides.workflows import claim
 
 
 def _manual(context: SourceContext, **changes: object) -> dict[str, Any]:
@@ -111,7 +111,7 @@ def test_real_fts_boolean_phrase_simple_vector_and_literal_filters(catalog: Sour
     assert _ids(catalog, location="\\") == set()
     with catalog.identity.admin.transaction() as conn:
         conn.execute(
-            text("""UPDATE offerloom.job_postings SET status='closed',version=version+1,
+            text("""UPDATE bonafides.job_postings SET status='closed',version=version+1,
             last_observed_at=timestamptz '2026-01-01 00:00:00+00' WHERE owner_id=:owner AND id=:id"""),
             {"owner": catalog.owner_id, "id": UUID(first["id"])},
         )
@@ -163,7 +163,7 @@ def test_signed_cursor_ties_cutoff_filter_binding_owner_and_key_rotation(
     with catalog.identity.admin.transaction() as conn:
         for identifier in identifiers:
             conn.execute(
-                text("""INSERT INTO offerloom.job_postings
+                text("""INSERT INTO bonafides.job_postings
                 (owner_id,id,title,company,description_text,dedupe_key,created_at)
                 VALUES(:owner,:id,'Tie','Reedglass Labs','Linux',:dedupe,:created)"""),
                 {
@@ -240,14 +240,14 @@ def test_disposition_persists_independent_application_and_source_replay(
     with catalog.identity.admin.transaction() as conn:
         opportunity = conn.execute(
             text(
-                "SELECT id FROM offerloom.saved_opportunities WHERE owner_id=:owner AND posting_id=:posting"
+                "SELECT id FROM bonafides.saved_opportunities WHERE owner_id=:owner AND posting_id=:posting"
             ),
             {"owner": catalog.owner_id, "posting": UUID(posting["id"])},
         ).scalar_one()
         application = uuid4()
         conn.execute(
             text(
-                "INSERT INTO offerloom.applications(owner_id,id,opportunity_id,current_stage) VALUES(:owner,:id,:opportunity,'interview')"
+                "INSERT INTO bonafides.applications(owner_id,id,opportunity_id,current_stage) VALUES(:owner,:id,:opportunity,'interview')"
             ),
             {"owner": catalog.owner_id, "id": application, "opportunity": opportunity},
         )
@@ -258,8 +258,8 @@ def test_disposition_persists_independent_application_and_source_replay(
         with catalog.runtime.transaction() as conn:
             retained = (
                 conn.execute(
-                    text("""SELECT o.id,o.disposition,a.current_stage FROM offerloom.saved_opportunities o
-                JOIN offerloom.applications a ON a.owner_id=o.owner_id AND a.opportunity_id=o.id
+                    text("""SELECT o.id,o.disposition,a.current_stage FROM bonafides.saved_opportunities o
+                JOIN bonafides.applications a ON a.owner_id=o.owner_id AND a.opportunity_id=o.id
                 WHERE o.owner_id=:owner AND o.posting_id=:posting"""),
                     {"owner": catalog.owner_id, "posting": UUID(posting["id"])},
                 )
@@ -323,7 +323,7 @@ def test_disposition_command_replay_cas_race_and_transactional_events(
         events = (
             conn.execute(
                 text(
-                    "SELECT payload FROM offerloom.outbox_events WHERE owner_id=:owner AND event_type='opportunity.disposition_changed' ORDER BY aggregate_version"
+                    "SELECT payload FROM bonafides.outbox_events WHERE owner_id=:owner AND event_type='opportunity.disposition_changed' ORDER BY aggregate_version"
                 ),
                 {"owner": catalog.owner_id},
             )
@@ -334,7 +334,7 @@ def test_disposition_command_replay_cas_race_and_transactional_events(
         audits = (
             conn.execute(
                 text(
-                    "SELECT detail FROM offerloom.audit_events WHERE owner_id=:owner AND action='opportunity.disposition_changed'"
+                    "SELECT detail FROM bonafides.audit_events WHERE owner_id=:owner AND action='opportunity.disposition_changed'"
                 ),
                 {"owner": catalog.owner_id},
             )
@@ -439,7 +439,7 @@ def test_conservative_candidates_distinct_external_ids_locations_and_persisted_r
     with catalog.identity.admin.transaction() as conn:
         conn.execute(
             text(
-                "UPDATE offerloom.job_postings SET title='Changed source title',version=version+1 WHERE owner_id=:owner AND id=:id"
+                "UPDATE bonafides.job_postings SET title='Changed source title',version=version+1 WHERE owner_id=:owner AND id=:id"
             ),
             {"owner": catalog.owner_id, "id": UUID(candidate["id"])},
         )
@@ -481,7 +481,7 @@ def test_conservative_candidates_distinct_external_ids_locations_and_persisted_r
         pair = (
             conn.execute(
                 text(
-                    "SELECT posting_id,candidate_id,decision FROM offerloom.posting_duplicate_decisions WHERE owner_id=:owner"
+                    "SELECT posting_id,candidate_id,decision FROM bonafides.posting_duplicate_decisions WHERE owner_id=:owner"
                 ),
                 {"owner": catalog.owner_id},
             )
@@ -511,25 +511,25 @@ def test_source_retirement_preserves_history_and_fences_delayed_worker(
     with catalog.identity.admin.transaction() as conn:
         opportunity_id = conn.execute(
             text(
-                "SELECT id FROM offerloom.saved_opportunities WHERE owner_id=:owner AND posting_id=:posting"
+                "SELECT id FROM bonafides.saved_opportunities WHERE owner_id=:owner AND posting_id=:posting"
             ),
             {"owner": catalog.owner_id, "posting": UUID(posting["id"])},
         ).scalar_one()
         conn.execute(
             text(
-                "INSERT INTO offerloom.applications(owner_id,id,opportunity_id,current_stage) VALUES(:owner,:id,:opportunity,'applied')"
+                "INSERT INTO bonafides.applications(owner_id,id,opportunity_id,current_stage) VALUES(:owner,:id,:opportunity,'applied')"
             ),
             {"owner": catalog.owner_id, "id": application_id, "opportunity": opportunity_id},
         )
         conn.execute(
             text(
-                "INSERT INTO offerloom.application_notes(owner_id,application_id,body) VALUES(:owner,:id,'Retained private note')"
+                "INSERT INTO bonafides.application_notes(owner_id,application_id,body) VALUES(:owner,:id,'Retained private note')"
             ),
             {"owner": catalog.owner_id, "id": application_id},
         )
         conn.execute(
             text(
-                "INSERT INTO offerloom.application_stage_events(owner_id,application_id,to_stage,effective_at,sequence) VALUES(:owner,:id,'applied',clock_timestamp(),1)"
+                "INSERT INTO bonafides.application_stage_events(owner_id,application_id,to_stage,effective_at,sequence) VALUES(:owner,:id,'applied',clock_timestamp(),1)"
             ),
             {"owner": catalog.owner_id, "id": application_id},
         )
@@ -623,9 +623,9 @@ def test_source_retirement_preserves_history_and_fences_delayed_worker(
     assert cannot_remove.json()["code"] == "manual_source_not_removable"
     with catalog.runtime.transaction() as conn:
         retained = conn.execute(
-            text("""SELECT a.current_stage,n.body,e.to_stage FROM offerloom.applications a
-            JOIN offerloom.application_notes n ON n.owner_id=a.owner_id AND n.application_id=a.id
-            JOIN offerloom.application_stage_events e ON e.owner_id=a.owner_id AND e.application_id=a.id
+            text("""SELECT a.current_stage,n.body,e.to_stage FROM bonafides.applications a
+            JOIN bonafides.application_notes n ON n.owner_id=a.owner_id AND n.application_id=a.id
+            JOIN bonafides.application_stage_events e ON e.owner_id=a.owner_id AND e.application_id=a.id
             WHERE a.owner_id=:owner AND a.id=:id"""),
             {"owner": catalog.owner_id, "id": application_id},
         ).one()
@@ -633,7 +633,7 @@ def test_source_retirement_preserves_history_and_fences_delayed_worker(
         assert (
             conn.execute(
                 text(
-                    "SELECT count(*) FROM offerloom.source_policy_reviews WHERE owner_id=:owner AND source_config_id=:source"
+                    "SELECT count(*) FROM bonafides.source_policy_reviews WHERE owner_id=:owner AND source_config_id=:source"
                 ),
                 {"owner": catalog.owner_id, "source": UUID(source["id"])},
             ).scalar_one()
@@ -642,7 +642,7 @@ def test_source_retirement_preserves_history_and_fences_delayed_worker(
         assert (
             conn.execute(
                 text(
-                    "SELECT count(*) FROM offerloom.posting_duplicate_decisions WHERE owner_id=:owner"
+                    "SELECT count(*) FROM bonafides.posting_duplicate_decisions WHERE owner_id=:owner"
                 ),
                 {"owner": catalog.owner_id},
             ).scalar_one()
@@ -650,14 +650,14 @@ def test_source_retirement_preserves_history_and_fences_delayed_worker(
         )
         assert conn.execute(
             text(
-                "SELECT last_error_code,rate_limit_retry_after_seconds FROM offerloom.source_configs WHERE owner_id=:owner AND id=:source"
+                "SELECT last_error_code,rate_limit_retry_after_seconds FROM bonafides.source_configs WHERE owner_id=:owner AND id=:source"
             ),
             {"owner": catalog.owner_id, "source": UUID(source["id"])},
         ).one() == (None, None)
     with pytest.raises(DBAPIError), catalog.runtime.transaction() as conn:
         conn.execute(
             text(
-                "UPDATE offerloom.source_configs SET removed_at=NULL,version=version+1 WHERE owner_id=:owner AND id=:source"
+                "UPDATE bonafides.source_configs SET removed_at=NULL,version=version+1 WHERE owner_id=:owner AND id=:source"
             ),
             {"owner": catalog.owner_id, "source": UUID(source["id"])},
         )
@@ -774,7 +774,7 @@ def test_duplicate_review_race_uses_posting_cas(catalog: SourceContext) -> None:
         assert (
             conn.execute(
                 text(
-                    "SELECT count(*) FROM offerloom.posting_duplicate_decisions WHERE owner_id=:owner"
+                    "SELECT count(*) FROM bonafides.posting_duplicate_decisions WHERE owner_id=:owner"
                 ),
                 {"owner": catalog.owner_id},
             ).scalar_one()
@@ -825,7 +825,7 @@ def test_duplicate_review_reverse_direction_fences_both_posting_tokens(
     for posting in postings:
         assert _detail(catalog, posting)["version"] == posting["version"] + 1
     pair_query = text(
-        "SELECT posting_id,candidate_id,decision,version FROM offerloom.posting_duplicate_decisions WHERE owner_id=:owner"
+        "SELECT posting_id,candidate_id,decision,version FROM bonafides.posting_duplicate_decisions WHERE owner_id=:owner"
     )
     left, right = sorted(UUID(posting["id"]) for posting in postings)
     with catalog.runtime.transaction() as conn:
@@ -873,19 +873,19 @@ def test_review_pair_database_constraints_and_history_privileges(catalog: Source
     left, right = sorted((UUID(first["id"]), UUID(second["id"])))
     statements = (
         (
-            "INSERT INTO offerloom.posting_duplicate_decisions(owner_id,posting_id,candidate_id,decision) VALUES(:owner,:left,:left,'distinct')",
+            "INSERT INTO bonafides.posting_duplicate_decisions(owner_id,posting_id,candidate_id,decision) VALUES(:owner,:left,:left,'distinct')",
             {"owner": catalog.owner_id, "left": left},
         ),
         (
-            "INSERT INTO offerloom.posting_duplicate_decisions(owner_id,posting_id,candidate_id,decision) VALUES(:owner,:right,:left,'distinct')",
+            "INSERT INTO bonafides.posting_duplicate_decisions(owner_id,posting_id,candidate_id,decision) VALUES(:owner,:right,:left,'distinct')",
             {"owner": catalog.owner_id, "left": left, "right": right},
         ),
         (
-            "INSERT INTO offerloom.posting_duplicate_decisions(owner_id,posting_id,candidate_id,decision) VALUES(:owner,:left,:right,'merged')",
+            "INSERT INTO bonafides.posting_duplicate_decisions(owner_id,posting_id,candidate_id,decision) VALUES(:owner,:left,:right,'merged')",
             {"owner": catalog.owner_id, "left": left, "right": right},
         ),
         (
-            "DELETE FROM offerloom.posting_duplicate_decisions WHERE owner_id=:owner",
+            "DELETE FROM bonafides.posting_duplicate_decisions WHERE owner_id=:owner",
             {"owner": catalog.owner_id},
         ),
     )

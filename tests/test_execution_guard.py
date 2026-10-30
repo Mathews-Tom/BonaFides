@@ -8,8 +8,8 @@ from pathlib import Path
 
 import pytest
 
-from offerloom.execution_guard import LOCK_NAME, ExecutionGuard
-from offerloom.spool_guard import SpoolBusy, pause_spool
+from bonafides.execution_guard import LOCK_NAME, ExecutionGuard
+from bonafides.spool_guard import SpoolBusy, pause_spool
 
 
 def test_surviving_actual_subprocess_retains_execution_exclusion_after_parent_closes(
@@ -87,7 +87,7 @@ def test_concurrent_first_actors_share_initialized_identity_and_both_exclude_rec
     creator_code = """
 import os, sys
 from pathlib import Path
-from offerloom.execution_guard import ExecutionGuard, LOCK_NAME
+from bonafides.execution_guard import ExecutionGuard, LOCK_NAME
 real_open = os.open
 def controlled_open(path, flags, *args, **kwargs):
     fd = real_open(path, flags, *args, **kwargs)
@@ -103,7 +103,7 @@ with ExecutionGuard(Path(sys.argv[1])) as guard:
     peer_code = """
 import sys
 from pathlib import Path
-from offerloom.execution_guard import ExecutionGuard
+from bonafides.execution_guard import ExecutionGuard
 print('STARTED', flush=True)
 with ExecutionGuard(Path(sys.argv[1])) as guard:
     print(guard.identity, flush=True)
@@ -161,7 +161,7 @@ with ExecutionGuard(Path(sys.argv[1])) as guard:
             child.communicate(timeout=5)
 
 
-@pytest.mark.parametrize("encoded", [b"", b"abandoned initialization", b"offerloom-execution/v1\n"])
+@pytest.mark.parametrize("encoded", [b"", b"abandoned initialization", b"bonafides-execution/v1\n"])
 def test_ordinary_startup_never_repairs_a_persisted_malformed_identity(
     tmp_path: Path, encoded: bytes
 ) -> None:

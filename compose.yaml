@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: MIT OR Apache-2.0
-name: ${COMPOSE_PROJECT_NAME:-offerloom}
+name: ${COMPOSE_PROJECT_NAME:-bonafides}
 x-app: &app
-  image: ${OFFERLOOM_IMAGE:-offerloom-m0:local}
+  image: ${BONAFIDES_IMAGE:-bonafides:local}
   build: {context: ., target: app}
   user: "10001:10001"
   read_only: true
@@ -16,15 +16,15 @@ x-app: &app
   restart: "on-failure:3"
   logging: {driver: json-file, options: {max-size: 5m, max-file: "2"}}
 x-settings: &settings
-  OFFERLOOM_DATABASE_DSN_FILE: /run/offerloom/runtime_dsn
-  OFFERLOOM_KEYRING_FILE: /run/offerloom/keyring
-  OFFERLOOM_BOOTSTRAP_TOKEN_FILE: /run/offerloom/bootstrap_token
-  OFFERLOOM_ORIGIN: ${OFFERLOOM_ORIGIN:-http://localhost:8000}
-  OFFERLOOM_BLOB_ROOT: /data/blobs
-  OFFERLOOM_RENDERER_SPOOL: /spool
-  OFFERLOOM_IMPORT_SPOOL: /import-spool
-  OFFERLOOM_MODE: ${OFFERLOOM_MODE:-production}
-  OFFERLOOM_LOCAL_MODEL_ROUTE_FILE: ${OFFERLOOM_LOCAL_MODEL_ROUTE_FILE:-}
+  BONAFIDES_DATABASE_DSN_FILE: /run/bonafides/runtime_dsn
+  BONAFIDES_KEYRING_FILE: /run/bonafides/keyring
+  BONAFIDES_BOOTSTRAP_TOKEN_FILE: /run/bonafides/bootstrap_token
+  BONAFIDES_ORIGIN: ${BONAFIDES_ORIGIN:-http://localhost:8000}
+  BONAFIDES_BLOB_ROOT: /data/blobs
+  BONAFIDES_RENDERER_SPOOL: /spool
+  BONAFIDES_IMPORT_SPOOL: /import-spool
+  BONAFIDES_MODE: ${BONAFIDES_MODE:-production}
+  BONAFIDES_LOCAL_MODEL_ROUTE_FILE: ${BONAFIDES_LOCAL_MODEL_ROUTE_FILE:-}
 services:
   prepare:
     <<: *app
@@ -34,7 +34,7 @@ services:
     network_mode: none
     cap_add: [CHOWN, DAC_OVERRIDE]
     volumes:
-      - ${OFFERLOOM_SECRET_DIR:-./.secrets}:/input:ro
+      - ${BONAFIDES_SECRET_DIR:-./.secrets}:/input:ro
       - app-secrets:/state/app-secrets
       - migration-secrets:/state/migration-secrets
       - db-secrets:/state/db-secrets
@@ -56,18 +56,18 @@ services:
     restart: "on-failure:3"
     stop_grace_period: 60s
     environment:
-      POSTGRES_DB: offerloom
+      POSTGRES_DB: bonafides
       POSTGRES_USER: postgres
-      POSTGRES_PASSWORD_FILE: /run/offerloom-db-secrets/admin_password
+      POSTGRES_PASSWORD_FILE: /run/bonafides-db-secrets/admin_password
       POSTGRES_INITDB_ARGS: --auth-host=scram-sha-256 --auth-local=trust
     volumes:
       - pg:/var/lib/postgresql
-      - db-secrets:/run/offerloom-db-secrets:ro
-      - ./deploy/init-db.sh:/docker-entrypoint-initdb.d/10-offerloom.sh:ro
+      - db-secrets:/run/bonafides-db-secrets:ro
+      - ./deploy/init-db.sh:/docker-entrypoint-initdb.d/10-bonafides.sh:ro
     networks: [private]
     depends_on: {prepare: {condition: service_completed_successfully}}
     healthcheck:
-      test: [CMD-SHELL, "pg_isready -U postgres -d offerloom"]
+      test: [CMD-SHELL, "pg_isready -U postgres -d bonafides"]
       interval: 3s
       timeout: 3s
       retries: 30
@@ -76,8 +76,8 @@ services:
     command: [migrate]
     restart: "no"
     environment:
-      OFFERLOOM_DATABASE_DSN_FILE: /run/migration/migrator_dsn
-      OFFERLOOM_MIGRATION_DSN_FILE: /run/migration/migrator_dsn
+      BONAFIDES_DATABASE_DSN_FILE: /run/migration/migrator_dsn
+      BONAFIDES_MIGRATION_DSN_FILE: /run/migration/migrator_dsn
     volumes: [migration-secrets:/run/migration:ro]
     networks: [private]
     depends_on: {db: {condition: service_healthy}}
@@ -85,25 +85,25 @@ services:
     <<: *app
     command: [api]
     environment: *settings
-    volumes: [app-secrets:/run/offerloom:ro, blobs:/data/blobs, spool:/spool, import-spool:/import-spool]
+    volumes: [app-secrets:/run/bonafides:ro, blobs:/data/blobs, spool:/spool, import-spool:/import-spool]
     networks: [private]
     depends_on: {migrate: {condition: service_completed_successfully}, renderer: {condition: service_started}, parser: {condition: service_started}}
     healthcheck:
-      test: [CMD, python, -m, offerloom, healthcheck]
+      test: [CMD, python, -m, bonafides, healthcheck]
       interval: 5s
       timeout: 5s
       retries: 24
       start_period: 10s
   ingress:
     <<: *app
-    entrypoint: [python, -m, offerloom.relay]
+    entrypoint: [python, -m, bonafides.relay]
     command: [api]
     tmpfs: []
     pids_limit: 32
     mem_limit: 128m
     cpus: 0.5
     networks: [ingress, private]
-    ports: ["127.0.0.1:${OFFERLOOM_PORT:-8000}:8000"]
+    ports: ["127.0.0.1:${BONAFIDES_PORT:-8000}:8000"]
     depends_on: {api: {condition: service_healthy}}
     healthcheck:
       test: [CMD, python, -c, "import socket; socket.create_connection(('127.0.0.1',8000),2).close()"]
@@ -114,7 +114,7 @@ services:
     <<: *app
     command: [lifecycle]
     environment: *settings
-    volumes: [app-secrets:/run/offerloom:ro, blobs:/data/blobs, spool:/spool, import-spool:/import-spool]
+    volumes: [app-secrets:/run/bonafides:ro, blobs:/data/blobs, spool:/spool, import-spool:/import-spool]
     networks: [private]
     depends_on: {migrate: {condition: service_completed_successfully}, renderer: {condition: service_started}, parser: {condition: service_started}}
   worker:
@@ -122,7 +122,7 @@ services:
     command: [worker]
     mem_limit: 1g
     environment: *settings
-    volumes: [app-secrets:/run/offerloom:ro, blobs:/data/blobs, spool:/spool, import-spool:/import-spool]
+    volumes: [app-secrets:/run/bonafides:ro, blobs:/data/blobs, spool:/spool, import-spool:/import-spool]
     networks: [private, sources]
     depends_on: {migrate: {condition: service_completed_successfully}, renderer: {condition: service_started}, parser: {condition: service_started}}
   source-egress:
@@ -145,7 +145,7 @@ services:
     mem_limit: 512m
     cpus: 1.0
     environment:
-      OFFERLOOM_RENDERER_SPOOL: /spool
+      BONAFIDES_RENDERER_SPOOL: /spool
     volumes: [spool:/spool]
     depends_on: {prepare: {condition: service_completed_successfully}}
   parser:
@@ -156,7 +156,7 @@ services:
     mem_limit: 512m
     cpus: 1.0
     environment:
-      OFFERLOOM_IMPORT_SPOOL: /import-spool
+      BONAFIDES_IMPORT_SPOOL: /import-spool
     volumes: [import-spool:/import-spool]
     depends_on: {prepare: {condition: service_completed_successfully}}
 networks:
