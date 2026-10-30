@@ -23,10 +23,13 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 from http.cookies import SimpleCookie
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from urllib.parse import urlsplit
 
 from tools.dev_setup import initialize, private_write
+
+if TYPE_CHECKING:
+    from playwright.sync_api import Page
 
 MAX_ARCHIVE = 128 * 1024 * 1024
 TERMINAL = {"succeeded", "cancelled", "permanent_failure"}
@@ -69,6 +72,24 @@ class ProbeFailure(RuntimeError):
 def require(condition: object, name: str) -> None:
     if not condition:
         raise ProbeFailure(name)
+
+
+def wait_for_profile_save_ready(page: Page, *, timeout: float = 30_000) -> None:
+    """Wait for write admission before starting the profile response deadline."""
+    from playwright.sync_api import expect
+
+    try:
+        expect(page.locator(".connection-details > summary")).to_have_text(
+            "Connected to your installation", timeout=timeout
+        )
+    except AssertionError as exc:
+        raise ProbeFailure("browser_profile_save_workspace_not_connected") from exc
+    try:
+        expect(page.get_by_role("button", name="Save profile", exact=True)).to_be_enabled(
+            timeout=timeout
+        )
+    except AssertionError as exc:
+        raise ProbeFailure("browser_profile_save_button_not_enabled") from exc
 
 
 def run(
@@ -902,6 +923,7 @@ class Proof:
             )
             description = "Synthetic description saved through the browser."
             page.get_by_label("Description (optional)", exact=True).fill(description)
+            wait_for_profile_save_ready(page)
             with page.expect_response(
                 lambda response: (
                     response.url == f"{self.origin}/api/v1/profile"
