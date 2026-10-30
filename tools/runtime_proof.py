@@ -74,8 +74,31 @@ def require(condition: object, name: str) -> None:
         raise ProbeFailure(name)
 
 
+def profile_connection_phase(page: Page) -> str:
+    """Map fixed connection-panel copy to a redacted diagnostic token."""
+    phases = {
+        "Checking the saved workspace before enabling writes.": "checking",
+        "Maintenance requires operator recovery. Writers remain closed; elapsed time is not proof of completion.": "maintenance",
+        "Maintenance is active. Writers remain closed.": "maintenance",
+        "This owner session is unavailable or expired.": "expired",
+        "The installation could not be reached.": "offline",
+        "Automatic connection monitoring reached its bound.": "monitor_bound",
+        "Review the current workspace before resuming writes.": "review",
+    }
+    for text in page.locator(
+        'section[aria-labelledby="connection-title"] [role="status"]'
+    ).all_text_contents():
+        if text in phases:
+            return phases[text]
+    if page.locator(".connection-details > summary").all_text_contents() == [
+        "Connected to your installation"
+    ]:
+        return "online"
+    return "unknown"
+
+
 def wait_for_profile_save_ready(page: Page, *, timeout: float = 30_000) -> None:
-    """Wait for write admission before starting the profile response deadline."""
+    """Name the connection phase when the proof cannot establish write admission."""
     from playwright.sync_api import expect
 
     try:
@@ -83,13 +106,17 @@ def wait_for_profile_save_ready(page: Page, *, timeout: float = 30_000) -> None:
             "Connected to your installation", timeout=timeout
         )
     except AssertionError as exc:
-        raise ProbeFailure("browser_profile_save_workspace_not_connected") from exc
+        raise ProbeFailure(
+            f"browser_profile_save_workspace_not_connected:{profile_connection_phase(page)}"
+        ) from exc
     try:
         expect(page.get_by_role("button", name="Save profile", exact=True)).to_be_enabled(
             timeout=timeout
         )
     except AssertionError as exc:
-        raise ProbeFailure("browser_profile_save_button_not_enabled") from exc
+        raise ProbeFailure(
+            f"browser_profile_save_button_not_enabled:{profile_connection_phase(page)}"
+        ) from exc
 
 
 def run(
@@ -887,6 +914,7 @@ class Proof:
 
     def browser(self) -> None:
         """Verify secure Chromium login, admitted profile saves, and reload persistence."""
+        from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
         from playwright.sync_api import expect, sync_playwright
 
         saved, _, _ = self.api.request("GET", "/api/v1/profile")
@@ -925,13 +953,18 @@ class Proof:
             description = "Synthetic description saved through the browser."
             page.get_by_label("Description (optional)", exact=True).fill(description)
             wait_for_profile_save_ready(page)
-            with page.expect_response(
-                lambda response: (
-                    response.url == f"{self.origin}/api/v1/profile"
-                    and response.request.method == "PUT"
-                )
-            ) as saved_response:
-                page.get_by_role("button", name="Save profile", exact=True).click()
+            try:
+                with page.expect_response(
+                    lambda response: (
+                        response.url == f"{self.origin}/api/v1/profile"
+                        and response.request.method == "PUT"
+                    )
+                ) as saved_response:
+                    page.get_by_role("button", name="Save profile", exact=True).click()
+            except PlaywrightTimeoutError as exc:
+                raise ProbeFailure(
+                    f"browser_profile_save_timeout:{profile_connection_phase(page)}"
+                ) from exc
             require(saved_response.value.status == 200, "browser_description_save_failed")
             persisted, _, _ = self.api.request("GET", "/api/v1/profile")
             require(
