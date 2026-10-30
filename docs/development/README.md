@@ -936,6 +936,20 @@ Earlier fresh namespaces A/B failed cold start because Docker's predefined addre
 
 Private evidence under `.local/m1-autonomous-20261025/` includes `ol009-backend-gate/reviewed-gap-final.receipt.json` and its stdout, `ol009-reviewed-web-*-fence.*`, `ol009-api-proof.json`, `ol009-browser-proof.json`, `ol009-browser-screenshots/`, `ol009-mutation-proof.json`, `ol009-ui-delayed-read-before.*`, `ol009-security-summary.json`, `ol009-transport-{api,worker}.json`, `ol009-transport-proof.json`, `ol009-address-pool-cleanup-proof.json`, `ol009-recovery-121940/bonafides-proof-m1-ol009-c/receipt.json` and the reviewed preparation/migration/startup receipts. They are retained local evidence, not a clean-clone dependency or public reproducibility bundle. No real board, real inference, paid call or human review approval is inferred. Exact-board terms/read authorization, an explicitly authorized and genuinely qualified real local route, and genuine human factual review remain unmet. Complete the local story's commit/prefix gates, then continue independent model-free application tracking; missing live qualification does not authorize a dependent unqualified route or stop eligible local work.
 
+## Structured claim evidence matching
+
+Claim schema v1 keeps structured fields and derives its English sentence through the
+language-keyed renderer. `claims.grounded(claim, excerpt)` supports a structured claim only
+when that complete rendered sentence occurs verbatim inside its evidence excerpt after
+Unicode NFKC normalization, casefolding, whitespace collapse and conversion of typographic
+quotes/dashes to ASCII. A trailing `.` or `;` on the rendering is ignored.
+
+This is literal containment, not semantic inference about surrounding text. Alternate verbs,
+paraphrases, reordered phrases, alternate number/date formats and separated fragments do not
+substitute for the rendering: `Cut batch runtime by 30%` does not support
+`Reduced batch runtime by 30%`. Abbreviations such as `Acme Inc.` or `U.S.` do not split the
+rendering. Schema validation and language-keyed rendering are unchanged.
+
 ## Development gates
 
 Backend gates require a disposable PostgreSQL 18 database, distinct migration/runtime roles and tracked migrations. Never use a personal or production database. `.github/backend_gate.py` creates an isolated CI namespace, PostgreSQL test database `bonafides_test` and scoped credentials, then runs the following gates; it also needs a locally built `bonafides:local` image for its one-shot preparation helper:
