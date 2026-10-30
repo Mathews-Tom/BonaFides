@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { App } from './App';
@@ -58,16 +58,115 @@ function connectedApi(saveFailure?: Error) {
   return { api, request };
 }
 describe('profile editing', () => {
+  it('retains description-only drafts through navigation and themes, fences source edits, and explicitly discards them', async () => {
+    const user = userEvent.setup(); const { api, request } = connectedApi();
+    render(<App api={api} />);
+    const description = await screen.findByLabelText('Description (optional)');
+    expect(description).toHaveValue('');
+    expect(description).not.toBeRequired();
+    expect(screen.getByLabelText('Highlight / tagline (optional)')).not.toBeRequired();
+    await user.type(description, 'A personal introduction.\nA second paragraph.');
+    expect(screen.getByRole('button', { name: 'Sign out' })).toBeDisabled();
+    await user.click(screen.getByRole('button', { name: 'Sources' }));
+    expect(screen.getByRole('button', { name: 'Add source or owner attestation' })).toBeDisabled();
+    await goTo(user, 'Documents');
+    await user.click(screen.getByRole('button', { name: 'Dark theme' }));
+    await goTo(user, 'Profile');
+    expect(screen.getByLabelText('Description (optional)')).toBe(description);
+    expect(description).toHaveValue('A personal introduction.\nA second paragraph.');
+    expect(screen.getByRole('complementary', { name: 'Retained workspace drafts' })).toBeVisible();
+    await user.click(screen.getByRole('button', { name: 'Discard identity changes' }));
+    expect(description).toHaveValue('');
+    expect(screen.getByRole('button', { name: 'Add source or owner attestation' })).toBeEnabled();
+    expect(request.mock.calls.some(call => call[1] === 'PUT')).toBe(false);
+  });
+
+  it('counts pasted astral characters as codepoints and blocks oversized text without truncating it, including direct submits', async () => {
+    const user = userEvent.setup(); const { api, request } = connectedApi(new ApiError(412, 'version_conflict'));
+    render(<App api={api} />);
+    const headline = await screen.findByLabelText('Highlight / tagline (optional)');
+    const description = screen.getByLabelText('Description (optional)');
+    await user.clear(headline); await user.paste('🚀'.repeat(300));
+    await user.click(description); await user.paste('🌍'.repeat(2000));
+    expect(headline).toHaveValue('🚀'.repeat(300)); expect(description).toHaveValue('🌍'.repeat(2000));
+    expect(headline).toHaveAccessibleDescription('300 / 300 characters');
+    expect(description).toHaveAccessibleDescription('2000 / 2000 characters');
+    expect(screen.getByRole('button', { name: 'Save profile' })).toBeEnabled();
+    await user.paste('🌍');
+    expect(description).toHaveValue('🌍'.repeat(2001));
+    expect(description).toHaveAttribute('aria-invalid', 'true');
+    expect(screen.getByRole('button', { name: 'Save profile' })).toBeDisabled();
+    await act(async () => { fireEvent.submit(description.closest('form')!); });
+    expect(await screen.findByRole('alert')).toHaveTextContent('Your text has not been changed');
+    expect(request.mock.calls.some(call => call[1] === 'PUT')).toBe(false);
+    fireEvent.change(description, { target: { value: '🌍'.repeat(2000) } });
+    fireEvent.change(headline, { target: { value: '🚀'.repeat(301) } });
+    expect(headline).toHaveValue('🚀'.repeat(301));
+    expect(headline).toHaveAttribute('aria-invalid', 'true');
+    expect(screen.getByRole('button', { name: 'Save profile' })).toBeDisabled();
+    fireEvent.change(headline, { target: { value: '🚀'.repeat(300) } });
+    await user.click(screen.getByRole('button', { name: 'Save profile' }));
+    await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent('A newer revision exists'));
+    expect(request.mock.calls.find(call => call[1] === 'PUT')?.[2]).toMatchObject({ headline: '🚀'.repeat(300), description: '🌍'.repeat(2000) });
+    expect(description).toHaveValue('🌍'.repeat(2000));
+  });
+
+  it('rebases without losing description text, replaces from comparison explicitly, and saves clearable optional values', async () => {
+    const user = userEvent.setup(); const api = new Api();
+    let saved = profile;
+    const request = mockRequest(api, async (path, method, body) => {
+      if (path === '/session') return session;
+      if (path === '/profile' && method === 'GET') return saved;
+      if (path === '/profile' && method === 'PUT') {
+        saved = { ...saved, version: saved.version + 1, current_revision: { ...saved.current_revision, revision_no: saved.current_revision.revision_no + 1, snapshot: body as Snapshot } };
+        return saved;
+      }
+      throw new ApiError(404, 'not_found');
+    });
+    const view = render(<App api={api} />);
+    const description = await screen.findByLabelText('Description (optional)');
+    await user.type(description, 'My draft introduction.');
+    saved = { ...profile, version: 2, current_revision: { ...profile.current_revision, revision_no: 2, snapshot: { ...profile.current_revision.snapshot, description: 'Saved elsewhere.' } } };
+    await user.click(screen.getByRole('button', { name: 'Compare current revision' }));
+    expect(await screen.findByText('Description: Saved elsewhere.')).toBeVisible();
+    await user.click(screen.getByRole('button', { name: 'Keep my text against this version' }));
+    expect(description).toHaveValue('My draft introduction.');
+    await user.click(screen.getByRole('button', { name: 'Save profile' }));
+    expect(await screen.findByText('Saved as revision 3.')).toBeVisible();
+    expect(request.mock.calls.find(call => call[1] === 'PUT')?.[3]).toBe(2);
+    expect(screen.queryByRole('button', { name: 'Discard identity changes' })).not.toBeInTheDocument();
+    view.unmount(); render(<App api={api} />);
+    const reloaded = await screen.findByLabelText('Description (optional)');
+    expect(reloaded).toHaveValue('My draft introduction.');
+    await user.type(reloaded, ' Temporary edit.');
+    await user.click(screen.getByRole('button', { name: 'Compare current revision' }));
+    await user.click(await screen.findByRole('button', { name: 'Replace editor with current revision' }));
+    expect(reloaded).toHaveValue('My draft introduction.');
+    await user.clear(reloaded); await user.clear(screen.getByLabelText('Highlight / tagline (optional)'));
+    await user.click(screen.getByRole('button', { name: 'Save profile' }));
+    expect(await screen.findByText('Saved as revision 4.')).toBeVisible();
+    expect(reloaded).toHaveValue(''); expect(saved.current_revision.snapshot.description).toBe('');
+    expect(saved.current_revision.snapshot.headline).toBe('');
+  });
+
   it('retains typed edits and focuses conflict recovery without claiming success', async () => {
     const user = userEvent.setup(); const { api } = connectedApi(new ApiError(412, 'version_conflict'));
     render(<App api={api} />);
-    const input = await screen.findByLabelText('Professional headline');
+    const input = await screen.findByLabelText('Highlight / tagline (optional)');
+    const description = screen.getByLabelText('Description (optional)');
+    await user.type(description, 'My retained biography.');
     await user.clear(input); await user.type(input, 'My retained revision'); await user.click(screen.getByRole('button', { name: 'Save profile' }));
     const alert = await screen.findByRole('alert');
     expect(alert).toHaveTextContent('A newer revision exists'); expect(alert).toHaveFocus();
     expect(input).toHaveValue('My retained revision'); expect(screen.queryByText('Saved as revision 2.')).not.toBeInTheDocument();
+    expect(description).toHaveValue('My retained biography.');
     await user.click(screen.getByRole('button', { name: 'Compare current revision' }));
     expect(await screen.findByText('Current server revision 1')).toBeInTheDocument(); expect(input).toHaveValue('My retained revision');
+    expect(screen.getByText('Description: Not supplied')).toBeVisible();
+    await user.click(screen.getByRole('button', { name: 'Keep my text against this version' }));
+    expect(description).toHaveValue('My retained biography.');
+    await user.click(screen.getByRole('button', { name: 'Discard identity changes' }));
+    expect(description).toHaveValue(''); expect(input).toHaveValue('Engineer');
   });
   it('keeps the buffer on network failure and never publishes a saved message', async () => {
     const user = userEvent.setup(); const { api, request } = connectedApi(new TypeError('network'));
@@ -125,7 +224,7 @@ describe('profile editing', () => {
       throw new ApiError(404, 'not_found');
     });
     render(<App api={api} />);
-    const input = await screen.findByLabelText('Professional headline');
+    const input = await screen.findByLabelText('Highlight / tagline (optional)');
     await user.clear(input); await user.type(input, 'Unsaved profile wording');
     await goTo(user, 'Settings');
     await user.click(screen.getByText('Confirm owner identity', { selector: 'summary' }));
@@ -144,32 +243,6 @@ describe('profile editing', () => {
     await goTo(user, 'Profile');
     expect(screen.getByRole('button', { name: 'Save profile' })).toBeEnabled();
     expect(screen.getByRole('button', { name: 'Sign out' })).toBeDisabled();
-  });
-});
-describe('printable profile contact', () => {
-  it('saves optional contact with the ordinary immutable profile command and retains claim/evidence pins', async () => {
-    const user = userEvent.setup(); const api = new Api(); let current = profile;
-    const request = mockRequest(api, async (path, method, body) => {
-      if (path === '/session') return session;
-      if (path === '/profile' && method === 'GET') return current;
-      if (path === '/profile' && method === 'PUT') {
-        current = { ...current, version: 2, current_revision: { ...current.current_revision, id: 'revision-2', revision_no: 2, snapshot: body as Snapshot } };
-        return current;
-      }
-      throw new ApiError(404, 'not_found');
-    });
-    render(<App api={api} />);
-    await user.type(await screen.findByLabelText('Printable email (optional)'), 'mira@example.test');
-    await user.type(screen.getByLabelText('Printable phone (optional)'), '+1 555 0100');
-    await user.type(screen.getByLabelText('Printable location (optional)'), 'Fictional North');
-    await user.type(screen.getByLabelText('Printable postal address (optional)'), '12 Example Street');
-    expect(screen.getByRole('button', { name: 'Sign out' })).toBeDisabled();
-    await user.click(screen.getByRole('button', { name: 'Save profile' }));
-    await screen.findByText('Saved as revision 2.');
-    expect(screen.getByLabelText('Printable email (optional)')).toHaveValue('mira@example.test');
-    const command = request.mock.calls.find(call => call[0] === '/profile' && call[1] === 'PUT');
-    expect(command?.[2]).toEqual({ ...profile.current_revision.snapshot, contact: { email: 'mira@example.test', phone: '+1 555 0100', location: 'Fictional North', postal_address: '12 Example Street' } });
-    expect(command?.[3]).toBe(1); expect(command?.[4]).toBeTypeOf('string');
   });
 });
 describe('owner authentication', () => {
@@ -324,7 +397,7 @@ describe('workspace suitability freshness propagation', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Review evidence coverage manually' }));
     fireEvent.change(screen.getByLabelText('Explanation of evidence and gaps'), { target: { value: 'Do not lose my ongoing coverage review.' } });
     await goTo(user, 'Profile');
-    fireEvent.change(screen.getByLabelText('Professional headline'), { target: { value: 'Updated identity' } });
+    fireEvent.change(screen.getByLabelText('Highlight / tagline (optional)'), { target: { value: 'Updated identity' } });
     expect(screen.getByRole('button', { name: 'Save profile' })).toBeEnabled();
     fireEvent.click(screen.getByRole('button', { name: 'Save profile' }));
     await goTo(user, 'Opportunities');
@@ -333,7 +406,7 @@ describe('workspace suitability freshness propagation', () => {
     expect(screen.getByRole('button', { name: 'Save owner-reviewed assessment' })).toBeDisabled();
     expect(await screen.findByRole('region', { name: 'Current profile comparison' })).toHaveTextContent('revision-2');
     await goTo(user, 'Profile');
-    expect(screen.getByLabelText('Professional headline')).toBeEnabled();
+    expect(screen.getByLabelText('Highlight / tagline (optional)')).toBeEnabled();
     expect(state.reviewReads).toBe(1);
     expect(state.review.latest_assessment?.stale).toBe(false);
   });
@@ -347,15 +420,15 @@ describe('workspace suitability freshness propagation', () => {
     await waitFor(() => expect(screen.getByRole('status', { name: 'Suitability task status' })).toHaveTextContent('Task running.'));
     expect(screen.getByRole('button', { name: 'Sign out' })).toBeDisabled();
     await goTo(user, 'Profile');
-    expect(screen.getByLabelText('Professional headline')).toBeEnabled();
-    fireEvent.change(screen.getByLabelText('Professional headline'), { target: { value: 'Updated identity' } });
+    expect(screen.getByLabelText('Highlight / tagline (optional)')).toBeEnabled();
+    fireEvent.change(screen.getByLabelText('Highlight / tagline (optional)'), { target: { value: 'Updated identity' } });
     fireEvent.click(screen.getByRole('button', { name: 'Save profile' }));
     await goTo(user, 'Opportunities');
     expect(await screen.findByText('Stale historical snapshot — not a current eligibility assertion')).toBeVisible();
     expect(screen.getByRole('region', { name: 'Current suitability task' })).toHaveTextContent('task-one');
     expect(state.workflow.state).toBe('running');
     await goTo(user, 'Profile');
-    expect(screen.getByLabelText('Professional headline')).toBeEnabled();
+    expect(screen.getByLabelText('Highlight / tagline (optional)')).toBeEnabled();
   });
 
   it('preserves unsaved identity text when an explicit citation reload observes a newer profile', async () => {
@@ -365,13 +438,13 @@ describe('workspace suitability freshness propagation', () => {
     fireEvent.click(await screen.findByRole('button', { name: 'Read Engineer at Synthetic North' }));
     await screen.findByText('Current snapshot');
     await goTo(user, 'Profile');
-    fireEvent.change(screen.getByLabelText('Professional headline'), { target: { value: 'My unsaved identity wording.' } });
+    fireEvent.change(screen.getByLabelText('Highlight / tagline (optional)'), { target: { value: 'My unsaved identity wording.' } });
     state.profile = { ...state.profile, version: 2, current_revision: { ...state.profile.current_revision, id: 'revision-2', revision_no: 2 } };
     await goTo(user, 'Opportunities');
     fireEvent.click(screen.getByRole('button', { name: 'Reload profile citations' }));
     await goTo(user, 'Profile');
     expect(await screen.findByText('Current server revision 2')).toBeVisible();
-    expect(screen.getByLabelText('Professional headline')).toHaveValue('My unsaved identity wording.');
+    expect(screen.getByLabelText('Highlight / tagline (optional)')).toHaveValue('My unsaved identity wording.');
     await goTo(user, 'Opportunities');
     expect(screen.getByText('Stale historical snapshot — not a current eligibility assertion')).toBeVisible();
   });
@@ -403,7 +476,7 @@ describe('task navigation and workspace edit boundaries', () => {
     await user.click(await screen.findByRole('button', { name: 'Edit private note 1' }));
     fireEvent.change(screen.getByLabelText(/Private note text/), { target: { value: 'Private unsaved tracking context.' } });
     await goTo(user, 'Profile');
-    fireEvent.change(screen.getByLabelText('Professional headline'), { target: { value: 'Private unsaved profile context.' } });
+    fireEvent.change(screen.getByLabelText('Highlight / tagline (optional)'), { target: { value: 'Private unsaved profile context.' } });
     await goTo(user, 'Activity & reviews');
     await user.click(screen.getByRole('button', { name: 'Load tasks' }));
     await user.click(await screen.findByRole('button', { name: /Running · document generate · task-1/ }));
@@ -411,7 +484,7 @@ describe('task navigation and workspace edit boundaries', () => {
     workflow = { ...workflow, version: 2, state: 'succeeded', result: { document_id: 'retained-task-result' } };
     await user.click(screen.getByRole('button', { name: 'Reload task status' }));
     await waitFor(() => expect(screen.getByRole('status', { name: 'Task state' })).toHaveTextContent('Succeeded'));
-    expect(screen.getByLabelText('Professional headline')).toHaveValue('Private unsaved profile context.');
+    expect(screen.getByLabelText('Highlight / tagline (optional)')).toHaveValue('Private unsaved profile context.');
     expect(screen.getByLabelText(/Private note text/)).toHaveValue('Private unsaved tracking context.');
     expect(screen.getByRole('button', { name: 'Open document result' })).toBeDisabled();
     expect(request.mock.calls.some(call => call[0] === '/documents/retained-task-result')).toBe(false);
@@ -428,7 +501,7 @@ describe('maintenance and preserved-workspace reconnection', () => {
       throw new ApiError(404, 'not_found');
     }, null, [], async () => status);
     render(<App api={api} />);
-    const input = await screen.findByLabelText('Professional headline');
+    const input = await screen.findByLabelText('Highlight / tagline (optional)');
     await waitFor(() => expect(api.writeBlock).toBeNull());
     await user.clear(input); await user.type(input, 'Unsaved wording kept through the pause');
     status = { ...installation, maintenance_active: true, maintenance_epoch: 1 };
@@ -444,7 +517,7 @@ describe('maintenance and preserved-workspace reconnection', () => {
     await user.click(screen.getByRole('button', { name: 'Check connection and compare saved workspace' }));
     await user.click(await screen.findByRole('button', { name: 'Resume writes and keep all editor text' }));
     await waitFor(() => expect(api.writeBlock).toBeNull());
-    expect(input).toBe(screen.getByLabelText('Professional headline'));
+    expect(input).toBe(screen.getByLabelText('Highlight / tagline (optional)'));
     expect(input).toHaveValue('Unsaved wording kept through the pause');
   });
 
@@ -460,7 +533,7 @@ describe('maintenance and preserved-workspace reconnection', () => {
       throw new ApiError(404, 'not_found');
     }, null, [], async () => { if (revoked) throw new ApiError(401, 'session_revoked'); return installation; });
     render(<App api={api} />);
-    const input = await screen.findByLabelText('Professional headline');
+    const input = await screen.findByLabelText('Highlight / tagline (optional)');
     await waitFor(() => expect(api.writeBlock).toBeNull());
     fireEvent.change(input, { target: { value: 'Unsaved wording during durable source work' } });
     await goTo(user, 'Opportunities');
@@ -482,7 +555,7 @@ describe('maintenance and preserved-workspace reconnection', () => {
     expect(screen.getByRole('button', { name: 'Discard all editors and load this saved workspace' })).toBeDisabled();
     await user.click(resume);
     await waitFor(() => expect(api.writeBlock).toBeNull());
-    expect(screen.getByLabelText('Professional headline')).toBe(input);
+    expect(screen.getByLabelText('Highlight / tagline (optional)')).toBe(input);
     expect(input).toHaveValue('Unsaved wording during durable source work');
     expect(screen.getByRole('heading', { name: 'Source refresh task task-1' })).toBeInTheDocument();
   });
@@ -498,14 +571,16 @@ describe('maintenance and preserved-workspace reconnection', () => {
       throw new ApiError(404, 'not_found');
     }, null, [], async () => { if (revoked) throw new ApiError(401, 'session_revoked'); return status; });
     render(<App api={api} />);
-    const input = await screen.findByLabelText('Professional headline');
+    const input = await screen.findByLabelText('Highlight / tagline (optional)');
     await waitFor(() => expect(api.writeBlock).toBeNull());
     await user.clear(input); await user.type(input, 'Private text from the previous workspace');
+    const description = screen.getByLabelText('Description (optional)');
+    await user.type(description, 'Private introduction from the previous workspace.');
     revoked = true; fireEvent(document, new Event('visibilitychange'));
     const password = await screen.findByLabelText('Password to reconnect');
     const readsBeforeSignIn = profileReads;
     status = { ...installation, namespace_id: 'restored-namespace', workspace_version: 1, maintenance_epoch: 2 };
-    saved = { ...profile, id: 'restored-profile', version: 1 };
+    saved = { ...profile, id: 'restored-profile', version: 1, current_revision: { ...profile.current_revision, snapshot: { ...profile.current_revision.snapshot, description: 'Restored saved introduction.' } } };
     await user.type(password, 'Fictional reconnect password 817!');
     await user.click(screen.getByRole('button', { name: 'Sign in and retain editors' }));
     await screen.findByText('Review the current workspace before resuming writes.');
@@ -515,12 +590,14 @@ describe('maintenance and preserved-workspace reconnection', () => {
     await screen.findByRole('region', { name: 'Saved workspace comparison' });
     expect(screen.queryByRole('button', { name: 'Resume writes and keep all editor text' })).not.toBeInTheDocument();
     expect(input).toHaveValue('Private text from the previous workspace');
+    expect(description).toHaveValue('Private introduction from the previous workspace.');
     const reload = screen.getByRole('button', { name: 'Discard all editors and load this saved workspace' });
     expect(reload).toBeDisabled(); expect(api.writeBlock).toBe('workspace_reconnect_required');
     await user.click(screen.getByRole('checkbox', { name: /I have preserved the text I need/ }));
     await user.click(reload);
-    await waitFor(() => expect(screen.getByLabelText('Professional headline')).toHaveValue('Engineer'));
-    expect(screen.getByLabelText('Professional headline')).not.toBe(input);
+    await waitFor(() => expect(screen.getByLabelText('Highlight / tagline (optional)')).toHaveValue('Engineer'));
+    expect(screen.getByLabelText('Highlight / tagline (optional)')).not.toBe(input);
+    expect(screen.getByLabelText('Description (optional)')).toHaveValue('Restored saved introduction.');
     expect(api.writeBlock).toBeNull();
     expect(request.mock.calls.filter(call => call[1] === 'PUT')).toHaveLength(0);
   });
@@ -535,10 +612,10 @@ describe('maintenance and preserved-workspace reconnection', () => {
     render(<App api={api} />);
     await screen.findByRole('region', { name: 'Installation unavailable' });
     expect(request.mock.calls.some(call => call[0] === '/auth/challenge')).toBe(false);
-    expect(screen.queryByLabelText('Professional headline')).not.toBeInTheDocument();
+    expect(screen.queryByLabelText('Highlight / tagline (optional)')).not.toBeInTheDocument();
     maintenance = false;
     await user.click(screen.getByRole('button', { name: 'Check installation again' }));
-    expect(await screen.findByLabelText('Professional headline')).toHaveValue('Engineer');
+    expect(await screen.findByLabelText('Highlight / tagline (optional)')).toHaveValue('Engineer');
     await waitFor(() => expect(api.writeBlock).toBeNull());
   });
 });
@@ -551,14 +628,14 @@ describe('dedicated workspace navigation', () => {
     expect(await screen.findByRole('heading', { level: 1, name: 'Overview' })).toBeVisible();
     expect(screen.queryByRole('button', { name: 'Save profile' })).not.toBeInTheDocument();
     await goTo(user, 'Profile');
-    const headline = screen.getByLabelText('Professional headline');
+    const headline = screen.getByLabelText('Highlight / tagline (optional)');
     await user.clear(headline); await user.type(headline, 'Retained across workspace screens');
     await goTo(user, 'Documents');
     expect(headline).not.toBeVisible();
     expect(screen.getByRole('complementary', { name: 'Retained workspace drafts' })).toBeVisible();
     expect(screen.getByRole('button', { name: 'Sign out' })).toBeDisabled();
     await goTo(user, 'Profile');
-    expect(screen.getByLabelText('Professional headline')).toBe(headline);
+    expect(screen.getByLabelText('Highlight / tagline (optional)')).toBe(headline);
     expect(headline).toHaveValue('Retained across workspace screens');
     expect(window.location.hash).toBe('#/profile');
     expect(request.mock.calls.some(call => call[1] === 'PUT' || call[1] === 'POST')).toBe(false);
@@ -570,13 +647,13 @@ describe('dedicated workspace navigation', () => {
     render(<App api={api} />);
     await screen.findByRole('heading', { level: 1, name: 'Overview' });
     await goTo(user, 'Profile');
-    fireEvent.change(screen.getByLabelText('Professional headline'), { target: { value: 'Retained through root navigation' } });
+    fireEvent.change(screen.getByLabelText('Highlight / tagline (optional)'), { target: { value: 'Retained through root navigation' } });
     window.history.replaceState(null, '', '/');
     fireEvent(window, new HashChangeEvent('hashchange'));
     expect(await screen.findByRole('heading', { level: 1, name: 'Overview' })).toBeVisible();
     expect(screen.queryByRole('button', { name: 'Save profile' })).not.toBeInTheDocument();
     await goTo(user, 'Profile');
-    expect(screen.getByLabelText('Professional headline')).toHaveValue('Retained through root navigation');
+    expect(screen.getByLabelText('Highlight / tagline (optional)')).toHaveValue('Retained through root navigation');
     expect(request.mock.calls.some(call => call[1] === 'PUT' || call[1] === 'POST')).toBe(false);
   });
 

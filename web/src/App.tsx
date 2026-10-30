@@ -37,6 +37,7 @@ export function App({ api = defaultApi }: { api?: Api }) {
   const [profile, setProfile] = useState<Profile | null>(null);
   const [name, setName] = useState('');
   const [headline, setHeadline] = useState('');
+  const [description, setDescription] = useState('');
   const [contact, setContact] = useState<ProfileContact>(emptyContact);
   const [comparison, setComparison] = useState<Profile | null>(null);
   const [error, setError] = useState('');
@@ -73,6 +74,7 @@ export function App({ api = defaultApi }: { api?: Api }) {
     latestProfileVersion.current = value.version;
     latestProfileId.current = value.id;
     setProfile(value); setName(value.current_revision.snapshot.display_name); setHeadline(value.current_revision.snapshot.headline);
+    setDescription(value.current_revision.snapshot.description ?? '');
     setContact(value.current_revision.snapshot.contact ?? emptyContact); setComparison(null); identityEpoch.current++;
   }, [api]);
   const acceptEditorProfile = useCallback((value: Profile) => {
@@ -143,7 +145,7 @@ export function App({ api = defaultApi }: { api?: Api }) {
       await api.request('/session', 'DELETE');
       workspaceEpoch.current++; setWorkspaceGeneration(workspaceEpoch.current);
       identityEpoch.current++; latestProfileVersion.current = 0; latestProfileId.current = null; profileMutation.current = null;
-      setSession(null); setProfile(null); setName(''); setHeadline(''); setContact(emptyContact);
+      setSession(null); setProfile(null); setName(''); setHeadline(''); setDescription(''); setContact(emptyContact);
       setDocumentRequest(null); setWorkflow(null);
       const value = await api.request<Challenge>('/auth/challenge'); api.csrf = value.csrf_token; setChallenge(value);
     });
@@ -157,7 +159,10 @@ export function App({ api = defaultApi }: { api?: Api }) {
     setDocumentsDirty(false); setDocumentsBusy(false); setTasksBusy(false); setPortabilityBusy(false);
     setDocumentRequest(null); setWorkflow(null); setError(''); setNotice('Every workspace editor was explicitly discarded and reloaded from the reviewed saved context.');
   }
-  const identityDirty = !!profile && (name !== profile.current_revision.snapshot.display_name || headline !== profile.current_revision.snapshot.headline || (['email', 'phone', 'location', 'postal_address'] as const).some(field => contact[field] !== (profile.current_revision.snapshot.contact ?? emptyContact)[field]));
+  const headlineLength = [...headline].length;
+  const descriptionLength = [...description].length;
+  const profileTextInvalid = headlineLength > 300 || descriptionLength > 2000;
+  const identityDirty = !!profile && (name !== profile.current_revision.snapshot.display_name || headline !== profile.current_revision.snapshot.headline || description !== (profile.current_revision.snapshot.description ?? '') || (['email', 'phone', 'location', 'postal_address'] as const).some(field => contact[field] !== (profile.current_revision.snapshot.contact ?? emptyContact)[field]));
   const profileLocked = connectionPaused || busy || entriesBusy || entriesDirty || identityDirty || importBusy || importDirty || documentsDirty || documentsBusy;
   const observeProfile = useCallback((value: Profile) => {
     if (workspaceGeneration !== workspaceEpoch.current) return;
@@ -174,8 +179,9 @@ export function App({ api = defaultApi }: { api?: Api }) {
   }, [identityDirty]);
   async function saveProfile(event: FormEvent) {
     event.preventDefault(); if (!profile) return;
+    if (profileTextInvalid) { setError('Shorten the highlight / tagline to 300 characters and the description to 2000 characters before saving. Your text has not been changed.'); return; }
     await act(async () => {
-      const body = { ...profile.current_revision.snapshot, display_name: name, headline, ...(profile.current_revision.snapshot.contact || Object.values(contact).some(Boolean) ? { contact } : {}) };
+      const body = { ...profile.current_revision.snapshot, display_name: name, headline, description, ...(profile.current_revision.snapshot.contact || Object.values(contact).some(Boolean) ? { contact } : {}) };
       const fingerprint = JSON.stringify({ body, version: profile.version });
       if (profileMutation.current?.fingerprint !== fingerprint) profileMutation.current = { fingerprint, key: crypto.randomUUID() };
       const value = await api.request<Profile>('/profile', 'PUT', body, profile.version, profileMutation.current.key);
@@ -243,16 +249,24 @@ export function App({ api = defaultApi }: { api?: Api }) {
       <div hidden={page !== 'profile'} data-workspace-screen="profile"><section className="panel identity-panel"><div className="section-heading"><div><h2>Personal details</h2><p className="hint">The identity and printable contact details on your documents.</p></div></div>{profile ? <form onSubmit={event => { void saveProfile(event); }}>
         <fieldset disabled={busy || entriesBusy || entriesDirty || importBusy || importDirty || documentsDirty || documentsBusy}><legend>Profile identity</legend>
           <label>Display name<input value={name} onChange={event => { identityEpoch.current++; setName(event.target.value); }} maxLength={120} required /></label>
-          <label>Professional headline<input value={headline} onChange={event => { identityEpoch.current++; setHeadline(event.target.value); }} maxLength={300} /></label>
+          <div className="profile-text-field"><label htmlFor="profile-headline">Highlight / tagline (optional)</label>
+            <input id="profile-headline" value={headline} aria-describedby="profile-headline-count" aria-invalid={headlineLength > 300} onChange={event => { identityEpoch.current++; setHeadline(event.target.value); }} />
+            <p id="profile-headline-count" className={`hint character-count${headlineLength > 300 ? ' over-limit' : ''}`} aria-live="polite">{headlineLength} / 300 characters{headlineLength > 300 ? ' — Shorten to 300 characters before saving.' : ''}</p>
+          </div>
+          <div className="profile-text-field profile-description"><label htmlFor="profile-description">Description (optional)</label>
+            <textarea id="profile-description" rows={5} value={description} aria-describedby="profile-description-count" aria-invalid={descriptionLength > 2000} onChange={event => { identityEpoch.current++; setDescription(event.target.value); }} />
+            <p id="profile-description-count" className={`hint character-count${descriptionLength > 2000 ? ' over-limit' : ''}`} aria-live="polite">{descriptionLength} / 2000 characters{descriptionLength > 2000 ? ' — Shorten to 2000 characters before saving.' : ''}</p>
+          </div>
+          <p className="hint">Your optional profile text is not parsed into facts. Saving does not change existing generated documents.</p>
           <p className="hint">Optional contact values are printable-only structured inputs, excluded from model projections. Existing documents retain their frozen details; saving does not rewrite them.</p>
           <label>Printable email (optional)<input type="email" autoComplete="email" maxLength={254} value={contact.email} onChange={event => { identityEpoch.current++; setContact(value => ({ ...value, email: event.target.value })); }} /></label>
           <label>Printable phone (optional)<input type="tel" autoComplete="tel" maxLength={120} value={contact.phone} onChange={event => { identityEpoch.current++; setContact(value => ({ ...value, phone: event.target.value })); }} /></label>
           <label>Printable location (optional)<input autoComplete="address-level2" maxLength={300} value={contact.location} onChange={event => { identityEpoch.current++; setContact(value => ({ ...value, location: event.target.value })); }} /></label>
           <label>Printable postal address (optional)<input autoComplete="street-address" maxLength={1000} value={contact.postal_address} onChange={event => { identityEpoch.current++; setContact(value => ({ ...value, postal_address: event.target.value })); }} /></label>
           <p className="hint">Save identity separately from entries and sources. Existing exact source links are retained. Unsaved changes prevent conflicting workspace actions.</p>
-          <div className="actions"><button disabled={connectionPaused}>Save profile</button><button type="button" className="secondary" onClick={() => { void act(async () => { const value = await api.request<Profile>('/profile'); if (value.id === latestProfileId.current && value.version >= latestProfileVersion.current) setComparison(value); else if (value.id !== latestProfileId.current) { setComparison(value); api.onUnavailable?.(new ApiError(409, 'workspace_identity_changed')); } }); }}>Compare current revision</button>
+          <div className="actions"><button disabled={connectionPaused || profileTextInvalid}>Save profile</button><button type="button" className="secondary" onClick={() => { void act(async () => { const value = await api.request<Profile>('/profile'); if (value.id === latestProfileId.current && value.version >= latestProfileVersion.current) setComparison(value); else if (value.id !== latestProfileId.current) { setComparison(value); api.onUnavailable?.(new ApiError(409, 'workspace_identity_changed')); } }); }}>Compare current revision</button>
             {identityDirty && <button type="button" className="secondary" onClick={() => acceptProfile(profile)}>Discard identity changes</button>}</div>
-          {comparison && <div className="comparison"><h3>Current server revision {comparison.current_revision.revision_no}</h3><p>{comparison.current_revision.snapshot.display_name}</p><p>{comparison.current_revision.snapshot.headline}</p><p>Printable contact: {Object.values(comparison.current_revision.snapshot.contact ?? emptyContact).filter(Boolean).join(' · ') || 'None'}</p><p>Your editor above is unchanged.</p>
+          {comparison && <div className="comparison"><h3>Current server revision {comparison.current_revision.revision_no}</h3><p>{comparison.current_revision.snapshot.display_name}</p><p>Highlight / tagline: {comparison.current_revision.snapshot.headline || 'Not supplied'}</p><p className="profile-description-preview">Description: {comparison.current_revision.snapshot.description || 'Not supplied'}</p><p>Printable contact: {Object.values(comparison.current_revision.snapshot.contact ?? emptyContact).filter(Boolean).join(' · ') || 'None'}</p><p>Your editor above is unchanged.</p>
             <button type="button" className="secondary" disabled={connectionPaused || comparison.id !== profile.id} onClick={() => { latestProfileVersion.current = comparison.version; identityEpoch.current++; setProfile(comparison); setComparison(null); setNotice('Current version loaded as the save precondition. Your edited text and printable contact are retained. Review and save explicitly.'); }}>Keep my text against this version</button>
             <button type="button" className="secondary" disabled={connectionPaused || comparison.id !== profile.id} onClick={() => acceptProfile(comparison)}>Replace editor with current revision</button></div>}
           {profile.quality_warnings.length > 0 && <ul>{profile.quality_warnings.map((warning, index) => <li key={index}>{warning}</li>)}</ul>}

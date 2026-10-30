@@ -2,7 +2,7 @@
 export interface Session { owner_id: string; login_name: string; csrf_token: string; expires_at: string }
 export interface Challenge { csrf_token: string; bootstrap_available: boolean }
 export interface ProfileContact { email: string; phone: string; location: string; postal_address: string }
-export interface Snapshot { display_name: string; headline: string; claim_revision_ids: string[]; evidence_revision_ids?: string[]; contact?: ProfileContact | null }
+export interface Snapshot { display_name: string; headline: string; description?: string; claim_revision_ids: string[]; evidence_revision_ids?: string[]; contact?: ProfileContact | null }
 export type ClaimKind = 'identity' | 'experience' | 'education' | 'skill' | 'project' | 'certification' | 'preference' | 'other' | 'language';
 export interface ClaimPayload { text: string; organization?: string; role?: string; start_date?: string; end_date?: string; proficiency?: string; project_url?: string }
 export interface RevisionMetadata { id: string; revision_no: number; content_sha256: string; created_at: string; author_owner_id: string }

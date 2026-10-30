@@ -29,7 +29,7 @@ const warningLabels: Record<string, string> = {
 };
 const destinations: { value: string; label: string }[] = [
   { value: '', label: 'Needs placement' }, { value: 'display_name', label: 'Personal details · Full name' },
-  { value: 'headline', label: 'Personal details · Headline' }, { value: 'experience', label: 'Work experience' },
+  { value: 'headline', label: 'Personal details · Highlight / tagline' }, { value: 'experience', label: 'Work experience' },
   { value: 'education', label: 'Education' }, { value: 'skill', label: 'Skills' }, { value: 'project', label: 'Projects' },
   { value: 'certification', label: 'Certifications' }, { value: 'language', label: 'Languages' },
   { value: 'preference', label: 'Preferences' }, { value: 'other', label: 'Additional information' },
@@ -87,7 +87,7 @@ function entryFields(draft: ReviewDraft, target?: ClaimRecord) {
     : draft.kind === 'preference' || draft.kind === 'other' || !draft.kind ? ['text']
     : ['text', 'organization', 'role', 'start_date', 'end_date', ...(draft.kind === 'project' ? ['project_url' as const] : [])];
   return fields.filter(field => keys.includes(field.key) || !!draft.payload[field.key] || !!target?.revision.payload[field.key]).map(field => ({
-    ...field, label: field.key === 'text' ? draft.kind === 'identity' ? draft.identity_field === 'display_name' ? 'Full name' : 'Headline'
+    ...field, label: field.key === 'text' ? draft.kind === 'identity' ? draft.identity_field === 'display_name' ? 'Full name' : 'Highlight / tagline'
       : draft.kind === 'skill' ? 'Skill' : draft.kind === 'language' ? 'Language' : 'Description'
       : field.key === 'organization' && draft.kind === 'education' ? 'School or institution'
       : field.key === 'role' && draft.kind === 'experience' ? 'Job title'
@@ -125,8 +125,9 @@ function entryProblems(entry: ImportEntry, draft: ReviewDraft, profile: Profile)
   if (!draft.payload.text.trim()) problems.push('Enter a value to save.');
   for (const field of fields) {
     const value = draft.payload[field.key] ?? '';
+    const isHeadline = draft.kind === 'identity' && field.key === 'text' && draft.identity_field === 'headline';
     const limit = draft.kind === 'identity' && field.key === 'text' ? draft.identity_field === 'display_name' ? 120 : 300 : field.limit;
-    if (value.length > limit) problems.push(`${field.label} must be no longer than ${limit} characters.`);
+    if ((isHeadline ? [...value].length : value.length) > limit) problems.push(`${isHeadline ? 'Highlight / tagline' : field.label} must be no longer than ${limit} characters.`);
     if ((field.key === 'start_date' || field.key === 'end_date') && value && !dateBounds(value)) problems.push('Use a real calendar date in YYYY, YYYY-MM or YYYY-MM-DD format.');
   }
   const start = draft.payload.start_date ? dateBounds(draft.payload.start_date) : null;
@@ -584,11 +585,11 @@ export function ResumeImport({ api, profile, disabled, onProfile, onDirtyChange,
             </div>
             <p className="hint">Combining requires a fresh review. Splitting restores the original source text and clears edited fields for those parts. Exact source parts are always retained.</p>
             {draft.kind === 'identity' && <section className="comparison" aria-label="Personal detail comparison">
-              <h4>{draft.identity_field === 'display_name' ? 'Full name' : 'Headline'} comparison</h4>
+              <h4>{draft.identity_field === 'display_name' ? 'Full name' : 'Highlight / tagline'} comparison</h4>
               <p>Current: {identityValue || 'Not supplied'}</p><p>Imported: {entry.payload.text}</p>
               <p>Will save: {draft.payload.text}</p>
               {identityValue && identityValue !== draft.payload.text && <><button type="button" className="secondary" onClick={() => updateDraft(entry.entry_id, previous => ({ ...previous, payload: { text: identityValue }, action: 'unchanged', identityConfirmed: false }))}>Keep current personal detail</button>
-                <label className="import-check"><input type="checkbox" checked={draft.identityConfirmed} onChange={event => updateDraft(entry.entry_id, previous => ({ ...previous, identityConfirmed: event.target.checked, reviewed: false }))} />Replace my current {draft.identity_field === 'display_name' ? 'full name' : 'headline'} with this value</label></>}
+                <label className="import-check"><input type="checkbox" checked={draft.identityConfirmed} onChange={event => updateDraft(entry.entry_id, previous => ({ ...previous, identityConfirmed: event.target.checked, reviewed: false }))} />Replace my current {draft.identity_field === 'display_name' ? 'full name' : 'highlight / tagline'} with this value</label></>}
             </section>}
             {draft.kind && draft.kind !== 'identity' && <label>Existing profile entry<select value={draft.action === 'skip' ? 'add' : draft.action} onChange={event => {
               const action = event.target.value as ReviewDraft['action'];
@@ -628,7 +629,7 @@ export function ResumeImport({ api, profile, disabled, onProfile, onDirtyChange,
                   </div>}
                   <p className="hint">Choice: {draft.choices[field.key] === 'keep' ? 'keep current' : draft.choices[field.key] === 'import' ? 'use imported' : draft.choices[field.key] === 'edit' ? 'your edited value' : (target.revision.payload[field.key] ?? '') === (entry.payload[field.key] ?? '') ? 'values match' : 'not yet chosen'}</p>
                 </>}
-                <label>{field.label}{field.key === 'text' ? <textarea maxLength={draft.kind === 'identity' ? draft.identity_field === 'display_name' ? 120 : 300 : field.limit} value={draft.payload[field.key] ?? ''} onChange={event => updateDraft(entry.entry_id, previous => ({ ...previous, payload: payloadValue(previous.payload, field.key, event.target.value), choices: { ...previous.choices, [field.key]: 'edit' }, identityConfirmed: false }))} />
+                <label>{field.label}{field.key === 'text' ? <textarea maxLength={draft.kind === 'identity' ? draft.identity_field === 'display_name' ? 120 : undefined : field.limit} value={draft.payload[field.key] ?? ''} onChange={event => updateDraft(entry.entry_id, previous => ({ ...previous, payload: payloadValue(previous.payload, field.key, event.target.value), choices: { ...previous.choices, [field.key]: 'edit' }, identityConfirmed: false }))} />
                   : <input maxLength={field.limit} value={draft.payload[field.key] ?? ''} onChange={event => updateDraft(entry.entry_id, previous => ({ ...previous, payload: payloadValue(previous.payload, field.key, event.target.value), choices: { ...previous.choices, [field.key]: 'edit' } }))} />}</label>
               </div>)}
             </div>}
@@ -683,6 +684,7 @@ export function ResumeImport({ api, profile, disabled, onProfile, onDirtyChange,
     {(conflict || stale || (error && waiting)) && <button className="secondary" disabled={operation || disabled || mergeAwaiting} onClick={() => { void loadComparison(); }}>Load current profile for comparison</button>}
     {comparison && <div className="comparison"><h3>Current server profile revision {comparison.current_revision.revision_no}</h3>
       <p>{comparison.current_revision.snapshot.display_name} · {comparison.current_revision.snapshot.headline}</p>
+      <p className="profile-description-preview">Description: {comparison.current_revision.snapshot.description || 'Not supplied'}</p>
       {comparison.current_revision.claims.map(claim => <div key={claim.id}><strong>{claim.kind} · {claim.id}</strong><dl>{fields.map(field => <div key={field.key}><dt>{field.label}</dt><dd>{claim.revision.payload[field.key] || 'Not supplied'}</dd></div>)}</dl></div>)}
       <p>Use this version only after comparison. Your reviewed values remain buffered; replacement fields whose current values changed need a fresh choice. Missing or archived targets must be selected again.</p>
       <button className="secondary" disabled={operation || disabled || mergeAwaiting} onClick={rebase}>Use latest profile and retain review</button>
@@ -716,12 +718,12 @@ export function ResumeImport({ api, profile, disabled, onProfile, onDirtyChange,
             const sectionEntries = entries.filter(entry => (drafts[entry.entry_id]?.kind ?? '') === section.value);
             const retained = mode === 'merge' ? current.current_revision.claims.filter(claim => !claim.archived && claim.kind === section.value
               && !entries.some(entry => { const draft = drafts[entry.entry_id]; return draft && draft.action !== 'skip' && (draft.action === 'replace' || draft.action === 'unchanged') && draft.claim_id === claim.id; })) : [];
-            const retainedIdentity = section.value === 'identity' ? (['display_name', 'headline'] as const).filter(key => current.current_revision.snapshot[key]
+            const retainedIdentity = section.value === 'identity' ? (['display_name', 'headline', 'description'] as const).filter(key => current.current_revision.snapshot[key]
               && !entries.some(entry => drafts[entry.entry_id]?.kind === 'identity' && drafts[entry.entry_id]?.identity_field === key && drafts[entry.entry_id]?.action !== 'skip')) : [];
             if (!sectionEntries.length && !retained.length && !retainedIdentity.length) return null;
             return <section className={`import-document-section${section.value === 'skill' || section.value === 'language' ? ' import-token-section' : ''}`} aria-label={section.label} key={section.value}>
               <h5>{section.label}</h5>
-              {retainedIdentity.map(key => <div className="import-document-entry" key={key}><dl><dt>{key === 'display_name' ? 'Full name' : 'Headline'}</dt><dd>{current.current_revision.snapshot[key]}</dd></dl><p className="hint">Current value retained</p></div>)}
+              {retainedIdentity.map(key => <div className="import-document-entry" key={key}><dl><dt>{key === 'display_name' ? 'Full name' : key === 'headline' ? 'Highlight / tagline' : 'Description'}</dt><dd className={key === 'description' ? 'profile-description-preview' : undefined}>{current.current_revision.snapshot[key]}</dd></dl><p className="hint">Current value retained</p></div>)}
               {retained.map(claim => <div className="import-document-entry" key={claim.id}><dl>{fields.filter(field => claim.revision.payload[field.key]).map(field => <div key={field.key}><dt>{field.label}</dt><dd>{claim.revision.payload[field.key]}</dd></div>)}</dl><p className="hint">Current entry retained</p></div>)}
               {sectionEntries.map(entry => {
                 const draft = drafts[entry.entry_id] ?? initialDraft(entry, current);

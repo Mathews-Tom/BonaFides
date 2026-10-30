@@ -19,10 +19,13 @@ from offerloom.db import Database
 from offerloom.document_frame import ProfileContact
 from offerloom.problems import Problem
 
+MAX_HEADLINE_LENGTH = 300
+
 
 class ProfileSnapshot(StrictModel):
     display_name: str = Field(default="", max_length=120)
-    headline: str = Field(default="", max_length=300)
+    headline: str = Field(default="", max_length=MAX_HEADLINE_LENGTH)
+    description: str = Field(default="", max_length=2000)
     claim_revision_ids: list[UUID] = Field(default_factory=list, max_length=100)
     evidence_revision_ids: list[UUID] = Field(default_factory=list, max_length=200)
     contact: ProfileContact | None = None
@@ -47,6 +50,7 @@ def create_empty_profile(
     snapshot: dict[str, object] = {
         "display_name": "",
         "headline": "",
+        "description": "",
         "claim_revision_ids": [],
         "evidence_revision_ids": [],
     }
@@ -340,7 +344,19 @@ def build_router(db: Database, settings: Settings) -> APIRouter:
             ).scalar_one()
 
             def effect(connection: Connection) -> tuple[int, dict[str, object]]:
-                return 200, _save(connection, owner.id, body, "owner_save")
+                current = connection.execute(
+                    text("""SELECT r.snapshot FROM offerloom.profiles p
+                    JOIN offerloom.profile_revisions r
+                    ON r.owner_id=p.owner_id AND r.id=p.current_revision_id
+                    WHERE p.owner_id=:owner"""),
+                    {"owner": owner.id},
+                ).scalar_one()
+                snapshot = body
+                if "description" not in body.model_fields_set:
+                    snapshot = body.model_copy(
+                        update={"description": current.get("description", "")}
+                    )
+                return 200, _save(connection, owner.id, snapshot, "owner_save")
 
             status, result = command(
                 conn,
@@ -348,7 +364,12 @@ def build_router(db: Database, settings: Settings) -> APIRouter:
                 "PUT",
                 "/api/v1/profile",
                 {},
-                body.model_dump(mode="json"),
+                body.model_dump(
+                    mode="json",
+                    exclude={"description"}
+                    if "description" not in body.model_fields_set
+                    else set(),
+                ),
                 if_match,
                 idempotency_key,
                 "profile",

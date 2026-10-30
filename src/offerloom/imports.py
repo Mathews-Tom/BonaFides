@@ -31,7 +31,7 @@ from offerloom.import_parser import (
 )
 from offerloom.problems import Problem
 from offerloom.profile_entries import ClaimKind, ClaimPayload, _snapshot
-from offerloom.profiles import _save, content_hash
+from offerloom.profiles import MAX_HEADLINE_LENGTH, _save, content_hash
 from offerloom.storage import BlobStore
 from offerloom.workflows import Claim, append_attempt_event, assert_fence, enqueue, publish
 
@@ -304,7 +304,11 @@ def project_entries(
         identity_field: IdentityField | None = None
         if index == 0 and section is None and _name_like(proposal.quote):
             kind, identity_field = "identity", "display_name"
-        elif section == "headline" and section_seen == 0 and len(proposal.quote) <= 300:
+        elif (
+            section == "headline"
+            and section_seen == 0
+            and len(proposal.quote) <= MAX_HEADLINE_LENGTH
+        ):
             # Only a single literal line in a bounded summary is a clear headline.
             following = proposals[index + 1] if index + 1 < len(proposals) else None
             boundary = source[end : following.source_start] if following else "\n\n"
@@ -658,7 +662,7 @@ def _validate_review(
                 if key != "text"
             ):
                 raise Problem(422, "import_identity_invalid")
-            limit = 120 if field == "display_name" else 300
+            limit = 120 if field == "display_name" else MAX_HEADLINE_LENGTH
             if len(decision.payload.text) > limit:
                 raise Problem(422, "import_identity_invalid")
             populated = bool(getattr(snapshot, field))

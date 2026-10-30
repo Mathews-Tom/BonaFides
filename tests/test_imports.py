@@ -33,6 +33,7 @@ from offerloom.import_parser import (
     ParsedImport,
 )
 from offerloom.problems import Problem
+from offerloom.profiles import ProfileSnapshot, _save
 from offerloom.worker import Worker
 from offerloom.workflows import Claim, cancel_workflow, claim, reap
 
@@ -101,6 +102,20 @@ def _entries(source: str) -> list[imports.ImportEntry]:
     parsed = _parsed(source)
     raw, _ = imports.extract_proposals(parsed)
     return imports.project_entries(parsed.text, parsed.source_sha256, raw)
+
+
+@pytest.mark.parametrize("character", ["a", "🚀"])
+def test_extracted_headline_limit_keeps_overlong_literal_available_for_review(
+    character: str,
+) -> None:
+    (bounded,) = _entries("Summary\n" + character * 300 + "\n")
+    assert bounded.identity_field == "headline"
+    assert bounded.payload.text == character * 300
+    (overlong,) = _entries("Summary\n" + character * 301 + "\n")
+    assert overlong.identity_field is None
+    assert overlong.kind is None
+    assert overlong.payload.text == overlong.sources[0].quote == character * 301
+    assert overlong.issues == ["needs_placement"]
 
 
 def test_structured_projection_groups_bounded_entries_and_preserves_raw_evidence() -> None:
@@ -404,12 +419,21 @@ def test_preview_marks_unplaced_invalid_and_overlong_groups_for_attention(
 def test_repeat_import_unchanged_completes_without_profile_or_evidence_mutation(
     importing: ImportContext,
 ) -> None:
+    updated = importing.client.put(
+        "/api/v1/profile",
+        json={"description": "Biography stays outside imported facts."},
+        headers=importing.headers(importing.profile()["version"]),
+    )
+    assert updated.status_code == 200, updated.text
     source = "Mira Example\nSummary\nLocal systems engineer\nSkills\nSQL\n"
     first = importing.staged(source)
     assert all(entry["comparison"]["status"] == "new" for entry in first["entries"])
     assert importing.approve(first).status_code == 202
     importing.run()
     original = importing.profile()
+    assert original["current_revision"]["snapshot"]["description"] == (
+        "Biography stays outside imported facts."
+    )
     before = _counts(importing)
     repeated = importing.staged(source)
     assert repeated["comparison_profile_version"] == original["version"]
@@ -434,6 +458,63 @@ def test_repeat_import_unchanged_completes_without_profile_or_evidence_mutation(
         assert str(row["merged_profile_revision_id"]) == original["current_revision"]["id"]
         assert row["parsed_text"] == source
         assert row["byte_length"] == len(source.encode())
+
+
+@pytest.mark.postgres
+def test_reviewed_headline_limit_preserves_original_quote_and_description(
+    importing: ImportContext,
+) -> None:
+    updated = importing.client.put(
+        "/api/v1/profile",
+        json={"description": "Owner-written biography."},
+        headers=importing.headers(importing.profile()["version"]),
+    )
+    assert updated.status_code == 200, updated.text
+    literal = "🚀" * 301
+    batch = importing.staged("Summary\n" + literal + "\n")
+    review = _review(batch)
+    decision = _decisions(review)[0]
+    decision.update(kind="identity", identity_field="headline", payload={"text": literal})
+    before = importing.profile()
+    rejected = importing.approve(batch, review)
+    assert rejected.status_code == 422, rejected.text
+    assert importing.profile() == before
+    decision["payload"] = {"text": "🚀" * 300}
+    accepted = importing.approve(batch, review)
+    assert accepted.status_code == 202, accepted.text
+    importing.run()
+    profile = importing.profile()
+    assert profile["current_revision"]["snapshot"]["headline"] == "🚀" * 300
+    assert profile["current_revision"]["snapshot"]["description"] == "Owner-written biography."
+    assert profile["current_revision"]["claims"] == []
+    evidence = profile["evidence"][0]["revision"]["payload"]
+    assert evidence["text"] == evidence["sources"][0]["quote"] == literal
+
+
+@pytest.mark.postgres
+def test_unchanged_import_preserves_legacy_headline_without_new_revision(
+    importing: ImportContext,
+) -> None:
+    literal = "🚀" * 300
+    with importing.runtime.transaction() as conn:
+        _save(
+            conn,
+            importing.owner_id,
+            ProfileSnapshot(headline=literal, description="Historical owner biography."),
+            "owner_restore",
+            restoring=True,
+        )
+    original = importing.profile()
+    before = _counts(importing)
+    batch = importing.staged("Summary\n" + literal + "\n")
+    review = _review(batch)
+    _decisions(review)[0].update(action="unchanged", kind="identity", identity_field="headline")
+    accepted = importing.approve(batch, review)
+    assert accepted.status_code == 202, accepted.text
+    importing.run()
+    assert importing.batch(batch["id"])["state"] == "succeeded"
+    assert importing.profile() == original
+    assert _counts(importing) == before
 
 
 @pytest.mark.postgres
@@ -688,7 +769,12 @@ def test_review_conflict_preserves_proposals_and_commit_conflict_has_no_partial_
     old_version = importing.profile()["version"]
     response = importing.client.put(
         "/api/v1/profile",
-        json={"display_name": "Fictional Mira", "headline": "", "claim_revision_ids": []},
+        json={
+            "display_name": "Fictional Mira",
+            "headline": "",
+            "description": "Biography preserved through conflict and reapproval.",
+            "claim_revision_ids": [],
+        },
         headers=importing.headers(old_version),
     )
     assert response.status_code == 200, response.text
@@ -715,6 +801,9 @@ def test_review_conflict_preserves_proposals_and_commit_conflict_has_no_partial_
     assert (
         importing.profile()["current_revision"]["snapshot"]["display_name"]
         == "Changed after approval"
+    )
+    assert importing.profile()["current_revision"]["snapshot"]["description"] == (
+        "Biography preserved through conflict and reapproval."
     )
 
 
@@ -1427,6 +1516,7 @@ def test_identity_only_import_updates_canonical_fields_without_claims_and_preser
             **snapshot,
             "display_name": "Prior Fictional Name",
             "headline": "Existing headline",
+            "description": "Biography must not become an imported claim.",
             "contact": contact,
         },
         headers=importing.headers(original["version"]),
@@ -1448,6 +1538,7 @@ def test_identity_only_import_updates_canonical_fields_without_claims_and_preser
     assert saved["display_name"] == "Mira Example"
     assert saved["headline"] == "Local systems engineer"
     assert saved["contact"] == original["current_revision"]["snapshot"]["contact"]
+    assert saved["description"] == "Biography must not become an imported claim."
     assert profile["current_revision"]["claims"] == original["current_revision"]["claims"]
     assert _counts(importing) == (counts[0] + 1, counts[1], counts[2] + 2, counts[3])
     sources = [
@@ -1465,6 +1556,7 @@ def test_identity_only_import_updates_canonical_fields_without_claims_and_preser
     importing.run()
     current = importing.profile()
     assert current["current_revision"]["snapshot"]["contact"] == saved["contact"]
+    assert current["current_revision"]["snapshot"]["description"] == saved["description"]
     assert current["current_revision"]["snapshot"]["display_name"] == "Mira Example"
     assert {row["id"] for row in sources} <= {row["id"] for row in current["evidence"]}
 

@@ -88,6 +88,39 @@ function approve() { return screen.getByRole('button', { name: /^Save profile$|^
 afterEach(() => { vi.useRealTimers(); vi.restoreAllMocks(); });
 
 describe('structured résumé review', () => {
+  it('keeps the saved description visible in merge and replace-all previews without making it an imported fact', async () => {
+    const user = userEvent.setup(); const { api, state } = server();
+    const described = { ...profile, current_revision: { ...profile.current_revision, snapshot: { ...profile.current_revision.snapshot, description: 'Saved personal introduction.' } } };
+    render(<ResumeImport api={api} profile={described} disabled={false} onProfile={vi.fn()} />);
+    await open(user);
+    const preview = within(screen.getByRole('region', { name: 'Assembled profile preview' }));
+    expect(preview.getByText('Saved personal introduction.')).toBeVisible();
+    await user.selectOptions(screen.getByLabelText('Import mode'), 'replace_all');
+    expect(preview.getByText('Saved personal introduction.')).toBeVisible();
+    await user.click(screen.getByLabelText('I separately confirm replacing all non-identity facts and archiving displaced sources'));
+    await user.click(attest()); await user.click(approve());
+    expect(state.submissions[0]?.body.decisions.every(decision => decision.kind !== 'identity')).toBe(true);
+  });
+
+  it('validates imported headline limits in Unicode codepoints and keeps oversized pasted values for correction', async () => {
+    const user = userEvent.setup(); const batch = staged();
+    batch.entries = [{ ...batch.entries[0]!, kind: 'identity', identity_field: 'headline', payload: { text: '🚀'.repeat(300) } }];
+    const { api, state } = server(batch);
+    const empty = { ...profile, current_revision: { ...profile.current_revision, snapshot: { ...profile.current_revision.snapshot, headline: '' } } };
+    render(<ResumeImport api={api} profile={empty} disabled={false} onProfile={vi.fn()} />); await open(user);
+    expect(attest()).toBeEnabled();
+    await edit(user);
+    const headline = screen.getByLabelText('Highlight / tagline');
+    expect(headline).toHaveValue('🚀'.repeat(300));
+    await user.click(headline); await user.keyboard('{End}'); await user.paste('🚀');
+    expect(headline).toHaveValue('🚀'.repeat(301));
+    expect(attest()).toBeDisabled(); expect(state.submissions).toHaveLength(0);
+    fireEvent.change(headline, { target: { value: '🚀'.repeat(300) } });
+    expect(attest()).toBeEnabled();
+    await user.click(attest()); await user.click(approve());
+    expect(state.submissions[0]?.body.decisions[0]?.payload.text).toBe('🚀'.repeat(300));
+  });
+
   it('shows the entire first profile immediately and saves clean entries with one batch approval', async () => {
     const user = userEvent.setup(); const { api, state } = server();
     const empty = { ...profile, current_revision: { ...profile.current_revision, claims: [], snapshot: { ...profile.current_revision.snapshot, display_name: '', headline: '', claim_revision_ids: [] } } };
@@ -454,7 +487,7 @@ describe('personal identity review', () => {
     const user = userEvent.setup(); const { api, state } = server(); render(<Harness api={api} />); await open(user);
     for (let index = 0; index < 2; index += 1) {
       await edit(user, index + 1); await user.selectOptions(screen.getByLabelText('Save to'), 'headline');
-      await user.click(screen.getByLabelText('Replace my current headline with this value'));
+      await user.click(screen.getByLabelText('Replace my current highlight / tagline with this value'));
     }
     expect(attest()).toBeDisabled(); await exclude(user, 2);
     await user.click(attest()); state.failures.push(new ApiError(412, 'version_conflict')); await user.click(approve());
@@ -463,8 +496,8 @@ describe('personal identity review', () => {
     await user.click(screen.getByRole('button', { name: 'Load current profile for comparison' }));
     await user.click(await screen.findByRole('button', { name: 'Use latest profile and retain review' })); await edit(user);
     expect(screen.getByText('Current: Changed current headline')).toBeVisible();
-    expect(screen.getByLabelText('Replace my current headline with this value')).not.toBeChecked(); expect(attest()).toBeDisabled();
-    await user.click(screen.getByLabelText('Replace my current headline with this value')); await user.click(attest()); await user.click(approve());
+    expect(screen.getByLabelText('Replace my current highlight / tagline with this value')).not.toBeChecked(); expect(attest()).toBeDisabled();
+    await user.click(screen.getByLabelText('Replace my current highlight / tagline with this value')); await user.click(attest()); await user.click(approve());
     expect(state.submissions[1]?.version).toBe(2); expect(state.submissions[1]?.body.decisions[0]?.payload.text).toBe(quote);
   });
 });

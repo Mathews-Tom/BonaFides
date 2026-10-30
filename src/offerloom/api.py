@@ -39,6 +39,7 @@ _VALIDATION_FIELDS = frozenset(
         "kind",
         "display_name",
         "headline",
+        "description",
         "claim_revision_ids",
         "evidence_revision_ids",
         "organization",
