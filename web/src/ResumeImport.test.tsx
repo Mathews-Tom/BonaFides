@@ -178,6 +178,21 @@ describe('structured résumé review', () => {
       sources: [{ source_id: `source-${index}`, start: 7 + index * 14, end: 20 + index * 14, quote: 'Fictional SQL' }],
       comparison: { status: 'unchanged', target_claim_id: skill.id, candidate_claim_ids: [skill.id] } }));
     const { api, state } = server(batch); render(<ResumeImport api={api} profile={saved} disabled={false} onProfile={() => undefined} />); await open(user);
+    const preview = within(screen.getByRole('region', { name: 'Assembled profile preview' }));
+    expect(preview.getAllByRole('article')).toHaveLength(1);
+    expect(preview.getByText('Fictional SQL', { selector: 'dd' })).toBeVisible();
+    await edit(user, 2);
+    expect(screen.getByRole('group', { name: 'Edit entry 2 · Skills' })).toBeVisible();
+    await user.click(screen.getByText('View original source and provenance'));
+    expect(screen.getByText('Source part source-1')).toBeVisible();
+    await user.click(screen.getByRole('button', { name: 'Previous entry' }));
+    expect(screen.getByRole('group', { name: 'Edit entry 1 · Skills' })).toBeVisible();
+    await user.click(screen.getByText('View original source and provenance'));
+    expect(screen.getByText('Source part source-0')).toBeVisible();
+    await user.click(screen.getByRole('button', { name: 'Exclude entry' }));
+    expect(preview.getByText('Fictional SQL', { selector: 'dd' })).toBeVisible();
+    await user.click(screen.getByRole('button', { name: 'Include preview entry 1' }));
+    expect(preview.getAllByRole('article')).toHaveLength(1);
     expect(attest()).toBeEnabled(); await user.click(attest()); await user.click(approve());
     expect(state.submissions[0]?.body.decisions.map(decision => ({ action: decision.action, claim_id: decision.claim_id, source_ids: decision.source_ids }))).toEqual([
       { action: 'unchanged', claim_id: skill.id, source_ids: ['source-0'] }, { action: 'unchanged', claim_id: skill.id, source_ids: ['source-1'] },

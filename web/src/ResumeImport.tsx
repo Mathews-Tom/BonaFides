@@ -716,6 +716,14 @@ export function ResumeImport({ api, profile, disabled, onProfile, onDirtyChange,
         <section className="import-document" aria-label="Assembled profile preview">
           {[{ value: 'identity', label: 'Personal details' }, ...destinations.filter(item => item.value && item.value !== 'display_name' && item.value !== 'headline'), { value: '', label: 'Needs placement' }].map(section => {
             const sectionEntries = entries.filter(entry => (drafts[entry.entry_id]?.kind ?? '') === section.value);
+            const previewGroups = new Map<string, ImportEntry[]>();
+            for (const entry of sectionEntries) {
+              const draft = drafts[entry.entry_id];
+              const key = draft?.action === 'unchanged' && draft.kind !== 'identity' && isUnchanged(draft, current)
+                && !needsConfirmation(entry, draft) && !duplicateEntryIds.has(entry.entry_id) ? `claim:${draft.claim_id}` : `entry:${entry.entry_id}`;
+              const group = previewGroups.get(key);
+              if (group) group.push(entry); else previewGroups.set(key, [entry]);
+            }
             const retained = mode === 'merge' ? current.current_revision.claims.filter(claim => !claim.archived && claim.kind === section.value
               && !entries.some(entry => { const draft = drafts[entry.entry_id]; return draft && draft.action !== 'skip' && (draft.action === 'replace' || draft.action === 'unchanged') && draft.claim_id === claim.id; })) : [];
             const retainedIdentity = section.value === 'identity' ? (['display_name', 'headline', 'description'] as const).filter(key => current.current_revision.snapshot[key]
@@ -725,15 +733,17 @@ export function ResumeImport({ api, profile, disabled, onProfile, onDirtyChange,
               <h5>{section.label}</h5>
               {retainedIdentity.map(key => <div className="import-document-entry" key={key}><dl><dt>{key === 'display_name' ? 'Full name' : key === 'headline' ? 'Highlight / tagline' : 'Description'}</dt><dd className={key === 'description' ? 'profile-description-preview' : undefined}>{current.current_revision.snapshot[key]}</dd></dl><p className="hint">Current value retained</p></div>)}
               {retained.map(claim => <div className="import-document-entry" key={claim.id}><dl>{fields.filter(field => claim.revision.payload[field.key]).map(field => <div key={field.key}><dt>{field.label}</dt><dd>{claim.revision.payload[field.key]}</dd></div>)}</dl><p className="hint">Current entry retained</p></div>)}
-              {sectionEntries.map(entry => {
+              {[...previewGroups.values()].map(group => {
+                const entry = group[0]!;
+                const editorEntry = group.find(item => item.entry_id === entries[currentIndex]?.entry_id);
                 const draft = drafts[entry.entry_id] ?? initialDraft(entry, current);
                 const payload = previewPayload(draft, current);
                 const issues = entryProblems(entry, draft, current);
                 const attention = needsConfirmation(entry, draft) || issues.length > 0 || duplicateEntryIds.has(entry.entry_id);
                 const status = draft.action === 'skip' ? 'Excluded' : attention ? 'Needs attention' : draft.action === 'unchanged' ? 'Unchanged' : draft.action === 'replace' ? 'Ready to update' : 'New entry';
                 const index = entries.indexOf(entry);
-                const compact = (section.value === 'skill' || section.value === 'language') && !attention && draft.action !== 'skip' && !draft.editing;
-                return <article className={`import-document-entry${compact ? ' is-compact' : ''}${attention && draft.action !== 'skip' ? ' needs-attention' : ''}${currentIndex === index && draft.editing ? ' is-editing' : ''}`} aria-label={`Preview entry ${index + 1}`} key={entry.entry_id}>
+                const compact = group.length === 1 && (section.value === 'skill' || section.value === 'language') && !attention && draft.action !== 'skip' && !draft.editing;
+                return <article className={`import-document-entry${compact ? ' is-compact' : ''}${attention && draft.action !== 'skip' ? ' needs-attention' : ''}${editorEntry && drafts[editorEntry.entry_id]?.editing ? ' is-editing' : ''}`} aria-label={`Preview entry ${index + 1}`} key={entry.entry_id}>
                   {compact ? <button type="button" className="secondary import-token-button" disabled={locked || !waiting} onClick={() => focusEntry(index)} aria-label={`Edit preview entry ${index + 1}`} aria-description={status}>
                     {payload.text}{payload.proficiency && <small>{payload.proficiency}</small>}
                   </button> : <>
@@ -742,11 +752,14 @@ export function ResumeImport({ api, profile, disabled, onProfile, onDirtyChange,
                   {attention && draft.action !== 'skip' && <p className="hint">{issues[0] ?? 'Check the extraction, choose a target if needed, then confirm or exclude this entry.'}</p>}
                   <div className="import-preview-actions">
                     <span className="import-entry-status">{status}{draft.action === 'replace' && issues.length ? ' · current values retained until resolved' : ''}</span>
-                    <button type="button" className="secondary" disabled={locked || !waiting} onClick={() => focusEntry(index)} aria-label={`Edit preview entry ${index + 1}`}>Edit</button>
+                    {group.map(sourceEntry => {
+                      const sourceIndex = entries.indexOf(sourceEntry);
+                      return <button type="button" className="secondary" disabled={locked || !waiting} onClick={() => focusEntry(sourceIndex)} aria-label={`Edit preview entry ${sourceIndex + 1}`} key={sourceEntry.entry_id}>{group.length > 1 ? `Edit source ${sourceIndex + 1}` : 'Edit'}</button>;
+                    })}
                     {draft.action === 'skip' && <button type="button" className="secondary" disabled={locked || !waiting} onClick={() => updateDraft(entry.entry_id, previous => ({ ...previous, action: initialDraft(entry, current).action, reviewed: false }))} aria-label={`Include preview entry ${index + 1}`}>Include</button>}
                   </div>
                   </>}
-                  {currentIndex === index && renderEntryEditor(entry)}
+                  {editorEntry && renderEntryEditor(editorEntry)}
                 </article>;
               })}
             </section>;
