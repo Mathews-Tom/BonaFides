@@ -97,7 +97,7 @@ describe('profile editing', () => {
     expect(screen.getByRole('button', { name: 'Sign out' })).toBeDisabled();
     await goTo(user, 'Profile');
     expect(screen.getByLabelText('Display name')).toBeDisabled();
-    await user.selectOptions(screen.getByLabelText('Theme'), 'dark');
+    await user.click(screen.getByRole('button', { name: 'Dark theme' }));
     expect(screen.getByLabelText('Source text')).toHaveValue('Fictional project notes retained in this editor.');
     await user.click(screen.getByRole('button', { name: 'Discard source changes' }));
     expect(screen.getByRole('button', { name: 'Save profile' })).toBeEnabled();
@@ -268,7 +268,7 @@ describe('evidence and document lifecycle', () => {
     expect(screen.getByRole('button', { name: 'Save profile' })).toBeDisabled();
     await goTo(user, 'Documents');
     expect(screen.getByRole('button', { name: 'Tracked application documents' })).toBeDisabled();
-    await user.selectOptions(screen.getByLabelText('Theme'), 'dark');
+    await user.click(screen.getByRole('button', { name: 'Dark theme' }));
     expect(input).toHaveValue('Private unsaved document text.');
     await goTo(user, 'Activity & reviews');
     await user.click(screen.getByRole('button', { name: 'Load tasks' }));

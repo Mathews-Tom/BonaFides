@@ -43,8 +43,12 @@ afterEach(() => {
   document.documentElement.removeAttribute('data-theme');
 });
 
+function themeButton(value: string) {
+  return screen.getByRole('button', { name: new RegExp(`^${value} theme$`, 'i') });
+}
+
 function selectTheme(value: string) {
-  fireEvent.change(screen.getByRole('combobox', { name: 'Theme' }), { target: { value } });
+  fireEvent.click(themeButton(value));
 }
 
 describe('system theme and explicit preference', () => {
@@ -52,7 +56,7 @@ describe('system theme and explicit preference', () => {
     setSystemDark(true);
     const write = vi.spyOn(Storage.prototype, 'setItem');
     render(<ThemePreference />);
-    expect(screen.getByRole('combobox', { name: 'Theme' })).toHaveValue('system');
+    expect(themeButton('system')).toHaveAttribute('aria-pressed', 'true');
     expect(document.documentElement).toHaveAttribute('data-theme', 'dark');
     setSystemDark(false);
     expect(document.documentElement).toHaveAttribute('data-theme', 'light');
@@ -68,7 +72,6 @@ describe('system theme and explicit preference', () => {
     const saved = window.localStorage.getItem(STORAGE_KEY);
     expect(JSON.parse(saved!)).toEqual({ version: 1, theme: 'dark', expiresAt: NOW + YEAR });
     expect(window.localStorage.length).toBe(1);
-    expect(screen.getByRole('combobox', { name: 'Theme' })).toHaveAccessibleDescription(/one year \(365 days\) from selection/);
     setSystemDark(true);
     setSystemDark(false);
     expect(document.documentElement).toHaveAttribute('data-theme', 'dark');
@@ -76,7 +79,7 @@ describe('system theme and explicit preference', () => {
     first.unmount();
     vi.setSystemTime(NOW + 24 * 60 * 60 * 1000);
     render(<ThemePreference />);
-    expect(screen.getByRole('combobox', { name: 'Theme' })).toHaveValue('dark');
+    expect(themeButton('dark')).toHaveAttribute('aria-pressed', 'true');
     expect(document.documentElement).toHaveAttribute('data-theme', 'dark');
     expect(window.localStorage.getItem(STORAGE_KEY)).toBe(saved);
   });
@@ -85,7 +88,7 @@ describe('system theme and explicit preference', () => {
     setSystemDark(theme === 'light');
     window.localStorage.setItem(STORAGE_KEY, storedTheme(theme));
     render(<ThemePreference />);
-    expect(screen.getByRole('combobox', { name: 'Theme' })).toHaveValue(theme);
+    expect(themeButton(theme)).toHaveAttribute('aria-pressed', 'true');
     expect(document.documentElement).toHaveAttribute('data-theme', theme);
   });
 
@@ -106,7 +109,7 @@ describe('system theme and explicit preference', () => {
     act(() => { vi.advanceTimersByTime(YEAR - 1); });
     expect(document.documentElement).toHaveAttribute('data-theme', 'dark');
     act(() => { vi.advanceTimersByTime(1); });
-    expect(screen.getByRole('combobox', { name: 'Theme' })).toHaveValue('system');
+    expect(themeButton('system')).toHaveAttribute('aria-pressed', 'true');
     expect(document.documentElement).toHaveAttribute('data-theme', 'light');
     setSystemDark(true);
     expect(document.documentElement).toHaveAttribute('data-theme', 'dark');
@@ -117,7 +120,7 @@ describe('system theme and explicit preference', () => {
     render(<ThemePreference />);
     vi.setSystemTime(NOW + 101);
     act(() => { window.dispatchEvent(new Event('focus')); });
-    expect(screen.getByRole('combobox', { name: 'Theme' })).toHaveValue('system');
+    expect(themeButton('system')).toHaveAttribute('aria-pressed', 'true');
     expect(document.documentElement).toHaveAttribute('data-theme', 'light');
   });
 
@@ -137,7 +140,7 @@ describe('system theme and explicit preference', () => {
   ])('returns to system for %s', (_description, raw) => {
     window.localStorage.setItem(STORAGE_KEY, raw);
     render(<ThemePreference />);
-    expect(screen.getByRole('combobox', { name: 'Theme' })).toHaveValue('system');
+    expect(themeButton('system')).toHaveAttribute('aria-pressed', 'true');
     expect(document.documentElement).toHaveAttribute('data-theme', 'light');
     setSystemDark(true);
     expect(document.documentElement).toHaveAttribute('data-theme', 'dark');
@@ -150,24 +153,24 @@ describe('cross-tab preference changes', () => {
     render(<ThemePreference />);
     window.localStorage.setItem(STORAGE_KEY, storedTheme());
     storageChanged();
-    expect(screen.getByRole('combobox', { name: 'Theme' })).toHaveValue('dark');
+    expect(themeButton('dark')).toHaveAttribute('aria-pressed', 'true');
     expect(document.documentElement).toHaveAttribute('data-theme', 'dark');
     setSystemDark(true);
     window.localStorage.setItem(STORAGE_KEY, 'not-json');
     storageChanged();
-    expect(screen.getByRole('combobox', { name: 'Theme' })).toHaveValue('system');
+    expect(themeButton('system')).toHaveAttribute('aria-pressed', 'true');
     setSystemDark(false);
     expect(document.documentElement).toHaveAttribute('data-theme', 'light');
     window.localStorage.setItem(STORAGE_KEY, storedTheme());
     storageChanged();
     window.localStorage.removeItem(STORAGE_KEY);
     storageChanged();
-    expect(screen.getByRole('combobox', { name: 'Theme' })).toHaveValue('system');
+    expect(themeButton('system')).toHaveAttribute('aria-pressed', 'true');
     window.localStorage.setItem(STORAGE_KEY, storedTheme());
     storageChanged();
     window.localStorage.clear();
     storageChanged(null);
-    expect(screen.getByRole('combobox', { name: 'Theme' })).toHaveValue('system');
+    expect(themeButton('system')).toHaveAttribute('aria-pressed', 'true');
     expect(document.documentElement).toHaveAttribute('data-theme', 'light');
   });
 
@@ -176,7 +179,7 @@ describe('cross-tab preference changes', () => {
     window.localStorage.setItem(STORAGE_KEY, storedTheme());
     storageChanged('another.preference');
     storageChanged(STORAGE_KEY, window.sessionStorage);
-    expect(screen.getByRole('combobox', { name: 'Theme' })).toHaveValue('system');
+    expect(themeButton('system')).toHaveAttribute('aria-pressed', 'true');
     expect(document.documentElement).toHaveAttribute('data-theme', 'light');
   });
 
@@ -185,7 +188,7 @@ describe('cross-tab preference changes', () => {
     render(<ThemePreference />);
     vi.spyOn(Storage.prototype, 'getItem').mockImplementation(() => { throw new DOMException('Denied', 'SecurityError'); });
     storageChanged();
-    expect(screen.getByRole('combobox', { name: 'Theme' })).toHaveValue('dark');
+    expect(themeButton('dark')).toHaveAttribute('aria-pressed', 'true');
     expect(screen.getByRole('status')).toHaveTextContent('only to this visit');
   });
 });
@@ -195,7 +198,7 @@ describe('unavailable browser storage', () => {
     window.localStorage.setItem(STORAGE_KEY, storedTheme());
     const denied = vi.spyOn(window, 'localStorage', 'get').mockImplementation(() => { throw new DOMException('Denied', 'SecurityError'); });
     render(<ThemePreference />);
-    expect(screen.getByRole('combobox', { name: 'Theme' })).toHaveValue('system');
+    expect(themeButton('system')).toHaveAttribute('aria-pressed', 'true');
     expect(screen.getByRole('status')).toHaveTextContent('Browser storage is unavailable');
     selectTheme('dark');
     setSystemDark(true);
@@ -212,7 +215,7 @@ describe('unavailable browser storage', () => {
   it('reports getItem failure without treating unreadable preferences as remembered', () => {
     vi.spyOn(Storage.prototype, 'getItem').mockImplementation(() => { throw new DOMException('Denied', 'SecurityError'); });
     render(<ThemePreference />);
-    expect(screen.getByRole('combobox', { name: 'Theme' })).toHaveValue('system');
+    expect(themeButton('system')).toHaveAttribute('aria-pressed', 'true');
     expect(screen.getByRole('status')).toHaveTextContent('only to this visit');
     setSystemDark(true);
     expect(document.documentElement).toHaveAttribute('data-theme', 'dark');
@@ -232,7 +235,7 @@ describe('unavailable browser storage', () => {
     expect(document.documentElement).toHaveAttribute('data-theme', 'dark');
     first.unmount();
     render(<ThemePreference />);
-    expect(screen.getByRole('combobox', { name: 'Theme' })).toHaveValue('light');
+    expect(themeButton('light')).toHaveAttribute('aria-pressed', 'true');
     expect(document.documentElement).toHaveAttribute('data-theme', 'light');
   });
 
@@ -241,13 +244,13 @@ describe('unavailable browser storage', () => {
     vi.spyOn(Storage.prototype, 'removeItem').mockImplementation(() => { throw new DOMException('Denied', 'SecurityError'); });
     const first = render(<ThemePreference />);
     selectTheme('system');
-    expect(screen.getByRole('combobox', { name: 'Theme' })).toHaveValue('system');
+    expect(themeButton('system')).toHaveAttribute('aria-pressed', 'true');
     expect(document.documentElement).toHaveAttribute('data-theme', 'light');
     expect(screen.getByRole('status')).toHaveTextContent('only to this visit');
     setSystemDark(true);
     expect(document.documentElement).toHaveAttribute('data-theme', 'dark');
     first.unmount();
     render(<ThemePreference />);
-    expect(screen.getByRole('combobox', { name: 'Theme' })).toHaveValue('dark');
+    expect(themeButton('dark')).toHaveAttribute('aria-pressed', 'true');
   });
 });
