@@ -260,7 +260,7 @@ _EN_MAGNITUDE_PATTERNS: dict[Magnitude, str] = {
 }
 _EN_ANY_MAGNITUDE = r"\s?(?:[kmb]|mn|bn|thousand|million|billion)\b"
 _EN_UNIT_PREFIXES: dict[str, str] = {
-    "usd": r"(?:US\$|\$|USD\s?)",
+    "usd": r"(?:(?<![A-Za-z])(?:US\$|\$)|\bUSD\s?)",
     "eur": r"(?:€|EUR\s?)",
     "gbp": r"(?:£|GBP\s?)",
 }
@@ -298,12 +298,58 @@ def _metric_quoted(metric: ClaimMetric, excerpt: str) -> bool:
     )
     amount = (
         _EN_UNIT_PREFIXES.get(metric.unit, "")
-        + rf"(?<![0-9.]){re.escape(metric.value)}(?![0-9]|\.[0-9])"
+        + rf"(?<![0-9A-Za-z./]){re.escape(metric.value)}(?![0-9]|\.[0-9])"
         + magnitude
-        + _EN_UNIT_SUFFIXES.get(metric.unit, "")
+        + (_EN_NO_UNIT if metric.unit == "count" else _EN_UNIT_SUFFIXES.get(metric.unit, ""))
         + (r"\s*" + _EN_RATE_PATTERNS[metric.per] if metric.per else "")
     )
-    return re.search(amount, excerpt.replace(",", ""), re.IGNORECASE) is not None
+    text = re.sub(r"(?<=[0-9]),(?=[0-9])", "", excerpt)
+    for found in re.finditer(amount, text, re.IGNORECASE):
+        if metric.change is None or _direction_stated(metric.change, _segment(text, found)):
+            return True
+    return False
+
+
+# A count is a bare number: any unit token after it ("30%", "30 hours", "3/5/2021") makes it
+# another kind of amount.
+_EN_NO_UNIT = "(?!" + "|".join((*_EN_UNIT_SUFFIXES.values(), r"\s?/")) + ")"
+_EN_INCREASE = r"increas\w*|grew|grow\w*|rais\w*|rose|risen|boost\w*|doubl\w*|tripl\w*"
+_EN_DECREASE = (
+    r"reduc\w*|decreas\w*|cut|cuts|cutting|lower\w*|fell|fall\w*|dropp\w*|declin\w*"
+    r"|shrank|shrunk|shrink\w*|shorten\w*|minimi[sz]\w*|slash\w*|trimm\w*"
+)
+# Per claimed change: the words that state it, and the words that state its opposite.
+_EN_DIRECTIONS: dict[MetricChange, tuple[str, str]] = {
+    "increase": (_EN_INCREASE, _EN_DECREASE),
+    "decrease": (_EN_DECREASE, _EN_INCREASE),
+    "improvement": (r"improv\w*|enhanc\w*|optimi[sz]\w*|better", r"worsen\w*|degrad\w*|regress\w*"),
+    "saving": (r"sav(?:e|ed|es|ing|ings)", r"lost|loss\w*|overspen\w*|overr[au]n\w*"),
+}
+_EN_NEGATION = re.compile(
+    r"(?<![A-Za-z])(?:not|never|no|without|cannot|failed|unable)(?![A-Za-z])|n't(?![A-Za-z])",
+    re.IGNORECASE,
+)
+
+
+def _segment(text: str, found: re.Match[str]) -> str:
+    """The comma-delimited part of a clause that holds one quoted amount."""
+    start = text.rfind(",", 0, found.start()) + 1
+    end = text.find(",", found.end())
+    return text[start : len(text) if end < 0 else end]
+
+
+def _words(pattern: str, text: str) -> bool:
+    return re.search(rf"(?<![A-Za-z])(?:{pattern})(?![A-Za-z])", text, re.IGNORECASE) is not None
+
+
+def _direction_stated(change: MetricChange, segment: str) -> bool:
+    """The amount's own segment states the claimed direction, not its opposite or a negation."""
+    stated, opposite = _EN_DIRECTIONS[change]
+    return (
+        _words(stated, segment)
+        and not _words(opposite, segment)
+        and _EN_NEGATION.search(segment) is None
+    )
 
 
 # An ISO date starts at a boundary or after a complete ISO date and a range hyphen
@@ -333,16 +379,61 @@ def _date_quoted(value: str, excerpt: str) -> bool:
     return re.search(together, excerpt, re.IGNORECASE) is not None
 
 
-def grounded(claim: StructuredClaim, excerpt: str) -> bool:
-    """Every literal part of a structured claim must appear in its quoted evidence excerpt."""
-    folded = excerpt.casefold()
+# English forms per ownership verb, in schema order. A claimed verb is grounded by its own
+# forms or by those of a stronger verb, never by a weaker one ("Assisted" does not ground "Led").
+_EN_VERB_FORMS: dict[OwnershipVerb, str] = {
+    "led": r"led|leads?|leading|spearhead\w*|head(?:s|ed|ing)|direct(?:s|ed|ing)",
+    "owned": r"own(?:s|ed|ing)?|owner(?:ship)?",
+    "managed": r"manag(?:e|es|ed|ing)|supervis(?:e|es|ed|ing)|oversaw|oversee\w*",
+    "initiated": r"initiat(?:e|es|ed|ing)|found(?:s|ed|ing)|establish\w*|pioneer\w*",
+    "designed": r"design(?:s|ed|ing)?|architect(?:s|ed|ing)?",
+    "built": r"buil(?:d|ds|t|ding)|develop(?:s|ed|ing)?|implement(?:s|ed|ing)?|creat(?:e|es|ed|ing)"
+    r"|engineer(?:s|ed|ing)",
+    "delivered": r"deliver(?:s|ed|ing)?|ship(?:s|ped|ping)?|launch\w*|releas(?:e|es|ed|ing)",
+    "increased": r"increas(?:e|es|ed|ing)|grew|grow(?:s|ing)?|rais(?:e|es|ed|ing)|boost\w*"
+    r"|doubl(?:e|es|ed|ing)|tripl(?:e|es|ed|ing)",
+    "reduced": r"reduc(?:e|es|ed|ing)|decreas(?:e|es|ed|ing)|cut|cuts|cutting|lower(?:s|ed|ing)?"
+    r"|shorten\w*|minimi[sz]\w*|slash\w*|trimm\w*",
+    "improved": r"improv\w*|enhanc\w*|optimi[sz]\w*",
+    "wrote": r"wr(?:ote|ite|ites|iting|itten)|author(?:s|ed|ing)?",
+    "maintained": r"maintain(?:s|ed|ing)?",
+    "mentored": r"mentor(?:s|ed|ing)?|coach(?:es|ed|ing)?",
+    "analyzed": r"analy[sz](?:e|es|ed|ing)|assess\w*|evaluat(?:e|es|ed|ing)",
+    "coordinated": r"coordinat(?:e|es|ed|ing)|organi[sz](?:e|es|ed|ing)",
+    "contributed": r"contribut(?:e|es|ed|ing)",
+    "supported": r"support(?:s|ed|ing)?",
+    "assisted": r"assist(?:s|ed|ing)?|help(?:s|ed|ing)?",
+}
+# A clause ends at a semicolon, a line break, or a full stop that is not inside a number or
+# before one ("1.2M", "Mar. 2021").
+_CLAUSE_BREAK = re.compile(r"[;\n]|\.(?![0-9])(?=\s+[^0-9\s]|\s*$)")
+
+
+def _verb_stated(verb: OwnershipVerb, clause: str) -> bool:
+    stronger = OWNERSHIP_VERBS[: OWNERSHIP_VERBS.index(verb) + 1]
+    return _words("|".join(_EN_VERB_FORMS[candidate] for candidate in stronger), clause)
+
+
+def _clause_grounds(claim: StructuredClaim, clause: str) -> bool:
+    folded = clause.casefold()
     phrases = [claim.subject, claim.scope, claim.metric.measure if claim.metric else None]
     if any(phrase is not None and phrase.casefold() not in folded for phrase in phrases):
         return False
-    if claim.metric is not None and not _metric_quoted(claim.metric, excerpt):
+    if not _verb_stated(claim.verb, clause):
+        return False
+    if claim.metric is not None and not _metric_quoted(claim.metric, clause):
         return False
     if claim.period is not None:
         bounds = {claim.period.start, claim.period.end}
-        if not all(_date_quoted(bound, excerpt) for bound in bounds):
+        if not all(_date_quoted(bound, clause) for bound in bounds):
             return False
     return True
+
+
+def grounded(claim: StructuredClaim, excerpt: str) -> bool:
+    """One sentence or clause of the quoted excerpt states every part of the claim.
+
+    The clause must name the subject, scope and measure, a form of the claimed ownership verb or
+    a stronger one, the complete metric in its claimed direction and the period.
+    """
+    return any(_clause_grounds(claim, clause) for clause in _CLAUSE_BREAK.split(excerpt))

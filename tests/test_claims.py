@@ -306,3 +306,119 @@ def test_structured_claim_is_saved_without_a_sentence_and_rendered_on_read(
         )
         assert refused.status_code == 422
         assert _json(client.get("/api/v1/profile"))["version"] == 3
+
+
+@pytest.mark.parametrize(
+    ("verb", "excerpt", "expected"),
+    [
+        ("led", "Led the migration", True),
+        ("led", "Spearheaded the migration", True),
+        ("led", "Assisted with the migration", False),
+        ("led", "Contributed to the migration", False),
+        ("managed", "Led the migration", True),
+        ("assisted", "Helped with the migration", True),
+        ("assisted", "Led the migration", True),
+        ("built", "Designed the migration", True),
+        ("designed", "Built the migration", False),
+    ],
+)
+def test_grounding_requires_the_claimed_or_a_stronger_verb(
+    verb: str, excerpt: str, expected: bool
+) -> None:
+    assert grounded(_claim(verb=verb, subject="the migration"), excerpt) is expected
+
+
+@pytest.mark.parametrize(
+    ("excerpt", "expected"),
+    [
+        ("Reduced error rate by 30%", True),
+        ("Cut error rate by 30%", True),
+        ("Reduced error rate by 30%, increasing throughput by 2x", True),
+        ("Reduced the dashboards; error rate increased by 30%", False),
+        ("Reduced alerts, error rate increased by 30%", False),
+        ("Reduced alerts while error rate rose by 30%", False),
+        ("Did not reduce error rate by 30%", False),
+        ("Reduced error rate, though not by 30%", False),
+        ("Reduced error rate by 30% but it didn't last", False),
+    ],
+)
+def test_grounding_requires_the_claimed_metric_direction(excerpt: str, expected: bool) -> None:
+    claim = _claim(
+        verb="reduced",
+        subject="error rate",
+        metric={"value": "30", "unit": "percent", "change": "decrease"},
+    )
+    assert grounded(claim, excerpt) is expected
+
+
+def test_grounding_rejects_a_contrary_saving_or_improvement() -> None:
+    saving = _claim(
+        subject="the migration",
+        metric={"value": "1.2", "unit": "usd", "magnitude": "million", "change": "saving"},
+    )
+    assert grounded(saving, "Led the migration, saving $1.2M") is True
+    assert grounded(saving, "Led the migration, which lost $1.2M") is False
+    improvement = _claim(
+        verb="improved",
+        subject="test coverage",
+        metric={"value": "25", "unit": "percent", "change": "improvement"},
+    )
+    assert grounded(improvement, "Improved test coverage by 25%") is True
+    assert grounded(improvement, "Improved test coverage, then it degraded by 25%") is False
+
+
+def test_grounding_takes_every_part_from_one_clause() -> None:
+    reduction = _claim(
+        verb="reduced",
+        subject="the billing migration",
+        metric={"value": "30", "unit": "percent", "change": "decrease"},
+    )
+    excerpt = "Led the billing migration. Separately, cloud spend fell 30% in 2022."
+    assert grounded(reduction, excerpt) is False
+    assert grounded(_claim(period={"start": "2022", "end": "2022"}), excerpt) is False
+    assert grounded(_claim(period={"start": "2022", "end": "2022"}), excerpt.replace(".", ",", 1))
+    assert grounded(_claim(), "Assisted the team; led the billing migration") is True
+    assert grounded(_claim(), "Assisted with the billing migration;\nled the rollout") is False
+    money = _claim(metric={"value": "1.2", "unit": "usd", "magnitude": "million"})
+    assert grounded(money, "Led the billing migration for $1.2M. Done.") is True
+
+
+@pytest.mark.parametrize(
+    ("value", "excerpt", "expected"),
+    [
+        ("30", "Reduced incidents by 30", True),
+        ("30", "Reduced incidents by 30 in total", True),
+        ("30", "Reduced incidents by 30%", False),
+        ("30", "Reduced incidents by 30 percent", False),
+        ("30", "Reduced incidents by 30 hours", False),
+        ("30", "Reduced incidents by 30x", False),
+        ("3", "Reduced incidents by 3 in Q3", True),
+        ("3", "Reduced incidents in Q3", False),
+        ("3", "Reduced incidents on 3/5/2021", False),
+        ("5", "Reduced incidents on 3/5/2021", False),
+        ("3", "Reduced incidents by 3.5", False),
+    ],
+)
+def test_grounding_counts_only_a_bare_number(value: str, excerpt: str, expected: bool) -> None:
+    claim = _claim(
+        verb="reduced",
+        subject="incidents",
+        metric={"value": value, "unit": "count", "change": "decrease"},
+    )
+    assert grounded(claim, excerpt) is expected
+
+
+@pytest.mark.parametrize(
+    ("excerpt", "expected"),
+    [
+        ("Led the migration for $30", True),
+        ("Led the migration for US$30", True),
+        ("Led the migration for USD 30", True),
+        ("Led the migration for A$30", False),
+        ("Led the migration for C$30", False),
+        ("Led the migration for AUS$30", False),
+    ],
+)
+def test_grounding_reads_only_us_dollar_prefixes_as_usd(excerpt: str, expected: bool) -> None:
+    claim = _claim(subject="the migration", metric={"value": "30", "unit": "usd"})
+    assert grounded(claim, excerpt) is expected
