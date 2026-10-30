@@ -29,7 +29,7 @@ const warningLabels: Record<string, string> = {
 };
 const destinations: { value: string; label: string }[] = [
   { value: '', label: 'Needs placement' }, { value: 'display_name', label: 'Personal details · Full name' },
-  { value: 'headline', label: 'Personal details · Headline' }, { value: 'experience', label: 'Work experience' },
+  { value: 'headline', label: 'Personal details · Highlight / tagline' }, { value: 'experience', label: 'Work experience' },
   { value: 'education', label: 'Education' }, { value: 'skill', label: 'Skills' }, { value: 'project', label: 'Projects' },
   { value: 'certification', label: 'Certifications' }, { value: 'language', label: 'Languages' },
   { value: 'preference', label: 'Preferences' }, { value: 'other', label: 'Additional information' },
@@ -37,18 +37,57 @@ const destinations: { value: string; label: string }[] = [
 function destination(draft: ReviewDraft): string { return draft.kind === 'identity' ? draft.identity_field ?? '' : draft.kind ?? ''; }
 function destinationLabel(draft: ReviewDraft): string { return destinations.find(item => item.value === destination(draft))?.label ?? 'Needs placement'; }
 function snippet(text: string): string { const line = text.replace(/\s+/g, ' ').trim(); return line.length > 72 ? `${line.slice(0, 69)}…` : line || 'Untitled entry'; }
-function initialDraft(entry: ImportEntry): ReviewDraft {
-  return { action: 'add', kind: entry.kind, identity_field: entry.identity_field, claim_id: '', payload: entry.kind === 'identity' ? { text: entry.payload.text } : { ...entry.payload }, reviewed: false, editing: false, identityConfirmed: false, choices: {} };
+function samePayload(left: ClaimPayload, right: ClaimPayload): boolean {
+  return fields.every(field => (left[field.key] ?? null) === (right[field.key] ?? null));
 }
-function initialDrafts(batch: ImportBatch): Record<string, ReviewDraft> {
-  return Object.fromEntries(batch.entries.map(entry => [entry.entry_id, initialDraft(entry)]));
+function initialDraft(entry: ImportEntry, profile: Profile): ReviewDraft {
+  const action = entry.comparison.status === 'unchanged' ? 'unchanged' : entry.comparison.status === 'conflict' ? 'replace' : 'add';
+  const draft: ReviewDraft = { action, kind: entry.kind, identity_field: entry.identity_field, claim_id: entry.comparison.target_claim_id ?? '',
+    payload: entry.kind === 'identity' ? { text: entry.payload.text } : { ...entry.payload }, reviewed: false, editing: false, identityConfirmed: false, choices: {} };
+  const target = action === 'replace' ? replacement(profile, draft) : undefined;
+  if (target) {
+    for (const field of fields) {
+      if (!entry.payload[field.key] && target.revision.payload[field.key]) {
+        draft.payload = payloadValue(draft.payload, field.key, target.revision.payload[field.key]!);
+        draft.choices[field.key] = 'keep';
+      }
+    }
+  }
+  return draft;
+}
+function initialDrafts(batch: ImportBatch, profile: Profile): Record<string, ReviewDraft> {
+  return Object.fromEntries(batch.entries.map(entry => [entry.entry_id, initialDraft(entry, profile)]));
+}
+function isUnchanged(draft: ReviewDraft, profile: Profile): boolean {
+  if (draft.kind === 'identity' && draft.identity_field) return draft.payload.text === profile.current_revision.snapshot[draft.identity_field];
+  const target = replacement(profile, draft);
+  return !!target && samePayload(draft.payload, target.revision.payload)
+    && profile.current_revision.claims.filter(claim => !claim.archived && claim.kind === draft.kind && samePayload(claim.revision.payload, draft.payload)).length === 1;
+}
+function needsConfirmation(entry: ImportEntry, draft: ReviewDraft): boolean {
+  return entry.comparison.status === 'needs_attention' && !draft.reviewed;
+}
+function previewPayload(draft: ReviewDraft, profile: Profile): ClaimPayload {
+  if (draft.action === 'replace') {
+    const target = replacement(profile, draft);
+    if (target) {
+      const payload = { ...target.revision.payload };
+      for (const field of fields) if (draft.choices[field.key] || (draft.payload[field.key] ?? '') === (target.revision.payload[field.key] ?? '')) {
+        const value = draft.payload[field.key];
+        if (value === undefined) delete payload[field.key]; else payload[field.key] = value;
+      }
+      return payload;
+    }
+    if (draft.kind === 'identity' && draft.identity_field && !draft.identityConfirmed) return { text: profile.current_revision.snapshot[draft.identity_field] };
+  }
+  return draft.payload;
 }
 function entryFields(draft: ReviewDraft, target?: ClaimRecord) {
   const keys: PayloadField[] = draft.kind === 'identity' ? ['text'] : draft.kind === 'skill' || draft.kind === 'language' ? ['text', 'proficiency']
     : draft.kind === 'preference' || draft.kind === 'other' || !draft.kind ? ['text']
     : ['text', 'organization', 'role', 'start_date', 'end_date', ...(draft.kind === 'project' ? ['project_url' as const] : [])];
   return fields.filter(field => keys.includes(field.key) || !!draft.payload[field.key] || !!target?.revision.payload[field.key]).map(field => ({
-    ...field, label: field.key === 'text' ? draft.kind === 'identity' ? draft.identity_field === 'display_name' ? 'Full name' : 'Headline'
+    ...field, label: field.key === 'text' ? draft.kind === 'identity' ? draft.identity_field === 'display_name' ? 'Full name' : 'Highlight / tagline'
       : draft.kind === 'skill' ? 'Skill' : draft.kind === 'language' ? 'Language' : 'Description'
       : field.key === 'organization' && draft.kind === 'education' ? 'School or institution'
       : field.key === 'role' && draft.kind === 'experience' ? 'Job title'
@@ -65,7 +104,8 @@ function replacement(profile: Profile, draft: ReviewDraft): ClaimRecord | undefi
   return profile.current_revision.claims.find(claim => claim.id === draft.claim_id && claim.kind === draft.kind && !claim.archived && claim.kind !== 'identity');
 }
 function unresolvedFields(entry: ImportEntry, draft: ReviewDraft, target: ClaimRecord): PayloadField[] {
-  return fields.filter(field => (target.revision.payload[field.key] ?? '') !== (entry.payload[field.key] ?? '') && !draft.choices[field.key]).map(field => field.key);
+  return fields.filter(field => ((target.revision.payload[field.key] ?? '') !== (entry.payload[field.key] ?? '') || (target.revision.payload[field.key] ?? '') !== (draft.payload[field.key] ?? ''))
+    && !!(entry.payload[field.key] || draft.payload[field.key]) && !draft.choices[field.key]).map(field => field.key);
 }
 function dateBounds(value: string): [number, number] | null {
   if (!/^\d{4}(-\d{2}(-\d{2})?)?$/.test(value)) return null;
@@ -85,8 +125,9 @@ function entryProblems(entry: ImportEntry, draft: ReviewDraft, profile: Profile)
   if (!draft.payload.text.trim()) problems.push('Enter a value to save.');
   for (const field of fields) {
     const value = draft.payload[field.key] ?? '';
+    const isHeadline = draft.kind === 'identity' && field.key === 'text' && draft.identity_field === 'headline';
     const limit = draft.kind === 'identity' && field.key === 'text' ? draft.identity_field === 'display_name' ? 120 : 300 : field.limit;
-    if (value.length > limit) problems.push(`${field.label} must be no longer than ${limit} characters.`);
+    if ((isHeadline ? [...value].length : value.length) > limit) problems.push(`${isHeadline ? 'Highlight / tagline' : field.label} must be no longer than ${limit} characters.`);
     if ((field.key === 'start_date' || field.key === 'end_date') && value && !dateBounds(value)) problems.push('Use a real calendar date in YYYY, YYYY-MM or YYYY-MM-DD format.');
   }
   const start = draft.payload.start_date ? dateBounds(draft.payload.start_date) : null;
@@ -104,7 +145,8 @@ function entryProblems(entry: ImportEntry, draft: ReviewDraft, profile: Profile)
   }
   if (entry.sources.map(source => source.quote).join('\n').length > 4000) problems.push('This source group is too long to save as one entry. Split it into original source parts.');
   if (draft.kind === 'identity' && draft.identity_field && profile.current_revision.snapshot[draft.identity_field]
-      && !draft.identityConfirmed) problems.push('Confirm the personal detail comparison before keeping this entry.');
+      && draft.payload.text !== profile.current_revision.snapshot[draft.identity_field] && !draft.identityConfirmed) problems.push('Choose whether to keep or replace this personal detail.');
+  if (draft.action === 'unchanged' && !isUnchanged(draft, profile)) problems.push('The saved value changed. Compare this entry with the latest profile.');
   if (draft.action === 'replace' && draft.kind !== 'identity') {
     const target = replacement(profile, draft);
     if (!target) problems.push('Choose an active existing entry in the same destination.');
@@ -133,6 +175,7 @@ export function ResumeImport({ api, profile, disabled, onProfile, onDirtyChange,
   const [drafts, setDrafts] = useState<Record<string, ReviewDraft>>({});
   const [reviewProfile, setReviewProfile] = useState<Profile | null>(null);
   const [comparison, setComparison] = useState<Profile | null>(null);
+  const [comparisonBatch, setComparisonBatch] = useState<ImportBatch | null>(null);
   const [reviewDirty, setReviewDirty] = useState(false);
   const [attested, setAttested] = useState(false);
   const [mode, setMode] = useState<ImportMergeRequest['mode']>('merge');
@@ -162,7 +205,7 @@ export function ResumeImport({ api, profile, disabled, onProfile, onDirtyChange,
   const dirty = file !== null || paste.length > 0 || reviewDirty;
   const locked = disabled || busy;
   const waiting = selected?.state === 'waiting_for_approval';
-  const stale = waiting && !!reviewProfile && reviewProfile.version !== profile.version;
+  const stale = waiting && (current.version !== profile.version || selected.comparison_profile_version !== current.version);
   const selectedId = selected?.id;
   const selectedState = selected?.state;
   const entryCount = entries.length;
@@ -170,18 +213,20 @@ export function ResumeImport({ api, profile, disabled, onProfile, onDirtyChange,
   const targetEntries = new Map<string, string[]>();
   for (const entry of entries) {
     const draft = drafts[entry.entry_id];
-    if (!draft?.reviewed || draft.action === 'skip') continue;
-    const key = draft.kind === 'identity' ? `identity:${draft.identity_field}` : draft.action === 'replace' ? `claim:${draft.claim_id}` : '';
+    if (!draft || draft.action === 'skip') continue;
+    const key = draft.kind === 'identity' ? `identity:${draft.identity_field}` : draft.action === 'replace' || draft.action === 'unchanged' ? `claim:${draft.claim_id}` : '';
     if (key) targetEntries.set(key, [...(targetEntries.get(key) ?? []), entry.entry_id]);
   }
-  const duplicateEntryIds = new Set([...targetEntries.values()].filter(ids => ids.length > 1).flat());
-  const excludedCount = entries.filter(entry => drafts[entry.entry_id]?.reviewed && drafts[entry.entry_id]?.action === 'skip').length;
+  const duplicateEntryIds = new Set([...targetEntries.values()].filter(ids => ids.length > 1
+    && ids.some(id => drafts[id]?.kind === 'identity' || drafts[id]?.action !== 'unchanged')).flat());
+  const excludedCount = entries.filter(entry => drafts[entry.entry_id]?.action === 'skip').length;
   const readyCount = entries.filter(entry => {
     const draft = drafts[entry.entry_id];
-    return draft?.reviewed && draft.action !== 'skip' && !duplicateEntryIds.has(entry.entry_id) && !entryProblems(entry, draft, current).length;
+    return !!draft && draft.action !== 'skip' && !needsConfirmation(entry, draft) && !duplicateEntryIds.has(entry.entry_id) && !entryProblems(entry, draft, current).length;
   }).length;
   const unreviewedCount = entryCount - excludedCount - readyCount;
-  const reviewedCount = entryCount - unreviewedCount;
+  const unchangedCount = entries.filter(entry => drafts[entry.entry_id]?.action === 'unchanged').length;
+  const noProfileChanges = mode === 'merge' && readyCount > 0 && readyCount === unchangedCount;
   const stage = selected?.state === 'succeeded' ? 3 : selected?.text != null ? 2 : selected || acceptedUpload ? 1 : 0;
   const historyId = batches?.some(batch => batch.id === savedId) ? savedId : batches?.[0]?.id ?? '';
 
@@ -191,8 +236,13 @@ export function ResumeImport({ api, profile, disabled, onProfile, onDirtyChange,
       const index = (currentIndex + offset) % entryCount;
       const entry = entries[index]!;
       const draft = drafts[entry.entry_id];
-      if (!draft?.reviewed || duplicateEntryIds.has(entry.entry_id) || (draft.action !== 'skip' && entryProblems(entry, draft, current).length)) { setEntryIndex(index); return; }
+      if (draft && draft.action !== 'skip' && (needsConfirmation(entry, draft) || duplicateEntryIds.has(entry.entry_id) || entryProblems(entry, draft, current).length)) { focusEntry(index); return; }
     }
+  }
+  function focusEntry(index: number) {
+    setEntryIndex(index);
+    const entry = entries[index];
+    if (entry) setDrafts(existing => ({ ...existing, [entry.entry_id]: { ...(existing[entry.entry_id] ?? initialDraft(entry, current)), editing: true } }));
   }
 
   useEffect(() => { onDirtyChange?.(dirty); }, [dirty, onDirtyChange]);
@@ -211,9 +261,9 @@ export function ResumeImport({ api, profile, disabled, onProfile, onDirtyChange,
     const changed = reviewBatchId.current !== batch.id;
     reviewBatchId.current = batch.id;
     setEntries(existing => changed || !existing.length ? batch.entries : existing);
-    setDrafts(existing => changed || !Object.keys(existing).length ? initialDrafts(batch) : { ...initialDrafts(batch), ...existing });
+    setDrafts(existing => changed || !Object.keys(existing).length ? initialDrafts(batch, current) : { ...initialDrafts(batch, current), ...existing });
     if (terminal(batch.state)) setMergeAwaiting(false);
-  }, []);
+  }, [current]);
 
   useEffect(() => {
     if (!selectedId || !selectedState || selectedState === 'waiting_for_approval' || terminal(selectedState) || pollPaused) return;
@@ -279,7 +329,7 @@ export function ResumeImport({ api, profile, disabled, onProfile, onDirtyChange,
     await perform(async () => {
       const batch = await api.request<ImportBatch>(`/imports/${encodeURIComponent(id)}`);
       if (selected?.id !== id) {
-        setDrafts(initialDrafts(batch)); setReviewProfile(profile); setComparison(null);
+        setDrafts(initialDrafts(batch, profile)); setReviewProfile(profile); setComparison(null);
         setEntryIndex(0);
         setReviewDirty(false); setAttested(false); setMode('merge'); setReplaceConfirmed(false); setConflict(false);
         mergeRetry.current = null;
@@ -313,13 +363,19 @@ export function ResumeImport({ api, profile, disabled, onProfile, onDirtyChange,
   function updateDraft(id: string, update: (draft: ReviewDraft) => ReviewDraft) {
     setDrafts(existing => {
       const draft = existing[id];
-      return draft ? { ...existing, [id]: update(draft) } : existing;
+      if (!draft) return existing;
+      const next = update(draft);
+      if (next.action !== 'skip' && next.kind === 'identity' && next.identity_field) {
+        const saved = current.current_revision.snapshot[next.identity_field];
+        next.action = next.payload.text === saved ? 'unchanged' : saved ? 'replace' : 'add';
+      } else if (next.action === 'unchanged' && !isUnchanged(next, current)) next.action = replacement(current, next) ? 'replace' : 'add';
+      return { ...existing, [id]: next };
     });
     setReviewDirty(true); setAttested(false); setError('');
   }
   function chooseField(entry: ImportEntry, draft: ReviewDraft, target: ClaimRecord, key: PayloadField, choice: 'keep' | 'import') {
     const value = (choice === 'keep' ? target.revision.payload[key] : entry.payload[key]) ?? '';
-    updateDraft(entry.entry_id, () => ({ ...draft, payload: payloadValue(draft.payload, key, value), reviewed: false, choices: { ...draft.choices, [key]: choice } }));
+    updateDraft(entry.entry_id, () => ({ ...draft, payload: payloadValue(draft.payload, key, value), choices: { ...draft.choices, [key]: choice } }));
   }
   function regroup(index: number, split: boolean) {
     const first = entries[index];
@@ -328,16 +384,16 @@ export function ResumeImport({ api, profile, disabled, onProfile, onDirtyChange,
     let removeCount = 1;
     if (split) {
       if (first.sources.length < 2) return;
-      const draft = drafts[first.entry_id] ?? initialDraft(first);
+      const draft = drafts[first.entry_id] ?? initialDraft(first, current);
       grouped = first.sources.map(source => ({
         entry_id: crypto.randomUUID(), kind: draft.kind === 'identity' ? null : draft.kind, identity_field: null,
-        payload: { text: source.quote }, sources: [source], issues: [],
+        payload: { text: source.quote }, sources: [source], issues: [], comparison: { status: 'needs_attention', target_claim_id: null, candidate_claim_ids: [] },
       }));
     } else {
       const second = entries[index + 1];
       if (!second) return;
-      const a = drafts[first.entry_id] ?? initialDraft(first);
-      const b = drafts[second.entry_id] ?? initialDraft(second);
+      const a = drafts[first.entry_id] ?? initialDraft(first, current);
+      const b = drafts[second.entry_id] ?? initialDraft(second, current);
       const sameDestination = destination(a) === destination(b);
       const payload = { ...a.payload, text: `${a.payload.text}\n${b.payload.text}` };
       for (const field of fields) {
@@ -353,7 +409,7 @@ export function ResumeImport({ api, profile, disabled, onProfile, onDirtyChange,
       grouped = [{
         entry_id: crypto.randomUUID(), kind: sameDestination ? a.kind : null, identity_field: sameDestination ? a.identity_field : null,
         payload,
-        sources: [...first.sources, ...second.sources], issues: [],
+        sources: [...first.sources, ...second.sources], issues: [], comparison: { status: 'needs_attention', target_claim_id: null, candidate_claim_ids: [] },
       }];
       removeCount = 2;
     }
@@ -361,50 +417,75 @@ export function ResumeImport({ api, profile, disabled, onProfile, onDirtyChange,
     setDrafts(existing => {
       const next = { ...existing };
       for (const removed of entries.slice(index, index + removeCount)) delete next[removed.entry_id];
-      for (const entry of grouped) next[entry.entry_id] = initialDraft(entry);
+      for (const entry of grouped) next[entry.entry_id] = initialDraft(entry, current);
       return next;
     });
     setEntryIndex(index); setReviewDirty(true); setAttested(false); setError('');
   }
   function discardReview() {
     if (!selected) return;
-    setDrafts(initialDrafts(selected)); setReviewDirty(false); setAttested(false); setMode('merge'); setReplaceConfirmed(false);
+    setDrafts(initialDrafts(selected, profile)); setReviewDirty(false); setAttested(false); setMode('merge'); setReplaceConfirmed(false);
     setEntries(selected.entries); setEntryIndex(0);
     setComparison(null); setReviewProfile(profile); setConflict(false); setError(''); mergeRetry.current = null;
   }
   async function loadComparison() {
-    await perform(async () => { setComparison(await api.request<Profile>('/profile')); });
+    if (!selected) return;
+    await perform(async () => {
+      const [latest, batch] = await Promise.all([api.request<Profile>('/profile'), api.request<ImportBatch>(`/imports/${encodeURIComponent(selected.id)}`)]);
+      if (batch.comparison_profile_version !== latest.version) { setError('The profile changed during comparison. Load the current profile again.'); return; }
+      setComparison(latest); setComparisonBatch(batch);
+    });
   }
   function rebase() {
-    if (!comparison) return;
+    if (!comparison || !comparisonBatch || comparisonBatch.comparison_profile_version !== comparison.version) return;
     const latest = comparison;
     setDrafts(existing => Object.fromEntries(entries.map(entry => {
-      const draft = existing[entry.entry_id] ?? initialDraft(entry);
+      const draft = existing[entry.entry_id] ?? initialDraft(entry, current);
       if (draft.action === 'skip') return [entry.entry_id, draft];
-      if (draft.kind === 'identity' && draft.identity_field
-          && current.current_revision.snapshot[draft.identity_field] !== latest.current_revision.snapshot[draft.identity_field]) {
-        return [entry.entry_id, { ...draft, reviewed: false, identityConfirmed: false }];
+      const fresh = comparisonBatch.entries.find(item => item.entry_id === entry.entry_id);
+      if (draft.kind === 'identity' && draft.identity_field) {
+        const saved = latest.current_revision.snapshot[draft.identity_field];
+        const changed = current.current_revision.snapshot[draft.identity_field] !== saved;
+        return [entry.entry_id, { ...draft, action: draft.payload.text === saved ? 'unchanged' : saved ? 'replace' : 'add', reviewed: changed ? false : draft.reviewed, identityConfirmed: changed ? false : draft.identityConfirmed }];
       }
-      if (draft.action !== 'replace') return [entry.entry_id, draft];
+      if (draft.action === 'add' && entry.comparison.status === 'new' && fresh && draft.kind === entry.kind && fresh.comparison.status !== 'new') {
+        const suggested = initialDraft(fresh, latest);
+        if (samePayload(draft.payload, entry.payload)) return [entry.entry_id, { ...suggested, editing: draft.editing }];
+        return [entry.entry_id, { ...draft, action: fresh.comparison.status === 'conflict' ? 'replace' : 'add', claim_id: fresh.comparison.target_claim_id ?? '', choices: {}, reviewed: false }];
+      }
+      if (draft.action !== 'replace' && draft.action !== 'unchanged') return [entry.entry_id, draft];
       const before = replacement(current, draft);
       const after = replacement(latest, draft);
       const changed = fields.filter(field => (before?.revision.payload[field.key] ?? '') !== (after?.revision.payload[field.key] ?? ''));
       const choices = { ...draft.choices };
-      for (const field of changed) delete choices[field.key];
-      return [entry.entry_id, { ...draft, choices, reviewed: changed.length || !after ? false : draft.reviewed }];
+      const payload = { ...draft.payload };
+      for (const field of changed) {
+        delete choices[field.key];
+        if (!entry.payload[field.key] && draft.choices[field.key] === 'keep' && after?.revision.payload[field.key]) {
+          payload[field.key] = after.revision.payload[field.key]!;
+          choices[field.key] = 'keep';
+        }
+      }
+      const action = draft.action === 'unchanged' && !isUnchanged(draft, latest) ? 'replace' : draft.action;
+      return [entry.entry_id, { ...draft, action, payload, choices, reviewed: changed.length || !after ? false : draft.reviewed }];
     })));
+    setSelected(comparisonBatch);
+    setEntries(existing => existing.map(entry => {
+      const fresh = comparisonBatch.entries.find(item => item.entry_id === entry.entry_id);
+      return fresh ? { ...entry, comparison: fresh.comparison } : entry;
+    }));
     setReviewProfile(latest); onProfile(latest); setComparison(null); setConflict(false); setAttested(false); setReplaceConfirmed(false);
     setNotice('Latest profile selected. Your actions and edited text are retained. Review any changed replacement fields and approve again.');
   }
   const problems: string[] = [];
   let acceptedCount = 0;
-  const targets = new Set<string>();
+  const targets = new Map<string, ImportDecision['action']>();
   const identityTargets = new Set<string>();
   if (selected && waiting) {
     for (const entry of entries) {
       const draft = drafts[entry.entry_id];
       const label = snippet(draft?.payload.text ?? entry.payload.text);
-      if (!draft?.reviewed) problems.push(`Review “${label}”: keep or exclude it.`);
+      if (draft && draft.action !== 'skip' && needsConfirmation(entry, draft)) problems.push(`Confirm the extraction or exclude “${label}”.`);
       if (!draft || draft.action === 'skip') continue;
       acceptedCount += 1;
       problems.push(...entryProblems(entry, draft, current).map(problem => `${label}: ${problem}`));
@@ -412,9 +493,9 @@ export function ResumeImport({ api, profile, disabled, onProfile, onDirtyChange,
         if (identityTargets.has(draft.identity_field)) problems.push('Keep only one entry for each personal detail.');
         identityTargets.add(draft.identity_field);
       }
-      if (draft.action === 'replace' && draft.kind !== 'identity') {
-        if (targets.has(draft.claim_id)) problems.push('Each existing entry can be replaced only once.');
-        targets.add(draft.claim_id);
+      if ((draft.action === 'replace' || draft.action === 'unchanged') && draft.kind !== 'identity') {
+        if (targets.has(draft.claim_id) && (draft.action !== 'unchanged' || targets.get(draft.claim_id) !== 'unchanged')) problems.push('Each existing entry can be updated only once; an update cannot also retain it unchanged.');
+        targets.set(draft.claim_id, draft.action);
       }
     }
   }
@@ -424,9 +505,9 @@ export function ResumeImport({ api, profile, disabled, onProfile, onDirtyChange,
     const body: ImportMergeRequest = {
       mode, replace_all_confirmed: mode === 'replace_all' && replaceConfirmed,
       decisions: entries.map(entry => {
-        const draft = drafts[entry.entry_id] ?? initialDraft(entry);
+        const draft = drafts[entry.entry_id] ?? initialDraft(entry, current);
         return { source_ids: entry.sources.map(source => source.source_id), action: draft.action, kind: draft.kind, identity_field: draft.identity_field, payload: draft.payload,
-          ...(draft.action === 'replace' && draft.kind !== 'identity' ? { claim_id: draft.claim_id } : {}) };
+          ...((draft.action === 'replace' || draft.action === 'unchanged') && draft.kind !== 'identity' ? { claim_id: draft.claim_id } : {}) };
       }),
     };
     const path = `/imports/${encodeURIComponent(selected.id)}/merge`;
@@ -453,9 +534,117 @@ export function ResumeImport({ api, profile, disabled, onProfile, onDirtyChange,
     });
   }
 
+  function renderEntryEditor(entry: ImportEntry) {
+          const draft = drafts[entry.entry_id] ?? initialDraft(entry, current);
+          if (!draft.editing) return null;
+          const target = draft.action === 'replace' && draft.kind !== 'identity' ? replacement(current, draft) : undefined;
+          const available = current.current_revision.claims.filter(claim => !claim.archived && claim.kind === draft.kind && claim.kind !== 'identity');
+          const issues = entryProblems(entry, draft, current);
+          if (duplicateEntryIds.has(entry.entry_id)) issues.push('More than one kept entry updates this same destination or replacement target. Exclude one or choose a different destination.');
+          const visibleFields = entryFields(draft, target);
+          const identityValue = draft.kind === 'identity' && draft.identity_field ? current.current_revision.snapshot[draft.identity_field] : '';
+          return <fieldset className="import-entry" key={entry.entry_id} disabled={locked || !waiting}>
+            <legend>Edit entry {currentIndex + 1} · {destinationLabel(draft)}</legend>
+        {drafts[entries[currentIndex]!.entry_id]?.editing && <nav className="import-review-nav" aria-label="Entry editor navigation">
+          <div className="actions">
+            <button type="button" className="secondary" disabled={currentIndex === 0} onClick={() => focusEntry(currentIndex - 1)}>Previous entry</button>
+            <span className="import-position" aria-live="polite">Entry {currentIndex + 1} of {entryCount}</span>
+            <button type="button" className="secondary" disabled={currentIndex >= entryCount - 1} onClick={() => focusEntry(currentIndex + 1)}>Next entry</button>
+            <button type="button" className="secondary" disabled={!unreviewedCount} onClick={nextUnreviewed}>Next entry needing attention</button>
+          </div>
+          <label>Go to entry<select value={currentIndex} onChange={event => focusEntry(Number(event.target.value))}>
+            {entries.map((entry, index) => <option key={entry.entry_id} value={index}>{snippet(drafts[entry.entry_id]?.payload.text ?? entry.payload.text)} · {destinationLabel(drafts[entry.entry_id] ?? initialDraft(entry, current))}</option>)}
+          </select></label>
+        </nav>}
+            <p className="import-entry-title">{snippet(draft.payload.text)}</p>
+            <label>Save to<select value={destination(draft)} onChange={event => {
+              const value = event.target.value;
+              const identity = value === 'display_name' || value === 'headline';
+              updateDraft(entry.entry_id, previous => ({
+                ...previous, kind: identity ? 'identity' : value ? value as ClaimKind : null,
+                identity_field: value === 'display_name' || value === 'headline' ? value : null, payload: identity ? { text: previous.payload.text } : { ...previous.payload },
+                action: 'add', claim_id: '', choices: {}, reviewed: false, identityConfirmed: false,
+              }));
+            }}>{destinations.map(item => <option key={item.value} value={item.value}>{item.label}</option>)}</select></label>
+            {!destination(draft) && <p className="disclosure">Choose where this belongs, or exclude it. Unplaced text cannot be saved.</p>}
+            {entry.issues.length > 0 && <p className="hint">Check this suggestion: {entry.issues.map(issue => issue.replaceAll('_', ' ')).join('; ')}.</p>}
+            <p className="hint">Edits appear in the complete preview immediately. Original source quotes below never change.</p>
+            <details className="import-provenance">
+              <summary>View original source and provenance</summary>
+              {entry.sources.map(source => <div key={source.source_id}>
+                <p>Exact source quote (Unicode span {source.start}–{source.end}, end exclusive):</p>
+                <blockquote className="import-source">{source.quote}</blockquote>
+                <small>Source part {source.source_id}</small>
+              </div>)}
+              <small>Source SHA-256 {selected?.source_sha256 ?? 'Not available'}</small>
+            </details>
+            <div className="actions import-grouping">
+              <button type="button" className="secondary" disabled={currentIndex === 0} onClick={() => regroup(currentIndex - 1, false)}>Combine with previous entry</button>
+              <button type="button" className="secondary" disabled={currentIndex >= entryCount - 1} onClick={() => regroup(currentIndex, false)}>Combine with next entry</button>
+              <button type="button" className="secondary" disabled={entry.sources.length < 2} onClick={() => regroup(currentIndex, true)}>Split into original source parts</button>
+            </div>
+            <p className="hint">Combining requires a fresh review. Splitting restores the original source text and clears edited fields for those parts. Exact source parts are always retained.</p>
+            {draft.kind === 'identity' && <section className="comparison" aria-label="Personal detail comparison">
+              <h4>{draft.identity_field === 'display_name' ? 'Full name' : 'Highlight / tagline'} comparison</h4>
+              <p>Current: {identityValue || 'Not supplied'}</p><p>Imported: {entry.payload.text}</p>
+              <p>Will save: {draft.payload.text}</p>
+              {identityValue && identityValue !== draft.payload.text && <><button type="button" className="secondary" onClick={() => updateDraft(entry.entry_id, previous => ({ ...previous, payload: { text: identityValue }, action: 'unchanged', identityConfirmed: false }))}>Keep current personal detail</button>
+                <label className="import-check"><input type="checkbox" checked={draft.identityConfirmed} onChange={event => updateDraft(entry.entry_id, previous => ({ ...previous, identityConfirmed: event.target.checked, reviewed: false }))} />Replace my current {draft.identity_field === 'display_name' ? 'full name' : 'highlight / tagline'} with this value</label></>}
+            </section>}
+            {draft.kind && draft.kind !== 'identity' && <label>Existing profile entry<select value={draft.action === 'skip' ? 'add' : draft.action} onChange={event => {
+              const action = event.target.value as ReviewDraft['action'];
+              updateDraft(entry.entry_id, previous => ({ ...previous, action, claim_id: action === 'replace' ? previous.claim_id : '', choices: {}, reviewed: false }));
+            }}>
+              {draft.action === 'unchanged' && <option value="unchanged">Keep unchanged; no new claim or source evidence</option>}
+              <option value="add">Add a new entry; keep existing entries</option><option value="replace">Replace an existing entry / attach this source evidence</option>
+            </select></label>}
+            {draft.action === 'unchanged' && <p className="hint">This exact saved entry is retained without new evidence. To explicitly attach the uploaded source, choose “Replace an existing entry / attach this source evidence”.</p>}
+            {draft.action === 'replace' && draft.kind !== 'identity' && <><label>Replacement target<select value={draft.claim_id} onChange={event => {
+              const targetId = event.target.value;
+              const selectedTarget = available.find(claim => claim.id === targetId);
+              updateDraft(entry.entry_id, previous => {
+                const payload = { ...previous.payload };
+                const choices: ReviewDraft['choices'] = {};
+                for (const field of fields) {
+                  if (previous.choices[field.key] === 'edit') choices[field.key] = 'edit';
+                  else if (!entry.payload[field.key] && selectedTarget?.revision.payload[field.key]) {
+                    payload[field.key] = selectedTarget.revision.payload[field.key]!;
+                    choices[field.key] = 'keep';
+                  }
+                }
+                return { ...previous, claim_id: targetId, payload, choices, reviewed: false };
+              });
+            }}>
+              <option value="">Choose an existing entry</option>
+              {draft.claim_id && !target && <option value={draft.claim_id}>Previous target unavailable · {draft.claim_id}</option>}
+              {available.map(claim => <option key={claim.id} value={claim.id}>{claim.revision.payload.text} · {claim.id}</option>)}
+            </select></label><p className="hint">Compare against profile revision {current.current_revision.revision_no}. Choose current, imported, or your own edited value for each differing field.</p></>}
+            {(draft.editing || target) && <div className="import-entry-fields">
+              {draft.kind !== 'identity' && <p className="hint">Dates accept YYYY, YYYY-MM or YYYY-MM-DD. Leave unknown values empty; do not invent precision.</p>}
+              {visibleFields.map(field => <div className={target ? 'comparison' : undefined} key={field.key}>
+                {target && <><h4>{field.label} comparison</h4><p>Current: {target.revision.payload[field.key] || 'Not supplied'}</p><p>Imported: {entry.payload[field.key] || 'Not supplied'}</p>
+                  {(target.revision.payload[field.key] ?? '') !== (entry.payload[field.key] ?? '') && <div className="actions">
+                    <button type="button" className="secondary" aria-pressed={draft.choices[field.key] === 'keep'} onClick={() => chooseField(entry, draft, target, field.key, 'keep')}>Keep current {field.label.toLowerCase()}</button>
+                    <button type="button" className="secondary" aria-pressed={draft.choices[field.key] === 'import'} onClick={() => chooseField(entry, draft, target, field.key, 'import')}>{entry.payload[field.key] ? 'Use imported' : 'Explicitly clear'} {field.label.toLowerCase()}</button>
+                  </div>}
+                  <p className="hint">Choice: {draft.choices[field.key] === 'keep' ? 'keep current' : draft.choices[field.key] === 'import' ? 'use imported' : draft.choices[field.key] === 'edit' ? 'your edited value' : (target.revision.payload[field.key] ?? '') === (entry.payload[field.key] ?? '') ? 'values match' : 'not yet chosen'}</p>
+                </>}
+                <label>{field.label}{field.key === 'text' ? <textarea maxLength={draft.kind === 'identity' ? draft.identity_field === 'display_name' ? 120 : undefined : field.limit} value={draft.payload[field.key] ?? ''} onChange={event => updateDraft(entry.entry_id, previous => ({ ...previous, payload: payloadValue(previous.payload, field.key, event.target.value), choices: { ...previous.choices, [field.key]: 'edit' }, identityConfirmed: false }))} />
+                  : <input maxLength={field.limit} value={draft.payload[field.key] ?? ''} onChange={event => updateDraft(entry.entry_id, previous => ({ ...previous, payload: payloadValue(previous.payload, field.key, event.target.value), choices: { ...previous.choices, [field.key]: 'edit' } }))} />}</label>
+              </div>)}
+            </div>}
+            {issues.length > 0 && draft.action !== 'skip' && <ul className="import-entry-issues" aria-label="Entry needs attention">{issues.map(issue => <li key={issue}>{issue}</li>)}</ul>}
+            <p className="import-decision-status" role="status">{draft.action === 'skip' ? 'Excluded' : issues.length || needsConfirmation(entry, draft) ? 'Needs attention before saving' : draft.action === 'unchanged' ? 'Unchanged · no profile changes' : 'Ready for batch approval'}</p>
+            <div className="actions import-entry-decisions">
+              {needsConfirmation(entry, draft) && draft.action !== 'skip' && <button type="button" disabled={issues.length > 0} onClick={() => updateDraft(entry.entry_id, previous => ({ ...previous, reviewed: true }))}>Confirm extraction</button>}
+              <button type="button" className="secondary" onClick={() => setDrafts(existing => ({ ...existing, [entry.entry_id]: { ...draft, editing: false } }))}>Close entry editor</button>
+              <button type="button" className="secondary" onClick={() => updateDraft(entry.entry_id, previous => ({ ...previous, action: 'skip', reviewed: false, editing: false }))}>Exclude entry</button>
+            </div>
+          </fieldset>;
+  }
   return <section className="panel resume-import" aria-labelledby="resume-import-title">
     <div className="import-intro"><h2 id="resume-import-title">Import a résumé</h2>
-      <p>Turn your résumé into profile facts, one decision at a time. Nothing changes in your profile until you review and approve it.</p>
+      <p>Preview your complete profile, make any corrections, then save the assembled result in one batch. Nothing changes before your approval.</p>
     </div>
     <ol className="import-steps" aria-label="Import progress">{['Choose source', 'Extract', 'Review', 'Complete'].map((label, index) => <li key={label} aria-current={stage === index ? 'step' : undefined} className={stage > index ? 'is-complete' : undefined}>
       <span aria-hidden="true">{stage > index ? '✓' : index + 1}</span><span>{label}</span>
@@ -495,6 +684,7 @@ export function ResumeImport({ api, profile, disabled, onProfile, onDirtyChange,
     {(conflict || stale || (error && waiting)) && <button className="secondary" disabled={operation || disabled || mergeAwaiting} onClick={() => { void loadComparison(); }}>Load current profile for comparison</button>}
     {comparison && <div className="comparison"><h3>Current server profile revision {comparison.current_revision.revision_no}</h3>
       <p>{comparison.current_revision.snapshot.display_name} · {comparison.current_revision.snapshot.headline}</p>
+      <p className="profile-description-preview">Description: {comparison.current_revision.snapshot.description || 'Not supplied'}</p>
       {comparison.current_revision.claims.map(claim => <div key={claim.id}><strong>{claim.kind} · {claim.id}</strong><dl>{fields.map(field => <div key={field.key}><dt>{field.label}</dt><dd>{claim.revision.payload[field.key] || 'Not supplied'}</dd></div>)}</dl></div>)}
       <p>Use this version only after comparison. Your reviewed values remain buffered; replacement fields whose current values changed need a fresh choice. Missing or archived targets must be selected again.</p>
       <button className="secondary" disabled={operation || disabled || mergeAwaiting} onClick={rebase}>Use latest profile and retain review</button>
@@ -519,118 +709,77 @@ export function ResumeImport({ api, profile, disabled, onProfile, onDirtyChange,
         {selected.text !== null ? <pre className="import-source">{selected.text}</pre> : <p>Source text is not available yet.</p>}
       </details>
       {entries.length > 0 && <form onSubmit={submitReview}>
-        <div className="import-review-heading"><h4>Review your profile entries</h4>
-          <p>Check where each entry belongs and what will be saved. Keep, edit or exclude every entry; nothing is selected for saving until you review it.</p>
-          <p className="import-review-progress" role="status">{readyCount} ready to save · {excludedCount} excluded · {unreviewedCount} need review or placement</p>
-          <progress aria-label="Entries reviewed" max={entryCount} value={reviewedCount} />
+        <div className="import-review-heading"><h4>Complete profile preview</h4>
+          <p>New and unchanged entries are ready without individual approval. Edit or exclude any entry; resolve highlighted comparisons before saving. Unresolved fields show the current saved value until you choose.</p>
+          <p className="import-review-progress" role="status">{readyCount} ready · {unchangedCount} unchanged · {excludedCount} excluded · {unreviewedCount} need attention</p>
         </div>
-        <nav className="import-review-nav" aria-label="Entry navigation">
-          <div className="actions">
-            <button type="button" className="secondary" disabled={currentIndex === 0} onClick={() => setEntryIndex(currentIndex - 1)}>Previous entry</button>
-            <span className="import-position" aria-live="polite">Entry {currentIndex + 1} of {entryCount}</span>
-            <button type="button" className="secondary" disabled={currentIndex >= entryCount - 1} onClick={() => setEntryIndex(currentIndex + 1)}>Next entry</button>
-            <button type="button" className="secondary" disabled={!unreviewedCount} onClick={nextUnreviewed}>Next entry needing review</button>
-          </div>
-          <label>Go to entry<select value={currentIndex} onChange={event => setEntryIndex(Number(event.target.value))}>
-            {entries.map((entry, index) => {
-              const draft = drafts[entry.entry_id] ?? initialDraft(entry);
-              return <option key={entry.entry_id} value={index}>{snippet(draft.payload.text)} · {destinationLabel(draft)} · {draft.reviewed ? draft.action === 'skip' ? 'excluded' : 'kept' : 'needs review'}</option>;
-            })}
-          </select></label>
-        </nav>
-        {entries.slice(currentIndex, currentIndex + 1).map(entry => {
-          const draft = drafts[entry.entry_id] ?? initialDraft(entry);
-          const target = draft.action === 'replace' && draft.kind !== 'identity' ? replacement(current, draft) : undefined;
-          const available = current.current_revision.claims.filter(claim => !claim.archived && claim.kind === draft.kind && claim.kind !== 'identity');
-          const issues = entryProblems(entry, draft, current);
-          if (duplicateEntryIds.has(entry.entry_id)) issues.push('More than one kept entry updates this same destination or replacement target. Exclude one or choose a different destination.');
-          const visibleFields = entryFields(draft, target);
-          const identityValue = draft.kind === 'identity' && draft.identity_field ? current.current_revision.snapshot[draft.identity_field] : '';
-          return <fieldset className="import-entry" key={entry.entry_id} disabled={locked || !waiting}>
-            <legend>{destinationLabel(draft)}</legend>
-            <p className="import-entry-title">{snippet(draft.payload.text)}</p>
-            <label>Save to<select value={destination(draft)} onChange={event => {
-              const value = event.target.value;
-              const identity = value === 'display_name' || value === 'headline';
-              updateDraft(entry.entry_id, previous => ({
-                ...previous, kind: identity ? 'identity' : value ? value as ClaimKind : null,
-                identity_field: value === 'display_name' || value === 'headline' ? value : null, payload: identity ? { text: previous.payload.text } : { ...previous.payload },
-                action: 'add', claim_id: '', choices: {}, reviewed: false, identityConfirmed: false,
-              }));
-            }}>{destinations.map(item => <option key={item.value} value={item.value}>{item.label}</option>)}</select></label>
-            {!destination(draft) && <p className="disclosure">Choose where this belongs, or exclude it. Unplaced text cannot be saved.</p>}
-            {entry.issues.length > 0 && <p className="hint">Check this suggestion: {entry.issues.map(issue => issue.replaceAll('_', ' ')).join('; ')}.</p>}
-            <section className="import-saved-preview" aria-label="Saved value preview">
-              <h4>What will be saved</h4>
-              <p>{draft.reviewed && draft.action === 'skip' ? 'Excluded — this entry will not change your profile.' : `${destinationLabel(draft)}${draft.kind === 'identity' ? identityValue ? ' · updates your current personal detail' : ' · adds your personal detail' : draft.action === 'replace' ? ' · replaces the selected existing entry' : ' · new profile entry'}`}</p>
-              <dl>{visibleFields.filter(field => draft.payload[field.key]).map(field => <div key={field.key}><dt>{field.label}</dt><dd>{draft.payload[field.key]}</dd></div>)}</dl>
-            </section>
-            <details className="import-provenance">
-              <summary>View original source and provenance</summary>
-              {entry.sources.map(source => <div key={source.source_id}>
-                <p>Exact source quote (Unicode span {source.start}–{source.end}, end exclusive):</p>
-                <blockquote className="import-source">{source.quote}</blockquote>
-                <small>Source part {source.source_id}</small>
-              </div>)}
-              <small>Source SHA-256 {selected.source_sha256 ?? 'Not available'}</small>
-            </details>
-            <div className="actions import-grouping">
-              <button type="button" className="secondary" disabled={currentIndex === 0} onClick={() => regroup(currentIndex - 1, false)}>Combine with previous entry</button>
-              <button type="button" className="secondary" disabled={currentIndex >= entryCount - 1} onClick={() => regroup(currentIndex, false)}>Combine with next entry</button>
-              <button type="button" className="secondary" disabled={entry.sources.length < 2} onClick={() => regroup(currentIndex, true)}>Split into original source parts</button>
-            </div>
-            <p className="hint">Combining requires a fresh review. Splitting restores the original source text and clears edited fields for those parts. Exact source parts are always retained.</p>
-            {draft.kind === 'identity' && <section className="comparison" aria-label="Personal detail comparison">
-              <h4>{draft.identity_field === 'display_name' ? 'Full name' : 'Headline'} comparison</h4>
-              <p>Current: {identityValue || 'Not supplied'}</p><p>Imported: {entry.payload.text}</p>
-              <p>Will save: {draft.payload.text}</p>
-              {identityValue && <label className="import-check"><input type="checkbox" checked={draft.identityConfirmed} onChange={event => updateDraft(entry.entry_id, previous => ({ ...previous, identityConfirmed: event.target.checked, reviewed: false }))} />Replace my current {draft.identity_field === 'display_name' ? 'full name' : 'headline'} with this value</label>}
-            </section>}
-            {draft.kind && draft.kind !== 'identity' && <label>Existing profile entry<select value={draft.action === 'replace' ? 'replace' : 'add'} onChange={event => updateDraft(entry.entry_id, previous => ({ ...previous, action: event.target.value as 'add' | 'replace', claim_id: '', choices: {}, reviewed: false }))}>
-              <option value="add">Add a new entry; keep existing entries</option><option value="replace">Replace an existing entry in this category</option>
-            </select></label>}
-            {draft.action === 'replace' && draft.kind !== 'identity' && <><label>Replacement target<select value={draft.claim_id} onChange={event => updateDraft(entry.entry_id, previous => ({ ...previous, claim_id: event.target.value, choices: {}, reviewed: false }))}>
-              <option value="">Choose an existing entry</option>
-              {draft.claim_id && !target && <option value={draft.claim_id}>Previous target unavailable · {draft.claim_id}</option>}
-              {available.map(claim => <option key={claim.id} value={claim.id}>{claim.revision.payload.text} · {claim.id}</option>)}
-            </select></label><p className="hint">Compare against profile revision {current.current_revision.revision_no}. Choose current, imported, or your own edited value for each differing field.</p></>}
-            {(draft.editing || target) && <div className="import-entry-fields">
-              {draft.kind !== 'identity' && <p className="hint">Dates accept YYYY, YYYY-MM or YYYY-MM-DD. Leave unknown values empty; do not invent precision.</p>}
-              {visibleFields.map(field => <div className={target ? 'comparison' : undefined} key={field.key}>
-                {target && <><h4>{field.label} comparison</h4><p>Current: {target.revision.payload[field.key] || 'Not supplied'}</p><p>Imported: {entry.payload[field.key] || 'Not supplied'}</p>
-                  {(target.revision.payload[field.key] ?? '') !== (entry.payload[field.key] ?? '') && <div className="actions">
-                    <button type="button" className="secondary" aria-pressed={draft.choices[field.key] === 'keep'} onClick={() => chooseField(entry, draft, target, field.key, 'keep')}>Keep current {field.label.toLowerCase()}</button>
-                    <button type="button" className="secondary" aria-pressed={draft.choices[field.key] === 'import'} onClick={() => chooseField(entry, draft, target, field.key, 'import')}>Use imported {field.label.toLowerCase()}</button>
-                  </div>}
-                  <p className="hint">Choice: {draft.choices[field.key] === 'keep' ? 'keep current' : draft.choices[field.key] === 'import' ? 'use imported' : draft.choices[field.key] === 'edit' ? 'your edited value' : (target.revision.payload[field.key] ?? '') === (entry.payload[field.key] ?? '') ? 'values match' : 'not yet chosen'}</p>
-                </>}
-                <label>{field.label}{field.key === 'text' ? <textarea maxLength={draft.kind === 'identity' ? draft.identity_field === 'display_name' ? 120 : 300 : field.limit} value={draft.payload[field.key] ?? ''} onChange={event => updateDraft(entry.entry_id, previous => ({ ...previous, payload: payloadValue(previous.payload, field.key, event.target.value), choices: { ...previous.choices, [field.key]: 'edit' }, identityConfirmed: false, reviewed: false }))} />
-                  : <input maxLength={field.limit} value={draft.payload[field.key] ?? ''} onChange={event => updateDraft(entry.entry_id, previous => ({ ...previous, payload: payloadValue(previous.payload, field.key, event.target.value), choices: { ...previous.choices, [field.key]: 'edit' }, reviewed: false }))} />}</label>
-              </div>)}
-            </div>}
-            {issues.length > 0 && !(draft.reviewed && draft.action === 'skip') && <ul className="import-entry-issues" aria-label="Entry needs attention">{issues.map(issue => <li key={issue}>{issue}</li>)}</ul>}
-            <p className="import-decision-status" role="status">{draft.reviewed ? draft.action === 'skip' ? 'Reviewed · Excluded' : issues.length ? 'Needs review before saving' : 'Reviewed · Ready to save' : 'Not reviewed'}</p>
-            <div className="actions import-entry-decisions">
-              <button type="button" disabled={issues.length > 0} onClick={() => updateDraft(entry.entry_id, previous => ({ ...previous, action: previous.kind === 'identity' ? identityValue ? 'replace' : 'add' : previous.action === 'replace' ? 'replace' : 'add', reviewed: true, editing: false }))}>{draft.editing ? 'Keep changes' : 'Keep entry'}</button>
-              <button type="button" className="secondary" onClick={() => updateDraft(entry.entry_id, previous => ({ ...previous, editing: true, reviewed: false, action: previous.action === 'skip' ? 'add' : previous.action }))}>Edit entry</button>
-              <button type="button" className="secondary" onClick={() => updateDraft(entry.entry_id, previous => ({ ...previous, action: 'skip', reviewed: true, editing: false }))}>Exclude entry</button>
-            </div>
-          </fieldset>;
-        })}
+        <section className="import-document" aria-label="Assembled profile preview">
+          {[{ value: 'identity', label: 'Personal details' }, ...destinations.filter(item => item.value && item.value !== 'display_name' && item.value !== 'headline'), { value: '', label: 'Needs placement' }].map(section => {
+            const sectionEntries = entries.filter(entry => (drafts[entry.entry_id]?.kind ?? '') === section.value);
+            const previewGroups = new Map<string, ImportEntry[]>();
+            for (const entry of sectionEntries) {
+              const draft = drafts[entry.entry_id];
+              const key = draft?.action === 'unchanged' && draft.kind !== 'identity' && isUnchanged(draft, current)
+                && !needsConfirmation(entry, draft) && !duplicateEntryIds.has(entry.entry_id) ? `claim:${draft.claim_id}` : `entry:${entry.entry_id}`;
+              const group = previewGroups.get(key);
+              if (group) group.push(entry); else previewGroups.set(key, [entry]);
+            }
+            const retained = mode === 'merge' ? current.current_revision.claims.filter(claim => !claim.archived && claim.kind === section.value
+              && !entries.some(entry => { const draft = drafts[entry.entry_id]; return draft && draft.action !== 'skip' && (draft.action === 'replace' || draft.action === 'unchanged') && draft.claim_id === claim.id; })) : [];
+            const retainedIdentity = section.value === 'identity' ? (['display_name', 'headline', 'description'] as const).filter(key => current.current_revision.snapshot[key]
+              && !entries.some(entry => drafts[entry.entry_id]?.kind === 'identity' && drafts[entry.entry_id]?.identity_field === key && drafts[entry.entry_id]?.action !== 'skip')) : [];
+            if (!sectionEntries.length && !retained.length && !retainedIdentity.length) return null;
+            return <section className={`import-document-section${section.value === 'skill' || section.value === 'language' ? ' import-token-section' : ''}`} aria-label={section.label} key={section.value}>
+              <h5>{section.label}</h5>
+              {retainedIdentity.map(key => <div className="import-document-entry" key={key}><dl><dt>{key === 'display_name' ? 'Full name' : key === 'headline' ? 'Highlight / tagline' : 'Description'}</dt><dd className={key === 'description' ? 'profile-description-preview' : undefined}>{current.current_revision.snapshot[key]}</dd></dl><p className="hint">Current value retained</p></div>)}
+              {retained.map(claim => <div className="import-document-entry" key={claim.id}><dl>{fields.filter(field => claim.revision.payload[field.key]).map(field => <div key={field.key}><dt>{field.label}</dt><dd>{claim.revision.payload[field.key]}</dd></div>)}</dl><p className="hint">Current entry retained</p></div>)}
+              {[...previewGroups.values()].map(group => {
+                const entry = group[0]!;
+                const editorEntry = group.find(item => item.entry_id === entries[currentIndex]?.entry_id);
+                const draft = drafts[entry.entry_id] ?? initialDraft(entry, current);
+                const payload = previewPayload(draft, current);
+                const issues = entryProblems(entry, draft, current);
+                const attention = needsConfirmation(entry, draft) || issues.length > 0 || duplicateEntryIds.has(entry.entry_id);
+                const status = draft.action === 'skip' ? 'Excluded' : attention ? 'Needs attention' : draft.action === 'unchanged' ? 'Unchanged' : draft.action === 'replace' ? 'Ready to update' : 'New entry';
+                const index = entries.indexOf(entry);
+                const compact = group.length === 1 && (section.value === 'skill' || section.value === 'language') && !attention && draft.action !== 'skip' && !draft.editing;
+                return <article className={`import-document-entry${compact ? ' is-compact' : ''}${attention && draft.action !== 'skip' ? ' needs-attention' : ''}${editorEntry && drafts[editorEntry.entry_id]?.editing ? ' is-editing' : ''}`} aria-label={`Preview entry ${index + 1}`} key={entry.entry_id}>
+                  {compact ? <button type="button" className="secondary import-token-button" disabled={locked || !waiting} onClick={() => focusEntry(index)} aria-label={`Edit preview entry ${index + 1}`} aria-description={status}>
+                    {payload.text}{payload.proficiency && <small>{payload.proficiency}</small>}
+                  </button> : <>
+                  {draft.action === 'skip' ? <p>{snippet(draft.payload.text)} — not included in the saved profile.</p>
+                    : <dl>{entryFields(draft, replacement(current, draft)).filter(field => payload[field.key]).map(field => <div className={field.key === 'text' && draft.kind !== 'identity' ? 'import-primary-field' : undefined} key={field.key}><dt>{field.label}</dt><dd>{payload[field.key]}</dd></div>)}</dl>}
+                  {attention && draft.action !== 'skip' && <p className="hint">{issues[0] ?? 'Check the extraction, choose a target if needed, then confirm or exclude this entry.'}</p>}
+                  <div className="import-preview-actions">
+                    <span className="import-entry-status">{status}{draft.action === 'replace' && issues.length ? ' · current values retained until resolved' : ''}</span>
+                    {group.map(sourceEntry => {
+                      const sourceIndex = entries.indexOf(sourceEntry);
+                      return <button type="button" className="secondary" disabled={locked || !waiting} onClick={() => focusEntry(sourceIndex)} aria-label={`Edit preview entry ${sourceIndex + 1}`} key={sourceEntry.entry_id}>{group.length > 1 ? `Edit source ${sourceIndex + 1}` : 'Edit'}</button>;
+                    })}
+                    {draft.action === 'skip' && <button type="button" className="secondary" disabled={locked || !waiting} onClick={() => updateDraft(entry.entry_id, previous => ({ ...previous, action: initialDraft(entry, current).action, reviewed: false }))} aria-label={`Include preview entry ${index + 1}`}>Include</button>}
+                  </div>
+                  </>}
+                  {editorEntry && renderEntryEditor(editorEntry)}
+                </article>;
+              })}
+            </section>;
+          })}
+        </section>
         {waiting && <fieldset className="import-approval" disabled={locked}>
-          <legend>Save reviewed entries</legend>
+          <legend>Approve assembled profile</legend>
           <label>Import mode<select value={mode} onChange={event => { setMode(event.target.value as ImportMergeRequest['mode']); setReplaceConfirmed(false); setAttested(false); setReviewDirty(true); }}><option value="merge">Merge only selected facts; keep unrelated profile facts</option><option value="replace_all">Replace all non-identity profile facts with selected facts</option></select></label>
           {mode === 'replace_all' && <div className="disclosure"><p>Replace all archives displaced active facts and sources. Unrelated personal details and immutable history are retained; reviewed personal details may change. Unrelated professional entries will leave the current profile. This is separate from ordinary merge.</p>
             <label><input type="checkbox" checked={replaceConfirmed} onChange={event => { setReplaceConfirmed(event.target.checked); setAttested(false); setReviewDirty(true); }} />I separately confirm replacing all non-identity facts and archiving displaced sources</label></div>}
           <p>{readyCount} of {entries.length} entries ready to save. Profile revision {current.current_revision.revision_no} is the exact save precondition.</p>
+          {noProfileChanges && <p className="hint">All included entries are unchanged. Completing this import keeps the existing profile revision and source evidence; the original upload remains in import history.</p>}
           {problems.length > 0 && <div className="import-remaining">
             <p>{unreviewedCount ? `${unreviewedCount} entries still need review or placement.` : 'Resolve the remaining comparisons before saving.'}</p>
             {unreviewedCount > 0 && <button type="button" className="secondary" onClick={nextUnreviewed}>Continue reviewing entries</button>}
             <details><summary>Remaining review steps ({problems.length})</summary><ul aria-label="Remaining review steps">{Array.from(new Set(problems)).map(problem => <li key={problem}>{problem}</li>)}</ul></details>
           </div>}
-          {!readyCount && <p className="hint">Keep at least one entry. Excluded entries alone cannot change your profile.</p>}
-          <label><input type="checkbox" checked={attested} disabled={problems.length > 0 || !readyCount || conflict || stale || (mode === 'replace_all' && !replaceConfirmed)} onChange={event => { setAttested(event.target.checked); setReviewDirty(true); }} />I reviewed every entry and confirm the kept values are accurate owner assertions, not independent verification</label>
-          <button disabled={!attested || problems.length > 0 || !readyCount || conflict || stale || (mode === 'replace_all' && !replaceConfirmed)}>Save {readyCount} profile {readyCount === 1 ? 'entry' : 'entries'}</button>
+          {!readyCount && <p className="hint">Include at least one valid entry. An all-excluded batch cannot be completed.</p>}
+          <label><input type="checkbox" checked={attested} disabled={problems.length > 0 || !readyCount || conflict || stale || (mode === 'replace_all' && !replaceConfirmed)} onChange={event => { setAttested(event.target.checked); setReviewDirty(true); }} />I approve this assembled profile and confirm its values are accurate owner assertions, not independent verification</label>
+          <button disabled={!attested || problems.length > 0 || !readyCount || conflict || stale || (mode === 'replace_all' && !replaceConfirmed)}>{noProfileChanges ? 'Complete import without profile changes' : 'Save profile'}</button>
         </fieldset>}
       </form>}
     </article>}

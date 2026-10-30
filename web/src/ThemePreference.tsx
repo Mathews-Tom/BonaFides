@@ -10,6 +10,12 @@ const STORAGE_KEY = 'offerloom.theme';
 const PREFERENCE_LIFETIME = 365 * 24 * 60 * 60 * 1000;
 const MAX_TIMEOUT = 2_147_483_647;
 
+const THEME_OPTIONS = [
+  { value: 'system', label: 'System theme', icon: <svg aria-hidden="true" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="13" rx="2" /><path d="M8 21h8m-4-4v4" /></svg> },
+  { value: 'light', label: 'Light theme', icon: <svg aria-hidden="true" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4" /><path d="M12 2v2m0 16v2M2 12h2m16 0h2M5 5l1.5 1.5m11 11L19 19M5 19l1.5-1.5m11-11L19 5" /></svg> },
+  { value: 'dark', label: 'Dark theme', icon: <svg aria-hidden="true" viewBox="0 0 24 24"><path d="M20.8 13.1A9 9 0 0 1 10.9 3.2a9 9 0 1 0 9.9 9.9Z" /></svg> },
+] as const;
+
 function readPreference(): ThemeState {
   const system: ThemeState = { preference: 'system', expiresAt: null, storageUnavailable: false };
   let raw: string | null;
@@ -107,13 +113,9 @@ export function ThemePreference() {
   }
 
   return <div className="theme-preference">
-    <label>Theme
-      <select value={state.preference} aria-describedby={state.storageUnavailable ? `${helpId} ${statusId}` : helpId} onChange={event => { selectPreference(event.currentTarget.value as Preference); }}>
-        <option value="system">System</option>
-        <option value="light">Light</option>
-        <option value="dark">Dark</option>
-      </select>
-    </label>
+    <div className="theme-options" role="group" aria-label="Theme" aria-describedby={state.storageUnavailable ? `${helpId} ${statusId}` : helpId}>
+      {THEME_OPTIONS.map(({ value, label, icon }) => <button key={value} type="button" className="theme-option" aria-label={label} title={label} aria-pressed={state.preference === value} onClick={() => { selectPreference(value); }}>{icon}</button>)}
+    </div>
     <p id={helpId} className="visually-hidden">System follows your device. Light and dark choices are remembered in this browser for one year (365 days) from selection. System removes the saved choice. Documents and PDFs do not change.</p>
     {state.storageUnavailable && <p id={statusId} className="theme-storage-status" role="status">Browser storage is unavailable. This theme choice applies only to this visit; a previously saved choice may return after reload.</p>}
   </div>;

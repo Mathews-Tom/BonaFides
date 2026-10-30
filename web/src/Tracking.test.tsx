@@ -132,7 +132,7 @@ describe('manual application buffers and selection boundaries', () => {
       if (path === '/sources') return { items: [] };
     });
     render(<App api={api} />); await openFirst(); fireEvent.click(screen.getByRole('button', { name: 'Add private note' })); fireEvent.change(screen.getByLabelText(/Private note text/), { target: { value: 'Fictional logout-fenced draft' } });
-    expect(screen.getByRole('button', { name: 'Sign out' })).toBeDisabled(); fireEvent.change(screen.getByLabelText('Theme'), { target: { value: 'dark' } }); expect(screen.getByLabelText(/Private note text/)).toHaveValue('Fictional logout-fenced draft');
+    expect(screen.getByRole('button', { name: 'Sign out' })).toBeDisabled(); fireEvent.click(screen.getByRole('button', { name: 'Dark theme' })); expect(screen.getByLabelText(/Private note text/)).toHaveValue('Fictional logout-fenced draft');
     fireEvent.click(screen.getByRole('button', { name: 'Sign out' })); expect(request.mock.calls.some(call => call[0] === '/session' && call[1] === 'DELETE')).toBe(false);
     fireEvent.click(screen.getByRole('button', { name: 'Discard tracking buffer' })); expect(screen.getByRole('button', { name: 'Sign out' })).toBeEnabled();
   });

@@ -15,9 +15,10 @@ from test_identity import IdentityContext, _bootstrap
 from test_identity import identity as identity
 
 from offerloom.documents import prepare_synthetic, publish_document
+from offerloom.portable_data import collect_owner_data, quarantine_records
 from offerloom.problems import Problem
 from offerloom.profile_entries import evidence_revision, hydrate_claim
-from offerloom.profiles import ProfileSnapshot, _save
+from offerloom.profiles import ProfileSnapshot, _save, canonical, content_hash
 
 
 @pytest.fixture
@@ -124,6 +125,169 @@ def _add_claim(
 
 
 @pytest.mark.postgres
+@pytest.mark.parametrize("character", ["a", "🚀"])
+def test_optional_profile_text_limits_clear_and_preserve_on_older_client_saves(
+    profile_owner: IdentityContext, character: str
+) -> None:
+    with profile_owner.client() as client:
+        boot = _bootstrap(profile_owner, client)
+        csrf = str(_json(boot)["csrf_token"])
+        optional = _mutate(client, profile_owner, csrf, "PUT", "/profile", 1, {})
+        assert optional.status_code == 200, optional.text
+        current = _json(optional)
+        assert current["current_revision"]["snapshot"]["headline"] == ""
+        assert current["current_revision"]["snapshot"]["description"] == ""
+        body: dict[str, object] = {"headline": character * 300, "description": character * 2000}
+        accepted = _mutate(client, profile_owner, csrf, "PUT", "/profile", current["version"], body)
+        assert accepted.status_code == 200, accepted.text
+        current = _json(accepted)
+        assert current["current_revision"]["snapshot"]["headline"] == body["headline"]
+        assert current["current_revision"]["snapshot"]["description"] == body["description"]
+        for field, limit in (("headline", 300), ("description", 2000)):
+            invalid = _mutate(
+                client,
+                profile_owner,
+                csrf,
+                "PUT",
+                "/profile",
+                current["version"],
+                {**body, field: character * (limit + 1)},
+            )
+            assert invalid.status_code == 422, invalid.text
+            if field == "description":
+                assert invalid.json()["fields"][0]["loc"] == ["body", "description"]
+            assert client.get("/api/v1/profile").json() == current
+        key = uuid4().hex
+        older_client = _mutate(
+            client,
+            profile_owner,
+            csrf,
+            "PUT",
+            "/profile",
+            current["version"],
+            {"headline": body["headline"], "display_name": "Updated name"},
+            key,
+        )
+        assert older_client.status_code == 200, older_client.text
+        different_intent = _mutate(
+            client,
+            profile_owner,
+            csrf,
+            "PUT",
+            "/profile",
+            current["version"],
+            {"headline": body["headline"], "display_name": "Updated name", "description": ""},
+            key,
+        )
+        assert different_intent.status_code == 409
+        current = _json(older_client)
+        assert current["current_revision"]["snapshot"]["description"] == body["description"]
+        cleared = _mutate(
+            client,
+            profile_owner,
+            csrf,
+            "PUT",
+            "/profile",
+            current["version"],
+            {"headline": "", "description": ""},
+        )
+        assert cleared.status_code == 200, cleared.text
+        assert _json(cleared)["current_revision"]["snapshot"]["headline"] == ""
+        assert _json(cleared)["current_revision"]["snapshot"]["description"] == ""
+
+
+@pytest.mark.postgres
+def test_legacy_profile_text_survives_edits_portable_validation_and_historical_restore(
+    profile_owner: IdentityContext,
+) -> None:
+    with profile_owner.client() as client:
+        boot = _bootstrap(profile_owner, client)
+        csrf, owner_id = str(_json(boot)["csrf_token"]), UUID(str(_json(boot)["owner_id"]))
+        revision_id = uuid4()
+        legacy = {
+            "display_name": "Legacy owner",
+            "headline": "🚀" * 300,
+            "claim_revision_ids": [],
+            "evidence_revision_ids": [],
+        }
+        digest = content_hash(legacy)
+        # Insert an immutable pre-description snapshot, not a normalized model dump.
+        with profile_owner.admin.transaction() as conn:
+            profile_id = conn.execute(
+                text("SELECT id FROM offerloom.profiles WHERE owner_id=:owner"),
+                {"owner": owner_id},
+            ).scalar_one()
+            conn.execute(
+                text("""INSERT INTO offerloom.profile_revisions
+                (owner_id,id,profile_id,revision_no,snapshot,content_sha256,reason)
+                VALUES(:owner,:id,:profile,2,CAST(:snapshot AS jsonb),:sha,'owner_save')"""),
+                {
+                    "owner": owner_id,
+                    "id": revision_id,
+                    "profile": profile_id,
+                    "snapshot": canonical(legacy),
+                    "sha": digest,
+                },
+            )
+            conn.execute(
+                text("""UPDATE offerloom.profiles SET current_revision_id=:id,version=version+1
+                WHERE owner_id=:owner"""),
+                {"owner": owner_id, "id": revision_id},
+            )
+        historical = client.get(f"/api/v1/profile/revisions/{revision_id}").json()
+        assert historical["snapshot"] == legacy
+        assert historical["content_sha256"] == digest
+        current = client.get("/api/v1/profile").json()
+        assert current["current_revision"]["snapshot"] == legacy
+        edited = _mutate(
+            client,
+            profile_owner,
+            csrf,
+            "PUT",
+            "/profile",
+            current["version"],
+            {**legacy, "description": "Owner biography, not a professional claim."},
+        )
+        assert edited.status_code == 200, edited.text
+        current = _attest(client, profile_owner, csrf, _json(edited)["version"])
+        current = _add_claim(client, profile_owner, csrf, current)
+        assert current["current_revision"]["snapshot"]["headline"] == legacy["headline"]
+        assert current["current_revision"]["snapshot"]["description"] == (
+            "Owner biography, not a professional claim."
+        )
+        assert len(current["current_revision"]["claims"]) == 1
+        with (
+            profile_owner.admin.engine.connect().execution_options(
+                isolation_level="REPEATABLE READ"
+            ) as conn,
+            conn.begin(),
+        ):
+            archive = collect_owner_data(conn, profile_owner.settings, owner_id)
+            quarantine_records(conn, archive)
+            exported = next(
+                row
+                for row in archive.manifest.records["profile_revisions"]
+                if row["id"] == str(revision_id)
+            )
+            assert exported["snapshot"] == legacy
+            assert exported["content_sha256"] == digest
+        restored = _mutate(
+            client,
+            profile_owner,
+            csrf,
+            "POST",
+            "/profile/restore",
+            current["version"],
+            {"revision_id": str(revision_id)},
+        )
+        assert restored.status_code == 200, restored.text
+        snapshot = _json(restored)["current_revision"]["snapshot"]
+        assert snapshot["headline"] == legacy["headline"]
+        assert snapshot["description"] == ""
+        assert client.get(f"/api/v1/profile/revisions/{revision_id}").json() == historical
+
+
+@pytest.mark.postgres
 def test_profile_wide_conflict_and_idempotent_replay(profile_owner: IdentityContext) -> None:
     with profile_owner.client() as client:
         boot = _bootstrap(profile_owner, client)
@@ -191,11 +355,21 @@ def test_history_restore_preserves_displaced_revisions_exact_pins_and_authorship
     with profile_owner.client() as client:
         boot = _bootstrap(profile_owner, client)
         csrf, owner_id = str(_json(boot)["csrf_token"]), str(_json(boot)["owner_id"])
+        identity_edit = _mutate(
+            client,
+            profile_owner,
+            csrf,
+            "PUT",
+            "/profile",
+            1,
+            {"headline": "Local operations analyst", "description": "Owner-authored biography."},
+        )
+        assert identity_edit.status_code == 200, identity_edit.text
         initial = _add_claim(
             client,
             profile_owner,
             csrf,
-            _attest(client, profile_owner, csrf),
+            _attest(client, profile_owner, csrf, _json(identity_edit)["version"]),
             "experience",
             start_date="2022",
             end_date="2023-04",
@@ -203,6 +377,7 @@ def test_history_restore_preserves_displaced_revisions_exact_pins_and_authorship
             role="Operator",
         )
         old_revision_id = initial["current_revision"]["id"]
+        assert initial["current_revision"]["snapshot"]["description"] == "Owner-authored biography."
         claim = initial["current_revision"]["claims"][0]
         immutable_claim = client.get(
             f"/api/v1/claims/{claim['id']}/revisions/{claim['revision']['id']}"

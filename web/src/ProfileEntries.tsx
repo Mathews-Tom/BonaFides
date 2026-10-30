@@ -147,6 +147,7 @@ export function ProfileEntries({ api, profile, disabled, onProfile, onDirtyChang
       {error && <button className="secondary" disabled={locked} onClick={() => { void read(async () => { setComparison(await api.request<Profile>('/profile')); }); }}>Load latest profile for comparison</button>}
       {comparison && <div className="comparison"><h3>Latest saved profile · revision {comparison.current_revision.revision_no}</h3>
         <p>{comparison.current_revision.snapshot.display_name} · {comparison.current_revision.snapshot.headline}</p>
+        <p className="profile-description-preview">Description: {comparison.current_revision.snapshot.description || 'Not supplied'}</p>
         {comparison.current_revision.claims.map(item => <div key={item.id}><strong>{item.kind}</strong><ClaimWords claim={item} /></div>)}
         {comparison.evidence.map(item => <blockquote key={item.id}><p>{item.revision.payload.source}</p><p>{item.revision.payload.text}</p></blockquote>)}
         <p>Your open editor remains unchanged. Rebasing changes the save precondition, not the entry text. Archived entries cannot be revived by saving an old editor.</p>
@@ -212,6 +213,7 @@ export function ProfileEntries({ api, profile, disabled, onProfile, onDirtyChang
       {history && <><ol>{history.map(item => <li key={item.id}><button className="secondary" disabled={locked} onClick={() => { void read(async () => { setPreview(await api.request<ProfileRevision>(`/profile/revisions/${encodeURIComponent(item.id)}`)); setRestoreConfirmed(false); }); }}>Preview profile revision {item.revision_no}</button><p>{item.reason} · {item.created_at} · owner {item.author_owner_id}</p></li>)}</ol>
         {cursor !== null && <button className="secondary" disabled={locked} onClick={() => { void loadHistory(cursor); }}>Load earlier profile revisions</button>}</>}
       {preview && <article className="comparison"><h3>Historical profile revision {preview.revision_no}</h3><p>{preview.snapshot.display_name} · {preview.snapshot.headline}</p>
+        <p className="profile-description-preview">Description: {preview.snapshot.description || 'Not supplied'}</p>
         <p>{preview.created_at} · {preview.reason} · owner {preview.author_owner_id}</p><small>Revision {preview.id} · SHA-256 {preview.content_sha256}</small>
         {preview.claims.map(item => <section key={item.id}><h4>{item.kind}</h4><ClaimWords claim={item} /></section>)}
         <h4>Exact saved source state</h4>{preview.evidence.map(item => <blockquote key={item.id}><p>{item.revision.payload.source}</p><p>{item.revision.payload.text}</p><small>{item.revision.id} · {item.revision.created_at} · owner {item.revision.author_owner_id} · SHA-256 {item.revision.content_sha256}</small></blockquote>)}

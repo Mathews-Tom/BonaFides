@@ -880,12 +880,16 @@ class Proof:
             page.get_by_role("button", name="Sign in", exact=True).click()
             page.get_by_role("link", name="Profile", exact=True).click()
             expect(page.get_by_label("Display name", exact=True)).to_be_visible()
-            expect(page.get_by_label("Professional headline", exact=True)).to_be_visible()
+            expect(page.get_by_label("Highlight / tagline (optional)", exact=True)).to_be_visible()
             expect(page.get_by_label("Display name", exact=True)).to_have_value(
                 snapshot["display_name"]
             )
-            expect(page.get_by_label("Professional headline", exact=True)).to_have_value(
+            expect(page.get_by_label("Highlight / tagline (optional)", exact=True)).to_have_value(
                 snapshot["headline"]
+            )
+            expect(page.get_by_label("Description (optional)", exact=True)).to_be_visible()
+            expect(page.get_by_label("Description (optional)", exact=True)).to_have_value(
+                snapshot.get("description", "")
             )
             require(
                 any(
@@ -896,14 +900,37 @@ class Proof:
                 ),
                 "browser_secure_session_missing",
             )
+            description = "Synthetic description saved through the browser."
+            page.get_by_label("Description (optional)", exact=True).fill(description)
+            with page.expect_response(
+                lambda response: (
+                    response.url == f"{self.origin}/api/v1/profile"
+                    and response.request.method == "PUT"
+                )
+            ) as saved_response:
+                page.get_by_role("button", name="Save profile", exact=True).click()
+            require(saved_response.value.status == 200, "browser_description_save_failed")
+            persisted, _, _ = self.api.request("GET", "/api/v1/profile")
+            require(
+                persisted["current_revision"]["snapshot"].get("description") == description,
+                "browser_description_not_persisted",
+            )
+            # The API commit can precede the editor releasing its unsaved-change guard.
+            expect(
+                page.get_by_role("button", name="Discard identity changes", exact=True)
+            ).to_have_count(0)
             page.reload()
             expect(page.get_by_label("Display name", exact=True)).to_be_visible()
-            expect(page.get_by_label("Professional headline", exact=True)).to_be_visible()
+            expect(page.get_by_label("Highlight / tagline (optional)", exact=True)).to_be_visible()
             expect(page.get_by_label("Display name", exact=True)).to_have_value(
                 snapshot["display_name"]
             )
-            expect(page.get_by_label("Professional headline", exact=True)).to_have_value(
+            expect(page.get_by_label("Highlight / tagline (optional)", exact=True)).to_have_value(
                 snapshot["headline"]
+            )
+            expect(page.get_by_label("Description (optional)", exact=True)).to_be_visible()
+            expect(page.get_by_label("Description (optional)", exact=True)).to_have_value(
+                description
             )
             browser.close()
         self.checked("actual_chromium_secure_localhost_login_and_reload")
@@ -1402,6 +1429,11 @@ def main() -> int:
         proof.evidence["failure"] = (
             str(exc) if isinstance(exc, ProbeFailure) else type(exc).__name__
         )
+        trace = exc.__traceback__
+        while trace is not None:
+            if trace.tb_frame.f_code.co_filename == __file__:
+                proof.evidence["failure_line"] = trace.tb_lineno
+            trace = trace.tb_next
     if proof.created:
         receipt = proof.directory / "receipt.json"
         private_write(receipt, json.dumps(proof.evidence, indent=2))

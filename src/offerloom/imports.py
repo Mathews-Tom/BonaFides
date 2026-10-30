@@ -31,7 +31,7 @@ from offerloom.import_parser import (
 )
 from offerloom.problems import Problem
 from offerloom.profile_entries import ClaimKind, ClaimPayload, _snapshot
-from offerloom.profiles import _save, content_hash
+from offerloom.profiles import MAX_HEADLINE_LENGTH, _save, content_hash
 from offerloom.storage import BlobStore
 from offerloom.workflows import Claim, append_attempt_event, assert_fence, enqueue, publish
 
@@ -117,9 +117,25 @@ class ImportEntry(StrictModel):
     issues: list[str] = Field(default_factory=list)
 
 
+class ImportComparison(StrictModel):
+    status: Literal["new", "unchanged", "conflict", "needs_attention"]
+    target_claim_id: UUID | None = None
+    candidate_claim_ids: list[UUID] = Field(default_factory=list)
+
+
+class ImportPreviewEntry(ImportEntry):
+    comparison: ImportComparison
+
+
+class _SavedClaim(StrictModel):
+    claim_id: UUID
+    kind: ClaimKind
+    payload: ClaimPayload
+
+
 class ImportDecision(StrictModel):
     source_ids: list[UUID] = Field(min_length=1, max_length=MAX_IMPORT_SOURCES)
-    action: Literal["skip", "add", "replace"]
+    action: Literal["skip", "add", "replace", "unchanged"]
     claim_id: UUID | None = None
     kind: ClaimKind | None
     identity_field: IdentityField | None = None
@@ -288,7 +304,11 @@ def project_entries(
         identity_field: IdentityField | None = None
         if index == 0 and section is None and _name_like(proposal.quote):
             kind, identity_field = "identity", "display_name"
-        elif section == "headline" and section_seen == 0 and len(proposal.quote) <= 300:
+        elif (
+            section == "headline"
+            and section_seen == 0
+            and len(proposal.quote) <= MAX_HEADLINE_LENGTH
+        ):
             # Only a single literal line in a bounded summary is a clear headline.
             following = proposals[index + 1] if index + 1 < len(proposals) else None
             boundary = source[end : following.source_start] if following else "\n\n"
@@ -327,6 +347,11 @@ def project_entries(
             if kind in {"experience", "education", "project"}:
                 payload = _literal_fields(literal, kind)
             issues = ["needs_placement"] if kind is None else []
+            if kind in {"experience", "education", "project"} and (
+                _DATE_RANGE.fullmatch(literal.split("|")[-1].strip()) is not None
+                and payload.start_date is None
+            ):
+                issues.append("invalid_extracted_fields")
             entry = ImportEntry(
                 entry_id=uuid5(NAMESPACE_URL, f"offerloom:entry:{part.source_id}"),
                 kind=kind,
@@ -335,7 +360,7 @@ def project_entries(
                 sources=[part],
                 issues=issues,
             )
-            if (
+            group_continuation = bool(
                 entries
                 and kind in {"experience", "education", "project"}
                 and entries[-1].kind == kind
@@ -353,8 +378,12 @@ def project_entries(
                         else None
                     ),
                 )
-                and len(entries[-1].payload.text) + len(literal) + 1 <= 4000
-            ):
+            )
+            if group_continuation and len(entries[-1].payload.text) + len(literal) + 1 > 4000:
+                entries[-1].issues.append("source_group_too_long")
+                entry.issues.append("source_group_too_long")
+                entries.append(entry)
+            elif group_continuation:
                 previous = entries[-1]
                 combined = previous.payload.text + "\n" + literal
                 previous.sources.append(part)
@@ -367,7 +396,12 @@ def project_entries(
                     }
                 )
                 fields["text"] = combined
-                previous.payload = ClaimPayload.model_validate(fields)
+                try:
+                    previous.payload = ClaimPayload.model_validate(fields)
+                except ValueError:
+                    previous.payload = ClaimPayload(text=combined)
+                    previous.issues.append("invalid_extracted_fields")
+                previous.issues.extend(entry.issues)
                 previous.entry_id = uuid5(
                     NAMESPACE_URL,
                     "offerloom:entry:" + ":".join(str(item.source_id) for item in previous.sources),
@@ -445,6 +479,67 @@ def _can_group(entry: ImportEntry, literal: str, following: str | None) -> bool:
     )
 
 
+def _saved_claims(conn: Connection, owner_id: UUID, ids: list[UUID]) -> list[_SavedClaim]:
+    rows = conn.execute(
+        text("""SELECT c.id,c.kind,r.payload FROM offerloom.professional_claims c
+        JOIN offerloom.claim_revisions r ON r.owner_id=c.owner_id AND r.id=c.current_revision_id
+        WHERE c.owner_id=:owner AND c.archived_at IS NULL
+        AND r.id=ANY(CAST(:ids AS uuid[])) ORDER BY c.created_at,c.id"""),
+        {"owner": owner_id, "ids": ids},
+    ).mappings()
+    return [
+        _SavedClaim(claim_id=row["id"], kind=row["kind"], payload=row["payload"]) for row in rows
+    ]
+
+
+def _same_entity(kind: ClaimKind, left: ClaimPayload, right: ClaimPayload) -> bool:
+    if kind in {"experience", "education"}:
+        return all(
+            getattr(left, field) and getattr(left, field) == getattr(right, field)
+            for field in ("organization", "role", "start_date")
+        )
+    if kind == "project":
+        return bool(left.project_url and left.project_url == right.project_url)
+    return bool(left.text and left.text == right.text)
+
+
+def _compare_entry(
+    entry: ImportEntry, saved: list[_SavedClaim], identity: dict[str, str]
+) -> ImportComparison:
+    if entry.issues or entry.kind is None or len(entry.payload.text) > 4000:
+        return ImportComparison(status="needs_attention")
+    if entry.kind == "identity":
+        field = entry.identity_field
+        if field is None or len(entry.payload.text) > (120 if field == "display_name" else 300):
+            return ImportComparison(status="needs_attention")
+        current = identity[field]
+        return ImportComparison(
+            status="new"
+            if not current
+            else "unchanged"
+            if current == entry.payload.text
+            else "conflict"
+        )
+    same_kind = [claim for claim in saved if claim.kind == entry.kind]
+    exact = [claim.claim_id for claim in same_kind if claim.payload == entry.payload]
+    if len(exact) == 1:
+        return ImportComparison(
+            status="unchanged", target_claim_id=exact[0], candidate_claim_ids=exact
+        )
+    candidates = exact or [
+        claim.claim_id
+        for claim in same_kind
+        if _same_entity(entry.kind, entry.payload, claim.payload)
+    ]
+    if len(candidates) > 1:
+        return ImportComparison(status="needs_attention", candidate_claim_ids=candidates)
+    if candidates:
+        return ImportComparison(
+            status="conflict", target_claim_id=candidates[0], candidate_claim_ids=candidates
+        )
+    return ImportComparison(status="new")
+
+
 def get_batch(conn: Connection, owner_id: UUID, import_id: UUID) -> dict[str, object]:
     row = (
         conn.execute(
@@ -458,6 +553,13 @@ def get_batch(conn: Connection, owner_id: UUID, import_id: UUID) -> dict[str, ob
     )
     if row is None:
         raise Problem(404, "import_not_found")
+    comparison_version = conn.execute(
+        text("SELECT version FROM offerloom.profiles WHERE owner_id=:owner FOR SHARE"),
+        {"owner": owner_id},
+    ).scalar_one()
+    snapshot = _snapshot(conn, owner_id)
+    saved = _saved_claims(conn, owner_id, snapshot.claim_revision_ids)
+    identity = {"display_name": snapshot.display_name, "headline": snapshot.headline}
     return {
         "id": str(row["id"]),
         "workflow_id": str(row["workflow_run_id"]),
@@ -469,7 +571,10 @@ def get_batch(conn: Connection, owner_id: UUID, import_id: UUID) -> dict[str, ob
         "source_sha256": row["source_sha256"],
         "text": row["parsed_text"],
         "entries": [
-            entry.model_dump(mode="json")
+            ImportPreviewEntry(
+                **entry.model_dump(),
+                comparison=_compare_entry(entry, saved, identity),
+            ).model_dump(mode="json")
             for entry in (
                 project_entries(
                     row["parsed_text"],
@@ -482,6 +587,7 @@ def get_batch(conn: Connection, owner_id: UUID, import_id: UUID) -> dict[str, ob
         ],
         "warnings": row["warnings"],
         "profile_version": int(row["profile_version"]),
+        "comparison_profile_version": int(comparison_version),
         "error_code": row["last_error_code"],
     }
 
@@ -523,8 +629,10 @@ def _validate_review(
     if review.mode == "replace_all" and not review.replace_all_confirmed:
         raise Problem(422, "import_replace_confirmation_required")
     replacements: dict[UUID, RowMapping] = {}
+    unchanged_targets: set[UUID] = set()
     snapshot = _snapshot(conn, owner_id)
     current_ids = set(snapshot.claim_revision_ids)
+    saved = _saved_claims(conn, owner_id, snapshot.claim_revision_ids)
     identity_fields: set[IdentityField] = set()
     for decision in review.decisions:
         if decision.identity_field is not None and decision.kind != "identity":
@@ -554,20 +662,36 @@ def _validate_review(
                 if key != "text"
             ):
                 raise Problem(422, "import_identity_invalid")
-            limit = 120 if field == "display_name" else 300
+            limit = 120 if field == "display_name" else MAX_HEADLINE_LENGTH
             if len(decision.payload.text) > limit:
                 raise Problem(422, "import_identity_invalid")
             populated = bool(getattr(snapshot, field))
-            if decision.action != ("replace" if populated else "add"):
+            if decision.action == "unchanged":
+                if decision.payload.text != getattr(snapshot, field):
+                    raise Problem(422, "import_unchanged_invalid")
+            elif decision.action != ("replace" if populated else "add"):
                 raise Problem(422, "import_identity_overwrite_required")
             identity_fields.add(field)
             continue
-        if decision.action != "replace":
+        if decision.action not in {"replace", "unchanged"}:
             if decision.claim_id is not None:
                 raise Problem(422, "import_target_invalid")
             continue
-        if decision.claim_id is None or decision.claim_id in replacements:
+        if decision.claim_id is None or (
+            decision.claim_id in replacements
+            and (decision.action != "unchanged" or decision.claim_id not in unchanged_targets)
+        ):
             raise Problem(422, "import_target_invalid")
+        if decision.action == "unchanged":
+            exact = [
+                claim.claim_id
+                for claim in saved
+                if claim.kind == decision.kind and claim.payload == decision.payload
+            ]
+            if exact != [decision.claim_id]:
+                raise Problem(422, "import_unchanged_invalid")
+            if decision.claim_id in unchanged_targets:
+                continue
         row = (
             conn.execute(
                 text("""SELECT c.* FROM offerloom.professional_claims c JOIN offerloom.profiles p
@@ -587,6 +711,8 @@ def _validate_review(
         ):
             raise Problem(422, "import_target_invalid")
         replacements[decision.claim_id] = row
+        if decision.action == "unchanged":
+            unchanged_targets.add(decision.claim_id)
     claim_count = conn.execute(
         text("""SELECT count(*) FROM offerloom.professional_claims
         WHERE owner_id=:owner AND archived_at IS NULL
@@ -603,17 +729,24 @@ def _validate_review(
         SELECT 1 FROM offerloom.claim_evidence_links l JOIN offerloom.professional_claims c
         ON c.owner_id=l.owner_id AND c.current_revision_id=l.claim_revision_id
         JOIN offerloom.evidence_revisions r ON r.owner_id=l.owner_id AND r.id=l.evidence_revision_id
-        WHERE c.owner_id=e.owner_id AND c.archived_at IS NULL AND c.kind='identity' AND r.evidence_id=e.id)
+        WHERE c.owner_id=e.owner_id AND c.archived_at IS NULL
+        AND (c.kind='identity' OR c.id=ANY(CAST(:unchanged AS uuid[]))) AND r.evidence_id=e.id)
         OR EXISTS(SELECT 1 FROM offerloom.evidence_revisions r WHERE r.owner_id=e.owner_id
         AND r.id=e.current_revision_id AND r.payload->>'identity_field' IN ('display_name','headline')))"""),
-        {"owner": owner_id, "replace_all": review.mode == "replace_all"},
+        {
+            "owner": owner_id,
+            "replace_all": review.mode == "replace_all",
+            "unchanged": [
+                item.claim_id for item in accepted if item.action == "unchanged" and item.claim_id
+            ],
+        },
     ).scalar_one()
     if (
         claim_count + sum(item.action == "add" and item.kind != "identity" for item in accepted)
         > 100
     ):
         raise Problem(422, "claim_limit")
-    if evidence_count + len(accepted) > 200:
+    if evidence_count + sum(item.action != "unchanged" for item in accepted) > 200:
         raise Problem(422, "evidence_limit")
     return replacements
 
@@ -676,7 +809,7 @@ def stage_parsed(
 
 
 def merge_reviewed(conn: Connection, task: Claim) -> dict[str, object]:
-    """Called only inside publish(): one locked transaction, one profile revision."""
+    """Called only inside publish(): one locked transaction, at most one profile revision."""
     batch = _batch_for_task(conn, task)
     if batch["review"] is None:
         raise Problem(409, "import_review_required")
@@ -688,7 +821,8 @@ def merge_reviewed(conn: Connection, task: Claim) -> dict[str, object]:
         raise Problem(409, "import_review_expired")
     profile = (
         conn.execute(
-            text("SELECT id,version FROM offerloom.profiles WHERE owner_id=:owner FOR UPDATE"),
+            text("""SELECT id,version,current_revision_id FROM offerloom.profiles
+            WHERE owner_id=:owner FOR UPDATE"""),
             {"owner": task.owner_id},
         )
         .mappings()
@@ -724,20 +858,28 @@ def merge_reviewed(conn: Connection, task: Claim) -> dict[str, object]:
                 {"owner": task.owner_id},
             ).scalars()
         )
-        # Keep immutable sources pinned by preserved identity facts; archive displaced sources.
+        # Preserve sources of unchanged targets and identity; archive genuinely displaced sources.
         conn.execute(
             text("""UPDATE offerloom.evidence_records e SET archived_at=clock_timestamp(),version=version+1
             WHERE e.owner_id=:owner AND e.archived_at IS NULL AND NOT EXISTS(
             SELECT 1 FROM offerloom.claim_evidence_links l JOIN offerloom.professional_claims c
             ON c.owner_id=l.owner_id AND c.current_revision_id=l.claim_revision_id
             JOIN offerloom.evidence_revisions r ON r.owner_id=l.owner_id AND r.id=l.evidence_revision_id
-            WHERE c.owner_id=e.owner_id AND c.archived_at IS NULL AND c.kind='identity' AND r.evidence_id=e.id)
+            WHERE c.owner_id=e.owner_id AND c.archived_at IS NULL
+            AND (c.kind='identity' OR c.id=ANY(CAST(:unchanged AS uuid[]))) AND r.evidence_id=e.id)
             AND NOT EXISTS(SELECT 1 FROM offerloom.evidence_revisions r WHERE r.owner_id=e.owner_id
             AND r.id=e.current_revision_id AND r.payload->>'identity_field' IN ('display_name','headline'))"""),
-            {"owner": task.owner_id},
+            {
+                "owner": task.owner_id,
+                "unchanged": [
+                    item.claim_id
+                    for item in review.decisions
+                    if item.action == "unchanged" and item.claim_id
+                ],
+            },
         )
     for decision in review.decisions:
-        if decision.action == "skip":
+        if decision.action in {"skip", "unchanged"}:
             continue
         parts = sorted(
             (sources[source_id] for source_id in decision.source_ids), key=lambda part: part.start
@@ -837,27 +979,35 @@ def merge_reviewed(conn: Connection, task: Claim) -> dict[str, object]:
     # Recheck the cancellation/lease/deadline after constructing effects and before publication.
     # Any refusal rolls the complete transaction back, including all immutable rows above.
     assert_fence(conn, task)
-    result = _save(
-        conn,
-        task.owner_id,
-        snapshot.model_copy(update={"claim_revision_ids": claim_ids, **identity_updates}),
-        "import_reviewed_merge",
-    )
+    if review.mode == "merge" and all(
+        item.action in {"skip", "unchanged"} for item in review.decisions
+    ):
+        revision_id = str(profile["current_revision_id"])
+        profile_version = int(profile["version"])
+    else:
+        result = _save(
+            conn,
+            task.owner_id,
+            snapshot.model_copy(update={"claim_revision_ids": claim_ids, **identity_updates}),
+            "import_reviewed_merge",
+        )
+        revision = cast(dict[str, object], result["current_revision"])
+        revision_id = str(revision["id"])
+        profile_version = int(str(result["version"]))
     if conn.execute(
         text("SELECT :expiry<=clock_timestamp()"), {"expiry": batch["review_expires_at"]}
     ).scalar_one():
         raise Problem(409, "import_review_expired")
     assert_fence(conn, task)
-    revision = cast(dict[str, object], result["current_revision"])
     conn.execute(
         text("""UPDATE offerloom.import_batches SET merged_profile_revision_id=:revision
         WHERE owner_id=:owner AND id=:id"""),
-        {"owner": task.owner_id, "id": batch["id"], "revision": UUID(str(revision["id"]))},
+        {"owner": task.owner_id, "id": batch["id"], "revision": UUID(revision_id)},
     )
     return {
         "import_id": str(batch["id"]),
-        "profile_revision_id": revision["id"],
-        "profile_version": result["version"],
+        "profile_revision_id": revision_id,
+        "profile_version": profile_version,
     }
 
 
