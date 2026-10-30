@@ -943,6 +943,8 @@ language-keyed renderer. `claims.grounded(claim, excerpt)` supports a structured
 when that complete rendered sentence occurs verbatim inside its evidence excerpt after
 Unicode NFKC normalization, casefolding, whitespace collapse and conversion of typographic
 quotes/dashes to ASCII. A trailing `.` or `;` on the rendering is ignored.
+The rendering must match a whole phrase, not part of a longer word or amount: a trailing
+count of `30` cannot match `300`, `30%`, `30x`, `30×`, `30,200`, `30.5` or `30€`.
 
 This is literal containment, not semantic inference about surrounding text. Alternate verbs,
 paraphrases, reordered phrases, alternate number/date formats and separated fragments do not

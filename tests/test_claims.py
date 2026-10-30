@@ -173,6 +173,32 @@ def test_abbreviations_ground_against_their_own_rendering(subject: str) -> None:
 
 
 @pytest.mark.parametrize(
+    ("excerpt", "expected"),
+    [
+        ("Reduced incidents by 30%", False),
+        ("Reduced incidents by 300", False),
+        ("Reduced incidents by 30x", False),
+        ("Reduced incidents by 30×", False),
+        ("Reduced incidents by 30,200", False),
+        ("Reduced incidents by 30.5", False),
+        ("Reduced incidents by 30€", False),
+        ("Reduced incidents by 30֏", False),
+        ("Unreduced incidents by 30", False),
+        ("Reduced incidents by 30 in 2023", True),
+        ("Reduced incidents by 30.", True),
+        ("Review: Reduced incidents by 30; confirmed.", True),
+    ],
+)
+def test_grounding_matches_a_whole_phrase_not_a_longer_token(excerpt: str, expected: bool) -> None:
+    claim = _claim(
+        verb="reduced",
+        subject="incidents",
+        metric={"value": "30", "unit": "count", "change": "decrease"},
+    )
+    assert grounded(claim, excerpt) is expected
+
+
+@pytest.mark.parametrize(
     ("fields", "excerpt"),
     [
         ({"subject": "the migration"}, "Assisted with the migration led by Alice"),

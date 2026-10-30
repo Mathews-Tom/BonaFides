@@ -274,7 +274,16 @@ def grounded(claim: StructuredClaim, excerpt: str) -> bool:
 
     Both texts use NFKC, casefolding, collapsed whitespace and ASCII quotes/dashes.
     A trailing full stop or semicolon on the rendering is ignored; wording is not.
+    Phrase boundaries exclude matches within longer words or numeric amounts.
     This is literal containment, not a semantic assessment of the surrounding text.
     """
     rendering = _normalise_grounding(render_claim(claim, "en")).rstrip(".;")
-    return rendering in _normalise_grounding(excerpt)
+    quoted = _normalise_grounding(excerpt)
+    # Currency symbols present in the excerpt are escaped, never treated as regex syntax.
+    currencies = re.escape("".join({char for char in quoted if unicodedata.category(char) == "Sc"}))
+    currency_boundary = rf"|[{currencies}]" if currencies else ""
+    pattern = (
+        rf"(?<![^\W_]){re.escape(rendering)}"
+        rf"(?![^\W_]|(?<=\d)[%×]|[.,]\d{currency_boundary})"
+    )
+    return re.search(pattern, quoted) is not None
