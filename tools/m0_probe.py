@@ -915,6 +915,10 @@ class Proof:
                 persisted["current_revision"]["snapshot"].get("description") == description,
                 "browser_description_not_persisted",
             )
+            # The API commit can precede the editor releasing its unsaved-change guard.
+            expect(
+                page.get_by_role("button", name="Discard identity changes", exact=True)
+            ).to_have_count(0)
             page.reload()
             expect(page.get_by_label("Display name", exact=True)).to_be_visible()
             expect(page.get_by_label("Highlight / tagline (optional)", exact=True)).to_be_visible()
