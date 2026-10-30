@@ -3,10 +3,8 @@
 
 from __future__ import annotations
 
-import calendar
-import re
 from collections.abc import Callable, Mapping, Sequence
-from datetime import date, datetime
+from datetime import datetime
 from typing import Annotated, Literal, cast
 from uuid import UUID, uuid4
 
@@ -16,6 +14,13 @@ from sqlalchemy import Connection, text
 from sqlalchemy.engine import RowMapping
 
 from bonafides.auth import Owner, StrictModel, require_owner
+from bonafides.claims import (
+    STRUCTURED_KINDS,
+    StructuredClaim,
+    claim_text,
+    date_bounds,
+    needs_attention,
+)
 from bonafides.commands import command
 from bonafides.db import Database
 from bonafides.problems import Problem
@@ -32,19 +37,6 @@ ClaimKind = Literal[
     "other",
     "language",
 ]
-
-
-def _date_bounds(value: str) -> tuple[date, date]:
-    if re.fullmatch(r"[0-9]{4}(?:-[0-9]{2}(?:-[0-9]{2})?)?", value) is None:
-        raise ValueError("invalid_date")
-    parts = [int(part) for part in value.split("-")]
-    year = parts[0]
-    month = parts[1] if len(parts) > 1 else 1
-    day = parts[2] if len(parts) > 2 else 1
-    lower = date(year, month, day)
-    upper_month = month if len(parts) > 1 else 12
-    upper_day = day if len(parts) > 2 else calendar.monthrange(year, upper_month)[1]
-    return lower, date(year, upper_month, upper_day)
 
 
 def _covered_days(intervals: list[tuple[int, int]]) -> int:
@@ -70,8 +62,8 @@ def experience_coverage(claims: Sequence[Mapping[str, object]]) -> dict[str, int
         if not isinstance(start, str) or not isinstance(end, str):
             unbounded += 1
             continue
-        start_min, start_max = _date_bounds(start)
-        end_min, end_max = _date_bounds(end)
+        start_min, start_max = date_bounds(start)
+        end_min, end_max = date_bounds(end)
         minimum.append((start_max.toordinal(), end_min.toordinal()))
         maximum.append((start_min.toordinal(), end_max.toordinal()))
     return {
@@ -81,8 +73,7 @@ def experience_coverage(claims: Sequence[Mapping[str, object]]) -> dict[str, int
     }
 
 
-class ClaimPayload(StrictModel):
-    text: str = Field(min_length=1, max_length=4000)
+class ClaimContext(StrictModel):
     organization: str | None = Field(default=None, max_length=200)
     role: str | None = Field(default=None, max_length=200)
     start_date: str | None = Field(default=None, max_length=10)
@@ -108,7 +99,7 @@ class ClaimPayload(StrictModel):
     @classmethod
     def valid_date(cls, value: str | None) -> str | None:
         if value is not None:
-            _date_bounds(value)
+            date_bounds(value)
         return value
 
     @field_validator("end_date")
@@ -118,10 +109,14 @@ class ClaimPayload(StrictModel):
         if (
             isinstance(start, str)
             and value is not None
-            and _date_bounds(start)[0] > _date_bounds(value)[1]
+            and date_bounds(start)[0] > date_bounds(value)[1]
         ):
             raise ValueError("invalid_interval")
         return value
+
+
+class ClaimPayload(ClaimContext):
+    text: str = Field(min_length=1, max_length=4000)
 
     @field_validator("text")
     @classmethod
@@ -129,6 +124,12 @@ class ClaimPayload(StrictModel):
         if not value.strip():
             raise ValueError("blank_text")
         return value
+
+
+class StructuredClaimPayload(ClaimContext):
+    """Claim schema v1: the stored statement is its structure, never a sentence."""
+
+    claim: StructuredClaim
 
 
 class EvidencePayload(StrictModel):
@@ -151,8 +152,19 @@ class EvidenceLink(StrictModel):
 
 class ClaimWrite(StrictModel):
     kind: ClaimKind
-    payload: ClaimPayload
+    payload: StructuredClaimPayload | ClaimPayload
     evidence_links: list[EvidenceLink] = Field(min_length=1, max_length=16)
+
+    @field_validator("payload")
+    @classmethod
+    def structured_kind(
+        cls, value: StructuredClaimPayload | ClaimPayload, info: ValidationInfo
+    ) -> StructuredClaimPayload | ClaimPayload:
+        if isinstance(value, StructuredClaimPayload) and info.data.get("kind") not in (
+            STRUCTURED_KINDS
+        ):
+            raise ValueError("structured_claim_kind")
+        return value
 
 
 class EvidenceWrite(StrictModel):
@@ -223,10 +235,13 @@ def hydrate_claim(
         }
         for link in links
     ]
+    payload = cast(dict[str, object], row["payload"])
     result: dict[str, object] = {
         "id": str(row["entity_id"]),
         "kind": row["kind"],
         "revision": revision,
+        "rendering": claim_text(payload),
+        "needs_attention": needs_attention(str(row["kind"]), payload),
     }
     if not historical:
         result.update(

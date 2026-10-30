@@ -30,7 +30,7 @@ from bonafides.import_parser import (
     ParsedImport,
 )
 from bonafides.problems import Problem
-from bonafides.profile_entries import ClaimKind, ClaimPayload, _snapshot
+from bonafides.profile_entries import ClaimKind, ClaimPayload, StructuredClaimPayload, _snapshot
 from bonafides.profiles import MAX_HEADLINE_LENGTH, _save, content_hash
 from bonafides.storage import BlobStore
 from bonafides.workflows import Claim, append_attempt_event, assert_fence, enqueue, publish
@@ -130,7 +130,7 @@ class ImportPreviewEntry(ImportEntry):
 class _SavedClaim(StrictModel):
     claim_id: UUID
     kind: ClaimKind
-    payload: ClaimPayload
+    payload: StructuredClaimPayload | ClaimPayload
 
 
 class ImportDecision(StrictModel):
@@ -492,7 +492,9 @@ def _saved_claims(conn: Connection, owner_id: UUID, ids: list[UUID]) -> list[_Sa
     ]
 
 
-def _same_entity(kind: ClaimKind, left: ClaimPayload, right: ClaimPayload) -> bool:
+def _same_entity(
+    kind: ClaimKind, left: ClaimPayload, right: StructuredClaimPayload | ClaimPayload
+) -> bool:
     if kind in {"experience", "education"}:
         return all(
             getattr(left, field) and getattr(left, field) == getattr(right, field)
@@ -500,7 +502,7 @@ def _same_entity(kind: ClaimKind, left: ClaimPayload, right: ClaimPayload) -> bo
         )
     if kind == "project":
         return bool(left.project_url and left.project_url == right.project_url)
-    return bool(left.text and left.text == right.text)
+    return isinstance(right, ClaimPayload) and bool(left.text and left.text == right.text)
 
 
 def _compare_entry(
