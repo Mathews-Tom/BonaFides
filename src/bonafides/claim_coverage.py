@@ -68,7 +68,7 @@ def main(argv: list[str]) -> int:
     report.add_argument("file", type=Path, help="UTF-8 text file; each non-blank line is a bullet")
     arguments = parser.parse_args(argv)
     try:
-        text = arguments.file.read_text(encoding="utf-8")
+        text = arguments.file.read_text(encoding="utf-8-sig")
     except (OSError, UnicodeDecodeError) as exc:
         parser.error(f"cannot read {arguments.file}: {exc}")
     try:

@@ -60,3 +60,13 @@ def test_claims_coverage_missing_empty_or_undecodable_file_exits_with_usage_erro
     with pytest.raises(SystemExit) as raised:
         cli.main(["claims", "coverage", str(source)])
     assert raised.value.code == 2
+
+
+def test_claims_coverage_reads_a_byte_order_mark_as_no_part_of_line_one(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    source = tmp_path / "bullets.txt"
+    source.write_text("Reduced checkout latency by 35%\n", encoding="utf-8-sig")
+    assert source.read_bytes().startswith(b"\xef\xbb\xbf")
+    assert cli.main(["claims", "coverage", str(source)]) == 0
+    assert capsys.readouterr().out.splitlines()[0] == "Representable: 1 of 1 bullets (100.0%)"
