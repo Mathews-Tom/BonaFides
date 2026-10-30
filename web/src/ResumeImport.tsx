@@ -13,6 +13,8 @@ interface ReviewDraft {
   action: ImportDecision['action']; kind: ImportEntry['kind']; identity_field: ImportEntry['identity_field'];
   claim_id: string; payload: ClaimPayload; reviewed: boolean; editing: boolean; identityConfirmed: boolean;
   choices: Partial<Record<PayloadField, FieldChoice>>;
+  /** Saved claims an earlier approval split this unedited entry into, one per line. */
+  lines: { claimIds: string[]; payload: ClaimPayload } | null;
 }
 
 /** Statement lines of experience and project entries arrive as structured claim proposals. */
@@ -58,7 +60,8 @@ function samePayload(left: ClaimPayload, right: ClaimPayload): boolean {
 function initialDraft(entry: ImportEntry, profile: Profile): ReviewDraft {
   const action = entry.comparison.status === 'unchanged' ? 'unchanged' : entry.comparison.status === 'conflict' ? 'replace' : 'add';
   const draft: ReviewDraft = { action, kind: entry.kind, identity_field: entry.identity_field, claim_id: entry.comparison.target_claim_id ?? '',
-    payload: entry.kind === 'identity' ? { text: entry.payload.text } : { ...entry.payload }, reviewed: false, editing: false, identityConfirmed: false, choices: {} };
+    payload: entry.kind === 'identity' ? { text: entry.payload.text } : { ...entry.payload }, reviewed: false, editing: false, identityConfirmed: false, choices: {},
+    lines: entry.comparison.status === 'unchanged' && entry.comparison.candidate_claim_ids.length > 1 ? { claimIds: entry.comparison.candidate_claim_ids, payload: { ...entry.payload } } : null };
   const target = action === 'replace' ? replacement(profile, draft) : undefined;
   if (target) {
     for (const field of fields) {
@@ -75,6 +78,11 @@ function initialDrafts(batch: ImportBatch, profile: Profile): Record<string, Rev
 }
 function isUnchanged(draft: ReviewDraft, profile: Profile): boolean {
   if (draft.kind === 'identity' && draft.identity_field) return draft.payload.text === profile.current_revision.snapshot[draft.identity_field];
+  if (draft.lines) {
+    // The server matched every line's saved claim; it re-verifies each payload when merging.
+    const active = new Set(profile.current_revision.claims.filter(claim => !claim.archived).map(claim => claim.id));
+    return draft.lines.claimIds[0] === draft.claim_id && samePayload(draft.payload, draft.lines.payload) && draft.lines.claimIds.every(id => active.has(id));
+  }
   const target = replacement(profile, draft);
   return !!target && samePayload(draft.payload, literalClaimPayload(target))
     && profile.current_revision.claims.filter(claim => !claim.archived && claim.kind === draft.kind && samePayload(literalClaimPayload(claim), draft.payload)).length === 1;

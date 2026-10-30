@@ -234,6 +234,18 @@ describe('structured résumé review', () => {
     await user.click(attest()); await user.click(approve());
     expect(state.submissions[0]?.body.decisions[0]).toMatchObject({ action: 'unchanged', claim_id: oldClaim.id, payload: oldClaim.revision.payload });
   });
+  it('retains an entry an earlier approval saved as one claim per line', async () => {
+    const user = userEvent.setup(); const batch = staged();
+    const lines = ['claim-line-1', 'claim-line-2'].map(id => ({ ...oldClaim, id, revision: { ...oldClaim.revision, id: `${id}-revision` } }));
+    const saved = { ...profile, current_revision: { ...profile.current_revision, claims: lines } };
+    batch.entries = [{ ...batch.entries[0]!, comparison: { status: 'unchanged', target_claim_id: 'claim-line-1', candidate_claim_ids: ['claim-line-1', 'claim-line-2'] } }];
+    const { api, state } = server(batch); render(<ResumeImport api={api} profile={saved} disabled={false} onProfile={() => undefined} />); await open(user);
+    expect(screen.queryByText('The saved value changed. Compare this entry with the latest profile.')).not.toBeInTheDocument();
+    expect(screen.getByText(/1 unchanged · 0 excluded · 0 need attention/)).toBeVisible();
+    expect(approve()).toHaveAccessibleName('Complete import without profile changes');
+    await user.click(attest()); await user.click(approve());
+    expect(state.submissions[0]?.body.decisions[0]).toMatchObject({ action: 'unchanged', claim_id: 'claim-line-1', payload: batch.entries[0]!.payload });
+  });
   it('allows repeated source occurrences that retain the same unchanged claim without duplicate-target approval', async () => {
     const user = userEvent.setup(); const batch = staged();
     const skill = { ...oldClaim, id: 'claim-skill', kind: 'skill' as const, revision: { ...oldClaim.revision, payload: { text: 'Fictional SQL' } } };
