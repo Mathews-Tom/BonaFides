@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 import { useEffect, useRef, useState, type FormEvent } from 'react';
-import { Api, errorText, literalClaimPayload, type ClaimKind, type ClaimPayload, type ClaimPeriodSeparator, type ClaimPeriodStyle, type ClaimRateWording, type ClaimRecord, type ClaimRendering, type ClaimVocabulary, type StructuredClaim, type EvidenceLink, type EvidenceRecord, type EvidenceRevision, type PinnedClaim, type Profile, type ProfileRevision, type ProfileRevisionSummary, type RevisionPage } from './api';
+import { Api, errorText, literalClaimPayload, type ClaimKind, type ClaimPayload, type ClaimPeriodSeparator, type ClaimPeriodStyle, type ClaimRateWording, type ClaimRecord, type ClaimRendering, type ClaimVocabulary, type StructuredClaim, type EvidenceLink, type EvidencePrivacyClass, type EvidenceRecord, type EvidenceRevision, type EvidenceSourceType, evidencePrivacyClasses, evidenceSourceTypes, type PinnedClaim, type Profile, type ProfileRevision, type ProfileRevisionSummary, type RevisionPage } from './api';
 import './ProfileEntries.css';
 
 const kinds: { value: ClaimKind; label: string }[] = [
@@ -70,7 +70,7 @@ function contextOf(payload: ClaimPayload): Omit<ClaimPayload, 'text'> {
   delete context.text;
   return context;
 }
-interface EvidenceDraft { id?: string; text: string; source: string; attestation: boolean }
+interface EvidenceDraft { id?: string; text: string; source: string; attestation: boolean; source_type: EvidenceSourceType | ''; privacy_class: EvidencePrivacyClass | ''; employer_owned: boolean }
 interface ArchiveChoice { kind: 'claim' | 'evidence'; id: string; text: string }
 
 function ClaimWords({ claim }: { claim: PinnedClaim }) {
@@ -177,7 +177,8 @@ export function ProfileEntries({ api, profile, disabled, onProfile, onDirtyChang
       pinnedEvidence: value.revision.evidence_links.map(link => link.evidence) });
   }
   function editEvidence(value: EvidenceRecord) {
-    setError(''); setNotice(''); setEvidence({ id: value.id, ...value.revision.payload, attestation: value.revision.payload.source === 'Owner attestation' });
+    setError(''); setNotice(''); const { source_type, privacy_class, employer_owned } = value.revision.provenance;
+    setEvidence({ id: value.id, text: value.revision.payload.text, source: value.revision.payload.source, attestation: value.revision.payload.source === 'Owner attestation', source_type, privacy_class, employer_owned });
   }
   function payloadField(field: keyof ClaimPayload, value: string) {
     if (!claim) return;
@@ -199,8 +200,11 @@ export function ProfileEntries({ api, profile, disabled, onProfile, onDirtyChang
   }
   function submitEvidence(event: FormEvent) {
     event.preventDefault(); if (!evidence) return;
+    const { source_type, privacy_class, employer_owned } = evidence;
+    if (!source_type || !privacy_class) { setError('Choose the source type and privacy class.'); return; }
     void mutate(evidence.id ? `/evidence/${encodeURIComponent(evidence.id)}` : '/evidence', evidence.id ? 'PUT' : 'POST', {
       payload: { text: evidence.text, source: evidence.attestation ? 'Owner attestation' : evidence.source },
+      provenance: { source_type, privacy_class, employer_owned },
     });
   }
   async function loadHistory(before?: number) {
@@ -323,11 +327,14 @@ export function ProfileEntries({ api, profile, disabled, onProfile, onDirtyChang
         <small>Revision {item.revision.revision_no} · {item.revision.id} · {item.revision.created_at} · owner {item.revision.author_owner_id}</small>
         <div className="actions"><button className="secondary" disabled={locked || dirty} onClick={() => editEvidence(item)}>Edit source {index + 1}</button><button className="secondary" disabled={locked || dirty} onClick={() => setArchive({ kind: 'evidence', id: item.id, text: item.revision.payload.text })}>Archive source {index + 1}</button></div>
       </li>)}</ul>}
-      <button className="secondary" disabled={locked || dirty} onClick={() => { setError(''); setEvidence({ text: '', source: '', attestation: false }); }}>Add source or owner attestation</button>
+      <button className="secondary" disabled={locked || dirty} onClick={() => { setError(''); setEvidence({ text: '', source: '', attestation: false, source_type: '', privacy_class: '', employer_owned: false }); }}>Add source or owner attestation</button>
       {evidence && <form onSubmit={submitEvidence}><fieldset disabled={locked}><legend>{evidence.id ? 'Edit saved source' : 'New source'}</legend>
         <label>Source text<textarea ref={evidenceInput} required maxLength={8000} value={evidence.text} onChange={event => setEvidence({ ...evidence, text: event.target.value })} /></label>
         <label className="check"><input type="checkbox" checked={evidence.attestation} onChange={event => setEvidence({ ...evidence, attestation: event.target.checked })} />This is my explicit owner attestation, not independent verification</label>
         <label>Source reference<input required={!evidence.attestation} disabled={evidence.attestation} maxLength={500} value={evidence.attestation ? 'Owner attestation' : evidence.source} onChange={event => setEvidence({ ...evidence, source: event.target.value })} /></label>
+        <label>Source type<select required value={evidence.source_type} onChange={event => setEvidence({ ...evidence, source_type: event.target.value as EvidenceSourceType | '' })}><option value="">Choose a source type</option>{Object.entries(evidenceSourceTypes).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
+        <label>Privacy class<select required value={evidence.privacy_class} onChange={event => setEvidence({ ...evidence, privacy_class: event.target.value as EvidencePrivacyClass | '' })}><option value="">Choose a privacy class</option>{Object.entries(evidencePrivacyClasses).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
+        <label className="check"><input type="checkbox" checked={evidence.employer_owned} onChange={event => setEvidence({ ...evidence, employer_owned: event.target.checked })} />My employer owns this content</label>
         <div className="actions"><button>Save source revision</button><button type="button" className="secondary" onClick={() => { setEvidence(null); setComparison(null); setError(''); }}>Discard source changes</button></div>
       </fieldset></form>}
     </section>

@@ -6,7 +6,7 @@ import { JobSources } from './JobSources';
 import { scalarSelection, Suitability, validSpan } from './Suitability';
 
 const metadata = { id: 'evidence-one', revision_no: 1, content_sha256: 'e'.repeat(64), created_at: '2026-01-01T12:00:00Z', author_owner_id: 'owner-one' };
-const evidence = { ...metadata, payload: { text: 'Maintained SQL queries on Linux.', source: 'Owner attestation' } };
+const evidence = { ...metadata, payload: { text: 'Maintained SQL queries on Linux.', source: 'Owner attestation' }, provenance: { source_type: 'owner_statement' as const, origin: 'owner_entry' as const, privacy_class: 'private' as const, employer_owned: false } };
 const requirement: Requirement = { requirement_key: 'req-1', text: 'SQL', importance: 'required', span: { start: 2, end: 5, quote: 'SQL' }, hard_constraint: null };
 const source = '😀 SQL and Kubernetes.\n<script>untrusted()</script>';
 function initialProfile(): Profile {

@@ -6,7 +6,7 @@ import { Api, ApiError, type ClaimRendering, type ClaimVocabulary, type Profile,
 import { ProfileEntries } from './ProfileEntries';
 
 const metadata = { revision_no: 1, content_sha256: 'a'.repeat(64), created_at: '2026-01-01T00:00:00Z', author_owner_id: 'synthetic-owner' };
-const source = { id: 'source', version: 1, archived: false, current_revision_id: 'source-revision', revision: { ...metadata, id: 'source-revision', payload: { text: 'Synthetic workshop notes.', source: 'Owner attestation' } } };
+const source = { id: 'source', version: 1, archived: false, current_revision_id: 'source-revision', revision: { ...metadata, id: 'source-revision', payload: { text: 'Synthetic workshop notes.', source: 'Owner attestation' }, provenance: { source_type: 'owner_statement' as const, origin: 'owner_entry' as const, privacy_class: 'private' as const, employer_owned: false } } };
 const profile: Profile = {
   id: 'synthetic-profile', version: 1,
   current_revision: {
@@ -555,5 +555,40 @@ describe('focused profile sections', () => {
     await user.click(screen.getByRole('button', { name: 'Use latest version and retain my editor' }));
     expect(onProfile).toHaveBeenCalledWith(latest);
     expect(screen.getByLabelText('Source text')).toHaveValue('Synthetic workshop notes. Retained source changes.');
+  });
+
+  it('saves a source only with an owner-chosen source type and privacy class', async () => {
+    const user = userEvent.setup(); const api = new Api();
+    const request = vi.spyOn(api, 'request').mockImplementation(async <T,>(path: string, method = 'GET') => {
+      if (path === '/evidence' && method === 'POST') return profile as T;
+      throw new ApiError(404, 'not_found');
+    });
+    render(<ProfileEntries api={api} profile={profile} disabled={false} onProfile={vi.fn()} onDirtyChange={vi.fn()} onBusyChange={vi.fn()} />);
+    await user.click(screen.getByRole('button', { name: 'Sources' }));
+    await user.click(screen.getByRole('button', { name: 'Add source or owner attestation' }));
+    await user.type(screen.getByLabelText('Source text'), 'Synthetic design review notes.');
+    await user.type(screen.getByLabelText('Source reference'), 'Synthetic design review');
+    fireEvent.submit(screen.getByRole('button', { name: 'Save source revision' }).closest('form') as HTMLFormElement);
+    expect(await screen.findByText('Choose the source type and privacy class.')).toBeVisible();
+    expect(request.mock.calls.some(([path]) => path === '/evidence')).toBe(false);
+    await user.selectOptions(screen.getByLabelText('Source type'), 'work_sample');
+    await user.selectOptions(screen.getByLabelText('Privacy class'), 'confidential');
+    await user.click(screen.getByLabelText('My employer owns this content'));
+    await user.click(screen.getByRole('button', { name: 'Save source revision' }));
+    const call = request.mock.calls.find(([path, method]) => path === '/evidence' && method === 'POST');
+    expect(call?.[2]).toEqual({
+      payload: { text: 'Synthetic design review notes.', source: 'Synthetic design review' },
+      provenance: { source_type: 'work_sample', privacy_class: 'confidential', employer_owned: true },
+    });
+  });
+
+  it('opens a saved source with its recorded provenance', async () => {
+    const user = userEvent.setup();
+    render(<ProfileEntries api={new Api()} profile={profile} disabled={false} onProfile={vi.fn()} onDirtyChange={vi.fn()} onBusyChange={vi.fn()} />);
+    await user.click(screen.getByRole('button', { name: 'Sources' }));
+    await user.click(screen.getByRole('button', { name: 'Edit source 1' }));
+    expect(screen.getByLabelText('Source type')).toHaveValue('owner_statement');
+    expect(screen.getByLabelText('Privacy class')).toHaveValue('private');
+    expect(screen.getByLabelText('My employer owns this content')).not.toBeChecked();
   });
 });

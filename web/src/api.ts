@@ -24,7 +24,17 @@ export function literalClaimPayload(claim: PinnedClaim): ClaimPayload {
   return { ...context, text: claim.rendering };
 }
 export interface RevisionMetadata { id: string; revision_no: number; content_sha256: string; created_at: string; author_owner_id: string }
-export interface EvidenceRevision extends RevisionMetadata { payload: { text: string; source: string } }
+export type EvidenceSourceType = 'owner_statement' | 'document' | 'work_sample' | 'web_page' | 'credential' | 'other';
+export type EvidenceOrigin = 'owner_entry' | 'resume_import';
+export type EvidencePrivacyClass = 'public' | 'private' | 'confidential';
+export interface EvidenceClassification { source_type: EvidenceSourceType; privacy_class: EvidencePrivacyClass; employer_owned: boolean }
+export interface EvidenceProvenance extends EvidenceClassification { origin: EvidenceOrigin }
+export const evidenceSourceTypes: Record<EvidenceSourceType, string> = {
+  owner_statement: 'Owner statement', document: 'Document', work_sample: 'Work sample', web_page: 'Web page', credential: 'Credential', other: 'Other',
+};
+export const evidenceOrigins: Record<EvidenceOrigin, string> = { owner_entry: 'Entered by owner', resume_import: 'Résumé import' };
+export const evidencePrivacyClasses: Record<EvidencePrivacyClass, string> = { public: 'Public', private: 'Private', confidential: 'Confidential' };
+export interface EvidenceRevision extends RevisionMetadata { payload: { text: string; source: string }; provenance: EvidenceProvenance }
 export interface EvidenceLink { evidence_revision_id: string; support_kind: 'direct' | 'user_asserted' | 'context'; excerpt: string }
 export interface ClaimRevision extends RevisionMetadata { payload: ProfileClaimPayload; evidence_links: (EvidenceLink & { evidence: EvidenceRevision })[] }
 export interface PinnedClaim { id: string; kind: ClaimKind; revision: ClaimRevision; rendering: string; needs_attention: boolean }
