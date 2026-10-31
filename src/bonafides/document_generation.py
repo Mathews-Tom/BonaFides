@@ -145,17 +145,19 @@ def _fact_data(conn: Connection, owner: UUID, revision: UUID) -> list[dict[str, 
         claims[identifier] = row
     accepted: list[dict[str, object]] = []
     for fact in facts:
-        if str(fact.evidence_id) not in profile.get("evidence_revision_ids", []):
+        if str(fact.evidence_id) not in profile.get("evidence_revision_ids", []) or str(
+            fact.evidence_id
+        ) not in current.get("evidence_revision_ids", []):
             raise Problem(409, "profile_evidence_unavailable")
         found = conn.execute(
-            text("""SELECT cr.id FROM bonafides.evidence_records e JOIN bonafides.evidence_revisions r
+            text("""SELECT e.id FROM bonafides.evidence_records e JOIN bonafides.evidence_revisions r
             ON r.owner_id=e.owner_id AND r.evidence_id=e.id
             JOIN bonafides.evidence_revisions cr ON cr.owner_id=e.owner_id
             AND cr.id=e.current_revision_id WHERE e.owner_id=:owner AND r.id=:id
             AND e.archived_at IS NULL AND cr.content_sha256=r.content_sha256 FOR SHARE OF e"""),
             {"owner": owner, "id": fact.evidence_id},
         ).first()
-        if found is None or str(found[0]) not in current.get("evidence_revision_ids", []):
+        if found is None:
             raise Problem(409, "profile_evidence_unavailable")
         claim = claims[str(fact.claim_id)]
         payload = cast(dict[str, object], claim["payload"])
