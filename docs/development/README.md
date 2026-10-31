@@ -982,7 +982,7 @@ parts remain visible and also select literal approval. The profile stays unchang
 the approved import command runs. Reimports match all saved line claims, preserve their
 unchanged status and supporting evidence, and do not duplicate them in the review preview.
 
-`bonafides claims coverage <file>` reads a local UTF-8 file (with an optional BOM), counts
+`uv run --frozen bonafides claims coverage <file>` reads a local UTF-8 file (with an optional BOM), counts
 every nonblank line, and reports fully mapped, strictly self-grounded claims plus unparsed
 reasons and source line numbers. It does not store or send the file. Compound ownership
 openers, including irregular verbs such as “Built and ran”, remain flagged rather than
