@@ -5,11 +5,15 @@ export interface ProfileContact { email: string; phone: string; location: string
 export interface Snapshot { display_name: string; headline: string; description?: string; claim_revision_ids: string[]; evidence_revision_ids?: string[]; contact?: ProfileContact | null }
 export type ClaimKind = 'identity' | 'experience' | 'education' | 'skill' | 'project' | 'certification' | 'preference' | 'other' | 'language';
 export interface ClaimPayload { text: string; organization?: string; role?: string; start_date?: string; end_date?: string; proficiency?: string; project_url?: string }
-export interface ClaimMetric { value: string; unit: string; magnitude?: string; change?: string; per?: string; measure?: string }
-export interface StructuredClaim { schema_version: 1; verb: string; subject: string; scope?: string; metric?: ClaimMetric; period?: { start: string; end: string } }
+export type ClaimRateWording = 'per' | 'a' | 'an' | 'each' | 'every' | 'adverbial' | 'annual';
+export type ClaimPeriodStyle = 'parenthetical' | 'in_year' | 'range';
+export type ClaimPeriodSeparator = 'hyphen' | 'en_dash' | 'em_dash';
+export interface ClaimMetric { value: string; unit: string; magnitude?: string; change?: string; per?: string; rate_wording?: ClaimRateWording | null; measure?: string }
+export interface ClaimPeriod { start: string; end: string; style?: ClaimPeriodStyle | null; separator?: ClaimPeriodSeparator | null }
+export interface StructuredClaim { schema_version: 1; verb: string; subject: string; scope?: string; metric?: ClaimMetric; period?: ClaimPeriod }
 export type StructuredClaimPayload = Omit<ClaimPayload, 'text'> & { claim: StructuredClaim };
 export type ProfileClaimPayload = ClaimPayload | StructuredClaimPayload;
-export interface ClaimVocabulary { language: string; verbs: { key: string; label: string }[]; units: string[]; changes: string[]; magnitudes: string[]; rates: string[] }
+export interface ClaimVocabulary { language: string; verbs: { key: string; label: string }[]; units: string[]; changes: string[]; magnitudes: string[]; rates: string[]; rate_wordings: ClaimRateWording[]; period_styles: ClaimPeriodStyle[]; period_separators: ClaimPeriodSeparator[] }
 export interface ClaimRendering { language: string; rendering: string }
 /** Literal view of a saved claim: structured statements contribute their rendering as text. */
 export function literalClaimPayload(claim: PinnedClaim): ClaimPayload {

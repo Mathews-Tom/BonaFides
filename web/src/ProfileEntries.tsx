@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 import { useEffect, useRef, useState, type FormEvent } from 'react';
-import { Api, errorText, literalClaimPayload, type ClaimKind, type ClaimPayload, type ClaimRecord, type ClaimRendering, type ClaimVocabulary, type StructuredClaim, type EvidenceLink, type EvidenceRecord, type EvidenceRevision, type PinnedClaim, type Profile, type ProfileRevision, type ProfileRevisionSummary, type RevisionPage } from './api';
+import { Api, errorText, literalClaimPayload, type ClaimKind, type ClaimPayload, type ClaimPeriodSeparator, type ClaimPeriodStyle, type ClaimRateWording, type ClaimRecord, type ClaimRendering, type ClaimVocabulary, type StructuredClaim, type EvidenceLink, type EvidenceRecord, type EvidenceRevision, type PinnedClaim, type Profile, type ProfileRevision, type ProfileRevisionSummary, type RevisionPage } from './api';
 import './ProfileEntries.css';
 
 const kinds: { value: ClaimKind; label: string }[] = [
@@ -10,15 +10,39 @@ const kinds: { value: ClaimKind; label: string }[] = [
   { value: 'identity', label: 'Identity facts' }, { value: 'preference', label: 'Preferences' },
   { value: 'other', label: 'Other facts' },
 ];
-interface StructuredDraft { verb: string; subject: string; scope: string; value: string; unit: string; magnitude: string; change: string; per: string; measure: string; start: string; end: string }
+interface StructuredDraft { verb: string; subject: string; scope: string; value: string; unit: string; magnitude: string; change: string; per: string; rate_wording: ClaimRateWording | ''; measure: string; start: string; end: string; style: ClaimPeriodStyle | ''; separator: ClaimPeriodSeparator | '' }
 interface ClaimDraft { id?: string; kind: ClaimKind; payload: ClaimPayload; structured: StructuredDraft | null; legacyText: string; evidence_links: EvidenceLink[]; pinnedEvidence: EvidenceRevision[] }
 const structuredKinds: ReadonlySet<ClaimKind> = new Set(['experience', 'project']);
-const emptyStructured: StructuredDraft = { verb: 'built', subject: '', scope: '', value: '', unit: 'percent', magnitude: '', change: '', per: '', measure: '', start: '', end: '' };
+const emptyStructured: StructuredDraft = { verb: 'built', subject: '', scope: '', value: '', unit: 'percent', magnitude: '', change: '', per: '', rate_wording: '', measure: '', start: '', end: '', style: '', separator: '' };
+const rateWordingLabels: Record<ClaimRateWording, string> = {
+  per: 'Per', a: 'A', an: 'An', each: 'Each', every: 'Every',
+  adverbial: 'Adverb (daily, weekly, monthly, quarterly, yearly)', annual: 'Annually (year only)',
+};
+const periodStyleLabels: Record<ClaimPeriodStyle, string> = {
+  parenthetical: 'Parenthetical (2021–2022)', in_year: 'In year (in 2022)', range: 'Range (2021–2022, without parentheses)',
+};
+const periodSeparatorLabels: Record<ClaimPeriodSeparator, string> = {
+  hyphen: 'Hyphen (-)', en_dash: 'En dash (–)', em_dash: 'Em dash (—)',
+};
+
+function isSingleYear(draft: StructuredDraft): boolean {
+  return /^\d{4}$/.test(draft.start) && draft.start === draft.end;
+}
+
+function wordingErrorOf(draft: StructuredDraft): string {
+  if (draft.value && draft.rate_wording) {
+    if (!draft.per) return 'Choose a metric rate for the selected rate wording.';
+    if (draft.rate_wording === 'annual' && draft.per !== 'year') return 'Annually requires the year metric rate.';
+  }
+  if ((draft.start || draft.end) && draft.style === 'in_year' && !isSingleYear(draft)) return 'In year wording requires matching year-only start and end dates.';
+  return '';
+}
 
 function draftOf(claim: StructuredClaim): StructuredDraft {
   const metric = claim.metric;
   return { verb: claim.verb, subject: claim.subject, scope: claim.scope ?? '', value: metric?.value ?? '', unit: metric?.unit ?? 'percent',
-    magnitude: metric?.magnitude ?? '', change: metric?.change ?? '', per: metric?.per ?? '', measure: metric?.measure ?? '', start: claim.period?.start ?? '', end: claim.period?.end ?? '' };
+    magnitude: metric?.magnitude ?? '', change: metric?.change ?? '', per: metric?.per ?? '', rate_wording: metric?.rate_wording ?? '', measure: metric?.measure ?? '',
+    start: claim.period?.start ?? '', end: claim.period?.end ?? '', style: claim.period?.style ?? '', separator: claim.period?.separator ?? '' };
 }
 
 /** Omitted optional parts stay absent; nothing is inferred to fill them. */
@@ -30,9 +54,14 @@ function claimOf(draft: StructuredDraft): StructuredClaim {
     if (draft.magnitude) claim.metric.magnitude = draft.magnitude;
     if (draft.change) claim.metric.change = draft.change;
     if (draft.per) claim.metric.per = draft.per;
+    if (draft.rate_wording) claim.metric.rate_wording = draft.rate_wording;
     if (draft.measure) claim.metric.measure = draft.measure;
   }
-  if (draft.start && draft.end) claim.period = { start: draft.start, end: draft.end };
+  if (draft.start && draft.end) {
+    claim.period = { start: draft.start, end: draft.end };
+    if (draft.style) claim.period.style = draft.style;
+    if (draft.separator) claim.period.separator = draft.separator;
+  }
   return claim;
 }
 
@@ -99,7 +128,8 @@ export function ProfileEntries({ api, profile, disabled, onProfile, onDirtyChang
     return () => controller.abort();
   }, [api, structuredOpen, vocabulary, vocabularyAttempt]);
   const structuredDraft = claim?.structured;
-  const renderable = structuredDraft?.subject.trim() ? JSON.stringify(claimOf(structuredDraft)) : '';
+  const wordingError = structuredDraft ? wordingErrorOf(structuredDraft) : '';
+  const renderable = structuredDraft?.subject.trim() && !wordingError ? JSON.stringify(claimOf(structuredDraft)) : '';
   useEffect(() => {
     setRendering(null);
     setRenderingError('');
@@ -155,14 +185,14 @@ export function ProfileEntries({ api, profile, disabled, onProfile, onDirtyChang
     if (field !== 'text' && !value) delete payload[field]; else payload[field] = value;
     setClaim({ ...claim, payload });
   }
-  function structuredField(field: keyof StructuredDraft, value: string) {
+  function structuredField<K extends keyof StructuredDraft>(field: K, value: StructuredDraft[K]) {
     if (claim?.structured) setClaim({ ...claim, structured: { ...claim.structured, [field]: value } });
   }
   function changeLink(index: number, update: Partial<EvidenceLink>) {
     if (claim) setClaim({ ...claim, evidence_links: claim.evidence_links.map((link, position) => position === index ? { ...link, ...update } : link) });
   }
   function submitClaim(event: FormEvent) {
-    event.preventDefault(); if (!claim || (claim.structured && !vocabulary)) return;
+    event.preventDefault(); if (!claim || (claim.structured && (!vocabulary || wordingErrorOf(claim.structured)))) return;
     void mutate(claim.id ? `/claims/${encodeURIComponent(claim.id)}` : '/claims', claim.id ? 'PUT' : 'POST', {
       kind: claim.kind, payload: claim.structured ? { ...contextOf(claim.payload), claim: claimOf(claim.structured) } : claim.payload, evidence_links: claim.evidence_links,
     });
@@ -248,11 +278,18 @@ export function ProfileEntries({ api, profile, disabled, onProfile, onDirtyChang
             <label>Metric magnitude<select value={claim.structured.magnitude} onChange={event => structuredField('magnitude', event.target.value)}><option value="">None</option>{vocabulary.magnitudes.map(value => <option key={value} value={value}>{value}</option>)}</select></label>
             <label>Metric change<select value={claim.structured.change} onChange={event => structuredField('change', event.target.value)}><option value="">None</option>{vocabulary.changes.map(value => <option key={value} value={value}>{value}</option>)}</select></label>
             <label>Metric rate<select value={claim.structured.per} onChange={event => structuredField('per', event.target.value)}><option value="">None</option>{vocabulary.rates.map(value => <option key={value} value={value}>per {value}</option>)}</select></label>
+            <label>Rate wording<select value={claim.structured.rate_wording} onChange={event => structuredField('rate_wording', event.target.value as StructuredDraft['rate_wording'])}><option value="">Per (default)</option>{vocabulary.rate_wordings.map(value => <option key={value} value={value} disabled={!claim.structured?.per || (value === 'annual' && claim.structured.per !== 'year')}>{rateWordingLabels[value]}</option>)}</select></label>
             <label>Metric measure (optional)<input maxLength={200} value={claim.structured.measure} onChange={event => structuredField('measure', event.target.value)} /></label>
           </>}
           <label>Period start (optional)<input maxLength={7} placeholder="YYYY or YYYY-MM" required={claim.structured.end !== ''} value={claim.structured.start} onChange={event => structuredField('start', event.target.value)} /></label>
           <label>Period end (optional)<input maxLength={7} placeholder="YYYY or YYYY-MM" required={claim.structured.start !== ''} value={claim.structured.end} onChange={event => structuredField('end', event.target.value)} /></label>
           <p className="hint">A period needs both a start and an end.</p>
+          {vocabulary && (claim.structured.start || claim.structured.end) && <>
+            <label>Period wording<select value={claim.structured.style} onChange={event => structuredField('style', event.target.value as StructuredDraft['style'])}><option value="">Parenthetical (default)</option>{vocabulary.period_styles.map(value => <option key={value} value={value} disabled={value === 'in_year' && (!structuredDraft || !isSingleYear(structuredDraft))}>{periodStyleLabels[value]}</option>)}</select></label>
+            <label>Period separator<select value={claim.structured.separator} onChange={event => structuredField('separator', event.target.value as StructuredDraft['separator'])}><option value="">En dash (default)</option>{vocabulary.period_separators.map(value => <option key={value} value={value}>{periodSeparatorLabels[value]}</option>)}</select></label>
+            <p className="hint">In year wording needs the same year-only date at both bounds. Separators apply when a range is rendered.</p>
+          </>}
+          {wordingError && <p className="error" role="alert">{wordingError}</p>}
           <p className="hint">The source excerpt must contain the complete rendered sentence as written.</p>
           <h4>Rendering (English)</h4><output aria-live="polite" aria-label="Claim rendering">{rendering ?? (renderingError ? 'Preview unavailable.' : 'Complete the structured fields to preview the rendering.')}</output>
           {renderingError && <p className="error" role="alert">Could not preview the claim: {renderingError}</p>}
@@ -274,7 +311,7 @@ export function ProfileEntries({ api, profile, disabled, onProfile, onDirtyChang
           <button type="button" className="secondary" onClick={() => setClaim({ ...claim, evidence_links: claim.evidence_links.filter((_, position) => position !== index) })}>Remove source link {index + 1}</button>
         </fieldset>)}
         <button type="button" className="secondary" disabled={claim.evidence_links.length >= 16} onClick={() => setClaim({ ...claim, evidence_links: [...claim.evidence_links, { evidence_revision_id: '', support_kind: 'user_asserted', excerpt: '' }] })}>Add evidence link</button>
-        <div className="actions"><button disabled={claim.evidence_links.length === 0 || (!!claim.structured && !vocabulary)}>Save entry revision</button><button type="button" className="secondary" onClick={() => { setClaim(null); setComparison(null); setError(''); }}>Discard entry changes</button></div>
+        <div className="actions"><button disabled={claim.evidence_links.length === 0 || (!!claim.structured && (!vocabulary || !!wordingError))}>Save entry revision</button><button type="button" className="secondary" onClick={() => { setClaim(null); setComparison(null); setError(''); }}>Discard entry changes</button></div>
       </fieldset></form>}
       {archive && <div className="comparison"><h3>Confirm archive</h3><p>{archive.text}</p><p>This removes the {archive.kind} from the active profile. Historical revisions and their source links remain readable. Only an explicit historical restore can reactivate archived records.</p>
         <button disabled={locked} onClick={() => { void mutate(`/${archive.kind === 'claim' ? 'claims' : 'evidence'}/${encodeURIComponent(archive.id)}`, 'DELETE'); }}>Confirm archive</button><button className="secondary" disabled={locked} onClick={() => setArchive(null)}>Keep active record</button>
