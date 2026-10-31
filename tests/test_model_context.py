@@ -184,7 +184,7 @@ def test_document_generation_sends_the_claim_without_withheld_evidence_content(
     assert {"id": evidence_id, "text": f"{CLAIM}. Internal codename {SECRET}."} in before[
         "model_projection"
     ]["evidence"]
-    _reclassify(catalog, profile, evidence_id, privacy_class, employer_owned)
+    profile = _reclassify(catalog, profile, evidence_id, privacy_class, employer_owned)
     preview = _preview(catalog, profile, application)
     _assert_withheld(preview["model_projection"], evidence_id, claim_id)
     task = _queue_pair(catalog, preview)
@@ -286,7 +286,7 @@ def test_section_regeneration_sends_the_claim_without_withheld_evidence_content(
     )
     records = _pair_documents(catalog, application)["items"]
     resume = next(item for item in records if item["kind"] == "resume")
-    _reclassify(catalog, profile, evidence_id, privacy_class, employer_owned)
+    profile = _reclassify(catalog, profile, evidence_id, privacy_class, employer_owned)
     _assert_withheld(
         _preview(catalog, profile, application)["model_projection"], evidence_id, claim_id
     )
@@ -321,7 +321,7 @@ def test_requirement_matching_sends_the_claim_without_withheld_evidence_content(
     assert {"id": evidence_id, "text": f"{CLAIM}. Internal codename {SECRET}."} in before[
         "model_projection"
     ]["evidence"]
-    _reclassify(catalog, profile, evidence_id, privacy_class, employer_owned)
+    profile = _reclassify(catalog, profile, evidence_id, privacy_class, employer_owned)
     _assert_withheld(
         _preview(catalog, profile, application)["model_projection"], evidence_id, claim_id
     )
@@ -344,7 +344,7 @@ def test_requirement_matching_sends_the_claim_without_withheld_evidence_content(
     [
         ("generate_documents", "stale_document_context"),
         ("regenerate_section", "regeneration_context_changed"),
-        ("match_requirements", "stale_profile_evidence"),
+        ("match_requirements", "stale_profile_revision"),
     ],
 )
 @pytest.mark.parametrize(
@@ -412,7 +412,7 @@ def test_document_generated_after_reclassification_can_be_reviewed_and_exported(
     application = _application(catalog, description_text=SOURCE)
     _write(catalog, {"id": application["posting_id"]}, [_requirement(1, "Linux required.")])
     profile, evidence_id, claim_id = _withheld_source(catalog, "private", False)
-    _reclassify(catalog, profile, evidence_id, privacy_class, employer_owned)
+    profile = _reclassify(catalog, profile, evidence_id, privacy_class, employer_owned)
     _route(monkeypatch, tmp_path)
     preview = _preview(catalog, profile, application)
     # Make the generated document cite the reclassified record, not an unrelated fixture claim.
