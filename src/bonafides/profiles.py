@@ -275,13 +275,19 @@ def _seed(conn: Connection, owner_id: UUID) -> dict[str, object]:
         )
         conn.execute(
             text(
-                "INSERT INTO bonafides.evidence_records(owner_id,id,current_revision_id) VALUES(:owner,:id,:revision)"
+                "INSERT INTO bonafides.evidence_records(owner_id,id,current_revision_id,privacy_class,employer_owned) VALUES(:owner,:id,:revision,'private',false)"
             ),
             {"owner": owner_id, "id": evidence_id, "revision": evidence_revision},
         )
         conn.execute(
+            text("""INSERT INTO bonafides.evidence_classification_changes
+            (owner_id,evidence_id,sequence,privacy_class,employer_owned)
+            VALUES(:owner,:id,1,'private',false)"""),
+            {"owner": owner_id, "id": evidence_id},
+        )
+        conn.execute(
             text(
-                "INSERT INTO bonafides.evidence_revisions(owner_id,id,evidence_id,revision_no,payload,content_sha256) VALUES(:owner,:id,:evidence,1,CAST(:payload AS jsonb),:sha)"
+                "INSERT INTO bonafides.evidence_revisions(owner_id,id,evidence_id,revision_no,payload,content_sha256,source_type,origin) VALUES(:owner,:id,:evidence,1,CAST(:payload AS jsonb),:sha,'owner_statement','owner_entry')"
             ),
             {
                 "owner": owner_id,

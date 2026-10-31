@@ -13,6 +13,7 @@ from test_database import PGContext
 from test_database import pg_context as pg_context
 
 from bonafides.execution_guard import ExecutionGuard
+from bonafides.installation_backup import table_integrity
 from bonafides.installation_control import begin_control
 from bonafides.workflows import claim, claim_control, enqueue
 
@@ -84,3 +85,59 @@ def test_runtime_cannot_forge_or_remove_a_generation_drill(
                 "SELECT id,restore_verified_at,restore_receipt_sha256 FROM bonafides.installation_backups"
             ),
         ).one() == (identifier, None, None)
+
+
+@pytest.mark.postgres
+def test_backup_inventory_fingerprints_record_classification_and_complete_history(
+    pg_context: PGContext,
+) -> None:
+    evidence_id, revision_id = uuid4(), uuid4()
+    parameters = {
+        "owner": pg_context.owner_id,
+        "evidence": evidence_id,
+        "revision": revision_id,
+    }
+    with pg_context.runtime.begin() as conn:
+        conn.execute(
+            text("""INSERT INTO bonafides.evidence_records
+            (owner_id,id,current_revision_id,privacy_class,employer_owned)
+            VALUES(:owner,:evidence,:revision,'public',false)"""),
+            parameters,
+        )
+        conn.execute(
+            text("""INSERT INTO bonafides.evidence_revisions
+            (owner_id,id,evidence_id,revision_no,payload,content_sha256,source_type,origin)
+            VALUES(:owner,:revision,:evidence,1,'{"text":"Synthetic backup fact","source":"Owner"}',
+            repeat('0',64),'work_sample','owner_entry')"""),
+            parameters,
+        )
+        conn.execute(
+            text("""INSERT INTO bonafides.evidence_classification_changes
+            (owner_id,evidence_id,sequence,privacy_class,employer_owned)
+            VALUES(:owner,:evidence,1,'public',false)"""),
+            parameters,
+        )
+        before_counts, before_hashes = table_integrity(conn)
+        assert before_counts["evidence_records"] == 1
+        assert before_counts["evidence_revisions"] == 1
+        assert before_counts["evidence_classification_changes"] == 1
+        conn.execute(
+            text("""UPDATE bonafides.evidence_records
+            SET privacy_class='confidential',employer_owned=true
+            WHERE owner_id=:owner AND id=:evidence"""),
+            parameters,
+        )
+        conn.execute(
+            text("""INSERT INTO bonafides.evidence_classification_changes
+            (owner_id,evidence_id,sequence,privacy_class,employer_owned)
+            VALUES(:owner,:evidence,2,'confidential',true)"""),
+            parameters,
+        )
+        after_counts, after_hashes = table_integrity(conn)
+        assert after_counts["evidence_classification_changes"] == 2
+        assert after_hashes["evidence_records"] != before_hashes["evidence_records"]
+        assert (
+            after_hashes["evidence_classification_changes"]
+            != before_hashes["evidence_classification_changes"]
+        )
+        assert after_hashes["evidence_revisions"] == before_hashes["evidence_revisions"]

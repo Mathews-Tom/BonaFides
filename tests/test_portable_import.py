@@ -30,12 +30,13 @@ from bonafides.commands import canonical_json
 from bonafides.import_parser import ImportParserClient
 from bonafides.installation_control import InstallationMaintenance, begin_control
 from bonafides.portable_archive import ArchiveError, BlobMember, PortableArchive
+from bonafides.portable_data import portable_rows
 from bonafides.portable_import import import_controlled_owner_data
 from bonafides.storage import BlobStore
 from bonafides.workflows import claim_control
 
 
-def _source(context: SourceContext) -> tuple[PortableArchive, bytes]:
+def _source(context: SourceContext, source_schema: int = 29) -> tuple[PortableArchive, bytes]:
     _base(context, _profile(context))
     original = _export(context)
     source_owner = uuid4()
@@ -63,9 +64,44 @@ def _source(context: SourceContext) -> tuple[PortableArchive, bytes]:
         media_type="text/plain",
         archive_member=f"blobs/{digest}",
     )
-    archive.manifest.records["evidence_revisions"][0]["blob_id"] = str(blob.blob_id)
+    revision = archive.manifest.records["evidence_revisions"][0]
+    revision["blob_id"] = str(blob.blob_id)
+    revision["source_type"] = "work_sample"
+    record = next(
+        row
+        for row in archive.manifest.records["evidence_records"]
+        if row["id"] == revision["evidence_id"]
+    )
+    record.update({"privacy_class": "confidential", "employer_owned": True})
+    previous = max(
+        (
+            row
+            for row in archive.manifest.records["evidence_classification_changes"]
+            if row["evidence_id"] == record["id"]
+        ),
+        key=lambda row: cast(int, row["sequence"]),
+    )
+    archive.manifest.records["evidence_classification_changes"].append(
+        {
+            **previous,
+            "sequence": cast(int, previous["sequence"]) + 1,
+            "privacy_class": "confidential",
+            "employer_owned": True,
+        }
+    )
     archive.manifest.blob_manifest.append(blob)
     blobs[digest] = payload
+    if source_schema < 29:
+        del archive.manifest.records["evidence_classification_changes"]
+        for row in archive.manifest.records["evidence_records"]:
+            for key in ("privacy_class", "employer_owned"):
+                del row[key]
+        for row in archive.manifest.records["evidence_revisions"]:
+            for key in ("source_type", "origin"):
+                del row[key]
+        archive = PortableArchive(
+            archive.manifest.model_copy(update={"source_schema_version": source_schema}), blobs
+        )
     archive = _digest(archive)
     return archive, _encoded(archive.manifest, archive.blobs)
 
@@ -121,12 +157,14 @@ def _approved_import(context: SourceContext, payload: bytes) -> Prepared:
 
 
 @pytest.mark.postgres
+@pytest.mark.parametrize("source_schema", [28, 29])
 def test_foreign_historical_import_preserves_native_rows_and_bytes_without_authority(
     catalog: SourceContext,
     parser: ImportParserClient,
     renderer_spool: Path,
+    source_schema: int,
 ) -> None:
-    archive, payload = _source(catalog)
+    archive, payload = _source(catalog, source_schema)
     changed = _digest(
         PortableArchive(
             archive.manifest.model_copy(
@@ -295,6 +333,37 @@ def test_foreign_historical_import_preserves_native_rows_and_bytes_without_autho
         assert {
             (row["id"], row["content_sha256"]) for row in again.manifest.records[family]
         } == expected
+    for family in (
+        "evidence_records",
+        "evidence_revisions",
+        "evidence_classification_changes",
+    ):
+        expected_rows = {
+            canonical_json({key: value for key, value in row.items() if key != "owner_id"})
+            for row in portable_rows(archive.manifest, family)
+        }
+        assert {
+            canonical_json({key: value for key, value in row.items() if key != "owner_id"})
+            for row in again.manifest.records[family]
+        } == expected_rows, family
+    if source_schema == 29:
+        assert ("confidential", True) in {
+            (row["privacy_class"], row["employer_owned"])
+            for row in again.manifest.records["evidence_records"]
+        }
+        assert any(
+            cast(int, row["sequence"]) > 1
+            for row in again.manifest.records["evidence_classification_changes"]
+        )
+    else:
+        assert "evidence_classification_changes" not in archive.manifest.records
+        assert {
+            (row["privacy_class"], row["employer_owned"])
+            for row in again.manifest.records["evidence_records"]
+        } == {("private", False)}
+        assert {
+            row["sequence"] for row in again.manifest.records["evidence_classification_changes"]
+        } == {1}
 
 
 @pytest.mark.postgres
@@ -440,7 +509,14 @@ def test_archive_from_before_structured_claims_rewrites_free_text_claims(
     version = catalog.client.get("/api/v1/profile").json()["version"]
     evidence = catalog.client.post(
         "/api/v1/evidence",
-        json={"payload": {"text": ". ".join(statements), "source": "Synthetic review"}},
+        json={
+            "payload": {"text": ". ".join(statements), "source": "Synthetic review"},
+            "provenance": {
+                "source_type": "document",
+                "privacy_class": "private",
+                "employer_owned": False,
+            },
+        },
         headers=catalog.headers(version),
     )
     assert evidence.status_code == 200, evidence.text
@@ -470,6 +546,14 @@ def test_archive_from_before_structured_claims_rewrites_free_text_claims(
         for row in rows:
             if "owner_id" in row:
                 row["owner_id"] = str(source_owner)
+    # Pre-schema-29 archives have neither provenance nor classification/history.
+    del original.manifest.records["evidence_classification_changes"]
+    for row in original.manifest.records["evidence_records"]:
+        for key in ("privacy_class", "employer_owned"):
+            del row[key]
+    for row in original.manifest.records["evidence_revisions"]:
+        for key in ("source_type", "origin"):
+            del row[key]
     archive = _digest(
         PortableArchive(
             original.manifest.model_copy(
@@ -519,3 +603,9 @@ def test_archive_from_before_structured_claims_rewrites_free_text_claims(
     assert profile["current_revision"]["reason"] == "claims_restructured"
     assert claims[5]["revision"]["payload"]["claim"]["verb"] == "implemented"
     assert claims[5]["revision"]["evidence_links"][0]["excerpt"] == statements[5]
+    assert claims[5]["revision"]["evidence_links"][0]["evidence"]["provenance"] == {
+        "source_type": "owner_statement",
+        "origin": "owner_entry",
+        "privacy_class": "private",
+        "employer_owned": False,
+    }

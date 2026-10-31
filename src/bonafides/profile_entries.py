@@ -26,6 +26,12 @@ from bonafides.claims import (
 )
 from bonafides.commands import command
 from bonafides.db import Database
+from bonafides.evidence_provenance import (
+    EvidenceClassification,
+    EvidenceProvenance,
+    InitialEvidenceProvenance,
+    provenance,
+)
 from bonafides.problems import Problem
 from bonafides.profiles import ProfileSnapshot, _save, canonical, content_hash
 
@@ -174,6 +180,12 @@ class ClaimWrite(StrictModel):
 
 class EvidenceWrite(StrictModel):
     payload: EvidencePayload
+    provenance: EvidenceProvenance
+
+
+class EvidenceCreate(StrictModel):
+    payload: EvidencePayload
+    provenance: InitialEvidenceProvenance
 
 
 class RenderRequest(StrictModel):
@@ -200,7 +212,10 @@ def _revision(row: RowMapping, owner_id: UUID) -> dict[str, object]:
 def evidence_revision(conn: Connection, owner_id: UUID, revision_id: UUID) -> dict[str, object]:
     row = (
         conn.execute(
-            text("SELECT * FROM bonafides.evidence_revisions WHERE owner_id=:owner AND id=:id"),
+            text("""SELECT r.*,e.privacy_class,e.employer_owned
+            FROM bonafides.evidence_revisions r JOIN bonafides.evidence_records e
+            ON e.owner_id=r.owner_id AND e.id=r.evidence_id
+            WHERE r.owner_id=:owner AND r.id=:id"""),
             {"owner": owner_id, "id": revision_id},
         )
         .mappings()
@@ -208,7 +223,7 @@ def evidence_revision(conn: Connection, owner_id: UUID, revision_id: UUID) -> di
     )
     if row is None:
         raise Problem(404, "evidence_revision_not_found")
-    return _revision(row, owner_id)
+    return {**_revision(row, owner_id), "provenance": provenance(row)}
 
 
 def hydrate_claim(
@@ -322,7 +337,7 @@ def _active_record(
 
 
 def write_evidence(
-    conn: Connection, owner_id: UUID, body: EvidenceWrite, entity_id: UUID | None
+    conn: Connection, owner_id: UUID, body: EvidenceWrite | EvidenceCreate, entity_id: UUID | None
 ) -> dict[str, object]:
     creating = entity_id is None
     if entity_id is None:
@@ -336,16 +351,31 @@ def write_evidence(
             raise Problem(422, "evidence_limit")
         entity_id = uuid4()
         conn.execute(
-            text("INSERT INTO bonafides.evidence_records(owner_id,id) VALUES(:owner,:id)"),
-            {"owner": owner_id, "id": entity_id},
+            text("""INSERT INTO bonafides.evidence_records(owner_id,id,privacy_class,employer_owned)
+            VALUES(:owner,:id,:privacy_class,:employer_owned)"""),
+            {
+                "owner": owner_id,
+                "id": entity_id,
+                **cast(EvidenceCreate, body).provenance.model_dump(),
+            },
+        )
+        append_classification(
+            conn,
+            owner_id,
+            entity_id,
+            EvidenceClassification.model_validate(
+                cast(EvidenceCreate, body).provenance.model_dump(exclude={"source_type"})
+            ),
         )
     else:
         _active_record(conn, owner_id, entity_id, "evidence")
     revision_id = uuid4()
     payload = body.payload.model_dump(mode="json")
     conn.execute(
-        text("""INSERT INTO bonafides.evidence_revisions(owner_id,id,evidence_id,revision_no,payload,content_sha256)
-        SELECT :owner,:revision,:id,COALESCE(max(revision_no),0)+1,CAST(:payload AS jsonb),:sha
+        text("""INSERT INTO bonafides.evidence_revisions(owner_id,id,evidence_id,revision_no,payload,content_sha256,
+        source_type,origin)
+        SELECT :owner,:revision,:id,COALESCE(max(revision_no),0)+1,CAST(:payload AS jsonb),:sha,
+        :source_type,'owner_entry'
         FROM bonafides.evidence_revisions WHERE owner_id=:owner AND evidence_id=:id"""),
         {
             "owner": owner_id,
@@ -353,6 +383,7 @@ def write_evidence(
             "id": entity_id,
             "payload": canonical(payload),
             "sha": content_hash(payload),
+            **body.provenance.model_dump(),
         },
     )
     conn.execute(
@@ -367,6 +398,36 @@ def write_evidence(
         },
     )
     result = _save(conn, owner_id, _snapshot(conn, owner_id), "evidence_saved")
+    result["changed_evidence_id"] = str(entity_id)
+    return result
+
+
+def append_classification(
+    conn: Connection, owner_id: UUID, entity_id: UUID, body: EvidenceClassification
+) -> None:
+    # Callers hold the record/profile write lock, so sequence allocation is serialized.
+    conn.execute(
+        text("""INSERT INTO bonafides.evidence_classification_changes
+        (owner_id,evidence_id,sequence,privacy_class,employer_owned)
+        SELECT :owner,:id,COALESCE(max(sequence),0)+1,:privacy_class,:employer_owned
+        FROM bonafides.evidence_classification_changes
+        WHERE owner_id=:owner AND evidence_id=:id"""),
+        {"owner": owner_id, "id": entity_id, **body.model_dump()},
+    )
+
+
+def classify_evidence(
+    conn: Connection, owner_id: UUID, entity_id: UUID, body: EvidenceClassification
+) -> dict[str, object]:
+    _active_record(conn, owner_id, entity_id, "evidence")
+    conn.execute(
+        text("""UPDATE bonafides.evidence_records
+        SET privacy_class=:privacy_class,employer_owned=:employer_owned,version=version+1
+        WHERE owner_id=:owner AND id=:id"""),
+        {"owner": owner_id, "id": entity_id, **body.model_dump()},
+    )
+    append_classification(conn, owner_id, entity_id, body)
+    result = _save(conn, owner_id, _snapshot(conn, owner_id), "evidence_classified")
     result["changed_evidence_id"] = str(entity_id)
     return result
 
@@ -787,7 +848,7 @@ def build_entry_router(db: Database) -> APIRouter:
 
     @router.post("/evidence")
     def create_evidence(
-        body: EvidenceWrite,
+        body: EvidenceCreate,
         response: Response,
         owner: Annotated[Owner, Depends(require_owner)],
         if_match: Annotated[str | None, Header()] = None,
@@ -824,6 +885,27 @@ def build_entry_router(db: Database) -> APIRouter:
             idempotency_key,
             response,
             lambda conn: write_evidence(conn, owner.id, body, entity_id),
+        )
+
+    @router.put("/evidence/{entity_id}/classification")
+    def update_evidence_classification(
+        entity_id: UUID,
+        body: EvidenceClassification,
+        response: Response,
+        owner: Annotated[Owner, Depends(require_owner)],
+        if_match: Annotated[str | None, Header()] = None,
+        idempotency_key: Annotated[str | None, Header()] = None,
+    ) -> dict[str, object]:
+        return mutate(
+            owner.id,
+            "PUT",
+            "/api/v1/evidence/{entity_id}/classification",
+            {"entity_id": str(entity_id)},
+            body.model_dump(mode="json"),
+            if_match,
+            idempotency_key,
+            response,
+            lambda conn: classify_evidence(conn, owner.id, entity_id, body),
         )
 
     @router.delete("/evidence/{entity_id}")

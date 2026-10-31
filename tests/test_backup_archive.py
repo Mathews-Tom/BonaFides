@@ -36,8 +36,25 @@ with tempfile.TemporaryDirectory() as temporary:
  digest=hashlib.sha256(payload).hexdigest()
  owner=uuid4();relative=f'{owner}/{digest[:2]}/{digest}'
  stored=blobs/relative;stored.parent.mkdir(parents=True);stored.write_bytes(payload)
- dump=b'Opaque archive transport fixture; not a native PostgreSQL dump.\n'*1024
- schema={str(n):hashlib.sha256(f'synthetic schema {n}'.encode()).hexdigest() for n in range(1,19)}
+ # Structured transport fixture only: native PostgreSQL recovery is a separate drill.
+ evidence_id,revision_id=str(uuid4()),str(uuid4())
+ snapshot={
+  'evidence_records':[{'owner_id':str(owner),'id':evidence_id,'version':1,
+   'current_revision_id':revision_id,'archived_at':None,'created_at':now.isoformat(),
+   'privacy_class':'confidential','employer_owned':True}],
+  'evidence_revisions':[{'owner_id':str(owner),'id':revision_id,'evidence_id':evidence_id,
+   'revision_no':1,'payload':{'text':'Synthetic source','source':'Owner supplied'},
+   'blob_id':str(uuid4()),'content_sha256':digest,'created_at':now.isoformat(),
+   'source_type':'work_sample','origin':'owner_entry'}],
+  'evidence_classification_changes':[
+   {'owner_id':str(owner),'evidence_id':evidence_id,'sequence':sequence,
+    'privacy_class':privacy,'employer_owned':owned,'changed_at':(now+timedelta(seconds=sequence)).isoformat()}
+   for sequence,privacy,owned in ((1,'public',False),(2,'confidential',True))]}
+ dump=json.dumps(snapshot,sort_keys=True,separators=(',',':')).encode()
+ counts={name:len(rows) for name,rows in snapshot.items()}
+ fingerprints={name:hashlib.sha256(json.dumps(rows,sort_keys=True,separators=(',',':')).encode()).hexdigest()
+  for name,rows in snapshot.items()}
+ schema={str(n):hashlib.sha256(f'synthetic schema {n}'.encode()).hexdigest() for n in range(1,30)}
  namespace=uuid4()
  def factory(sha,size,fingerprint,files):
   return BackupManifest(format='bonafides-installation',format_version=1,created_at=now,
@@ -46,7 +63,7 @@ with tempfile.TemporaryDirectory() as temporary:
    source_sha256='3'*64,config_sha256='4'*64,recipient_sha256=fingerprint,
    credential_keys={'synthetic-key':'5'*64},credential_active_key_id='synthetic-key',
    postgres_version='18.6',dump_tool_version='opaque transport fixture, not native pg_dump',
-   schema_versions=schema,table_counts={'profiles':1},table_sha256={'profiles':'6'*64},
+   schema_versions=schema,table_counts=counts,table_sha256=fingerprints,
    dump_sha256=sha,dump_byte_length=size,files=files)
  def create():
   return create_bundle(dump=io.BytesIO(dump),blob_root=blobs,
@@ -67,6 +84,10 @@ with tempfile.TemporaryDirectory() as temporary:
    assert restored.manifest.source_namespace==namespace
    assert restored.manifest.source_owner_id==owner
    assert restored.manifest.schema_versions==schema
+   assert json.loads(restored.dump.read_bytes())==snapshot
+   assert restored.manifest.table_counts==counts
+   assert restored.manifest.table_sha256==fingerprints
+   assert len(json.loads(restored.dump.read_bytes())['evidence_classification_changes'])==2
   assert not list((root/'offline').iterdir())
  elif case in ('changed_source','symlink_source','unwritable_destination'):
   if case=='changed_source':
@@ -98,7 +119,7 @@ with tempfile.TemporaryDirectory() as temporary:
     serialization.Encoding.PEM,serialization.PrivateFormat.PKCS8,serialization.NoEncryption()))
    wrong.chmod(0o600);arguments['private_key']=wrong;expected='backup_crypto_failed'
   elif case=='incompatible_schema':
-   arguments['expected_schema']={**schema,'19':'7'*64};expected='incompatible_backup_schema'
+   arguments['expected_schema']={**schema,'30':'7'*64};expected='incompatible_backup_schema'
   elif case=='incompatible_image':
    arguments['expected_image_sha256']='0'*64;expected='incompatible_backup_image'
   elif case in ('tampered_ciphertext','truncated_ciphertext'):
