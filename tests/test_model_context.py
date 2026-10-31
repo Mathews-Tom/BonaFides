@@ -9,14 +9,23 @@ from __future__ import annotations
 
 import copy
 import json
+from dataclasses import replace
 from pathlib import Path
 from threading import Event
 from typing import Any, cast
 from uuid import UUID
 
 import pytest
-from test_document_generation import _candidate, _pair_documents, _preview, _queue_pair
+from test_document_generation import (
+    _candidate,
+    _claim,
+    _pair_documents,
+    _preview,
+    _queue_pair,
+    _review,
+)
 from test_identity import identity as identity
+from test_installation_control import renderer_spool as renderer_spool
 from test_local_model import fixture_server, qualified_route, response_body, route_data
 from test_section_regeneration import _queue_section, _section_preview
 from test_sources import SourceContext
@@ -35,6 +44,7 @@ from test_tracking import _application
 
 from bonafides import local_model, suitability
 from bonafides.commands import canonical_json
+from bonafides.worker import Worker
 
 CLAIM = "Kept the synthetic payroll batch inside its nightly window"
 SECRET = "SECRET-EMPLOYER-ROADMAP-7Q"
@@ -84,6 +94,32 @@ def _withheld_source(
     return profile, evidence_id, str(claim["revision"]["id"])
 
 
+def _reclassify(
+    context: SourceContext,
+    profile: dict[str, Any],
+    evidence_id: str,
+    privacy_class: str,
+    employer_owned: bool,
+) -> dict[str, Any]:
+    record = next(item for item in profile["evidence"] if item["revision"]["id"] == evidence_id)
+    response = context.client.put(
+        f"/api/v1/evidence/{record['id']}/classification",
+        json={"privacy_class": privacy_class, "employer_owned": employer_owned},
+        headers=context.headers(profile["version"]),
+    )
+    assert response.status_code == 200, response.text
+    updated = cast(dict[str, Any], response.json())
+    current = next(item for item in updated["evidence"] if item["id"] == record["id"])
+    assert current["revision"]["id"] == evidence_id
+    assert current["revision"]["payload"] == record["revision"]["payload"]
+    assert current["revision"]["content_sha256"] == record["revision"]["content_sha256"]
+    assert current["revision"]["provenance"]["source_type"] == "work_sample"
+    assert current["revision"]["provenance"]["privacy_class"] == privacy_class
+    assert current["revision"]["provenance"]["employer_owned"] is employer_owned
+    assert updated["current_revision"] == profile["current_revision"]
+    return updated
+
+
 def _transmitted(tmp_path: Path, stage: str, context: dict[str, object]) -> dict[str, Any]:
     """Send one context through the local model client and return the exact sent context."""
     with fixture_server(response_body()) as (endpoint, requests):
@@ -102,7 +138,10 @@ def _transmitted(tmp_path: Path, stage: str, context: dict[str, object]) -> dict
 
 
 def _assert_withheld(sent: dict[str, Any], evidence_id: str, claim_id: str) -> None:
-    assert {"id": evidence_id, "withheld": True} in sent["evidence"]
+    assert next(item for item in sent["evidence"] if item["id"] == evidence_id) == {
+        "id": evidence_id,
+        "withheld": True,
+    }
     claim = next(item for item in sent["claims"] if item["id"] == claim_id)
     assert claim["text"] == CLAIM and evidence_id in claim["evidence_revision_ids"]
     assert SECRET not in canonical_json(sent)
@@ -123,8 +162,13 @@ def test_document_generation_sends_the_claim_without_withheld_evidence_content(
     _profile(catalog)
     application = _application(catalog, description_text=SOURCE)
     _write(catalog, {"id": application["posting_id"]}, [_requirement(1, "Linux required.")])
-    profile, evidence_id, claim_id = _withheld_source(catalog, privacy_class, employer_owned)
+    profile, evidence_id, claim_id = _withheld_source(catalog, "private", False)
     _route(monkeypatch, tmp_path)
+    before = _preview(catalog, profile, application)
+    assert {"id": evidence_id, "text": f"{CLAIM}. Internal codename {SECRET}."} in before[
+        "model_projection"
+    ]["evidence"]
+    _reclassify(catalog, profile, evidence_id, privacy_class, employer_owned)
     preview = _preview(catalog, profile, application)
     _assert_withheld(preview["model_projection"], evidence_id, claim_id)
     task = _queue_pair(catalog, preview)
@@ -137,82 +181,57 @@ def test_document_generation_sends_the_claim_without_withheld_evidence_content(
 
 
 @pytest.mark.postgres
-@pytest.mark.parametrize("changed_text", [False, True])
-def test_document_generation_reclassified_pinned_evidence_requires_unchanged_content(
+def test_document_generation_content_edit_without_repin_is_unavailable(
     catalog: SourceContext,
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
-    changed_text: bool,
 ) -> None:
     _profile(catalog)
     application = _application(catalog, description_text=SOURCE)
     _write(catalog, {"id": application["posting_id"]}, [_requirement(1, "Linux required.")])
-    profile, evidence_id, claim_id = _withheld_source(catalog, "private", False)
+    profile, evidence_id, _ = _withheld_source(catalog, "private", False)
     record = next(item for item in profile["evidence"] if item["revision"]["id"] == evidence_id)
     _route(monkeypatch, tmp_path)
-    before = _preview(catalog, profile, application)
-    assert {"id": evidence_id, "text": f"{CLAIM}. Internal codename {SECRET}."} in before[
-        "model_projection"
-    ]["evidence"]
-
+    _preview(catalog, profile, application)
     payload = copy.deepcopy(record["revision"]["payload"])
-    if changed_text:
-        payload["text"] = f"{payload['text']} Changed source text."
+    payload["text"] = f"{payload['text']} Changed source text."
     updated = catalog.client.put(
         f"/api/v1/evidence/{record['id']}",
         json={
             "payload": payload,
-            "provenance": {
-                "source_type": "work_sample",
-                "privacy_class": "private",
-                "employer_owned": True,
-            },
+            "provenance": {"source_type": "work_sample"},
         },
         headers=catalog.headers(profile["version"]),
     )
     assert updated.status_code == 200, updated.text
     current = next(item for item in updated.json()["evidence"] if item["id"] == record["id"])
     assert current["revision"]["id"] != evidence_id
-    assert current["revision"]["provenance"]["employer_owned"] is True
-    assert (current["revision"]["content_sha256"] != record["revision"]["content_sha256"]) is (
-        changed_text
+    assert current["revision"]["content_sha256"] != record["revision"]["content_sha256"]
+    refused = catalog.client.get(
+        f"/api/v1/applications/{application['id']}/generation-context",
+        params={
+            "profile_revision_id": profile["current_revision"]["id"],
+            "template_version": "bonafides-evidence-v1",
+            "tone": "professional",
+            "language": "en",
+        },
     )
-
-    if changed_text:
-        refused = catalog.client.get(
-            f"/api/v1/applications/{application['id']}/generation-context",
-            params={
-                "profile_revision_id": profile["current_revision"]["id"],
-                "template_version": "bonafides-evidence-v1",
-                "tone": "professional",
-                "language": "en",
-            },
-        )
-        assert refused.status_code == 409, refused.text
-        assert refused.json()["code"] == "profile_evidence_unavailable"
-        return
-
-    # Keep the original profile/claim citation pinned to the earlier private revision.
-    preview = _preview(catalog, profile, application)
-    _assert_withheld(preview["model_projection"], evidence_id, claim_id)
-    assert preview["model_projection"]["evidence"] != before["model_projection"]["evidence"]
-    task = _queue_pair(catalog, preview)
-    assert task.input["context"] == preview["model_projection"]
-    sent = _transmitted(
-        tmp_path, "generate_documents", cast(dict[str, object], task.input["context"])
-    )
-    assert sent == preview["model_projection"]
-    _assert_withheld(sent, evidence_id, claim_id)
+    assert refused.status_code == 409, refused.text
+    assert refused.json()["code"] == "profile_evidence_unavailable"
 
 
 @pytest.mark.postgres
+@pytest.mark.parametrize("privacy_class", ["private", "public"])
 def test_private_and_public_evidence_content_still_reaches_document_generation(
-    catalog: SourceContext, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    catalog: SourceContext,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    privacy_class: str,
 ) -> None:
     _profile(catalog)
     application = _application(catalog, description_text=SOURCE)
     _write(catalog, {"id": application["posting_id"]}, [_requirement(1, "Linux required.")])
-    profile, evidence_id, _ = _withheld_source(catalog, "private", False)
+    profile, evidence_id, _ = _withheld_source(catalog, privacy_class, False)
     _route(monkeypatch, tmp_path)
     preview = _preview(catalog, profile, application)
     assert {"id": evidence_id, "text": f"{CLAIM}. Internal codename {SECRET}."} in preview[
@@ -221,13 +240,20 @@ def test_private_and_public_evidence_content_still_reaches_document_generation(
 
 
 @pytest.mark.postgres
+@pytest.mark.parametrize(
+    ("privacy_class", "employer_owned"), [("confidential", False), ("private", True)]
+)
 def test_section_regeneration_sends_the_claim_without_withheld_evidence_content(
-    catalog: SourceContext, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    catalog: SourceContext,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    privacy_class: str,
+    employer_owned: bool,
 ) -> None:
     _profile(catalog)
     application = _application(catalog, description_text=SOURCE)
     _write(catalog, {"id": application["posting_id"]}, [_requirement(1, "Linux required.")])
-    profile, evidence_id, claim_id = _withheld_source(catalog)
+    profile, evidence_id, claim_id = _withheld_source(catalog, "private", False)
     _route(monkeypatch, tmp_path)
     preview = _preview(catalog, profile, application)
     pair = cast(dict[str, Any], _candidate(preview))
@@ -244,6 +270,10 @@ def test_section_regeneration_sends_the_claim_without_withheld_evidence_content(
     )
     records = _pair_documents(catalog, application)["items"]
     resume = next(item for item in records if item["kind"] == "resume")
+    _reclassify(catalog, profile, evidence_id, privacy_class, employer_owned)
+    _assert_withheld(
+        _preview(catalog, profile, application)["model_projection"], evidence_id, claim_id
+    )
     section = _section_preview(catalog, resume)
     _assert_withheld(section["model_projection"], evidence_id, claim_id)
     task = _queue_section(catalog, section)
@@ -256,13 +286,29 @@ def test_section_regeneration_sends_the_claim_without_withheld_evidence_content(
 
 
 @pytest.mark.postgres
+@pytest.mark.parametrize(
+    ("privacy_class", "employer_owned"), [("confidential", False), ("private", True)]
+)
 def test_requirement_matching_sends_the_claim_without_withheld_evidence_content(
-    catalog: SourceContext, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    catalog: SourceContext,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    privacy_class: str,
+    employer_owned: bool,
 ) -> None:
     _profile(catalog)
-    profile, evidence_id, claim_id = _withheld_source(catalog)
-    view = _write(catalog, _posting(catalog), [_requirement(1, "Linux required.")])
+    profile, evidence_id, claim_id = _withheld_source(catalog, "private", False)
+    application = _application(catalog, description_text=SOURCE)
+    view = _write(catalog, {"id": application["posting_id"]}, [_requirement(1, "Linux required.")])
     _route(monkeypatch, tmp_path)
+    before = _preview(catalog, profile, application)
+    assert {"id": evidence_id, "text": f"{CLAIM}. Internal codename {SECRET}."} in before[
+        "model_projection"
+    ]["evidence"]
+    _reclassify(catalog, profile, evidence_id, privacy_class, employer_owned)
+    _assert_withheld(
+        _preview(catalog, profile, application)["model_projection"], evidence_id, claim_id
+    )
     task = _queue(catalog, view, profile)
     context = cast(dict[str, Any], task.input["context"])
     _assert_withheld(context, evidence_id, claim_id)
@@ -274,6 +320,130 @@ def test_requirement_matching_sends_the_claim_without_withheld_evidence_content(
         )
     # The local checker keeps reading the complete evidence the claim cites.
     assert SECRET in str(projection.evidence[next(iter(projection.withheld))]["text"])
+
+
+@pytest.mark.postgres
+@pytest.mark.parametrize(
+    ("stage", "error"),
+    [
+        ("generate_documents", "stale_document_context"),
+        ("regenerate_section", "regeneration_context_changed"),
+        ("match_requirements", "stale_profile_evidence"),
+    ],
+)
+@pytest.mark.parametrize(
+    ("privacy_class", "employer_owned"), [("confidential", False), ("private", True)]
+)
+def test_reclassification_after_queue_refuses_before_transmission(
+    catalog: SourceContext,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    stage: str,
+    error: str,
+    privacy_class: str,
+    employer_owned: bool,
+) -> None:
+    _profile(catalog)
+    application = _application(catalog, description_text=SOURCE)
+    view = _write(catalog, {"id": application["posting_id"]}, [_requirement(1, "Linux required.")])
+    profile, evidence_id, _ = _withheld_source(catalog, "private", False)
+    with fixture_server(response_body()) as (endpoint, requests):
+        route = qualified_route(tmp_path, route_data(endpoint))
+        monkeypatch.setattr(local_model, "load_route", lambda _path: route)
+        preview = _preview(catalog, profile, application)
+        if stage == "match_requirements":
+            task = _queue(catalog, view, profile)
+        elif stage == "regenerate_section":
+            suitability.execute_model(
+                catalog.runtime,
+                catalog.identity.settings,
+                _queue_pair(catalog, preview),
+                Event(),
+                FixtureModel(_candidate(preview)),
+            )
+            resume = next(
+                item
+                for item in _pair_documents(catalog, application)["items"]
+                if item["kind"] == "resume"
+            )
+            task = _queue_section(catalog, _section_preview(catalog, resume))
+        else:
+            task = _queue_pair(catalog, preview)
+        assert SECRET in canonical_json(task.input["context"])
+        _reclassify(catalog, profile, evidence_id, privacy_class, employer_owned)
+        Worker(catalog.runtime, replace(catalog.identity.settings, mode="production"))._execute(
+            task, Event()
+        )
+        failed = catalog.workflow(task.id)
+        assert failed["state"] == "permanent_failure", failed
+        assert failed["last_error_code"] == error, failed
+        assert requests == []
+
+
+@pytest.mark.postgres
+@pytest.mark.parametrize(
+    ("privacy_class", "employer_owned"), [("confidential", False), ("private", True)]
+)
+def test_document_generated_after_reclassification_can_be_reviewed_and_exported(
+    catalog: SourceContext,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    renderer_spool: Path,
+    privacy_class: str,
+    employer_owned: bool,
+) -> None:
+    _profile(catalog)
+    application = _application(catalog, description_text=SOURCE)
+    _write(catalog, {"id": application["posting_id"]}, [_requirement(1, "Linux required.")])
+    profile, evidence_id, claim_id = _withheld_source(catalog, "private", False)
+    _reclassify(catalog, profile, evidence_id, privacy_class, employer_owned)
+    _route(monkeypatch, tmp_path)
+    preview = _preview(catalog, profile, application)
+    # Make the generated document cite the reclassified record, not an unrelated fixture claim.
+    candidate_preview = copy.deepcopy(preview)
+    candidate_preview["model_projection"]["claims"] = [
+        item for item in preview["model_projection"]["claims"] if item["id"] == claim_id
+    ]
+    candidate = _candidate(candidate_preview)
+    worker = Worker(
+        catalog.runtime,
+        replace(catalog.identity.settings, mode="production", renderer_spool=renderer_spool),
+    )
+    encoded = response_body(message={"role": "assistant", "content": json.dumps(candidate)})
+    with fixture_server(encoded) as (endpoint, requests):
+        route = qualified_route(tmp_path, route_data(endpoint))
+        monkeypatch.setattr(local_model, "load_route", lambda _path: route)
+        preview = _preview(catalog, profile, application)
+        task = _queue_pair(catalog, preview)
+        worker._execute(task, Event())
+        result = catalog.workflow(task.id)
+        assert result["state"] == "succeeded", result
+        assert len(requests) == 1
+        assert SECRET.encode() not in requests[0]
+        sent = json.loads(json.loads(requests[0])["messages"][1]["content"])
+        _assert_withheld(sent, evidence_id, claim_id)
+    for document in _pair_documents(catalog, application)["items"]:
+        reviewed = _review(catalog, document)
+        assert reviewed.status_code == 200, reviewed.text
+        current = reviewed.json()
+        revision = current["current_revision"]
+        queued = catalog.client.post(
+            f"/api/v1/documents/{document['id']}/renders",
+            json={
+                "revision_id": revision["id"],
+                "content_sha256": revision["content_sha256"],
+                "format": "pdf",
+            },
+            headers=catalog.headers(current["version"]),
+        )
+        assert queued.status_code == 202, queued.text
+        render_task = _claim(catalog, queued.json()["id"])
+        worker._execute(render_task, Event())
+        rendered = catalog.workflow(render_task.id)
+        assert rendered["state"] == "succeeded", rendered
+        artifact = catalog.client.get(f"/api/v1/artifacts/{rendered['result']['artifact_id']}")
+        assert artifact.status_code == 200, artifact.text
+        assert artifact.content.startswith(b"%PDF-")
 
 
 @pytest.mark.postgres
