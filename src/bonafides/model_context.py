@@ -25,8 +25,8 @@ def withheld_evidence(
 ) -> dict[UUID, list[WithheldReason]]:
     """Evidence revisions whose content stays out of model context, with the reasons.
 
-    A revision is withheld when it, or the current revision of its evidence record, is
-    confidential or employer-owned: a later classification also covers pinned revisions.
+    The record's current classification is the single authority, independently of
+    which immutable revision a claim cites or a historical profile restores.
     """
     identifiers = sorted(set(revision_ids), key=str)
     if not identifiers:
@@ -34,11 +34,10 @@ def withheld_evidence(
     rows = (
         conn.execute(
             text("""SELECT r.id,
-            r.privacy_class='confidential' OR c.privacy_class='confidential' AS confidential,
-            r.employer_owned OR c.employer_owned AS employer_owned
+            e.privacy_class='confidential' AS confidential,
+            e.employer_owned AS employer_owned
             FROM bonafides.evidence_revisions r JOIN bonafides.evidence_records e
             ON e.owner_id=r.owner_id AND e.id=r.evidence_id
-            JOIN bonafides.evidence_revisions c ON c.owner_id=e.owner_id AND c.id=e.current_revision_id
             WHERE r.owner_id=:owner AND r.id=ANY(CAST(:ids AS uuid[]))"""),
             {"owner": owner, "ids": identifiers},
         )
