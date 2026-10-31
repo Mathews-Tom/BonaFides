@@ -432,6 +432,9 @@ def test_archive_from_before_structured_claims_rewrites_free_text_claims(
     statements = (
         "Reduced batch runtime by 30% across 3 warehouses",
         "Hired 4 engineers for the platform team",
+        "Proposed a new on-call rotation",
+        "Cut batch runtime by 30% across 3 warehouses",
+        "Reduced batch runtime by 30% across 3 warehouses.",
     )
     version = catalog.client.get("/api/v1/profile").json()["version"]
     evidence = catalog.client.post(
@@ -507,5 +510,8 @@ def test_archive_from_before_structured_claims_rewrites_free_text_claims(
     assert [(item["rendering"], item["needs_attention"]) for item in claims] == [
         (statements[0], False),
         (statements[1], True),
+        (statements[2], True),
+        (statements[3], True),
+        (statements[4], True),
     ]
     assert profile["current_revision"]["reason"] == "claims_restructured"

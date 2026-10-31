@@ -25,7 +25,7 @@ MAPPABLE = "Reduced batch runtime by 30% across 3 warehouses"
 UNMAPPABLE = "Saved $90K in synthetic licensing costs"
 
 
-def _literal(evidence_id: str, statement: str) -> dict[str, object]:
+def _literal(evidence_id: str, statement: str, excerpt: str | None = None) -> dict[str, object]:
     return {
         "kind": "experience",
         "payload": {"role": "Platform engineer", "text": statement},
@@ -33,7 +33,7 @@ def _literal(evidence_id: str, statement: str) -> dict[str, object]:
             {
                 "evidence_revision_id": evidence_id,
                 "support_kind": "direct",
-                "excerpt": statement,
+                "excerpt": statement if excerpt is None else excerpt,
             }
         ],
     }
@@ -53,6 +53,15 @@ def test_free_text_claims_are_rewritten_in_place_and_restore_brings_back_the_tex
     with profile_owner.client() as client:
         boot = _json(_bootstrap(profile_owner, client))
         csrf, owner_id = str(boot["csrf_token"]), UUID(str(boot["owner_id"]))
+        statements = (
+            (MAPPABLE, MAPPABLE),
+            (UNMAPPABLE, UNMAPPABLE),
+            ("Hired 4 engineers for the platform team", "Hired 4 engineers for the platform team"),
+            ("Proposed a new on-call rotation", "Proposed a new on-call rotation"),
+            (MAPPABLE, "Cut batch runtime by 30% across 3 warehouses"),
+            (MAPPABLE + ".", MAPPABLE + "."),
+        )
+        literal_summary = [(statement, True) for statement, _ in statements]
         evidence = _mutate(
             client,
             profile_owner,
@@ -60,10 +69,15 @@ def test_free_text_claims_are_rewritten_in_place_and_restore_brings_back_the_tex
             "POST",
             "/evidence",
             1,
-            {"payload": {"text": f"{MAPPABLE}. {UNMAPPABLE}.", "source": "Synthetic review"}},
+            {
+                "payload": {
+                    "text": ". ".join(excerpt for _, excerpt in statements),
+                    "source": "Synthetic review",
+                }
+            },
         )
         evidence_id = _json(evidence)["evidence"][0]["revision"]["id"]
-        for version, statement in ((2, MAPPABLE), (3, UNMAPPABLE)):
+        for version, (statement, excerpt) in enumerate(statements, start=2):
             saved = _mutate(
                 client,
                 profile_owner,
@@ -71,11 +85,11 @@ def test_free_text_claims_are_rewritten_in_place_and_restore_brings_back_the_tex
                 "POST",
                 "/claims",
                 version,
-                _literal(evidence_id, statement),
+                _literal(evidence_id, statement, excerpt),
             )
             assert saved.status_code == 200, saved.text
         before = _json(client.get("/api/v1/profile"))
-        assert _summary(before) == [(MAPPABLE, True), (UNMAPPABLE, True)]
+        assert _summary(before) == literal_summary
 
         with profile_owner.admin.transaction() as conn:
             assert restructure_free_text_claims(conn, owner_id) == 1
@@ -84,7 +98,8 @@ def test_free_text_claims_are_rewritten_in_place_and_restore_brings_back_the_tex
 
         after = _json(client.get("/api/v1/profile"))
         assert after["version"] == before["version"] + 1
-        assert _summary(after) == [(MAPPABLE, False), (UNMAPPABLE, True)]
+        assert _summary(after) == [(MAPPABLE, False), *literal_summary[1:]]
+        assert after["current_revision"]["claims"][1:] == before["current_revision"]["claims"][1:]
         rewritten = after["current_revision"]["claims"][0]["revision"]
         assert "text" not in rewritten["payload"]
         assert rewritten["payload"]["role"] == "Platform engineer"
@@ -95,7 +110,9 @@ def test_free_text_claims_are_rewritten_in_place_and_restore_brings_back_the_tex
         historical = _json(
             client.get(f"/api/v1/profile/revisions/{before['current_revision']['id']}")
         )
-        assert [item["rendering"] for item in historical["claims"]] == [MAPPABLE, UNMAPPABLE]
+        assert [item["rendering"] for item in historical["claims"]] == [
+            statement for statement, _ in statements
+        ]
         restored = _mutate(
             client,
             profile_owner,
@@ -106,14 +123,19 @@ def test_free_text_claims_are_rewritten_in_place_and_restore_brings_back_the_tex
             {"revision_id": before["current_revision"]["id"]},
         )
         assert restored.status_code == 200, restored.text
-        assert _summary(_json(restored)) == [(MAPPABLE, True), (UNMAPPABLE, True)]
+        assert _summary(_json(restored)) == literal_summary
         assert "text" in _json(restored)["current_revision"]["claims"][0]["revision"]["payload"]
 
 
 @pytest.mark.parametrize(
     ("statement", "rewritten"),
     [
-        ("Reduced batch runtime by 30% across 3 warehouses.", True),
+        (MAPPABLE, True),
+        (MAPPABLE + ".", False),
+        (MAPPABLE + ";", False),
+        (" " + MAPPABLE, False),
+        (MAPPABLE + " ", False),
+        ("- " + MAPPABLE, False),
         ("Hired 4 engineers for the platform team", False),
         ("Proposed a new on-call rotation", False),
         ("Prioritized the quarterly roadmap", False),
@@ -125,6 +147,45 @@ def test_a_free_text_claim_is_rewritten_only_when_its_rendering_is_its_own_text(
     statement: str, rewritten: bool
 ) -> None:
     assert (_restructurable(statement) is not None) is rewritten
+
+
+@pytest.mark.parametrize(
+    ("excerpt", "expected"),
+    [
+        (MAPPABLE, True),
+        ("Owner source: " + MAPPABLE + ".", True),
+        ("REDUCED BATCH RUNTIME BY 30% ACROSS 3 WAREHOUSES", True),
+        ("Reduced  batch runtime\nby 30% across 3 warehouses", True),
+        ("Ｒｅｄｕｃｅｄ batch runtime by 30% across 3 warehouses", True),
+        ("Cut batch runtime by 30% across 3 warehouses", False),
+        ("Led batch runtime by 30% across 3 warehouses", False),
+        ("Reduced batch runtime by 30 percent across 3 warehouses", False),
+        ("Reduced batch runtime by 30%; across 3 warehouses", False),
+        ("Reduced batch runtime by 30% across 3 warehouses_extra", True),
+        ("Reduced batch runtime by 30% across 3 warehouseswide", False),
+        ("Unreduced batch runtime by 30% across 3 warehouses", False),
+    ],
+)
+def test_frozen_grounding_requires_the_complete_rendering(excerpt: str, expected: bool) -> None:
+    claim = _restructurable(MAPPABLE)
+    assert claim is not None
+    assert structured_claims_v1.grounded(claim, excerpt) is expected
+
+
+@pytest.mark.parametrize(
+    "excerpt",
+    [
+        "Built system for 30",
+        "Built system for 30%",
+        "Built system for 30.5",
+        "Built system for 30€",
+    ],
+)
+def test_frozen_grounding_preserves_numeric_phrase_boundaries(excerpt: str) -> None:
+    claim = structured_claims_v1.StructuredClaim(
+        schema_version=1, verb="built", subject="system for 30"
+    )
+    assert structured_claims_v1.grounded(claim, excerpt) is (excerpt == "Built system for 30")
 
 
 def test_the_frozen_rewrite_imports_no_live_application_module() -> None:
