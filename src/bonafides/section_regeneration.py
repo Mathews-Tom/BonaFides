@@ -12,7 +12,7 @@ from sqlalchemy import Connection, text
 from sqlalchemy.engine import RowMapping
 
 from bonafides import document_generation as generation
-from bonafides import documents, local_model, suitability
+from bonafides import documents, local_model, model_context, suitability
 from bonafides.auth import Owner, require_owner
 from bonafides.commands import canonical_json, command
 from bonafides.config import Settings
@@ -111,21 +111,7 @@ def _source_context(
         "content_sha256"
     ) != suitability._posting_digest(posting):
         raise Problem(409, "stale_regeneration_posting_context")
-    claims: dict[str, dict[str, object]] = {}
-    evidence: dict[str, dict[str, object]] = {}
-    for fact in facts:
-        claim_id, evidence_id = str(fact["claim_revision_id"]), str(fact["evidence_revision_id"])
-        claim = claims.setdefault(
-            claim_id,
-            {
-                "id": claim_id,
-                "text": fact["claim_text"],
-                "structured_fields": fact["structured_fields"],
-                "evidence_revision_ids": [],
-            },
-        )
-        cast(list[str], claim["evidence_revision_ids"]).append(evidence_id)
-        evidence[evidence_id] = {"id": evidence_id, "text": fact["evidence_text"]}
+    claims, evidence = model_context.professional_context(conn, owner, facts)
     projection: dict[str, object] = {
         "posting": {
             "title": pinned_posting["title"],
@@ -141,8 +127,8 @@ def _source_context(
             }
             for item in reviewed
         ],
-        "claims": list(claims.values()),
-        "evidence": list(evidence.values()),
+        "claims": claims,
+        "evidence": evidence,
         "tone": tone,
         "language": provenance.get("language", "en"),
         "target": {

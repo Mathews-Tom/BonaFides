@@ -24,7 +24,7 @@ from sqlalchemy import Connection, text
 from sqlalchemy.engine import RowMapping
 from sqlalchemy.exc import DBAPIError
 
-from bonafides import local_model
+from bonafides import local_model, model_context
 from bonafides.auth import Owner, StrictModel, audit, require_owner
 from bonafides.claims import claim_text as rendered_claim_text
 from bonafides.claims import grounded, structured_claim
@@ -642,6 +642,14 @@ class ProfileProjection:
     claims: dict[UUID, dict[str, object]]
     evidence: dict[UUID, dict[str, object]]
     links: dict[UUID, set[UUID]]
+    withheld: frozenset[UUID]
+
+    def model_evidence(self) -> list[dict[str, object]]:
+        """Evidence items as they enter model context; the checker keeps reading ``evidence``."""
+        return [
+            model_context.evidence_item(str(item["id"]), str(item["text"]), key in self.withheld)
+            for key, item in self.evidence.items()
+        ]
 
 
 def _profile_projection(conn: Connection, owner_id: UUID, revision_id: UUID) -> ProfileProjection:
@@ -716,7 +724,8 @@ def _profile_projection(conn: Connection, owner_id: UUID, revision_id: UUID) -> 
             "evidence_revision_ids": sorted(str(item) for item in permitted),
         }
         links[identifier] = permitted
-    return ProfileProjection(claims, evidence, links)
+    withheld = model_context.withheld_evidence(conn, owner_id, evidence)
+    return ProfileProjection(claims, evidence, links, frozenset(withheld))
 
 
 def _reviewed_requirements(
@@ -1091,7 +1100,7 @@ def _prepare_workflow(
                 "context": {
                     "requirements": [item.model_dump(mode="json") for item in requirements],
                     "claims": list(profile.claims.values()),
-                    "evidence": list(profile.evidence.values()),
+                    "evidence": profile.model_evidence(),
                 },
             }
         )
@@ -1129,9 +1138,10 @@ def _check_workflow_context(
             conn, task.owner_id, UUID(str(task.input["profile_revision_id"]))
         )
         context = cast(dict[str, object], task.input["context"])
-        if context.get("claims") != list(profile.claims.values()) or context.get(
-            "evidence"
-        ) != list(profile.evidence.values()):
+        if (
+            context.get("claims") != list(profile.claims.values())
+            or context.get("evidence") != profile.model_evidence()
+        ):
             raise Problem(409, "stale_profile_evidence")
         return profile
     return None

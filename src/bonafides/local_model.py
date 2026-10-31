@@ -43,7 +43,7 @@ _TRANSPORT_POLICY = {
     "inference_identity": "unknown_mutable_tag",
     "interruption_code": "model_interrupted",
 }
-PROJECTION_VERSION = "ol-professional-wire-v3"
+PROJECTION_VERSION = "ol-professional-wire-v4"
 PROMPT_VERSIONS = {
     "extract_posting": "ol-extract-posting-v1",
     "match_requirements": "ol-match-requirements-v1",
@@ -326,6 +326,13 @@ class _WireEvidence(_WireModel):
     text: str = Field(min_length=1, max_length=100000)
 
 
+class _WireWithheldEvidence(_WireModel):
+    """Confidential or employer-owned evidence: its identifier, never its content."""
+
+    id: UUID
+    withheld: Literal[True]
+
+
 class _WirePosting(_WireModel):
     title: str = Field(min_length=1, max_length=500)
     organization: str = Field(min_length=1, max_length=500)
@@ -343,7 +350,7 @@ class _SectionProjection(_WireModel):
     posting: _WirePosting
     requirements: list[_WireRequirement] = Field(max_length=100)
     claims: list[_WireClaim] = Field(max_length=100)
-    evidence: list[_WireEvidence] = Field(max_length=100)
+    evidence: list[_WireEvidence | _WireWithheldEvidence] = Field(max_length=100)
     tone: Literal["professional", "concise"]
     language: Literal["en"]
     target: _WireTarget
@@ -399,6 +406,11 @@ class InferenceLifecycle(Protocol):
     def started(self) -> None: ...
 
     def completed(self) -> None: ...
+
+
+def _withheld(value: dict[str, object]) -> bool:
+    """A withheld evidence item carries its identifier and marker, never any content."""
+    return set(value) == {"id", "withheld"} and value["withheld"] is True
 
 
 def _json(value: object) -> bytes:
@@ -966,7 +978,9 @@ class OllamaClient:
                     raise ModelFailure("model_context_invalid")
                 items: list[dict[str, object]] = []
                 for value in values:
-                    if not isinstance(value, dict) or set(value) != allowed:
+                    if not isinstance(value, dict) or (
+                        set(value) != allowed and not (name == "evidence" and _withheld(value))
+                    ):
                         raise ModelFailure("model_context_invalid")
                     item = cast(dict[str, object], value)
                     if stage == "generate_documents" and name == "claims":
