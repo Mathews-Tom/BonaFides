@@ -41,3 +41,7 @@
   background: var(--warn-bg);
   color: var(--ink);
 }
+.evidence-provenance {
+  font-size: .85rem;
+  color: var(--muted);
+}
