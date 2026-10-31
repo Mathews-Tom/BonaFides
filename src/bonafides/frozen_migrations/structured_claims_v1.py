@@ -1,10 +1,10 @@
 # SPDX-License-Identifier: MIT OR Apache-2.0
-"""Frozen claim schema v1 mapping, rendering and grounding for the structured-claims upgrade.
+"""Release-fixed claim schema v1 mapping, rendering and grounding for schema 28.
 
-The schema 28 upgrade and the import of portable archives written before schema 28 rewrite
-free-text experience and project claims with this copy. It must never change and must not
-import live application modules: later changes to the mapper, renderer, grounding or profile
-code must not alter what an upgrade from an earlier schema produces.
+This final version is fixed for release. The schema 28 upgrade and imports of portable
+archives written before schema 28 use this standalone copy. Later application changes
+must never change this frozen schema, vocabulary, mapper, renderer or grounding behavior.
+No live application modules may be imported here.
 """
 
 from __future__ import annotations
@@ -14,6 +14,7 @@ import hashlib
 import json
 import re
 import unicodedata
+from collections.abc import Callable, Mapping
 from datetime import date
 from typing import Literal, cast, get_args
 from uuid import UUID, uuid4
@@ -35,25 +36,127 @@ class StrictModel(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
+# Ordered from strongest to weakest ownership. The order is part of the schema contract.
 OwnershipVerb = Literal[
-    "led",
-    "owned",
-    "managed",
-    "initiated",
-    "designed",
-    "built",
-    "delivered",
-    "increased",
-    "reduced",
-    "improved",
-    "wrote",
-    "maintained",
-    "mentored",
-    "analyzed",
-    "coordinated",
-    "contributed",
-    "supported",
-    "assisted",
+    "led",  # Explicit leadership; no generic achievement is placed here.
+    "spearheaded",  # Explicit leadership; no generic achievement is placed here.
+    "headed",  # Explicit leadership; no generic achievement is placed here.
+    "directed",  # Explicit leadership; no generic achievement is placed here.
+    "owned",  # Explicit responsibility, below leadership.
+    "took_ownership_of",  # Explicit responsibility, below leadership.
+    "responsible_for",  # Explicit responsibility, below leadership.
+    "was_responsible_for",  # Explicit responsibility, below leadership.
+    "managed",  # Supervision or oversight, not creation or leadership inference.
+    "supervised",  # Supervision or oversight, not creation or leadership inference.
+    "oversaw",  # Supervision or oversight, not creation or leadership inference.
+    "initiated",  # Starting something, not necessarily owning its later execution.
+    "founded",  # Starting something, not necessarily owning its later execution.
+    "established",  # Starting something, not necessarily owning its later execution.
+    "introduced",  # Starting something, not necessarily owning its later execution.
+    "pioneered",  # Starting something, not necessarily owning its later execution.
+    "designed",  # Design or planning, without asserting delivery.
+    "architected",  # Design or planning, without asserting delivery.
+    "planned",  # Design or planning, without asserting delivery.
+    "built",  # Hands-on implementation; prototypes and integration do not assert project leadership.
+    "developed",  # Hands-on implementation; prototypes and integration do not assert project leadership.
+    "implemented",  # Hands-on implementation; prototypes and integration do not assert project leadership.
+    "created",  # Hands-on implementation; prototypes and integration do not assert project leadership.
+    "engineered",  # Hands-on implementation; prototypes and integration do not assert project leadership.
+    "coded",  # Hands-on implementation; prototypes and integration do not assert project leadership.
+    "programmed",  # Hands-on implementation; prototypes and integration do not assert project leadership.
+    "automated",  # Hands-on implementation; prototypes and integration do not assert project leadership.
+    "integrated",  # Hands-on implementation; prototypes and integration do not assert project leadership.
+    "migrated",  # Hands-on implementation; prototypes and integration do not assert project leadership.
+    "prototyped",  # Hands-on implementation; prototypes and integration do not assert project leadership.
+    "delivered",  # Executing or releasing work, without asserting its design or ownership.
+    "shipped",  # Executing or releasing work, without asserting its design or ownership.
+    "launched",  # Executing or releasing work, without asserting its design or ownership.
+    "completed",  # Executing or releasing work, without asserting its design or ownership.
+    "executed",  # Executing or releasing work, without asserting its design or ownership.
+    "released",  # Executing or releasing work, without asserting its design or ownership.
+    "rolled_out",  # Executing or releasing work, without asserting its design or ownership.
+    "deployed",  # Executing or releasing work, without asserting its design or ownership.
+    "increased",  # A stated outcome/change, without asserting who led the work.
+    "grew",  # A stated outcome/change, without asserting who led the work.
+    "raised",  # A stated outcome/change, without asserting who led the work.
+    "boosted",  # A stated outcome/change, without asserting who led the work.
+    "expanded",  # A stated outcome/change, without asserting who led the work.
+    "scaled",  # A stated outcome/change, without asserting who led the work.
+    "generated",  # A stated outcome/change, without asserting who led the work.
+    "achieved",  # A stated outcome/change, without asserting who led the work.
+    "reduced",  # A stated outcome/change, without asserting who led the work.
+    "cut",  # A stated outcome/change, without asserting who led the work.
+    "decreased",  # A stated outcome/change, without asserting who led the work.
+    "lowered",  # A stated outcome/change, without asserting who led the work.
+    "shortened",  # A stated outcome/change, without asserting who led the work.
+    "minimized",  # A stated outcome/change, without asserting who led the work.
+    "slashed",  # A stated outcome/change, without asserting who led the work.
+    "trimmed",  # A stated outcome/change, without asserting who led the work.
+    "saved",  # A stated outcome/change, without asserting who led the work.
+    "improved",  # A stated outcome/change, without asserting who led the work.
+    "optimized",  # A stated outcome/change, without asserting who led the work.
+    "enhanced",  # A stated outcome/change, without asserting who led the work.
+    "streamlined",  # A stated outcome/change, without asserting who led the work.
+    "modernized",  # A stated outcome/change, without asserting who led the work.
+    "stabilized",  # A stated outcome/change, without asserting who led the work.
+    "strengthened",  # A stated outcome/change, without asserting who led the work.
+    "hardened",  # A stated outcome/change, without asserting who led the work.
+    "accelerated",  # A stated outcome/change, without asserting who led the work.
+    "resolved",  # A stated outcome/change, without asserting who led the work.
+    "fixed",  # A stated outcome/change, without asserting who led the work.
+    "wrote",  # Creating or communicating an artifact, not managing the subject.
+    "authored",  # Creating or communicating an artifact, not managing the subject.
+    "documented",  # Creating or communicating an artifact, not managing the subject.
+    "drafted",  # Creating or communicating an artifact, not managing the subject.
+    "produced",  # Creating or communicating an artifact, not managing the subject.
+    "prepared",  # Creating or communicating an artifact, not managing the subject.
+    "published",  # Creating or communicating an artifact, not managing the subject.
+    "presented",  # Creating or communicating an artifact, not managing the subject.
+    "maintained",  # Operating or improving an existing system, without ownership inference.
+    "administered",  # Operating or improving an existing system, without ownership inference.
+    "operated",  # Operating or improving an existing system, without ownership inference.
+    "configured",  # Operating or improving an existing system, without ownership inference.
+    "monitored",  # Operating or improving an existing system, without ownership inference.
+    "upgraded",  # Operating or improving an existing system, without ownership inference.
+    "refactored",  # Operating or improving an existing system, without ownership inference.
+    "mentored",  # Teaching or developing others, not managing them.
+    "coached",  # Teaching or developing others, not managing them.
+    "trained",  # Teaching or developing others, not managing them.
+    "analyzed",  # Investigation or a bounded performed activity, without delivery inference.
+    "assessed",  # Investigation or a bounded performed activity, without delivery inference.
+    "audited",  # Investigation or a bounded performed activity, without delivery inference.
+    "evaluated",  # Investigation or a bounded performed activity, without delivery inference.
+    "investigated",  # Investigation or a bounded performed activity, without delivery inference.
+    "researched",  # Investigation or a bounded performed activity, without delivery inference.
+    "reviewed",  # Investigation or a bounded performed activity, without delivery inference.
+    "measured",  # Investigation or a bounded performed activity, without delivery inference.
+    "inspected",  # Investigation or a bounded performed activity, without delivery inference.
+    "conducted",  # Investigation or a bounded performed activity, without delivery inference.
+    "identified",  # Investigation or a bounded performed activity, without delivery inference.
+    "defined",  # Investigation or a bounded performed activity, without delivery inference.
+    "coordinated",  # Coordination, negotiation or joint work, not unilateral leadership.
+    "orchestrated",  # Coordination, negotiation or joint work, not unilateral leadership.
+    "organized",  # Coordination, negotiation or joint work, not unilateral leadership.
+    "facilitated",  # Coordination, negotiation or joint work, not unilateral leadership.
+    "scheduled",  # Coordination, negotiation or joint work, not unilateral leadership.
+    "negotiated",  # Coordination, negotiation or joint work, not unilateral leadership.
+    "partnered",  # Coordination, negotiation or joint work, not unilateral leadership.
+    "collaborated",  # Coordination, negotiation or joint work, not unilateral leadership.
+    "contributed",  # A contribution or participation only.
+    "contributed_to",  # A contribution or participation only.
+    "worked_on",  # A contribution or participation only.
+    "participated_in",  # A contribution or participation only.
+    "took_part_in",  # A contribution or participation only.
+    "supported",  # Service/support activity only.
+    "handled",  # Service/support activity only.
+    "processed",  # Service/support activity only.
+    "answered",  # Service/support activity only.
+    "responded",  # Service/support activity only.
+    "assisted_with",  # Assistance only; never inflated into an outcome or ownership claim.
+    "assisted_in",  # Assistance only; never inflated into an outcome or ownership claim.
+    "helped",  # Assistance only; never inflated into an outcome or ownership claim.
+    "helped_to",  # Assistance only; never inflated into an outcome or ownership claim.
+    "assisted",  # Assistance only; never inflated into an outcome or ownership claim.
 ]
 OWNERSHIP_VERBS: tuple[OwnershipVerb, ...] = get_args(OwnershipVerb)
 MetricUnit = Literal[
@@ -73,9 +176,12 @@ MetricUnit = Literal[
     "months",
 ]
 METRIC_UNITS: tuple[MetricUnit, ...] = get_args(MetricUnit)
-MetricChange = Literal["increase", "decrease", "improvement", "saving"]
+MetricChange = Literal["increase", "decrease", "improvement", "saving", "quantity"]
 Magnitude = Literal["thousand", "million", "billion"]
 MetricRate = Literal["day", "week", "month", "quarter", "year"]
+RateWording = Literal["per", "a", "an", "each", "every", "adverbial", "annual"]
+PeriodStyle = Literal["parenthetical", "in_year", "range"]
+PeriodSeparator = Literal["hyphen", "en_dash", "em_dash"]
 RenderLanguage = Literal["en"]
 RENDER_LANGUAGES: tuple[RenderLanguage, ...] = get_args(RenderLanguage)
 STRUCTURED_KINDS = frozenset({"experience", "project"})
@@ -106,6 +212,7 @@ class ClaimMetric(StrictModel):
     magnitude: Magnitude | None = None
     change: MetricChange | None = None
     per: MetricRate | None = None
+    rate_wording: RateWording | None = None
     measure: str | None = Field(default=None, min_length=1, max_length=200)
 
     @field_validator("measure")
@@ -113,10 +220,23 @@ class ClaimMetric(StrictModel):
     def single_line_measure(cls, value: str | None) -> str | None:
         return None if value is None else _phrase(value)
 
+    @model_validator(mode="after")
+    def quantity_without_measure(self) -> ClaimMetric:
+        # A quantity counts the subject itself, so a separate measure would be ambiguous.
+        if self.change == "quantity" and self.measure is not None:
+            raise ValueError("quantity_with_measure")
+        if self.rate_wording is not None and self.per is None:
+            raise ValueError("rate_wording_without_rate")
+        if self.rate_wording == "annual" and self.per != "year":
+            raise ValueError("annual_wording_requires_year")
+        return self
+
 
 class ClaimPeriod(StrictModel):
     start: str = Field(pattern=r"^[0-9]{4}(?:-[0-9]{2})?$")
     end: str = Field(pattern=r"^[0-9]{4}(?:-[0-9]{2})?$")
+    style: PeriodStyle | None = None
+    separator: PeriodSeparator | None = None
 
     @field_validator("start", "end")
     @classmethod
@@ -131,6 +251,12 @@ class ClaimPeriod(StrictModel):
         if isinstance(start, str) and date_bounds(start)[0] > date_bounds(value)[1]:
             raise ValueError("invalid_interval")
         return value
+
+    @model_validator(mode="after")
+    def coherent_style(self) -> ClaimPeriod:
+        if self.style == "in_year" and (self.start != self.end or len(self.start) != 4):
+            raise ValueError("in_year_requires_one_year")
+        return self
 
 
 class StructuredClaim(StrictModel):
@@ -153,7 +279,8 @@ class StructuredClaim(StrictModel):
         metric = self.metric
         if (
             metric is not None
-            and {expected, metric.change} == {"increase", "decrease"}
+            and _METRIC_POLARITY.get(expected) is not None
+            and _METRIC_POLARITY.get(metric.change) == -_METRIC_POLARITY[expected]
             and (metric.measure is None or metric.measure.casefold() == self.subject.casefold())
         ):
             raise ValueError("metric_direction_contradicts_verb")
@@ -161,32 +288,50 @@ class StructuredClaim(StrictModel):
 
 
 _EN_VERBS: dict[OwnershipVerb, str] = {
-    "led": "Led",
-    "owned": "Owned",
-    "managed": "Managed",
-    "initiated": "Initiated",
-    "designed": "Designed",
-    "built": "Built",
-    "delivered": "Delivered",
-    "increased": "Increased",
-    "reduced": "Reduced",
-    "improved": "Improved",
-    "wrote": "Wrote",
-    "maintained": "Maintained",
-    "mentored": "Mentored",
-    "analyzed": "Analyzed",
-    "coordinated": "Coordinated",
-    "contributed": "Contributed to",
-    "supported": "Supported",
-    "assisted": "Assisted with",
+    verb: verb.replace("_", " ").capitalize() for verb in OWNERSHIP_VERBS
 }
 _EN_CURRENCY: dict[str, str] = {"usd": "$", "eur": "€", "gbp": "£"}
 _EN_MAGNITUDE: dict[Magnitude, str] = {"thousand": "K", "million": "M", "billion": "B"}
 _EN_MONTHS = tuple(calendar.month_abbr)
 _VERB_DIRECTION: dict[OwnershipVerb, MetricChange] = {
     "increased": "increase",
+    "grew": "increase",
+    "raised": "increase",
+    "boosted": "increase",
+    "expanded": "increase",
+    "scaled": "increase",
+    "generated": "increase",
+    "accelerated": "increase",
     "reduced": "decrease",
+    "cut": "decrease",
+    "decreased": "decrease",
+    "lowered": "decrease",
+    "shortened": "decrease",
+    "minimized": "decrease",
+    "slashed": "decrease",
+    "trimmed": "decrease",
+    "saved": "saving",
     "improved": "improvement",
+    "optimized": "improvement",
+    "enhanced": "improvement",
+    "streamlined": "improvement",
+    "modernized": "improvement",
+    "stabilized": "improvement",
+    "strengthened": "improvement",
+    "hardened": "improvement",
+}
+_METRIC_POLARITY: dict[MetricChange | None, int] = {"increase": 1, "decrease": -1, "saving": -1}
+_EN_RATE_ADVERBS: dict[MetricRate, str] = {
+    "day": "daily",
+    "week": "weekly",
+    "month": "monthly",
+    "quarter": "quarterly",
+    "year": "yearly",
+}
+_EN_PERIOD_SEPARATORS: dict[PeriodSeparator, str] = {
+    "hyphen": "-",
+    "en_dash": "–",
+    "em_dash": "—",
 }
 _EN_PARTICIPLES: dict[MetricChange, str] = {
     "increase": "increasing",
@@ -195,9 +340,20 @@ _EN_PARTICIPLES: dict[MetricChange, str] = {
 }
 
 
+def _en_rate(metric: ClaimMetric) -> str:
+    if metric.per is None:
+        return ""
+    wording = metric.rate_wording or "per"
+    if wording == "annual":
+        return " annually"
+    if wording == "adverbial":
+        return " " + _EN_RATE_ADVERBS[metric.per]
+    return f" {wording} {metric.per}"
+
+
 def _en_amount(metric: ClaimMetric) -> str:
     number = metric.value + (_EN_MAGNITUDE[metric.magnitude] if metric.magnitude else "")
-    rate = f" per {metric.per}" if metric.per else ""
+    rate = _en_rate(metric)
     if metric.unit in _EN_CURRENCY:
         return _EN_CURRENCY[metric.unit] + number + rate
     if metric.unit == "percent":
@@ -223,13 +379,17 @@ def _render_en(claim: StructuredClaim) -> str:
         and metric.change is not None
         and _VERB_DIRECTION.get(claim.verb) == metric.change
     )
-    words = [_EN_VERBS[claim.verb], claim.subject]
+    leading = metric is not None and metric.change == "quantity"
+    words = [_EN_VERBS[claim.verb]]
+    if leading and metric is not None:
+        words.append(_en_amount(metric))
+    words.append(claim.subject)
     if inline and metric is not None:
         words.append(f"by {_en_amount(metric)}")
     if claim.scope:
         words.append(claim.scope)
     sentence = " ".join(words)
-    if metric is not None and not inline:
+    if metric is not None and not inline and not leading:
         amount = _en_amount(metric)
         if metric.change in _EN_PARTICIPLES:
             sentence += f", {_EN_PARTICIPLES[metric.change]} {metric.measure or 'it'} by {amount}"
@@ -237,9 +397,59 @@ def _render_en(claim: StructuredClaim) -> str:
             lead = "saving" if metric.change == "saving" else "reaching"
             sentence += f", {lead} {amount}" + (f" {metric.measure}" if metric.measure else "")
     if claim.period is not None:
-        start, end = _en_date(claim.period.start), _en_date(claim.period.end)
-        sentence += f" ({start})" if start == end else f" ({start}–{end})"
+        period = claim.period
+        start, end = _en_date(period.start), _en_date(period.end)
+        if period.style == "in_year":
+            sentence += f" in {start}"
+        else:
+            separator = _EN_PERIOD_SEPARATORS[period.separator or "en_dash"]
+            dates = start if start == end else f"{start}{separator}{end}"
+            sentence += f" {dates}" if period.style == "range" else f" ({dates})"
     return sentence
+
+
+RENDERERS: dict[RenderLanguage, Callable[[StructuredClaim], str]] = {"en": _render_en}
+
+
+def render_claim(claim: StructuredClaim, language: RenderLanguage = "en") -> str:
+    return RENDERERS[language](claim)
+
+
+def vocabulary(language: RenderLanguage = "en") -> dict[str, object]:
+    """Editor choices; verbs keep their ownership order and carry the language's wording."""
+    labels = {"en": _EN_VERBS}[language]
+    return {
+        "language": language,
+        "verbs": [{"key": verb, "label": labels[verb]} for verb in OWNERSHIP_VERBS],
+        "units": list(METRIC_UNITS),
+        "changes": list(get_args(MetricChange)),
+        "magnitudes": list(get_args(Magnitude)),
+        "rates": list(get_args(MetricRate)),
+        "rate_wordings": list(get_args(RateWording)),
+        "period_styles": list(get_args(PeriodStyle)),
+        "period_separators": list(get_args(PeriodSeparator)),
+    }
+
+
+def structured_claim(payload: Mapping[str, object]) -> StructuredClaim | None:
+    value = payload.get("claim")
+    return None if value is None else StructuredClaim.model_validate(value)
+
+
+def claim_text(payload: Mapping[str, object], language: RenderLanguage = "en") -> str:
+    """The displayed statement: a rendering for structured claims, literal text otherwise."""
+    claim = structured_claim(payload)
+    if claim is not None:
+        return render_claim(claim, language)
+    value = payload.get("text")
+    if not isinstance(value, str):
+        raise ValueError("claim_without_statement")
+    return value
+
+
+def needs_attention(kind: str, payload: Mapping[str, object]) -> bool:
+    """Experience and project statements still stored as free text await restructuring."""
+    return kind in STRUCTURED_KINDS and payload.get("claim") is None
 
 
 _GROUNDING_PUNCTUATION = str.maketrans(
@@ -258,9 +468,16 @@ def _normalise_grounding(text: str) -> str:
 
 
 def grounded(claim: StructuredClaim, excerpt: str) -> bool:
-    """Require the complete rendering as a whole phrase under frozen literal normalization."""
-    rendering = _normalise_grounding(render_claim(claim)).rstrip(".;")
+    """Require the complete English rendering verbatim within the evidence excerpt.
+
+    Both texts use NFKC, casefolding, collapsed whitespace and ASCII quotes/dashes.
+    A trailing full stop or semicolon on the rendering is ignored; wording is not.
+    Phrase boundaries exclude matches within longer words or numeric amounts.
+    This is literal containment, not a semantic assessment of the surrounding text.
+    """
+    rendering = _normalise_grounding(render_claim(claim, "en")).rstrip(".;")
     quoted = _normalise_grounding(excerpt)
+    # Currency symbols present in the excerpt are escaped, never treated as regex syntax.
     currencies = re.escape("".join({char for char in quoted if unicodedata.category(char) == "Sc"}))
     currency_boundary = rf"|[{currencies}]" if currencies else ""
     pattern = (
@@ -270,10 +487,6 @@ def grounded(claim: StructuredClaim, excerpt: str) -> bool:
     return re.search(pattern, quoted) is not None
 
 
-def render_claim(claim: StructuredClaim) -> str:
-    return _render_en(claim)
-
-
 UnparsedReason = Literal[
     "unknown_verb",
     "missing_subject",
@@ -281,102 +494,18 @@ UnparsedReason = Literal[
     "multiple_statements",
     "invalid_value",
     "unplaced_scope",
+    "unquoted_rendering",
+    "compound_verb",
 ]
 
-# Declared normalization: case-insensitive whole-word prefixes, longest phrase first.
+# Source actions are vocabulary identities, never synonyms for another ownership key.
 _VERB_PHRASES: dict[str, tuple[OwnershipVerb, MetricChange | None]] = {
-    # A phrase maps only to a vocabulary verb with the same meaning at the same or a lower
-    # ownership rank; a verb with another meaning stays unknown so the line needs attention.
-    "led": ("led", None),
-    "spearheaded": ("led", None),
-    "headed": ("led", None),
-    "directed": ("led", None),
-    "owned": ("owned", None),
-    "took ownership of": ("owned", None),
-    "responsible for": ("owned", None),
-    "was responsible for": ("owned", None),
-    "managed": ("managed", None),
-    "supervised": ("managed", None),
-    "oversaw": ("managed", None),
-    "mentored": ("mentored", None),
-    "coached": ("mentored", None),
-    "maintained": ("maintained", None),
-    "administered": ("maintained", None),
-    "operated": ("maintained", None),
-    "wrote": ("wrote", None),
-    "authored": ("wrote", None),
-    "documented": ("wrote", None),
-    "drafted": ("wrote", None),
-    "initiated": ("initiated", None),
-    "founded": ("initiated", None),
-    "established": ("initiated", None),
-    "introduced": ("initiated", None),
-    "pioneered": ("initiated", None),
-    "designed": ("designed", None),
-    "architected": ("designed", None),
-    "built": ("built", None),
-    "developed": ("built", None),
-    "implemented": ("built", None),
-    "created": ("built", None),
-    "engineered": ("built", None),
-    "coded": ("built", None),
-    "programmed": ("built", None),
-    "delivered": ("delivered", None),
-    "shipped": ("delivered", None),
-    "launched": ("delivered", None),
-    "completed": ("delivered", None),
-    "executed": ("delivered", None),
-    "released": ("delivered", None),
-    "rolled out": ("delivered", None),
-    "increased": ("increased", "increase"),
-    "grew": ("increased", "increase"),
-    "raised": ("increased", "increase"),
-    "boosted": ("increased", "increase"),
-    "expanded": ("increased", "increase"),
-    "reduced": ("reduced", "decrease"),
-    "cut": ("reduced", "decrease"),
-    "decreased": ("reduced", "decrease"),
-    "lowered": ("reduced", "decrease"),
-    "shortened": ("reduced", "decrease"),
-    "minimized": ("reduced", "decrease"),
-    "slashed": ("reduced", "decrease"),
-    "trimmed": ("reduced", "decrease"),
-    "improved": ("improved", "improvement"),
-    "optimized": ("improved", "improvement"),
-    "enhanced": ("improved", "improvement"),
-    "streamlined": ("improved", "improvement"),
-    "modernized": ("improved", "improvement"),
-    "stabilized": ("improved", "improvement"),
-    "strengthened": ("improved", "improvement"),
-    "analyzed": ("analyzed", None),
-    "assessed": ("analyzed", None),
-    "audited": ("analyzed", None),
-    "evaluated": ("analyzed", None),
-    "investigated": ("analyzed", None),
-    "researched": ("analyzed", None),
-    "reviewed": ("analyzed", None),
-    "measured": ("analyzed", None),
-    "coordinated": ("coordinated", None),
-    "orchestrated": ("coordinated", None),
-    "organized": ("coordinated", None),
-    "facilitated": ("coordinated", None),
-    "scheduled": ("coordinated", None),
-    "contributed to": ("contributed", None),
-    "contributed": ("contributed", None),
-    "worked on": ("contributed", None),
-    "participated in": ("contributed", None),
-    "took part in": ("contributed", None),
-    "supported": ("supported", None),
-    "handled": ("supported", None),
-    "assisted with": ("assisted", None),
-    "assisted in": ("assisted", None),
-    "assisted": ("assisted", None),
-    "helped": ("assisted", None),
-    "helped to": ("assisted", None),
+    verb.replace("_", " "): (verb, _VERB_DIRECTION.get(verb)) for verb in OWNERSHIP_VERBS
 }
 # Verbs that also mean "removed" or "shortened in scope" map only when a metric follows them
 # ("Cut costs by 20%", never "Cut the 2.0 release").
 _METRIC_ONLY = frozenset({"cut", "slashed", "trimmed"})
+_COMPOUND = re.compile(r"(?:and|&)\s+(?P<word>[A-Za-z]+)\b", re.IGNORECASE)
 _PHRASES = sorted(_VERB_PHRASES, key=lambda phrase: (-len(phrase), phrase))
 _BULLET = re.compile(r"^\s*(?:[-*•·●▪◦‣]\s+)?")
 _NUMBER = r"[0-9]{1,3}(?:,[0-9]{3})+(?:\.[0-9]{1,4})?|[0-9]{1,12}(?:\.[0-9]{1,4})?"
@@ -407,16 +536,18 @@ _PARTICIPLE = re.compile(
 _SAVING = re.compile(r",?\s+saving\s+(?P<amount>.+)$", re.IGNORECASE)
 _BY = re.compile(r"\s+by\s+(?P<amount>.+)$", re.IGNORECASE)
 _PERIOD = re.compile(
-    r"\s*\((?P<start>[0-9]{4}(?:-[0-9]{2})?)(?:\s*[-–—]\s*(?P<end>[0-9]{4}(?:-[0-9]{2})?))?\)$"
+    r"\s*\((?P<start>[0-9]{4}(?:-[0-9]{2})?)(?:\s*(?P<separator>[-–—])\s*(?P<end>[0-9]{4}(?:-[0-9]{2})?))?\)$"
     r"|\s+in\s+(?P<year>[0-9]{4})$"
+    r"|\s+(?P<range_start>[0-9]{4}(?:-[0-9]{2})?)\s*(?P<range_separator>[-–—])\s*(?P<range_end>[0-9]{4}(?:-[0-9]{2})?)$"
 )
 _SCOPE = re.compile(r"\s+(?=(?:across|for|within|spanning|serving)\s)", re.IGNORECASE)
 _TAIL = re.compile(
-    r"^(?:across|for|within|spanning|serving|through|via|using|with|in|at|over|on|by|while|from)\s",
+    r"^(?:across|for|within|spanning|serving|through|via|using|with|in|at|over|on|by|while|from"
+    r"|during|after|before|without)\s",
     re.IGNORECASE,
 )
 _RATE = re.compile(
-    r"^(?:(?:per|a|an|each|every)\s+(?P<unit>day|week|month|quarter|year)"
+    r"^(?:(?P<wording>per|a|an|each|every)\s+(?P<unit>day|week|month|quarter|year)"
     r"|(?P<adverb>daily|weekly|monthly|quarterly|yearly|annually))(?P<rest>.*)$",
     re.IGNORECASE,
 )
@@ -493,6 +624,14 @@ def _leading_amount(value: str) -> tuple[re.Match[str], str] | None:
     return None if match is None else (match, value[match.end() :].strip())
 
 
+def _quantity(body: str) -> tuple[re.Match[str], str] | None:
+    """An amount opening the object counts the subject itself ("$3.4M in new contracts")."""
+    found = _leading_amount(body)
+    if found is None or found[0]["duration"] or not found[1]:
+        return None
+    return found
+
+
 def _verb(line: str) -> tuple[str, OwnershipVerb, MetricChange | None, str] | None:
     folded = line.casefold()
     for phrase in _PHRASES:
@@ -500,6 +639,15 @@ def _verb(line: str) -> tuple[str, OwnershipVerb, MetricChange | None, str] | No
             verb, change = _VERB_PHRASES[phrase]
             return phrase, verb, change, line[len(phrase) :].strip()
     return None
+
+
+def _verb_word(word: str) -> bool:
+    folded = word.casefold()
+    return (
+        folded in {"ran", "run", "took", "taken", "made", "gave", "given", "taught", "brought"}
+        or folded.endswith("ed")
+        or any(phrase.split()[0] == folded for phrase in _VERB_PHRASES)
+    )
 
 
 def _unknown_verb(line: str, statement: str, unparsed: list[UnparsedPart]) -> ClaimMapping:
@@ -528,11 +676,32 @@ def map_line(line: str) -> ClaimMapping:
     if found is None:
         return _unknown_verb(line, statement, unparsed)
     phrase, verb, verb_change, body = found
+    # "Designed and implemented X" names two ownership acts; neither is folded into the subject.
+    compound = _COMPOUND.match(body)
+    if compound is not None and _verb_word(compound["word"]):
+        return ClaimMapping(
+            claim=None,
+            rendering=None,
+            unparsed=[
+                UnparsedPart(
+                    text=statement[: len(phrase)] + " " + compound[0], reason="compound_verb"
+                ),
+                *unparsed,
+            ],
+        )
     fields: dict[str, object] = {"schema_version": 1, "verb": verb}
     period = _PERIOD.search(body)
     if period is not None:
-        start = period["start"] or period["year"]
-        fields["period"] = {"start": start, "end": period["end"] or start}
+        start = period["start"] or period["year"] or period["range_start"]
+        end = period["end"] or period["range_end"] or start
+        style = (
+            "in_year" if period["year"] else "range" if period["range_start"] else "parenthetical"
+        )
+        period_fields = {"start": start, "end": end, "style": style}
+        separator = period["separator"] or period["range_separator"]
+        if separator:
+            period_fields["separator"] = {"-": "hyphen", "–": "en_dash", "—": "em_dash"}[separator]
+        fields["period"] = period_fields
         body = body[: period.start()].strip()
     metric: dict[str, object] = {}
     amount: tuple[re.Match[str], str] | None = None
@@ -549,6 +718,9 @@ def map_line(line: str) -> ClaimMapping:
     elif by is not None and verb_change is not None and (amount := _leading_amount(by["amount"])):
         metric = {"change": verb_change}
         body = body[: by.start()].strip()
+    elif (quantity := _quantity(body)) is not None:
+        metric = {"change": "quantity"}
+        amount, body = (quantity[0], ""), quantity[1]
     tail = ""
     if amount is not None:
         match, tail = amount
@@ -559,6 +731,14 @@ def map_line(line: str) -> ClaimMapping:
                 _ADVERB_RATES[rate["adverb"].casefold()]
                 if rate["adverb"]
                 else cast(MetricRate, unit_word.casefold())
+            )
+            adverb = (rate["adverb"] or "").casefold()
+            metric["rate_wording"] = (
+                "annual"
+                if adverb == "annually"
+                else "adverbial"
+                if adverb
+                else rate["wording"].casefold()
             )
             tail = rate["rest"].strip()
         if metric["change"] == "saving" and tail and not _TAIL.match(tail):
@@ -599,6 +779,10 @@ def map_line(line: str) -> ClaimMapping:
     except ValidationError:
         unparsed.append(UnparsedPart(text=statement, reason="invalid_value"))
         return ClaimMapping(claim=None, rendering=None, unparsed=unparsed)
+    # Identity mapping and form metadata never waive complete-rendering quotation.
+    # Unsupported wording remains inspectable, with literal approval needing attention.
+    if not unparsed and not grounded(claim, line):
+        unparsed.append(UnparsedPart(text=statement_text(line), reason="unquoted_rendering"))
     return ClaimMapping(claim=claim, rendering=render_claim(claim), unparsed=unparsed)
 
 

@@ -22,7 +22,7 @@ from bonafides.frozen_migrations.structured_claims_v1 import (
 )
 
 MAPPABLE = "Reduced batch runtime by 30% across 3 warehouses"
-UNMAPPABLE = "Saved $90K in synthetic licensing costs"
+UNMAPPABLE = "Successfully saved $90K in synthetic licensing costs"
 
 
 def _literal(evidence_id: str, statement: str, excerpt: str | None = None) -> dict[str, object]:
@@ -60,6 +60,7 @@ def test_free_text_claims_are_rewritten_in_place_and_restore_brings_back_the_tex
             ("Proposed a new on-call rotation", "Proposed a new on-call rotation"),
             (MAPPABLE, "Cut batch runtime by 30% across 3 warehouses"),
             (MAPPABLE + ".", MAPPABLE + "."),
+            ("Implemented a new on-call rotation", "Implemented a new on-call rotation"),
         )
         literal_summary = [(statement, True) for statement, _ in statements]
         evidence = _mutate(
@@ -92,14 +93,19 @@ def test_free_text_claims_are_rewritten_in_place_and_restore_brings_back_the_tex
         assert _summary(before) == literal_summary
 
         with profile_owner.admin.transaction() as conn:
-            assert restructure_free_text_claims(conn, owner_id) == 1
+            assert restructure_free_text_claims(conn, owner_id) == 2
         with profile_owner.admin.transaction() as conn:
             assert restructure_free_text_claims(conn, owner_id) == 0
 
         after = _json(client.get("/api/v1/profile"))
         assert after["version"] == before["version"] + 1
-        assert _summary(after) == [(MAPPABLE, False), *literal_summary[1:]]
-        assert after["current_revision"]["claims"][1:] == before["current_revision"]["claims"][1:]
+        assert _summary(after) == [
+            (statement, index in {1, 2, 3, 4, 5}) for index, (statement, _) in enumerate(statements)
+        ]
+        assert after["current_revision"]["claims"][1:6] == before["current_revision"]["claims"][1:6]
+        implemented = after["current_revision"]["claims"][6]["revision"]
+        assert implemented["payload"]["claim"]["verb"] == "implemented"
+        assert implemented["evidence_links"][0]["excerpt"] == statements[6][0]
         rewritten = after["current_revision"]["claims"][0]["revision"]
         assert "text" not in rewritten["payload"]
         assert rewritten["payload"]["role"] == "Platform engineer"
@@ -138,9 +144,15 @@ def test_free_text_claims_are_rewritten_in_place_and_restore_brings_back_the_tex
         ("- " + MAPPABLE, False),
         ("Hired 4 engineers for the platform team", False),
         ("Proposed a new on-call rotation", False),
+        ("Successfully implemented a new on-call rotation", False),
+        ("Implemented a new on-call rotation", True),
         ("Prioritized the quarterly roadmap", False),
-        ("Spearheaded vendor consolidation", False),
-        ("Led migration of 40 services to Kubernetes (2021-2022)", False),
+        ("Spearheaded vendor consolidation", True),
+        ("Led migration of 40 services to Kubernetes (2021-2022)", True),
+        ("Implemented a new on-call rotation in 2022", True),
+        ("Implemented a new on-call rotation 2021—2022", True),
+        ("Reduced runtime by 12% each year", True),
+        ("Reduced runtime by 12% annually", True),
     ],
 )
 def test_a_free_text_claim_is_rewritten_only_when_its_rendering_is_its_own_text(
@@ -197,3 +209,119 @@ def test_the_frozen_rewrite_imports_no_live_application_module() -> None:
         for alias in node.names
     }
     assert not any(name.split(".")[0] == "bonafides" for name in imported), imported
+
+
+@pytest.mark.parametrize(
+    "statement",
+    [
+        "Implemented a new on-call rotation",
+        "Hired 4 engineers for the platform team",
+        "Proposed a new on-call rotation",
+        "Successfully implemented a new on-call rotation",
+        "Led migration of 40 services to Kubernetes (2021-2022)",
+        "Led migration of 40 services to Kubernetes (2021–2022)",
+        "Implemented a new on-call rotation in 2022",
+        "Implemented a new on-call rotation 2021—2022",
+        "Reduced runtime by 12% per year",
+        "Reduced runtime by 12% a year",
+        "Reduced runtime by 12% each year",
+        "Reduced runtime by 12% every year",
+        "Reduced runtime by 12% yearly",
+        "Reduced runtime by 12% annually",
+        "Reduced runtime by 12% annually.",
+        "Increased 12 service quotas",
+    ],
+)
+def test_release_frozen_mapper_matches_live_schema_rendering_and_grounding(statement: str) -> None:
+    from bonafides.claim_mapping import map_line
+    from bonafides.claims import grounded, render_claim
+
+    live = map_line(statement)
+    frozen = structured_claims_v1.map_line(statement)
+    assert frozen.model_dump(mode="json") == live.model_dump(mode="json")
+    if live.claim is None:
+        return
+    assert frozen.claim is not None
+    rendering = render_claim(live.claim)
+    assert structured_claims_v1.render_claim(frozen.claim) == rendering
+    assert (_restructurable(statement) is not None) is (
+        live.representable and rendering == statement
+    )
+    for excerpt in (statement, "Owner source: " + statement, "Unrelated source"):
+        assert structured_claims_v1.grounded(frozen.claim, excerpt) == grounded(live.claim, excerpt)
+
+
+@pytest.mark.parametrize(
+    ("statement", "field", "expected"),
+    [
+        ("Reduced runtime by 12% each year", "metric", {"rate_wording": "each", "per": "year"}),
+        ("Reduced runtime by 12% annually", "metric", {"rate_wording": "annual", "per": "year"}),
+        ("Reduced runtime by 12% yearly", "metric", {"rate_wording": "adverbial", "per": "year"}),
+        (
+            "Implemented a new on-call rotation in 2022",
+            "period",
+            {"start": "2022", "end": "2022", "style": "in_year"},
+        ),
+        (
+            "Implemented a new on-call rotation 2021—2022",
+            "period",
+            {"start": "2021", "end": "2022", "style": "range", "separator": "em_dash"},
+        ),
+        (
+            "Led migration of 40 services to Kubernetes (2021-2022)",
+            "period",
+            {"start": "2021", "end": "2022", "separator": "hyphen"},
+        ),
+    ],
+)
+def test_frozen_rewrite_retains_exact_period_and_rate_metadata(
+    statement: str, field: str, expected: dict[str, str]
+) -> None:
+    claim = _restructurable(statement)
+    assert claim is not None
+    payload = claim.model_dump(mode="json")
+    assert all(payload[field][key] == value for key, value in expected.items())
+    assert structured_claims_v1.render_claim(claim) == statement
+    assert structured_claims_v1.grounded(claim, statement)
+    assert not structured_claims_v1.grounded(claim, "Implemented something unrelated")
+
+
+@pytest.mark.parametrize(
+    "parts",
+    [
+        {"metric": {"value": "12", "unit": "count", "rate_wording": "each"}},
+        {"metric": {"value": "12", "unit": "count", "per": "month", "rate_wording": "annual"}},
+        {"metric": {"value": "12", "unit": "count", "per": "year", "rate_wording": "hourly"}},
+        {"period": {"start": "2021", "end": "2022", "style": "in_year"}},
+        {"period": {"start": "2022-01", "end": "2022-01", "style": "in_year"}},
+        {"period": {"start": "2022", "end": "2022", "separator": "slash"}},
+    ],
+)
+def test_frozen_new_metadata_validation_matches_live(parts: dict[str, object]) -> None:
+    from pydantic import ValidationError
+
+    from bonafides.claims import StructuredClaim
+
+    payload = {"schema_version": 1, "verb": "delivered", "subject": "releases", **parts}
+    for model in (StructuredClaim, structured_claims_v1.StructuredClaim):
+        with pytest.raises(ValidationError):
+            model.model_validate(payload)
+
+
+def test_frozen_release_vocabulary_and_defaults_match_live() -> None:
+    from bonafides.claims import StructuredClaim, vocabulary
+
+    assert structured_claims_v1.vocabulary() == vocabulary()
+    payload = {
+        "schema_version": 1,
+        "verb": "delivered",
+        "subject": "releases",
+        "metric": {"value": "12", "unit": "count", "per": "year"},
+        "period": {"start": "2021", "end": "2022"},
+    }
+    live = StructuredClaim.model_validate(payload)
+    frozen = structured_claims_v1.StructuredClaim.model_validate(payload)
+    assert frozen.model_dump(mode="json") == live.model_dump(mode="json")
+    assert structured_claims_v1.render_claim(frozen) == (
+        "Delivered releases, reaching 12 per year (2021–2022)"
+    )
