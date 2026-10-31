@@ -271,7 +271,11 @@ def _verb(line: str) -> tuple[str, OwnershipVerb, MetricChange | None, str] | No
 
 def _verb_word(word: str) -> bool:
     folded = word.casefold()
-    return folded.endswith("ed") or any(phrase.split()[0] == folded for phrase in _VERB_PHRASES)
+    return (
+        folded in {"ran", "run", "took", "taken", "made", "gave", "given", "taught", "brought"}
+        or folded.endswith("ed")
+        or any(phrase.split()[0] == folded for phrase in _VERB_PHRASES)
+    )
 
 
 def _unknown_verb(line: str, statement: str, unparsed: list[UnparsedPart]) -> ClaimMapping:

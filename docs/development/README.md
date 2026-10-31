@@ -982,6 +982,18 @@ parts remain visible and also select literal approval. The profile stays unchang
 the approved import command runs. Reimports match all saved line claims, preserve their
 unchanged status and supporting evidence, and do not duplicate them in the review preview.
 
+`bonafides claims coverage <file>` reads a local UTF-8 file (with an optional BOM), counts
+every nonblank line, and reports fully mapped, strictly self-grounded claims plus unparsed
+reasons and source line numbers. It does not store or send the file. Compound ownership
+openers, including irregular verbs such as “Built and ran”, remain flagged rather than
+silently becoming part of the subject.
+
+The unchanged 305-bullet synthetic corpus includes its 64-bullet held-out block. Under
+strict self-grounding, 125/305 bullets qualify (40.9%, floored for display). Ignoring only
+`unquoted_rendering` gives 224/305 (73.4%) schema-representable bullets; that diagnostic is
+not the command's approval criterion. The development plan's **≥95% acceptance is not met
+and awaits an owner decision**. Neither the corpus nor the mapper is tuned to reach it.
+
 ## Development gates
 
 Backend gates require a disposable PostgreSQL 18 database, distinct migration/runtime roles and tracked migrations. Never use a personal or production database. `.github/backend_gate.py` creates an isolated CI namespace, PostgreSQL test database `bonafides_test` and scoped credentials, then runs the following gates; it also needs a locally built `bonafides:local` image for its one-shot preparation helper:

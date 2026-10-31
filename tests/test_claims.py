@@ -297,6 +297,25 @@ def test_grounding_rejects_wording_and_factual_differences(
 
 
 @pytest.mark.parametrize(
+    ("verb", "excerpt"),
+    [
+        ("reduced", "Increased $3M budget"),
+        ("increased", "Reduced $3M budget"),
+        ("improved", "Reduced $3M budget"),
+        ("managed", "Led $3M budget"),
+    ],
+)
+def test_quantity_grounding_requires_the_complete_rendered_verb(verb: str, excerpt: str) -> None:
+    claim = _claim(
+        verb=verb,
+        subject="budget",
+        metric={"value": "3", "unit": "usd", "magnitude": "million", "change": "quantity"},
+    )
+    assert not grounded(claim, excerpt)
+    assert grounded(claim, render_claim(claim))
+
+
+@pytest.mark.parametrize(
     ("fields", "valid"),
     [
         (

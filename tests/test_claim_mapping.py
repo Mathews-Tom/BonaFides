@@ -34,13 +34,14 @@ from bonafides.claims import OWNERSHIP_VERBS, grounded
             "Improved test coverage by 25% through contract tests",
             "Improved test coverage by 25% through contract tests",
         ),
+        ("Increased weekly active users by 12000", "Increased weekly active users by 12000"),
         ("Increased weekly active users by 12,000", "Increased weekly active users by 12,000"),
         (
-            "- Delivered $3.4M in new enterprise contracts in 2021",
+            "- Delivered $3.4M in new enterprise contracts (2021)",
             "Delivered $3.4M in new enterprise contracts (2021)",
         ),
         (
-            "Shipped 99.95% uptime for the core API (2022)",
+            "Delivered 99.95% uptime for the core API (2022)",
             "Delivered 99.95% uptime for the core API (2022)",
         ),
         (
@@ -48,7 +49,7 @@ from bonafides.claims import OWNERSHIP_VERBS, grounded
             "Increased order throughput by 20% during peak season",
         ),
         (
-            "Hardened container images for the production cluster",
+            "Improved container images for the production cluster",
             "Improved container images for the production cluster",
         ),
     ],
@@ -69,6 +70,9 @@ def test_representable_lines_map_to_grounded_claims(line: str, rendering: str) -
         "Cut cloud spend by 30%",
         "Reduced latency by 30 percent",
         "Led migration for checkout in 2020",
+        "Delivered $3.4M in new enterprise contracts in 2021",
+        "Shipped 99.95% uptime for the core API (2022)",
+        "Hardened container images for the production cluster",
     ],
 )
 def test_reworded_proposals_need_attention_instead_of_claiming_grounding(line: str) -> None:
@@ -201,6 +205,10 @@ def test_a_scope_split_by_the_metric_is_flagged_not_joined() -> None:
     [
         ("Designed and implemented a self-service onboarding flow", "Designed and implemented"),
         ("Led and grew the platform team", "Led and grew"),
+        ("Built and ran the API", "Built and ran"),
+        ("Built and run the API", "Built and run"),
+        ("Led and taught the platform team", "Led and taught"),
+        ("Led and took the platform team", "Led and took"),
     ],
 )
 def test_a_compound_verb_is_flagged_not_folded_into_the_subject(line: str, flagged: str) -> None:
