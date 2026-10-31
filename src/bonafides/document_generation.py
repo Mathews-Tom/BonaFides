@@ -1107,8 +1107,17 @@ def install_routes(router: APIRouter, db: Database, settings: Settings) -> None:
                 "frame",
                 "generation_route",
             )
+            # The explanation is shown to the owner beside the projection and never transmitted.
+            withheld = model_context.withheld_explanations(
+                conn, owner.id, cast(list[dict[str, object]], plan["facts"])
+            )
             return _response(
-                200, {**{key: plan[key] for key in keys}, "model_projection": plan["context"]}
+                200,
+                {
+                    **{key: plan[key] for key in keys},
+                    "model_projection": plan["context"],
+                    "withheld_evidence": withheld,
+                },
             )
 
     @router.post("/applications/{application_id}/generation")

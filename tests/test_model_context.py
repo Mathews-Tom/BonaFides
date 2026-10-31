@@ -149,6 +149,29 @@ def test_private_and_public_evidence_content_still_reaches_document_generation(
     assert {"id": evidence_id, "text": f"{CLAIM}. Internal codename {SECRET}."} in preview[
         "model_projection"
     ]["evidence"]
+    assert preview["withheld_evidence"] == []
+
+
+@pytest.mark.postgres
+def test_generation_preview_explains_withheld_evidence_beside_the_exact_projection(
+    catalog: SourceContext, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _profile(catalog)
+    application = _application(catalog, description_text=SOURCE)
+    _write(catalog, {"id": application["posting_id"]}, [_requirement(1, "Linux required.")])
+    profile, evidence_id, claim_id = _withheld_source(catalog, "private", True)
+    _route(monkeypatch, tmp_path)
+    preview = _preview(catalog, profile, application)
+    assert preview["withheld_evidence"] == [
+        {
+            "evidence_revision_id": evidence_id,
+            "source": "Review",
+            "reasons": ["employer_owned"],
+            "claim_revision_ids": [claim_id],
+        }
+    ]
+    assert "withheld_evidence" not in preview["model_projection"]
+    assert SECRET not in canonical_json(preview)
 
 
 @pytest.mark.postgres
