@@ -952,6 +952,13 @@ substitute for the rendering: `Cut batch runtime by 30%` does not support
 `Reduced batch runtime by 30%`. Abbreviations such as `Acme Inc.` or `U.S.` do not split the
 rendering. Schema validation and language-keyed rendering are unchanged.
 
+Document assembly uses the same rendered sentence and grounding rule for base résumés and
+tailored-document fact context. Unsupported structured claims cannot become exportable
+through document edits or owner review. Suitability coverage projects that rendering too,
+but permits a structured claim's linked evidence only when its `direct` or `user_asserted`
+excerpt is both a verbatim evidence quote and grounds the complete rendering. Literal
+claim coverage keeps its existing support-kind behavior.
+
 ## Development gates
 
 Backend gates require a disposable PostgreSQL 18 database, distinct migration/runtime roles and tracked migrations. Never use a personal or production database. `.github/backend_gate.py` creates an isolated CI namespace, PostgreSQL test database `bonafides_test` and scoped credentials, then runs the following gates; it also needs a locally built `bonafides:local` image for its one-shot preparation helper:

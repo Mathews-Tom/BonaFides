@@ -1310,6 +1310,9 @@ def test_reviewed_safe_language_is_not_a_professional_assertion_escape() -> None
     [
         ("Led the billing migration, reducing cloud spend by 30%", True),
         ("Assisted with the billing migration, reducing cloud spend by 30%", False),
+        ("Spearheaded the billing migration, reducing cloud spend by 30%", False),
+        ("I never led the billing migration, but reduced cloud spend by 30%", False),
+        ("Cut cloud spend by 30% while leading the billing migration", False),
         ("Led the billing migration, increasing cloud spend by 30%", False),
         ("Led the billing migration but did not reduce cloud spend by 30%", False),
         ("Led the billing migration. Separately, cloud spend fell by 30%", False),

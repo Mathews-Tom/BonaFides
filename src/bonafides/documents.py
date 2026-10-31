@@ -172,8 +172,8 @@ def _facts(conn: Connection, owner_id: UUID, profile_revision_id: UUID) -> tuple
             or hashlib.sha256(canonical(evidence).encode()).hexdigest() != row["evidence_sha256"]
         ):
             raise Problem(409, "evidence_integrity_failed")
-        # A literal claim must be quoted verbatim; a structured claim's literal parts must all
-        # appear in a verbatim evidence quote, since its sentence is derived, never stored.
+        # Structured claims require their complete rendering within a verbatim evidence
+        # quote; literal claims still require an exact quote of the entire stored text.
         quoted = (
             row["excerpt"] in evidence_text and grounded(structured, row["excerpt"])
             if structured

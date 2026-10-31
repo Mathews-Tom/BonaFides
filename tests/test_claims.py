@@ -394,7 +394,7 @@ def test_structured_claim_is_saved_without_a_sentence_and_rendered_on_read(
 
 
 @pytest.mark.postgres
-def test_base_resume_prints_the_profile_rendering_only_when_the_parts_are_quoted(
+def test_base_resume_prints_the_profile_rendering_only_when_the_sentence_is_quoted(
     profile_owner: IdentityContext,
 ) -> None:
     with profile_owner.client() as client:
@@ -407,7 +407,7 @@ def test_base_resume_prints_the_profile_rendering_only_when_the_parts_are_quoted
             "POST",
             "/evidence",
             1,
-            {"payload": {"text": "Cut batch runtime by 30%", "source": "Synthetic review"}},
+            {"payload": {"text": "Reduced batch runtime by 30%", "source": "Synthetic review"}},
         )
         evidence_id = _json(evidence)["evidence"][0]["revision"]["id"]
         body = _structured_body(evidence_id)

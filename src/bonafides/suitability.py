@@ -27,6 +27,7 @@ from sqlalchemy.exc import DBAPIError
 from bonafides import local_model
 from bonafides.auth import Owner, StrictModel, audit, require_owner
 from bonafides.claims import claim_text as rendered_claim_text
+from bonafides.claims import grounded, structured_claim
 from bonafides.commands import append_outbox, canonical_json, command, lock_installation
 from bonafides.config import Settings
 from bonafides.db import Database
@@ -692,17 +693,23 @@ def _profile_projection(conn: Connection, owner_id: UUID, revision_id: UUID) -> 
         if found is None:
             continue
         permitted: set[UUID] = set()
+        payload = cast(dict[str, object], found["payload"])
+        structured = structured_claim(payload)
         for link in conn.execute(
-            text("""SELECT evidence_revision_id,support_kind FROM bonafides.claim_evidence_links
+            text("""SELECT evidence_revision_id,support_kind,excerpt FROM bonafides.claim_evidence_links
             WHERE owner_id=:owner AND claim_revision_id=:id"""),
             {"owner": owner_id, "id": identifier},
         ).mappings():
-            if link["evidence_revision_id"] in evidence and link["support_kind"] in {
-                "direct",
-                "user_asserted",
-            }:
+            evidence_text = str(evidence.get(link["evidence_revision_id"], {}).get("text", ""))
+            if (
+                link["evidence_revision_id"] in evidence
+                and link["support_kind"] in {"direct", "user_asserted"}
+                and (
+                    structured is None
+                    or (link["excerpt"] in evidence_text and grounded(structured, link["excerpt"]))
+                )
+            ):
                 permitted.add(link["evidence_revision_id"])
-        payload = cast(dict[str, object], found["payload"])
         claims[identifier] = {
             "id": str(identifier),
             "text": rendered_claim_text(payload),
