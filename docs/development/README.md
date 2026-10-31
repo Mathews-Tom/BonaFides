@@ -982,6 +982,37 @@ parts remain visible and also select literal approval. The profile stays unchang
 the approved import command runs. Reimports match all saved line claims, preserve their
 unchanged status and supporting evidence, and do not duplicate them in the review preview.
 
+### Source-preserving action inventory
+
+The release vocabulary is selected before re-measuring individual corpus failures, from
+general leadership, technical delivery, analysis, communication and support actions.
+Vocabulary keys identify the stated action, not interchangeable synonyms. Each key has
+an individual rank rationale beside its declaration in `claims.py`. The conservative
+strongest-to-weakest groups are:
+
+| Group | Action keys, in order | Rank boundary |
+| --- | --- | --- |
+| Leadership | led, spearheaded, headed, directed | Explicit leadership only. |
+| Accountability | owned, took_ownership_of, responsible_for, was_responsible_for | Explicit responsibility, below leadership. |
+| Management | managed, supervised, oversaw | Supervision, not inferred creation or leadership. |
+| Initiation | initiated, founded, established, introduced, pioneered | Starting work, not necessarily owning its execution. |
+| Design | designed, architected, planned | Design or planning, without asserting delivery. |
+| Construction | built, developed, implemented, created, engineered, coded, programmed, automated, integrated, migrated, prototyped | Hands-on implementation, not project leadership. |
+| Delivery | delivered, shipped, launched, completed, executed, released, rolled_out, deployed | Execution or release, not inferred design or ownership. |
+| Outcomes | increased, grew, raised, boosted, expanded, scaled, generated, achieved, reduced, cut, decreased, lowered, shortened, minimized, slashed, trimmed, saved, improved, optimized, enhanced, streamlined, modernized, stabilized, strengthened, hardened, accelerated, resolved, fixed | Stated change or result, without leadership inference. |
+| Communication | wrote, authored, documented, drafted, produced, prepared, published, presented | Creating or communicating an artifact only. |
+| Stewardship | maintained, administered, operated, configured, monitored, upgraded, refactored | Work on an existing system, not inferred ownership. |
+| Instruction | mentored, coached, trained | Teaching others, not managing them. |
+| Investigation | analyzed, assessed, audited, evaluated, investigated, researched, reviewed, measured, inspected, conducted, identified, defined | Investigation or bounded activity, not inferred delivery. |
+| Coordination | coordinated, orchestrated, organized, facilitated, scheduled, negotiated, partnered, collaborated | Coordination or joint work, not unilateral leadership. |
+| Participation | contributed, contributed_to, worked_on, participated_in, took_part_in | A contribution or participation only. |
+| Support | supported, handled, processed, answered, responded | Service/support activity only. |
+| Assistance | assisted_with, assisted_in, helped, helped_to, assisted | Assistance, never inflated into ownership or an outcome. |
+
+This order is an explicit conservative policy, not permission to replace one action with
+another. English renders each key in its own words. `Hired`, `Proposed` and leading adverbs
+such as `Successfully` remain outside this action vocabulary and must stay flagged.
+
 `uv run --frozen bonafides claims coverage <file>` reads a local UTF-8 file (with an optional BOM), counts
 every nonblank line, and reports fully mapped, strictly self-grounded claims plus unparsed
 reasons and source line numbers. It does not store or send the file. Compound ownership
