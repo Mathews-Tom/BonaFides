@@ -47,7 +47,7 @@ from bonafides.commands import canonical_json
 from bonafides.worker import Worker
 
 CLAIM = "Kept the synthetic payroll batch inside its nightly window"
-SECRET = "SECRET-EMPLOYER-ROADMAP-7Q"
+WITHHELD_MARKER = "SECRET-EMPLOYER-ROADMAP-7Q"
 
 
 def _withheld_source(
@@ -58,7 +58,10 @@ def _withheld_source(
     evidence = context.client.post(
         "/api/v1/evidence",
         json={
-            "payload": {"text": f"{CLAIM}. Internal codename {SECRET}.", "source": "Review"},
+            "payload": {
+                "text": f"{CLAIM}. Internal codename {WITHHELD_MARKER}.",
+                "source": "Review",
+            },
             "provenance": {
                 "source_type": "work_sample",
                 "privacy_class": privacy_class,
@@ -148,7 +151,7 @@ def _transmitted(tmp_path: Path, stage: str, context: dict[str, object]) -> dict
                 client.call(stage, context, local_model.PROMPT_VERSIONS[stage])
         assert len(requests) == 1
         raw = requests[0]
-    assert SECRET.encode() not in raw
+    assert WITHHELD_MARKER.encode() not in raw
     sent = json.loads(raw)
     return cast(dict[str, Any], json.loads(sent["messages"][1]["content"]))
 
@@ -160,7 +163,7 @@ def _assert_withheld(sent: dict[str, Any], evidence_id: str, claim_id: str) -> N
     }
     claim = next(item for item in sent["claims"] if item["id"] == claim_id)
     assert claim["text"] == CLAIM and evidence_id in claim["evidence_revision_ids"]
-    assert SECRET not in canonical_json(sent)
+    assert WITHHELD_MARKER not in canonical_json(sent)
 
 
 @pytest.mark.postgres
@@ -181,7 +184,7 @@ def test_document_generation_sends_the_claim_without_withheld_evidence_content(
     profile, evidence_id, claim_id = _withheld_source(catalog, "private", False)
     _route(monkeypatch, tmp_path)
     before = _preview(catalog, profile, application)
-    assert {"id": evidence_id, "text": f"{CLAIM}. Internal codename {SECRET}."} in before[
+    assert {"id": evidence_id, "text": f"{CLAIM}. Internal codename {WITHHELD_MARKER}."} in before[
         "model_projection"
     ]["evidence"]
     profile = _reclassify(catalog, profile, evidence_id, privacy_class, employer_owned)
@@ -250,7 +253,7 @@ def test_private_and_public_evidence_content_still_reaches_document_generation(
     profile, evidence_id, _ = _withheld_source(catalog, privacy_class, False)
     _route(monkeypatch, tmp_path)
     preview = _preview(catalog, profile, application)
-    assert {"id": evidence_id, "text": f"{CLAIM}. Internal codename {SECRET}."} in preview[
+    assert {"id": evidence_id, "text": f"{CLAIM}. Internal codename {WITHHELD_MARKER}."} in preview[
         "model_projection"
     ]["evidence"]
 
@@ -318,7 +321,7 @@ def test_requirement_matching_sends_the_claim_without_withheld_evidence_content(
     view = _write(catalog, {"id": application["posting_id"]}, [_requirement(1, "Linux required.")])
     _route(monkeypatch, tmp_path)
     before = _preview(catalog, profile, application)
-    assert {"id": evidence_id, "text": f"{CLAIM}. Internal codename {SECRET}."} in before[
+    assert {"id": evidence_id, "text": f"{CLAIM}. Internal codename {WITHHELD_MARKER}."} in before[
         "model_projection"
     ]["evidence"]
     profile = _reclassify(catalog, profile, evidence_id, privacy_class, employer_owned)
@@ -328,14 +331,14 @@ def test_requirement_matching_sends_the_claim_without_withheld_evidence_content(
     task = _queue(catalog, view, profile)
     context = cast(dict[str, Any], task.input["context"])
     _assert_withheld(context, evidence_id, claim_id)
-    assert SECRET not in canonical_json(task.input)
+    assert WITHHELD_MARKER not in canonical_json(task.input)
     _assert_withheld(_transmitted(tmp_path, "match_requirements", context), evidence_id, claim_id)
     with catalog.runtime.transaction() as conn:
         projection = suitability._profile_projection(
             conn, catalog.owner_id, UUID(str(task.input["profile_revision_id"]))
         )
     # The local checker keeps reading the complete evidence the claim cites.
-    assert SECRET in str(projection.evidence[next(iter(projection.withheld))]["text"])
+    assert WITHHELD_MARKER in str(projection.evidence[next(iter(projection.withheld))]["text"])
 
 
 @pytest.mark.postgres
@@ -385,7 +388,7 @@ def test_reclassification_after_queue_refuses_before_transmission(
             task = _queue_section(catalog, _section_preview(catalog, resume))
         else:
             task = _queue_pair(catalog, preview)
-        assert SECRET in canonical_json(task.input["context"])
+        assert WITHHELD_MARKER in canonical_json(task.input["context"])
         _reclassify(catalog, profile, evidence_id, privacy_class, employer_owned)
         Worker(catalog.runtime, replace(catalog.identity.settings, mode="production"))._execute(
             task, Event()
@@ -435,7 +438,7 @@ def test_document_generated_after_reclassification_can_be_reviewed_and_exported(
         result = catalog.workflow(task.id)
         assert result["state"] == "succeeded", result
         assert len(requests) == 1
-        assert SECRET.encode() not in requests[0]
+        assert WITHHELD_MARKER.encode() not in requests[0]
         sent = json.loads(json.loads(requests[0])["messages"][1]["content"])
         _assert_withheld(sent, evidence_id, claim_id)
     for document in _pair_documents(catalog, application)["items"]:
@@ -479,7 +482,7 @@ def test_transmit_point_refuses_withheld_evidence_that_carries_content(tmp_path:
     context: dict[str, object] = {
         "requirements": [],
         "claims": [],
-        "evidence": [{"id": "e", "withheld": True, "text": SECRET}],
+        "evidence": [{"id": "e", "withheld": True, "text": WITHHELD_MARKER}],
     }
     with fixture_server(response_body()) as (endpoint, requests):
         client = local_model.OllamaClient(qualified_route(tmp_path, route_data(endpoint)))
