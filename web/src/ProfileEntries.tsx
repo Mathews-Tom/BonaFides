@@ -72,7 +72,7 @@ function contextOf(payload: ClaimPayload): Omit<ClaimPayload, 'text'> {
 }
 export function EvidenceProvenanceSummary({ provenance }: { provenance: EvidenceProvenance }) {
   const withheld = provenance.privacy_class === 'confidential' || provenance.employer_owned;
-  return <p className="evidence-provenance">Source type: {evidenceSourceTypes[provenance.source_type]} · Origin: {evidenceOrigins[provenance.origin]} · Privacy: {evidencePrivacyClasses[provenance.privacy_class]}{provenance.employer_owned ? ' · Employer-owned' : ''}{withheld ? ' · Content never sent to a model' : ''}</p>;
+  return <p className="evidence-provenance">Source type: {evidenceSourceTypes[provenance.source_type]} · Origin: {evidenceOrigins[provenance.origin]} · Privacy: {evidencePrivacyClasses[provenance.privacy_class]}{provenance.employer_owned ? ' · Employer-owned' : ''}{withheld ? ' · Content withheld from models' : ''}</p>;
 }
 interface EvidenceDraft { id?: string; text: string; source: string; attestation: boolean; source_type: EvidenceSourceType | ''; privacy_class: EvidencePrivacyClass | ''; employer_owned: boolean }
 interface ArchiveChoice { kind: 'claim' | 'evidence'; id: string; text: string }
@@ -344,13 +344,13 @@ export function ProfileEntries({ api, profile, disabled, onProfile, onDirtyChang
         {!evidence.id && <><label>Privacy class<select required aria-describedby="evidence-privacy-hint" value={evidence.privacy_class} onChange={event => setEvidence({ ...evidence, privacy_class: event.target.value as EvidencePrivacyClass | '' })}><option value="">Choose a privacy class</option>{Object.entries(evidencePrivacyClasses).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
         <label className="check"><input type="checkbox" aria-describedby="evidence-privacy-hint" checked={evidence.employer_owned} onChange={event => setEvidence({ ...evidence, employer_owned: event.target.checked })} />My employer owns this content</label>
         <p className="hint" id="evidence-privacy-hint">Confidential or employer-owned source text is never sent to a model. Entries citing it are still sent as their own text and are checked locally against the full source.</p></>}
-        {evidence.id && <p className="hint">Content edits create a source revision without changing its classification. Use Change classification separately; existing claim pins stay unchanged.</p>}
+        {evidence.id && <p className="hint">Saving content or source type creates a new source revision without changing classification. Re-pin entries to that exact new revision before generating. Use Change classification separately to keep existing claim pins valid.</p>}
         <div className="actions"><button>Save source revision</button><button type="button" className="secondary" onClick={() => { setEvidence(null); setComparison(null); setError(''); }}>Discard source changes</button></div>
       </fieldset></form>}
       {classification && <form onSubmit={event => { event.preventDefault(); void mutate(`/evidence/${encodeURIComponent(classification.id)}/classification`, 'PUT', { privacy_class: classification.privacy_class, employer_owned: classification.employer_owned }); }}><fieldset disabled={locked}><legend>Change source classification</legend>
-        <p className="hint">Classification applies to this source across all revisions, including historical claim links. It does not edit source content or re-pin claims.</p>
-        <label>Privacy class<select required value={classification.privacy_class} onChange={event => setClassification({ ...classification, privacy_class: event.target.value as EvidencePrivacyClass })}>{Object.entries(evidencePrivacyClasses).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
-        <label className="check"><input type="checkbox" checked={classification.employer_owned} onChange={event => setClassification({ ...classification, employer_owned: event.target.checked })} />My employer owns this content</label>
+        <p className="hint" id="evidence-classification-hint">Reclassification takes effect immediately across all source revisions, including existing claim links and restored profiles. No re-save or re-pin is needed. Confidential or employer-owned evidence content is withheld from models; the claim text is still sent and checked locally against the full source.</p>
+        <label>Privacy class<select required aria-describedby="evidence-classification-hint" value={classification.privacy_class} onChange={event => setClassification({ ...classification, privacy_class: event.target.value as EvidencePrivacyClass })}>{Object.entries(evidencePrivacyClasses).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
+        <label className="check"><input type="checkbox" aria-describedby="evidence-classification-hint" checked={classification.employer_owned} onChange={event => setClassification({ ...classification, employer_owned: event.target.checked })} />My employer owns this content</label>
         <div className="actions"><button>Save source classification</button><button type="button" className="secondary" onClick={() => { setClassification(null); setError(''); }}>Discard classification changes</button></div>
       </fieldset></form>}
     </section>

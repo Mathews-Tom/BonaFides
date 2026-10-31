@@ -275,7 +275,8 @@ def test_generation_preview_explains_withheld_evidence_beside_the_exact_projecti
     _profile(catalog)
     application = _application(catalog, description_text=SOURCE)
     _write(catalog, {"id": application["posting_id"]}, [_requirement(1, "Linux required.")])
-    profile, evidence_id, claim_id = _withheld_source(catalog, "private", True)
+    profile, evidence_id, claim_id = _withheld_source(catalog, "private", False)
+    profile = _reclassify(catalog, profile, evidence_id, "private", True)
     _route(monkeypatch, tmp_path)
     preview = _preview(catalog, profile, application)
     assert preview["withheld_evidence"] == [

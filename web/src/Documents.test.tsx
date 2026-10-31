@@ -407,6 +407,7 @@ describe('review, export and generation boundaries', () => {
     expect(within(explanation).getByText('Quarterly review')).toBeVisible();
     expect(within(explanation).getByText('Content withheld because the source is owned by your employer.')).toBeVisible();
     expect(within(explanation).getByText('Claims still sent: “Kept the payroll batch inside its nightly window”')).toBeVisible();
+    expect(within(explanation).getByText(/evidence record’s current classification/)).toHaveTextContent('no entry re-save or re-pin is needed');
     const projection = screen.getByRole('heading', { name: 'Exact minimized model projection' }).parentElement!;
     expect(JSON.parse(projection.querySelector('pre')!.textContent!)).toEqual(withheld.model_projection);
   });
