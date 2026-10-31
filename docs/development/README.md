@@ -973,12 +973,12 @@ text and discards structured verb, metric and period fields, even when keeping t
 description. Unchanged and skipped decisions do not perform that conversion.
 
 Imported experience/project entries show one proposal per source line, including headings.
-The mapper may recognize a same-meaning verb at the same or lower ownership rank, but a
-fully parsed proposal is eligible for structured approval only when its complete rendering
-passes that same strict source-quotation rule. Synonym changes and reformatted metrics or
-dates are flagged `unquoted_rendering`; approval retains the original line as free text
-needing attention rather than presenting a reworded sentence as grounded. Other unplaced
-parts remain visible and also select literal approval. The profile stays unchanged until
+The mapper retains each recognized source action as its own vocabulary key; it never folds
+`implemented` into `built`, `spearheaded` into `led`, or another action into a synonym.
+A fully parsed proposal is eligible for structured approval only when its complete rendering
+passes the strict source-quotation rule. Unsupported notation or reordered phrases are
+flagged `unquoted_rendering`; approval retains the original line as free text needing attention.
+Other unplaced parts remain visible and also select literal approval. The profile stays unchanged until
 the approved import command runs. Reimports match all saved line claims, preserve their
 unchanged status and supporting evidence, and do not duplicate them in the review preview.
 
@@ -1013,17 +1013,43 @@ This order is an explicit conservative policy, not permission to replace one act
 another. English renders each key in its own words. `Hired`, `Proposed` and leading adverbs
 such as `Successfully` remain outside this action vocabulary and must stay flagged.
 
+Periods store semantic dates with a `style` key (`parenthetical`, `in_year`, or `range`)
+and an optional separator key (`hyphen`, `en_dash`, or `em_dash`). Rates retain their unit
+and a `rate_wording` key (`per`, `a`, `an`, `each`, `every`, `adverbial`, or `annual`).
+English reproduces the selected form instead of substituting “(2022)” for “in 2022” or
+“per year” for “annually”. `in_year` requires one identical year; annual wording requires
+the year rate. Omitted keys retain the deterministic parenthetical/en-dash and per-unit
+defaults. The editor exposes the server's choices and blocks invalid combinations.
+
+The unshipped frozen schema-v1 copy is synchronized with this release contract and is now
+fixed for release. Future changes must not alter that copy. Schema-27 upgrade and older
+archive import still restructure only byte-identical statement/rendering pairs with quoted
+evidence: an exact “Implemented …” may convert, while `Hired`, `Proposed`, leading adverbs,
+or any changed wording remains literal needing attention.
+
 `uv run --frozen bonafides claims coverage <file>` reads a local UTF-8 file (with an optional BOM), counts
 every nonblank line, and reports fully mapped, strictly self-grounded claims plus unparsed
 reasons and source line numbers. It does not store or send the file. Compound ownership
 openers, including irregular verbs such as “Built and ran”, remain flagged rather than
 silently becoming part of the subject.
 
-The unchanged 305-bullet synthetic corpus includes its 64-bullet held-out block. Under
-strict self-grounding, 125/305 bullets qualify (40.9%, floored for display). Ignoring only
-`unquoted_rendering` gives 224/305 (73.4%) schema-representable bullets; that diagnostic is
-not the command's approval criterion. The development plan's **≥95% acceptance is not met
-and awaits an owner decision**. Neither the corpus nor the mapper is tuned to reach it.
+The unchanged 305-bullet synthetic corpus includes its 64-bullet held-out block. The fixed
+general action inventory was committed before this re-measurement; no further tuning follows.
+
+| Block | Schema only before | Strict before | Schema only after | Strict after |
+| --- | --- | --- | --- | --- |
+| Original (241 bullets) | 186/241 (77.1784%) | 109/241 (45.2282%) | 231/241 (95.8506%) | 226/241 (93.7759%) |
+| Held-out (64 bullets) | 38/64 (59.375%) | 16/64 (25%) | 50/64 (78.125%) | 49/64 (76.5625%) |
+| Whole file (305 bullets) | 224/305 (73.4426%) | 125/305 (40.9836%) | 281/305 (92.1311%) | 275/305 (90.1639%) |
+
+The command reports strict coverage, floored to **90.1%**. Schema only ignores the
+`unquoted_rendering` flag; it is diagnostic, not the approval criterion. Remaining reasons
+are `additional_metric` (11), `unknown_verb` (9), `unquoted_rendering` (6), and `compound_verb`
+(5); reason counts overlap across 30 bullets. Examples include embedded budget amounts,
+unlisted actions such as `Closed`, leading `Successfully`, dual-action openers, “cutting”
+instead of “reducing”, and a scope separated from its metric.
+The development plan's **≥95% whole-file strict acceptance is still not met**. The corpus
+and threshold are unchanged; further tuning is stopped and the measured gap is reported.
 
 ## Development gates
 

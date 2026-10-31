@@ -67,7 +67,8 @@ def test_ownership_vocabulary_is_ordered_strongest_first() -> None:
                     "unit": "usd",
                     "magnitude": "million",
                     "change": "saving",
-                    "measure": "annually",
+                    "per": "year",
+                    "rate_wording": "annual",
                 }
             },
             "Led the billing migration, saving $1.2M annually",
@@ -77,7 +78,7 @@ def test_ownership_vocabulary_is_ordered_strongest_first() -> None:
             "Led the billing migration, reaching 1 hour of weekly toil",
         ),
         (
-            {"verb": "contributed", "period": {"start": "2021-03", "end": "2022"}},
+            {"verb": "contributed_to", "period": {"start": "2021-03", "end": "2022"}},
             "Contributed to the billing migration (Mar 2021–2022)",
         ),
         ({"period": {"start": "2020", "end": "2020"}}, "Led the billing migration (2020)"),
@@ -127,7 +128,7 @@ def test_english_rendering_is_deterministic(fields: dict[str, object], expected:
 @pytest.mark.parametrize(
     "fields",
     [
-        {"verb": "spearheaded"},
+        {"verb": "proposed"},
         {"subject": " padded"},
         {"subject": "two\nlines"},
         {"metric": {"value": "1,200", "unit": "count"}},
@@ -136,6 +137,12 @@ def test_english_rendering_is_deterministic(fields: dict[str, object], expected:
         {"period": {"start": "2022-13", "end": "2023"}},
         {"sentence": "Led the billing migration"},
         {"metric": {"value": "2", "unit": "usd", "change": "quantity", "measure": "budget"}},
+        {"metric": {"value": "2", "unit": "usd", "rate_wording": "annual"}},
+        {"metric": {"value": "2", "unit": "usd", "per": "month", "rate_wording": "annual"}},
+        {"period": {"start": "2021", "end": "2022", "style": "in_year"}},
+        {"period": {"start": "2022-03", "end": "2022-03", "style": "in_year"}},
+        {"period": {"start": "2022", "end": "2022", "style": "arbitrary"}},
+        {"period": {"start": "2021", "end": "2022", "separator": "arbitrary"}},
     ],
 )
 def test_structured_claim_rejects_values_outside_the_schema(fields: dict[str, object]) -> None:
@@ -473,8 +480,21 @@ def test_editor_vocabulary_and_preview_use_the_stored_renderer(
         vocabulary = _json(client.get("/api/v1/claims/vocabulary"))
         assert [verb["key"] for verb in vocabulary["verbs"]] == list(OWNERSHIP_VERBS)
         labels = {verb["key"]: verb["label"] for verb in vocabulary["verbs"]}
-        assert labels["contributed"] == "Contributed to"
+        assert labels["contributed"] == "Contributed"
+        assert labels["contributed_to"] == "Contributed to"
+        assert labels["implemented"] == "Implemented"
         assert vocabulary["rates"] == ["day", "week", "month", "quarter", "year"]
+        assert vocabulary["rate_wordings"] == [
+            "per",
+            "a",
+            "an",
+            "each",
+            "every",
+            "adverbial",
+            "annual",
+        ]
+        assert vocabulary["period_styles"] == ["parenthetical", "in_year", "range"]
+        assert vocabulary["period_separators"] == ["hyphen", "en_dash", "em_dash"]
         claim = cast(dict[str, Any], _structured_body("unused")["payload"])
         headers = {"Origin": profile_owner.settings.origin, "X-CSRF-Token": csrf}
         preview = client.post(
@@ -484,8 +504,62 @@ def test_editor_vocabulary_and_preview_use_the_stored_renderer(
         assert _json(preview) == {"language": "en", "rendering": "Reduced batch runtime by 30%"}
         refused = client.post(
             "/api/v1/claims/render",
-            json={"claim": {**claim["claim"], "verb": "spearheaded"}},
+            json={"claim": {**claim["claim"], "verb": "proposed"}},
             headers=headers,
         )
         assert refused.status_code == 422
         assert _json(client.get("/api/v1/profile"))["version"] == 1
+
+
+@pytest.mark.parametrize(
+    ("fields", "expected"),
+    [
+        (
+            {"verb": "implemented", "period": {"start": "2022", "end": "2022", "style": "in_year"}},
+            "Implemented the billing migration in 2022",
+        ),
+        (
+            {
+                "verb": "launched",
+                "period": {"start": "2021", "end": "2022", "style": "range", "separator": "hyphen"},
+            },
+            "Launched the billing migration 2021-2022",
+        ),
+        (
+            {
+                "verb": "spearheaded",
+                "metric": {
+                    "value": "2",
+                    "unit": "usd",
+                    "change": "saving",
+                    "per": "year",
+                    "rate_wording": "annual",
+                },
+            },
+            "Spearheaded the billing migration, saving $2 annually",
+        ),
+        (
+            {
+                "verb": "optimized",
+                "metric": {"value": "30", "unit": "percent", "change": "improvement"},
+            },
+            "Optimized the billing migration by 30%",
+        ),
+    ],
+)
+def test_source_form_metadata_renders_without_substituting_words(
+    fields: dict[str, object], expected: str
+) -> None:
+    claim = _claim(**fields)
+    assert render_claim(claim) == expected
+    assert grounded(claim, expected)
+    assert render_claim(StructuredClaim.model_validate(claim.model_dump())) == expected
+
+
+@pytest.mark.parametrize(
+    ("verb", "change"),
+    [("scaled", "decrease"), ("generated", "decrease"), ("saved", "increase")],
+)
+def test_new_directional_verbs_reject_opposite_same_subject_changes(verb: str, change: str) -> None:
+    with pytest.raises(ValidationError, match="metric_direction_contradicts_verb"):
+        _claim(verb=verb, metric={"value": "30", "unit": "percent", "change": change})

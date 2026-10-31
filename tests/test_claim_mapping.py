@@ -26,7 +26,7 @@ from bonafides.claims import OWNERSHIP_VERBS, grounded
         ),
         (
             "Led migration of 40 services to Kubernetes for the payments team (2021-2022)",
-            "Led migration of 40 services to Kubernetes for the payments team (2021–2022)",
+            "Led migration of 40 services to Kubernetes for the payments team (2021-2022)",
         ),
         ("Increased revenue by 3x (2020).", "Increased revenue by 3x (2020)"),
         ("Contributed to the open-source scheduler", "Contributed to the open-source scheduler"),
@@ -52,6 +52,27 @@ from bonafides.claims import OWNERSHIP_VERBS, grounded
             "Improved container images for the production cluster",
             "Improved container images for the production cluster",
         ),
+        (
+            "Spearheaded vendor consolidation, saving $1.2M annually",
+            "Spearheaded vendor consolidation, saving $1.2M annually",
+        ),
+        ("Grew revenue by 3x in 2020.", "Grew revenue by 3x in 2020"),
+        ("Cut cloud spend by 30%", "Cut cloud spend by 30%"),
+        ("Led migration for checkout in 2020", "Led migration for checkout in 2020"),
+        (
+            "Delivered $3.4M in new enterprise contracts in 2021",
+            "Delivered $3.4M in new enterprise contracts in 2021",
+        ),
+        (
+            "Shipped 99.95% uptime for the core API (2022)",
+            "Shipped 99.95% uptime for the core API (2022)",
+        ),
+        (
+            "Hardened container images for the production cluster",
+            "Hardened container images for the production cluster",
+        ),
+        ("Saved $200K in licensing costs", "Saved $200K in licensing costs"),
+        ("Raised $75K for the food bank", "Raised $75K for the food bank"),
     ],
 )
 def test_representable_lines_map_to_grounded_claims(line: str, rendering: str) -> None:
@@ -65,14 +86,8 @@ def test_representable_lines_map_to_grounded_claims(line: str, rendering: str) -
 @pytest.mark.parametrize(
     "line",
     [
-        "Spearheaded vendor consolidation, saving $1.2M annually",
-        "Grew revenue by 3x in 2020.",
-        "Cut cloud spend by 30%",
         "Reduced latency by 30 percent",
-        "Led migration for checkout in 2020",
-        "Delivered $3.4M in new enterprise contracts in 2021",
-        "Shipped 99.95% uptime for the core API (2022)",
-        "Hardened container images for the production cluster",
+        "Led migration (2021-03)",
     ],
 )
 def test_reworded_proposals_need_attention_instead_of_claiming_grounding(line: str) -> None:
@@ -87,7 +102,6 @@ def test_reworded_proposals_need_attention_instead_of_claiming_grounding(line: s
 @pytest.mark.parametrize(
     ("line", "unparsed"),
     [
-        ("Saved $200K in licensing costs", [("Saved", "unknown_verb")]),
         (
             "Designed onboarding flow; cut churn by 10%",
             [("cut churn by 10%", "multiple_statements")],
@@ -99,7 +113,6 @@ def test_reworded_proposals_need_attention_instead_of_claiming_grounding(line: s
         ("Led", [("Led", "missing_subject")]),
         ("Managed a $2M annual marketing budget", [("$2M", "additional_metric")]),
         ("Hired 5 engineers for the platform team", [("Hired", "unknown_verb")]),
-        ("Raised $75K for the food bank", [("$75K", "additional_metric")]),
     ],
 )
 def test_unplaced_parts_are_flagged_not_dropped(line: str, unparsed: list[tuple[str, str]]) -> None:
@@ -122,20 +135,10 @@ def test_partial_mapping_keeps_the_claim_beside_its_flags() -> None:
         "Ran",
         "Championed",
         "Drove",
-        "Presented",
-        "Trained",
-        "Negotiated",
         "Closed",
         "Secured",
         "Won",
-        "Fixed",
-        "Deployed",
-        "Scaled",
         "Prioritized",
-        "Answered",
-        "Automated",
-        "Published",
-        "Planned",
     ],
 )
 def test_a_verb_with_another_meaning_stays_unknown(phrase: str) -> None:
@@ -171,10 +174,10 @@ def test_every_participle_obeys_literal_grounding(participle: str) -> None:
         ]
 
 
-def test_oversaw_and_orchestrated_map_at_or_below_their_meaning() -> None:
-    assert _claim_verb("Oversaw the quarterly vendor review") == "managed"
-    assert _claim_verb("Orchestrated the quarterly vendor review") == "coordinated"
-    assert _claim_verb("Launched the quarterly vendor review") == "delivered"
+def test_distinct_source_actions_map_to_their_own_keys() -> None:
+    assert _claim_verb("Oversaw the quarterly vendor review") == "oversaw"
+    assert _claim_verb("Orchestrated the quarterly vendor review") == "orchestrated"
+    assert _claim_verb("Launched the quarterly vendor review") == "launched"
 
 
 def _claim_verb(line: str) -> str | None:
@@ -182,8 +185,8 @@ def _claim_verb(line: str) -> str | None:
     return None if claim is None else claim.verb
 
 
-def test_cut_maps_to_reduced_only_before_a_metric() -> None:
-    assert _claim_verb("Cut cloud spend by 30%") == "reduced"
+def test_cut_keeps_its_own_key_only_before_a_metric() -> None:
+    assert _claim_verb("Cut cloud spend by 30%") == "cut"
     release = map_line("Cut the 2.0 release")
     assert release.claim is None
     assert [(part.text, part.reason) for part in release.unparsed] == [("Cut", "unknown_verb")]
@@ -215,3 +218,71 @@ def test_a_compound_verb_is_flagged_not_folded_into_the_subject(line: str, flagg
     mapping = map_line(line)
     assert mapping.claim is None
     assert [(part.text, part.reason) for part in mapping.unparsed] == [(flagged, "compound_verb")]
+
+
+@pytest.mark.parametrize("verb", OWNERSHIP_VERBS)
+def test_every_inventory_action_preserves_its_source_words(verb: str) -> None:
+    phrase = verb.replace("_", " ").capitalize()
+    tail = " by 20%" if verb in {"cut", "slashed", "trimmed"} else ""
+    line = f"{phrase} the release{tail}"
+    mapping = map_line(line)
+    assert mapping.representable, mapping.unparsed
+    assert mapping.claim is not None and mapping.claim.verb == verb
+    assert mapping.rendering == line
+    assert grounded(mapping.claim, line)
+
+
+@pytest.mark.parametrize(
+    ("suffix", "period"),
+    [
+        ("in 2022", {"start": "2022", "end": "2022", "style": "in_year"}),
+        ("(2022)", {"start": "2022", "end": "2022", "style": "parenthetical"}),
+        (
+            "(2021-2022)",
+            {"start": "2021", "end": "2022", "style": "parenthetical", "separator": "hyphen"},
+        ),
+        (
+            "2021–2022",
+            {"start": "2021", "end": "2022", "style": "range", "separator": "en_dash"},
+        ),
+    ],
+)
+def test_period_form_is_stored_and_reproduced(suffix: str, period: dict[str, str]) -> None:
+    line = f"Implemented access control {suffix}"
+    mapping = map_line(line)
+    assert mapping.representable
+    assert mapping.rendering == line
+    assert mapping.claim is not None and mapping.claim.period is not None
+    assert mapping.claim.period.model_dump(exclude_none=True) == period
+
+
+@pytest.mark.parametrize(
+    ("wording", "key"),
+    [
+        ("per year", "per"),
+        ("a year", "a"),
+        ("an year", "an"),
+        ("each year", "each"),
+        ("every year", "every"),
+        ("yearly", "adverbial"),
+        ("annually", "annual"),
+    ],
+)
+def test_rate_form_is_stored_and_reproduced(wording: str, key: str) -> None:
+    line = f"Led vendor consolidation, saving $200K {wording}"
+    mapping = map_line(line)
+    assert mapping.representable, mapping.unparsed
+    assert mapping.rendering == line
+    assert mapping.claim is not None and mapping.claim.metric is not None
+    assert mapping.claim.metric.per == "year"
+    assert mapping.claim.metric.rate_wording == key
+
+
+@pytest.mark.parametrize(
+    "line", ["Successfully implemented access control", "Hired engineers", "Proposed a migration"]
+)
+def test_leading_adverbs_and_unlisted_actions_remain_flagged(line: str) -> None:
+    mapping = map_line(line)
+    assert not mapping.representable
+    assert mapping.claim is None
+    assert mapping.unparsed[0].reason == "unknown_verb"

@@ -20,24 +20,125 @@ from bonafides.auth import StrictModel
 
 # Ordered from strongest to weakest ownership. The order is part of the schema contract.
 OwnershipVerb = Literal[
-    "led",
-    "owned",
-    "managed",
-    "initiated",
-    "designed",
-    "built",
-    "delivered",
-    "increased",
-    "reduced",
-    "improved",
-    "wrote",
-    "maintained",
-    "mentored",
-    "analyzed",
-    "coordinated",
-    "contributed",
-    "supported",
-    "assisted",
+    "led",  # Explicit leadership; no generic achievement is placed here.
+    "spearheaded",  # Explicit leadership; no generic achievement is placed here.
+    "headed",  # Explicit leadership; no generic achievement is placed here.
+    "directed",  # Explicit leadership; no generic achievement is placed here.
+    "owned",  # Explicit responsibility, below leadership.
+    "took_ownership_of",  # Explicit responsibility, below leadership.
+    "responsible_for",  # Explicit responsibility, below leadership.
+    "was_responsible_for",  # Explicit responsibility, below leadership.
+    "managed",  # Supervision or oversight, not creation or leadership inference.
+    "supervised",  # Supervision or oversight, not creation or leadership inference.
+    "oversaw",  # Supervision or oversight, not creation or leadership inference.
+    "initiated",  # Starting something, not necessarily owning its later execution.
+    "founded",  # Starting something, not necessarily owning its later execution.
+    "established",  # Starting something, not necessarily owning its later execution.
+    "introduced",  # Starting something, not necessarily owning its later execution.
+    "pioneered",  # Starting something, not necessarily owning its later execution.
+    "designed",  # Design or planning, without asserting delivery.
+    "architected",  # Design or planning, without asserting delivery.
+    "planned",  # Design or planning, without asserting delivery.
+    "built",  # Hands-on implementation; prototypes and integration do not assert project leadership.
+    "developed",  # Hands-on implementation; prototypes and integration do not assert project leadership.
+    "implemented",  # Hands-on implementation; prototypes and integration do not assert project leadership.
+    "created",  # Hands-on implementation; prototypes and integration do not assert project leadership.
+    "engineered",  # Hands-on implementation; prototypes and integration do not assert project leadership.
+    "coded",  # Hands-on implementation; prototypes and integration do not assert project leadership.
+    "programmed",  # Hands-on implementation; prototypes and integration do not assert project leadership.
+    "automated",  # Hands-on implementation; prototypes and integration do not assert project leadership.
+    "integrated",  # Hands-on implementation; prototypes and integration do not assert project leadership.
+    "migrated",  # Hands-on implementation; prototypes and integration do not assert project leadership.
+    "prototyped",  # Hands-on implementation; prototypes and integration do not assert project leadership.
+    "delivered",  # Executing or releasing work, without asserting its design or ownership.
+    "shipped",  # Executing or releasing work, without asserting its design or ownership.
+    "launched",  # Executing or releasing work, without asserting its design or ownership.
+    "completed",  # Executing or releasing work, without asserting its design or ownership.
+    "executed",  # Executing or releasing work, without asserting its design or ownership.
+    "released",  # Executing or releasing work, without asserting its design or ownership.
+    "rolled_out",  # Executing or releasing work, without asserting its design or ownership.
+    "deployed",  # Executing or releasing work, without asserting its design or ownership.
+    "increased",  # A stated outcome/change, without asserting who led the work.
+    "grew",  # A stated outcome/change, without asserting who led the work.
+    "raised",  # A stated outcome/change, without asserting who led the work.
+    "boosted",  # A stated outcome/change, without asserting who led the work.
+    "expanded",  # A stated outcome/change, without asserting who led the work.
+    "scaled",  # A stated outcome/change, without asserting who led the work.
+    "generated",  # A stated outcome/change, without asserting who led the work.
+    "achieved",  # A stated outcome/change, without asserting who led the work.
+    "reduced",  # A stated outcome/change, without asserting who led the work.
+    "cut",  # A stated outcome/change, without asserting who led the work.
+    "decreased",  # A stated outcome/change, without asserting who led the work.
+    "lowered",  # A stated outcome/change, without asserting who led the work.
+    "shortened",  # A stated outcome/change, without asserting who led the work.
+    "minimized",  # A stated outcome/change, without asserting who led the work.
+    "slashed",  # A stated outcome/change, without asserting who led the work.
+    "trimmed",  # A stated outcome/change, without asserting who led the work.
+    "saved",  # A stated outcome/change, without asserting who led the work.
+    "improved",  # A stated outcome/change, without asserting who led the work.
+    "optimized",  # A stated outcome/change, without asserting who led the work.
+    "enhanced",  # A stated outcome/change, without asserting who led the work.
+    "streamlined",  # A stated outcome/change, without asserting who led the work.
+    "modernized",  # A stated outcome/change, without asserting who led the work.
+    "stabilized",  # A stated outcome/change, without asserting who led the work.
+    "strengthened",  # A stated outcome/change, without asserting who led the work.
+    "hardened",  # A stated outcome/change, without asserting who led the work.
+    "accelerated",  # A stated outcome/change, without asserting who led the work.
+    "resolved",  # A stated outcome/change, without asserting who led the work.
+    "fixed",  # A stated outcome/change, without asserting who led the work.
+    "wrote",  # Creating or communicating an artifact, not managing the subject.
+    "authored",  # Creating or communicating an artifact, not managing the subject.
+    "documented",  # Creating or communicating an artifact, not managing the subject.
+    "drafted",  # Creating or communicating an artifact, not managing the subject.
+    "produced",  # Creating or communicating an artifact, not managing the subject.
+    "prepared",  # Creating or communicating an artifact, not managing the subject.
+    "published",  # Creating or communicating an artifact, not managing the subject.
+    "presented",  # Creating or communicating an artifact, not managing the subject.
+    "maintained",  # Operating or improving an existing system, without ownership inference.
+    "administered",  # Operating or improving an existing system, without ownership inference.
+    "operated",  # Operating or improving an existing system, without ownership inference.
+    "configured",  # Operating or improving an existing system, without ownership inference.
+    "monitored",  # Operating or improving an existing system, without ownership inference.
+    "upgraded",  # Operating or improving an existing system, without ownership inference.
+    "refactored",  # Operating or improving an existing system, without ownership inference.
+    "mentored",  # Teaching or developing others, not managing them.
+    "coached",  # Teaching or developing others, not managing them.
+    "trained",  # Teaching or developing others, not managing them.
+    "analyzed",  # Investigation or a bounded performed activity, without delivery inference.
+    "assessed",  # Investigation or a bounded performed activity, without delivery inference.
+    "audited",  # Investigation or a bounded performed activity, without delivery inference.
+    "evaluated",  # Investigation or a bounded performed activity, without delivery inference.
+    "investigated",  # Investigation or a bounded performed activity, without delivery inference.
+    "researched",  # Investigation or a bounded performed activity, without delivery inference.
+    "reviewed",  # Investigation or a bounded performed activity, without delivery inference.
+    "measured",  # Investigation or a bounded performed activity, without delivery inference.
+    "inspected",  # Investigation or a bounded performed activity, without delivery inference.
+    "conducted",  # Investigation or a bounded performed activity, without delivery inference.
+    "identified",  # Investigation or a bounded performed activity, without delivery inference.
+    "defined",  # Investigation or a bounded performed activity, without delivery inference.
+    "coordinated",  # Coordination, negotiation or joint work, not unilateral leadership.
+    "orchestrated",  # Coordination, negotiation or joint work, not unilateral leadership.
+    "organized",  # Coordination, negotiation or joint work, not unilateral leadership.
+    "facilitated",  # Coordination, negotiation or joint work, not unilateral leadership.
+    "scheduled",  # Coordination, negotiation or joint work, not unilateral leadership.
+    "negotiated",  # Coordination, negotiation or joint work, not unilateral leadership.
+    "partnered",  # Coordination, negotiation or joint work, not unilateral leadership.
+    "collaborated",  # Coordination, negotiation or joint work, not unilateral leadership.
+    "contributed",  # A contribution or participation only.
+    "contributed_to",  # A contribution or participation only.
+    "worked_on",  # A contribution or participation only.
+    "participated_in",  # A contribution or participation only.
+    "took_part_in",  # A contribution or participation only.
+    "supported",  # Service/support activity only.
+    "handled",  # Service/support activity only.
+    "processed",  # Service/support activity only.
+    "answered",  # Service/support activity only.
+    "responded",  # Service/support activity only.
+    "assisted_with",  # Assistance only; never inflated into an outcome or ownership claim.
+    "assisted_in",  # Assistance only; never inflated into an outcome or ownership claim.
+    "helped",  # Assistance only; never inflated into an outcome or ownership claim.
+    "helped_to",  # Assistance only; never inflated into an outcome or ownership claim.
+    "assisted",  # Assistance only; never inflated into an outcome or ownership claim.
 ]
 OWNERSHIP_VERBS: tuple[OwnershipVerb, ...] = get_args(OwnershipVerb)
 MetricUnit = Literal[
@@ -60,6 +161,9 @@ METRIC_UNITS: tuple[MetricUnit, ...] = get_args(MetricUnit)
 MetricChange = Literal["increase", "decrease", "improvement", "saving", "quantity"]
 Magnitude = Literal["thousand", "million", "billion"]
 MetricRate = Literal["day", "week", "month", "quarter", "year"]
+RateWording = Literal["per", "a", "an", "each", "every", "adverbial", "annual"]
+PeriodStyle = Literal["parenthetical", "in_year", "range"]
+PeriodSeparator = Literal["hyphen", "en_dash", "em_dash"]
 RenderLanguage = Literal["en"]
 RENDER_LANGUAGES: tuple[RenderLanguage, ...] = get_args(RenderLanguage)
 STRUCTURED_KINDS = frozenset({"experience", "project"})
@@ -90,6 +194,7 @@ class ClaimMetric(StrictModel):
     magnitude: Magnitude | None = None
     change: MetricChange | None = None
     per: MetricRate | None = None
+    rate_wording: RateWording | None = None
     measure: str | None = Field(default=None, min_length=1, max_length=200)
 
     @field_validator("measure")
@@ -102,12 +207,18 @@ class ClaimMetric(StrictModel):
         # A quantity counts the subject itself, so a separate measure would be ambiguous.
         if self.change == "quantity" and self.measure is not None:
             raise ValueError("quantity_with_measure")
+        if self.rate_wording is not None and self.per is None:
+            raise ValueError("rate_wording_without_rate")
+        if self.rate_wording == "annual" and self.per != "year":
+            raise ValueError("annual_wording_requires_year")
         return self
 
 
 class ClaimPeriod(StrictModel):
     start: str = Field(pattern=r"^[0-9]{4}(?:-[0-9]{2})?$")
     end: str = Field(pattern=r"^[0-9]{4}(?:-[0-9]{2})?$")
+    style: PeriodStyle | None = None
+    separator: PeriodSeparator | None = None
 
     @field_validator("start", "end")
     @classmethod
@@ -122,6 +233,12 @@ class ClaimPeriod(StrictModel):
         if isinstance(start, str) and date_bounds(start)[0] > date_bounds(value)[1]:
             raise ValueError("invalid_interval")
         return value
+
+    @model_validator(mode="after")
+    def coherent_style(self) -> ClaimPeriod:
+        if self.style == "in_year" and (self.start != self.end or len(self.start) != 4):
+            raise ValueError("in_year_requires_one_year")
+        return self
 
 
 class StructuredClaim(StrictModel):
@@ -144,7 +261,8 @@ class StructuredClaim(StrictModel):
         metric = self.metric
         if (
             metric is not None
-            and {expected, metric.change} == {"increase", "decrease"}
+            and _METRIC_POLARITY.get(expected) is not None
+            and _METRIC_POLARITY.get(metric.change) == -_METRIC_POLARITY[expected]
             and (metric.measure is None or metric.measure.casefold() == self.subject.casefold())
         ):
             raise ValueError("metric_direction_contradicts_verb")
@@ -152,32 +270,50 @@ class StructuredClaim(StrictModel):
 
 
 _EN_VERBS: dict[OwnershipVerb, str] = {
-    "led": "Led",
-    "owned": "Owned",
-    "managed": "Managed",
-    "initiated": "Initiated",
-    "designed": "Designed",
-    "built": "Built",
-    "delivered": "Delivered",
-    "increased": "Increased",
-    "reduced": "Reduced",
-    "improved": "Improved",
-    "wrote": "Wrote",
-    "maintained": "Maintained",
-    "mentored": "Mentored",
-    "analyzed": "Analyzed",
-    "coordinated": "Coordinated",
-    "contributed": "Contributed to",
-    "supported": "Supported",
-    "assisted": "Assisted with",
+    verb: verb.replace("_", " ").capitalize() for verb in OWNERSHIP_VERBS
 }
 _EN_CURRENCY: dict[str, str] = {"usd": "$", "eur": "€", "gbp": "£"}
 _EN_MAGNITUDE: dict[Magnitude, str] = {"thousand": "K", "million": "M", "billion": "B"}
 _EN_MONTHS = tuple(calendar.month_abbr)
 _VERB_DIRECTION: dict[OwnershipVerb, MetricChange] = {
     "increased": "increase",
+    "grew": "increase",
+    "raised": "increase",
+    "boosted": "increase",
+    "expanded": "increase",
+    "scaled": "increase",
+    "generated": "increase",
+    "accelerated": "increase",
     "reduced": "decrease",
+    "cut": "decrease",
+    "decreased": "decrease",
+    "lowered": "decrease",
+    "shortened": "decrease",
+    "minimized": "decrease",
+    "slashed": "decrease",
+    "trimmed": "decrease",
+    "saved": "saving",
     "improved": "improvement",
+    "optimized": "improvement",
+    "enhanced": "improvement",
+    "streamlined": "improvement",
+    "modernized": "improvement",
+    "stabilized": "improvement",
+    "strengthened": "improvement",
+    "hardened": "improvement",
+}
+_METRIC_POLARITY: dict[MetricChange | None, int] = {"increase": 1, "decrease": -1, "saving": -1}
+_EN_RATE_ADVERBS: dict[MetricRate, str] = {
+    "day": "daily",
+    "week": "weekly",
+    "month": "monthly",
+    "quarter": "quarterly",
+    "year": "yearly",
+}
+_EN_PERIOD_SEPARATORS: dict[PeriodSeparator, str] = {
+    "hyphen": "-",
+    "en_dash": "–",
+    "em_dash": "—",
 }
 _EN_PARTICIPLES: dict[MetricChange, str] = {
     "increase": "increasing",
@@ -186,9 +322,20 @@ _EN_PARTICIPLES: dict[MetricChange, str] = {
 }
 
 
+def _en_rate(metric: ClaimMetric) -> str:
+    if metric.per is None:
+        return ""
+    wording = metric.rate_wording or "per"
+    if wording == "annual":
+        return " annually"
+    if wording == "adverbial":
+        return " " + _EN_RATE_ADVERBS[metric.per]
+    return f" {wording} {metric.per}"
+
+
 def _en_amount(metric: ClaimMetric) -> str:
     number = metric.value + (_EN_MAGNITUDE[metric.magnitude] if metric.magnitude else "")
-    rate = f" per {metric.per}" if metric.per else ""
+    rate = _en_rate(metric)
     if metric.unit in _EN_CURRENCY:
         return _EN_CURRENCY[metric.unit] + number + rate
     if metric.unit == "percent":
@@ -232,8 +379,14 @@ def _render_en(claim: StructuredClaim) -> str:
             lead = "saving" if metric.change == "saving" else "reaching"
             sentence += f", {lead} {amount}" + (f" {metric.measure}" if metric.measure else "")
     if claim.period is not None:
-        start, end = _en_date(claim.period.start), _en_date(claim.period.end)
-        sentence += f" ({start})" if start == end else f" ({start}–{end})"
+        period = claim.period
+        start, end = _en_date(period.start), _en_date(period.end)
+        if period.style == "in_year":
+            sentence += f" in {start}"
+        else:
+            separator = _EN_PERIOD_SEPARATORS[period.separator or "en_dash"]
+            dates = start if start == end else f"{start}{separator}{end}"
+            sentence += f" {dates}" if period.style == "range" else f" ({dates})"
     return sentence
 
 
@@ -254,6 +407,9 @@ def vocabulary(language: RenderLanguage = "en") -> dict[str, object]:
         "changes": list(get_args(MetricChange)),
         "magnitudes": list(get_args(Magnitude)),
         "rates": list(get_args(MetricRate)),
+        "rate_wordings": list(get_args(RateWording)),
+        "period_styles": list(get_args(PeriodStyle)),
+        "period_separators": list(get_args(PeriodSeparator)),
     }
 
 

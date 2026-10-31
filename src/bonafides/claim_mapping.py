@@ -15,6 +15,8 @@ from pydantic import ValidationError
 
 from bonafides.auth import StrictModel
 from bonafides.claims import (
+    _VERB_DIRECTION,
+    OWNERSHIP_VERBS,
     ClaimMetric,
     ClaimPeriod,
     Magnitude,
@@ -38,98 +40,9 @@ UnparsedReason = Literal[
     "compound_verb",
 ]
 
-# Declared normalization: case-insensitive whole-word prefixes, longest phrase first.
+# Source actions are vocabulary identities, never synonyms for another ownership key.
 _VERB_PHRASES: dict[str, tuple[OwnershipVerb, MetricChange | None]] = {
-    # A phrase maps only to a vocabulary verb with the same meaning at the same or a lower
-    # ownership rank; a verb with another meaning stays unknown so the line needs attention.
-    "led": ("led", None),
-    "spearheaded": ("led", None),
-    "headed": ("led", None),
-    "directed": ("led", None),
-    "owned": ("owned", None),
-    "took ownership of": ("owned", None),
-    "responsible for": ("owned", None),
-    "was responsible for": ("owned", None),
-    "managed": ("managed", None),
-    "supervised": ("managed", None),
-    "oversaw": ("managed", None),
-    "mentored": ("mentored", None),
-    "coached": ("mentored", None),
-    "maintained": ("maintained", None),
-    "administered": ("maintained", None),
-    "operated": ("maintained", None),
-    "wrote": ("wrote", None),
-    "authored": ("wrote", None),
-    "documented": ("wrote", None),
-    "drafted": ("wrote", None),
-    "initiated": ("initiated", None),
-    "founded": ("initiated", None),
-    "established": ("initiated", None),
-    "introduced": ("initiated", None),
-    "pioneered": ("initiated", None),
-    "designed": ("designed", None),
-    "architected": ("designed", None),
-    "built": ("built", None),
-    "developed": ("built", None),
-    "implemented": ("built", None),
-    "created": ("built", None),
-    "engineered": ("built", None),
-    "coded": ("built", None),
-    "programmed": ("built", None),
-    "delivered": ("delivered", None),
-    "shipped": ("delivered", None),
-    "launched": ("delivered", None),
-    "completed": ("delivered", None),
-    "executed": ("delivered", None),
-    "released": ("delivered", None),
-    "rolled out": ("delivered", None),
-    "increased": ("increased", "increase"),
-    "grew": ("increased", "increase"),
-    "raised": ("increased", "increase"),
-    "boosted": ("increased", "increase"),
-    "expanded": ("increased", "increase"),
-    "reduced": ("reduced", "decrease"),
-    "cut": ("reduced", "decrease"),
-    "decreased": ("reduced", "decrease"),
-    "lowered": ("reduced", "decrease"),
-    "shortened": ("reduced", "decrease"),
-    "minimized": ("reduced", "decrease"),
-    "slashed": ("reduced", "decrease"),
-    "trimmed": ("reduced", "decrease"),
-    "improved": ("improved", "improvement"),
-    "optimized": ("improved", "improvement"),
-    "enhanced": ("improved", "improvement"),
-    "streamlined": ("improved", "improvement"),
-    "modernized": ("improved", "improvement"),
-    "stabilized": ("improved", "improvement"),
-    "strengthened": ("improved", "improvement"),
-    "analyzed": ("analyzed", None),
-    "assessed": ("analyzed", None),
-    "audited": ("analyzed", None),
-    "evaluated": ("analyzed", None),
-    "investigated": ("analyzed", None),
-    "researched": ("analyzed", None),
-    "reviewed": ("analyzed", None),
-    "measured": ("analyzed", None),
-    "coordinated": ("coordinated", None),
-    "orchestrated": ("coordinated", None),
-    "organized": ("coordinated", None),
-    "facilitated": ("coordinated", None),
-    "scheduled": ("coordinated", None),
-    "contributed to": ("contributed", None),
-    "contributed": ("contributed", None),
-    "worked on": ("contributed", None),
-    "participated in": ("contributed", None),
-    "took part in": ("contributed", None),
-    "supported": ("supported", None),
-    "handled": ("supported", None),
-    "assisted with": ("assisted", None),
-    "assisted in": ("assisted", None),
-    "assisted": ("assisted", None),
-    "hardened": ("improved", "improvement"),
-    "inspected": ("analyzed", None),
-    "helped": ("assisted", None),
-    "helped to": ("assisted", None),
+    verb.replace("_", " "): (verb, _VERB_DIRECTION.get(verb)) for verb in OWNERSHIP_VERBS
 }
 # Verbs that also mean "removed" or "shortened in scope" map only when a metric follows them
 # ("Cut costs by 20%", never "Cut the 2.0 release").
@@ -165,8 +78,9 @@ _PARTICIPLE = re.compile(
 _SAVING = re.compile(r",?\s+saving\s+(?P<amount>.+)$", re.IGNORECASE)
 _BY = re.compile(r"\s+by\s+(?P<amount>.+)$", re.IGNORECASE)
 _PERIOD = re.compile(
-    r"\s*\((?P<start>[0-9]{4}(?:-[0-9]{2})?)(?:\s*[-–—]\s*(?P<end>[0-9]{4}(?:-[0-9]{2})?))?\)$"
+    r"\s*\((?P<start>[0-9]{4}(?:-[0-9]{2})?)(?:\s*(?P<separator>[-–—])\s*(?P<end>[0-9]{4}(?:-[0-9]{2})?))?\)$"
     r"|\s+in\s+(?P<year>[0-9]{4})$"
+    r"|\s+(?P<range_start>[0-9]{4}(?:-[0-9]{2})?)\s*(?P<range_separator>[-–—])\s*(?P<range_end>[0-9]{4}(?:-[0-9]{2})?)$"
 )
 _SCOPE = re.compile(r"\s+(?=(?:across|for|within|spanning|serving)\s)", re.IGNORECASE)
 _TAIL = re.compile(
@@ -175,7 +89,7 @@ _TAIL = re.compile(
     re.IGNORECASE,
 )
 _RATE = re.compile(
-    r"^(?:(?:per|a|an|each|every)\s+(?P<unit>day|week|month|quarter|year)"
+    r"^(?:(?P<wording>per|a|an|each|every)\s+(?P<unit>day|week|month|quarter|year)"
     r"|(?P<adverb>daily|weekly|monthly|quarterly|yearly|annually))(?P<rest>.*)$",
     re.IGNORECASE,
 )
@@ -320,8 +234,16 @@ def map_line(line: str) -> ClaimMapping:
     fields: dict[str, object] = {"schema_version": 1, "verb": verb}
     period = _PERIOD.search(body)
     if period is not None:
-        start = period["start"] or period["year"]
-        fields["period"] = {"start": start, "end": period["end"] or start}
+        start = period["start"] or period["year"] or period["range_start"]
+        end = period["end"] or period["range_end"] or start
+        style = (
+            "in_year" if period["year"] else "range" if period["range_start"] else "parenthetical"
+        )
+        period_fields = {"start": start, "end": end, "style": style}
+        separator = period["separator"] or period["range_separator"]
+        if separator:
+            period_fields["separator"] = {"-": "hyphen", "–": "en_dash", "—": "em_dash"}[separator]
+        fields["period"] = period_fields
         body = body[: period.start()].strip()
     metric: dict[str, object] = {}
     amount: tuple[re.Match[str], str] | None = None
@@ -338,7 +260,7 @@ def map_line(line: str) -> ClaimMapping:
     elif by is not None and verb_change is not None and (amount := _leading_amount(by["amount"])):
         metric = {"change": verb_change}
         body = body[: by.start()].strip()
-    elif verb_change is None and (quantity := _quantity(body)) is not None:
+    elif (quantity := _quantity(body)) is not None:
         metric = {"change": "quantity"}
         amount, body = (quantity[0], ""), quantity[1]
     tail = ""
@@ -351,6 +273,14 @@ def map_line(line: str) -> ClaimMapping:
                 _ADVERB_RATES[rate["adverb"].casefold()]
                 if rate["adverb"]
                 else cast(MetricRate, unit_word.casefold())
+            )
+            adverb = (rate["adverb"] or "").casefold()
+            metric["rate_wording"] = (
+                "annual"
+                if adverb == "annually"
+                else "adverbial"
+                if adverb
+                else rate["wording"].casefold()
             )
             tail = rate["rest"].strip()
         if metric["change"] == "saving" and tail and not _TAIL.match(tail):
@@ -391,8 +321,8 @@ def map_line(line: str) -> ClaimMapping:
     except ValidationError:
         unparsed.append(UnparsedPart(text=statement, reason="invalid_value"))
         return ClaimMapping(claim=None, rendering=None, unparsed=unparsed)
-    # Recognizing synonyms or metric notation does not make a reworded sentence evidence.
-    # Keep the proposal inspectable, but approval falls back to the original literal line.
+    # Identity mapping and form metadata never waive complete-rendering quotation.
+    # Unsupported wording remains inspectable, with literal approval needing attention.
     if not unparsed and not grounded(claim, line):
         unparsed.append(UnparsedPart(text=statement_text(line), reason="unquoted_rendering"))
     return ClaimMapping(claim=claim, rendering=render_claim(claim), unparsed=unparsed)

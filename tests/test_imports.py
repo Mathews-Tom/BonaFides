@@ -610,15 +610,19 @@ def test_replace_all_overlapping_unchanged_split_sets_keep_every_target_and_its_
 
 @pytest.mark.postgres
 @pytest.mark.parametrize(
-    ("statement", "needs_attention"),
-    [("Cut batch runtime by 30%", True), ("Reduced batch runtime by 30%", False)],
+    ("statement", "needs_attention", "rendering"),
+    [
+        ("Reduced batch runtime by 30 percent", True, "Reduced batch runtime by 30%"),
+        ("Reduced batch runtime by 30%", False, "Reduced batch runtime by 30%"),
+        ("Cut batch runtime by 30%", False, "Cut batch runtime by 30%"),
+    ],
 )
 def test_import_approval_and_document_preserve_exact_source_when_rendering_is_unquoted(
-    importing: ImportContext, statement: str, needs_attention: bool
+    importing: ImportContext, statement: str, needs_attention: bool, rendering: str
 ) -> None:
     batch = importing.staged(f"Experience\n{statement}\n")
     proposal = batch["entries"][0]["claim_proposals"][0]
-    assert proposal["rendering"] == "Reduced batch runtime by 30%"
+    assert proposal["rendering"] == rendering
     if needs_attention:
         assert proposal["unparsed"] == [{"text": statement, "reason": "unquoted_rendering"}]
     else:
@@ -1710,7 +1714,7 @@ def test_projection_groups_plain_date_headers_without_guessing_labels_or_crossin
 CLAIM_SOURCE = (
     "Experience\nPlatform Engineer | Fictional Freight | 2021 – 2023\n"
     "- Reduced batch runtime by 30% across 3 warehouses\n"
-    "- Saved $90K in synthetic licensing costs\n"
+    "- Successfully saved $90K in synthetic licensing costs\n"
 )
 
 
@@ -1721,7 +1725,7 @@ def test_projection_proposes_each_statement_line_as_a_structured_claim() -> None
     assert [item.quote for item in proposals] == [
         "Platform Engineer | Fictional Freight | 2021 – 2023",
         "- Reduced batch runtime by 30% across 3 warehouses",
-        "- Saved $90K in synthetic licensing costs",
+        "- Successfully saved $90K in synthetic licensing costs",
     ]
     assert proposals[0].claim is None
     assert [(part.text, part.reason) for part in proposals[0].unparsed] == [
@@ -1731,7 +1735,7 @@ def test_projection_proposes_each_statement_line_as_a_structured_claim() -> None
     assert proposals[1].unparsed == []
     assert proposals[2].claim is None
     assert [(part.text, part.reason) for part in proposals[2].unparsed] == [
-        ("Saved", "unknown_verb")
+        ("Successfully", "unknown_verb")
     ]
     assert _entries("Skills\nSQL\n")[0].claim_proposals == []
 
@@ -1748,7 +1752,7 @@ def test_reviewed_import_adds_structured_claims_only_after_approval(
         "Reduced batch runtime by 30% across 3 warehouses",
         None,
     ]
-    assert proposals[2]["unparsed"] == [{"text": "Saved", "reason": "unknown_verb"}]
+    assert proposals[2]["unparsed"] == [{"text": "Successfully", "reason": "unknown_verb"}]
     assert importing.profile() == original
     accepted = importing.approve(batch)
     assert accepted.status_code == 202, accepted.text
@@ -1758,7 +1762,7 @@ def test_reviewed_import_adds_structured_claims_only_after_approval(
     assert [(item["rendering"], item["needs_attention"]) for item in claims] == [
         ("Platform Engineer | Fictional Freight | 2021 – 2023", True),
         ("Reduced batch runtime by 30% across 3 warehouses", False),
-        ("Saved $90K in synthetic licensing costs", True),
+        ("Successfully saved $90K in synthetic licensing costs", True),
     ]
     structured = claims[1]["revision"]["payload"]
     assert structured["role"] == "Platform Engineer"
@@ -1767,7 +1771,10 @@ def test_reviewed_import_adds_structured_claims_only_after_approval(
     assert "text" not in structured
     assert proposals[1]["quote"] == "- Reduced batch runtime by 30% across 3 warehouses"
     assert claims[1]["revision"]["evidence_links"][0]["excerpt"] == proposals[1]["quote"][2:]
-    assert claims[2]["revision"]["payload"]["text"] == "Saved $90K in synthetic licensing costs"
+    assert (
+        claims[2]["revision"]["payload"]["text"]
+        == "Successfully saved $90K in synthetic licensing costs"
+    )
     with importing.identity.admin.transaction() as conn:
         prepared = prepare_synthetic(
             conn, importing.owner_id, UUID(importing.profile()["current_revision"]["id"])
@@ -1775,7 +1782,7 @@ def test_reviewed_import_adds_structured_claims_only_after_approval(
     assert [block.text for block in prepared.body.sections[0].blocks] == [
         "Platform Engineer | Fictional Freight | 2021 – 2023",
         "Reduced batch runtime by 30% across 3 warehouses",
-        "Saved $90K in synthetic licensing costs",
+        "Successfully saved $90K in synthetic licensing costs",
     ]
 
 
