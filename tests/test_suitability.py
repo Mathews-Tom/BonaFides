@@ -1458,6 +1458,7 @@ def test_every_coverage_state_checks_applicant_explanation_novelty(state: str) -
         {claim_id: {"text": "Maintained Linux runbooks"}},
         {evidence_id: {"text": "Maintained Linux runbooks"}},
         {claim_id: {evidence_id}},
+        frozenset(),
     )
     item = suitability.Coverage.model_validate(
         {
@@ -1529,7 +1530,9 @@ def test_negative_coverage_can_describe_a_requirement_gap_without_applicant_fact
             "explanation": explanation,
         }
     )
-    suitability.validate_coverage([item], [requirement], suitability.ProfileProjection({}, {}, {}))
+    suitability.validate_coverage(
+        [item], [requirement], suitability.ProfileProjection({}, {}, {}, frozenset())
+    )
 
 
 @pytest.mark.postgres
@@ -1642,5 +1645,5 @@ def test_gap_grammar_rejects_affirmative_tails_in_the_same_sentence(explanation:
     )
     with pytest.raises(Problem, match="unsupported_explanation_novelty"):
         suitability.validate_coverage(
-            [item], [requirement], suitability.ProfileProjection({}, {}, {})
+            [item], [requirement], suitability.ProfileProjection({}, {}, {}, frozenset())
         )
