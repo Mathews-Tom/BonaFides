@@ -582,6 +582,14 @@ describe('focused profile sections', () => {
     });
   });
 
+  it('shows source type, origin and privacy class on every saved source', async () => {
+    const user = userEvent.setup();
+    const owned = { ...source, revision: { ...source.revision, provenance: { source_type: 'document' as const, origin: 'resume_import' as const, privacy_class: 'confidential' as const, employer_owned: true } } };
+    render(<ProfileEntries api={new Api()} profile={{ ...profile, evidence: [owned] }} disabled={false} onProfile={vi.fn()} onDirtyChange={vi.fn()} onBusyChange={vi.fn()} />);
+    await user.click(screen.getByRole('button', { name: 'Sources' }));
+    expect(screen.getByText('Source type: Document · Origin: Résumé import · Privacy: Confidential · Employer-owned · Content never sent to a model')).toBeVisible();
+  });
+
   it('opens a saved source with its recorded provenance', async () => {
     const user = userEvent.setup();
     render(<ProfileEntries api={new Api()} profile={profile} disabled={false} onProfile={vi.fn()} onDirtyChange={vi.fn()} onBusyChange={vi.fn()} />);

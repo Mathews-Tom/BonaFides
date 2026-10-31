@@ -19,7 +19,7 @@ const application: ApplicationSummary = { id: 'application-1', version: 7, attem
 const tailored: DocumentRecord = { ...saved, id: 'tailored-resume', scope: 'tailored', application_id: application.id };
 const route = { status: 'unqualified' as const, reason: 'generate_documents qualification has not been authorized', identity: { model: 'unqualified-local' } };
 const pair: ApplicationDocuments = { application_id: application.id, version: 7, items: [tailored], generation_route: route, requirements_revision_id: 'requirements-1' };
-const context: GenerationContext = { application_id: application.id, application_version: 7, profile_revision_id: 'profile-rev-3', profile_version: 3, requirements_revision_id: 'requirements-1', template_version: 'bonafides-evidence-v1', tone: 'professional', language: 'en', context_sha256: '1'.repeat(64), model_projection: { facts: [{ text: 'Maintained Linux service checks.' }], requirements: [{ text: 'Linux' }] }, frame: { display_name: 'Mira Vale', contact: { email: 'mira@example.test' } }, generation_route: route };
+const context: GenerationContext = { application_id: application.id, application_version: 7, profile_revision_id: 'profile-rev-3', profile_version: 3, requirements_revision_id: 'requirements-1', template_version: 'bonafides-evidence-v1', tone: 'professional', language: 'en', context_sha256: '1'.repeat(64), model_projection: { facts: [{ text: 'Maintained Linux service checks.' }], requirements: [{ text: 'Linux' }] }, frame: { display_name: 'Mira Vale', contact: { email: 'mira@example.test' } }, generation_route: route, withheld_evidence: [] };
 const workflow: Workflow = {
   id: 'compose-1', version: 1, state: 'pending', kind: 'document_generate', mode: 'deterministic_base', attempt: 0, max_attempts: 3, last_error_code: null, result: null,
   created_at: '2026-10-25T12:00:00Z', updated_at: '2026-10-25T12:00:00Z', deadline_at: '2030-01-01T00:00:00Z', next_attempt_at: null,
@@ -385,6 +385,30 @@ describe('review, export and generation boundaries', () => {
     expect(firstPre).not.toHaveTextContent('mira@example.test');
     expect(within(projection!).getByText(/Destination from this operation/)).toHaveTextContent('not anonymization');
     expect(request.mock.calls.filter(call => call[1] === 'POST')).toHaveLength(0);
+  });
+
+  it('explains employer-owned evidence that the exact projection withholds', async () => {
+    const user = userEvent.setup();
+    const withheld: GenerationContext = { ...context,
+      model_projection: { claims: [{ id: 'claim-rev-9', text: 'Kept the payroll batch inside its nightly window', evidence_revision_ids: ['evidence-rev-9'] }], evidence: [{ id: 'evidence-rev-9', withheld: true }] },
+      withheld_evidence: [{ evidence_revision_id: 'evidence-rev-9', source: 'Quarterly review', reasons: ['employer_owned'], claim_revision_ids: ['claim-rev-9'] }] };
+    const { api } = fixture(saved, async path => {
+      if (path === '/applications') return { items: [application], next_cursor: null, query_elapsed_ms: 1, as_of: application.updated_at };
+      if (path === '/applications/application-1/documents') return pair;
+      if (path.startsWith('/applications/application-1/generation-context?')) return withheld;
+      throw new ApiError(404, 'not_found');
+    });
+    render(<Documents api={api} profile={profile} />); await ready();
+    await user.click(screen.getByRole('button', { name: 'Tracked application documents' }));
+    await user.click(screen.getByRole('button', { name: 'Reload tracked applications' }));
+    await user.selectOptions(await screen.findByLabelText('Tracked application'), 'application-1');
+    await user.click(await screen.findByRole('button', { name: 'Preview reviewed generation context' }));
+    const explanation = (await screen.findByRole('heading', { name: 'Evidence withheld from the model' })).parentElement!;
+    expect(within(explanation).getByText('Quarterly review')).toBeVisible();
+    expect(within(explanation).getByText('Content withheld because the source is owned by your employer.')).toBeVisible();
+    expect(within(explanation).getByText('Claims still sent: “Kept the payroll batch inside its nightly window”')).toBeVisible();
+    const projection = screen.getByRole('heading', { name: 'Exact minimized model projection' }).parentElement!;
+    expect(JSON.parse(projection.querySelector('pre')!.textContent!)).toEqual(withheld.model_projection);
   });
   it.each([false, true])('keeps the selected application document on task reconnect after an earlier result read failed (dirty: %s)', async keepDirty => {
     const onDirtyChange = vi.fn();
