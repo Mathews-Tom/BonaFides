@@ -375,13 +375,15 @@ def test_classification_preserves_revisions_pins_and_survives_profile_restore(
                 ).scalar_one()
                 == 1
             )
-        with pytest.raises(DBAPIError, match="immutable"):
-            with profile_owner.admin.transaction() as conn:
-                conn.execute(
-                    text("""UPDATE bonafides.evidence_classification_changes
-                    SET privacy_class='public' WHERE evidence_id=:evidence"""),
-                    {"evidence": evidence["id"]},
-                )
+        with (
+            pytest.raises(DBAPIError, match="immutable"),
+            profile_owner.admin.transaction() as conn,
+        ):
+            conn.execute(
+                text("""UPDATE bonafides.evidence_classification_changes
+                SET privacy_class='public' WHERE evidence_id=:evidence"""),
+                {"evidence": evidence["id"]},
+            )
 
 
 @pytest.mark.postgres
