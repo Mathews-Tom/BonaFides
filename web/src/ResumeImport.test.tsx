@@ -89,6 +89,56 @@ function approve() { return screen.getByRole('button', { name: /^Save profile$|^
 afterEach(() => { vi.useRealTimers(); vi.restoreAllMocks(); });
 
 describe('structured résumé review', () => {
+  it.each(['new', 'conflict'] as const)('warns before accepting a structured target as text for a %s replacement or source attachment, even when keeping its description', async status => {
+    const user = userEvent.setup(); const batch = staged();
+    const rendering = 'Reduced batch runtime by 30% during 2020–2022.';
+    const structured: ClaimRecord = { ...oldClaim, rendering, revision: { ...oldClaim.revision, payload: {
+      organization: oldPayload.organization, role: oldPayload.role, start_date: oldPayload.start_date, end_date: oldPayload.end_date,
+      claim: { schema_version: 1, verb: 'reduced', subject: 'batch runtime', metric: { value: '30', unit: 'percent', change: 'decrease' }, period: { start: '2020', end: '2022' } },
+    } } };
+    batch.entries = [{ ...batch.entries[0]!, payload: { ...oldPayload, text: quote },
+      comparison: { status, target_claim_id: status === 'conflict' ? structured.id : null, candidate_claim_ids: [structured.id] } }];
+    const { api, state } = server(batch);
+    const saved = { ...profile, current_revision: { ...profile.current_revision, claims: [structured] } };
+    render(<ResumeImport api={api} profile={saved} disabled={false} onProfile={vi.fn()} />); await open(user);
+    if (status === 'new') expect(screen.queryByText(/Accepting this replacement or source attachment converts/)).not.toBeInTheDocument();
+    await edit(user);
+    if (status === 'new') {
+      await user.selectOptions(screen.getByLabelText('Existing profile entry'), 'replace');
+      await user.selectOptions(screen.getByLabelText('Replacement target'), structured.id);
+    }
+    const warning = screen.getByRole('note');
+    expect(warning).toHaveTextContent('discards its structured verb, metric, and period');
+    expect(warning).toHaveTextContent('Choosing “Keep current description” keeps only the rendered text; it still converts the stored representation');
+    expect(warning).toHaveTextContent('The import request sends the Description shown in this preview as text, not a structured claim');
+    expect(state.submissions).toHaveLength(0);
+    await user.click(screen.getByRole('button', { name: 'Keep current description' }));
+    expect(warning).toBeVisible();
+    expect(screen.getByLabelText('Description')).toHaveValue(rendering);
+    expect(within(screen.getByRole('article', { name: 'Preview entry 1' })).getByText(rendering, { selector: 'dd' })).toBeVisible();
+    await user.click(attest()); await user.click(approve());
+    expect(state.submissions[0]?.body.decisions).toEqual([expect.objectContaining({
+      action: 'replace', claim_id: structured.id, payload: { ...oldPayload, text: rendering },
+    })]);
+    expect(state.submissions[0]?.body.decisions[0]?.payload).not.toHaveProperty('claim');
+  });
+
+  it.each(['literal', 'unchanged', 'skipped'] as const)('does not warn about structured conversion for a %s target or decision', async scenario => {
+    const user = userEvent.setup(); const batch = staged();
+    const target: ClaimRecord = scenario === 'literal' ? oldClaim : { ...oldClaim, revision: { ...oldClaim.revision,
+      payload: { claim: { schema_version: 1, verb: 'built', subject: 'fictional systems', metric: { value: '3', unit: 'count' }, period: { start: '2020', end: '2022' } } } } };
+    batch.entries = [{ ...batch.entries[0]!, payload: scenario === 'unchanged' ? { text: target.rendering } : { ...oldPayload },
+      comparison: { status: scenario === 'unchanged' ? 'unchanged' : 'conflict', target_claim_id: target.id, candidate_claim_ids: [target.id] } }];
+    const { api } = server(batch);
+    const saved = { ...profile, current_revision: { ...profile.current_revision, claims: [target] } };
+    render(<ResumeImport api={api} profile={saved} disabled={false} onProfile={vi.fn()} />); await open(user);
+    if (scenario === 'skipped') {
+      expect(screen.getByText(/Accepting this replacement or source attachment converts/)).toBeVisible();
+      await edit(user); await user.click(screen.getByRole('button', { name: 'Exclude entry' }));
+    } else await edit(user);
+    expect(screen.queryByText(/Accepting this replacement or source attachment converts/)).not.toBeInTheDocument();
+  });
+
   it('keeps the saved description visible in merge and replace-all previews without making it an imported fact', async () => {
     const user = userEvent.setup(); const { api, state } = server();
     const described = { ...profile, current_revision: { ...profile.current_revision, snapshot: { ...profile.current_revision.snapshot, description: 'Saved personal introduction.' } } };

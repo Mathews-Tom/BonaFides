@@ -739,6 +739,7 @@ export function ResumeImport({ api, profile, disabled, onProfile, onDirtyChange,
                 const editorEntry = group.find(item => item.entry_id === entries[currentIndex]?.entry_id);
                 const draft = drafts[entry.entry_id] ?? initialDraft(entry, current);
                 const payload = previewPayload(draft, current);
+                const target = replacement(current, draft);
                 const issues = entryProblems(entry, draft, current);
                 const attention = needsConfirmation(entry, draft) || issues.length > 0 || duplicateEntryIds.has(entry.entry_id);
                 const status = draft.action === 'skip' ? 'Excluded' : attention ? 'Needs attention' : draft.action === 'unchanged' ? 'Unchanged' : draft.action === 'replace' ? 'Ready to update' : 'New entry';
@@ -750,6 +751,9 @@ export function ResumeImport({ api, profile, disabled, onProfile, onDirtyChange,
                   </button> : <>
                   {draft.action === 'skip' ? <p>{snippet(draft.payload.text)} — not included in the saved profile.</p>
                     : <dl>{entryFields(draft, replacement(current, draft)).filter(field => payload[field.key]).map(field => <div className={field.key === 'text' && draft.kind !== 'identity' ? 'import-primary-field' : undefined} key={field.key}><dt>{field.label}</dt><dd>{payload[field.key]}</dd></div>)}</dl>}
+                  {draft.action === 'replace' && target && 'claim' in target.revision.payload && <p className="disclosure" role="note">
+                    Accepting this replacement or source attachment converts the structured target to free text and discards its structured verb, metric, and period. Choosing “Keep current description” keeps only the rendered text; it still converts the stored representation. The import request sends the Description shown in this preview as text, not a structured claim.
+                  </p>}
                   {attention && draft.action !== 'skip' && <p className="hint">{issues[0] ?? 'Check the extraction, choose a target if needed, then confirm or exclude this entry.'}</p>}
                   <div className="import-preview-actions">
                     <span className="import-entry-status">{status}{draft.action === 'replace' && issues.length ? ' · current values retained until resolved' : ''}</span>

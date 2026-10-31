@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
-import { render, screen } from '@testing-library/react';
+import { act, fireEvent, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
-import { Api, ApiError, type Profile, type ProfileRevision } from './api';
+import { Api, ApiError, type ClaimRendering, type ClaimVocabulary, type Profile, type ProfileRevision } from './api';
 import { ProfileEntries } from './ProfileEntries';
 
 const metadata = { revision_no: 1, content_sha256: 'a'.repeat(64), created_at: '2026-01-01T00:00:00Z', author_owner_id: 'synthetic-owner' };
@@ -19,6 +19,14 @@ const profile: Profile = {
   },
   evidence: [source], quality_warnings: [], experience_coverage: { minimum_days: 0, maximum_days: 0, undated_or_open_entries: 0 },
 };
+const ownershipVocabulary: ClaimVocabulary = { language: 'en', verbs: [{ key: 'built', label: 'Built' }], units: ['percent'], changes: [], magnitudes: [], rates: [] };
+function deferred<T>() {
+  // The project targets ES2022, which does not include Promise.withResolvers.
+  let resolve!: (value: T) => void;
+  let reject!: (reason: unknown) => void;
+  const promise = new Promise<T>((onResolve, onReject) => { resolve = onResolve; reject = onReject; });
+  return { promise, resolve, reject };
+}
 function setup() {
   const api = new Api();
   const onDirtyChange = vi.fn();
@@ -104,6 +112,115 @@ describe('focused profile sections', () => {
     expect(saved?.[2]).toEqual({ kind: 'experience', payload: { claim: { schema_version: 1, verb: 'reduced', subject: 'batch runtime', metric: { value: '30', unit: 'percent', change: 'decrease' } } },
       evidence_links: [{ evidence_revision_id: 'source-revision', support_kind: 'user_asserted', excerpt: 'Synthetic workshop notes.' }] });
     expect(onProfile).toHaveBeenCalledWith(profile);
+  });
+
+  it('shows rejected preview feedback beside the rendering and clears it on structured edits before recovery', async () => {
+    const user = userEvent.setup(); const api = new Api();
+    const recovery = deferred<ClaimRendering>();
+    let renderAttempts = 0;
+    const request = vi.spyOn(api, 'request').mockImplementation(async <T,>(path: string) => {
+      if (path === '/claims/vocabulary') return ownershipVocabulary as T;
+      if (path === '/claims/render') {
+        if (++renderAttempts === 1) throw new ApiError(422, 'invalid_claim');
+        return recovery.promise as Promise<T>;
+      }
+      throw new ApiError(404, 'not_found');
+    });
+    render(<ProfileEntries api={api} profile={profile} disabled={false} onProfile={vi.fn()} onDirtyChange={vi.fn()} onBusyChange={vi.fn()} />);
+    await user.click(screen.getByRole('button', { name: 'Work experience' }));
+    await user.click(screen.getByRole('button', { name: 'Add work experience entry' }));
+    await screen.findByLabelText('Ownership verb');
+    fireEvent.change(screen.getByLabelText('Subject'), { target: { value: 'the billing service' } });
+    const feedback = await screen.findByText(/Could not preview the claim:.*invalid_claim/);
+    expect(feedback).toHaveAttribute('role', 'alert');
+    expect(feedback.parentElement).toContainElement(screen.getByLabelText('Claim rendering'));
+    expect(screen.getByLabelText('Claim rendering')).toHaveTextContent('Preview unavailable.');
+    expect(screen.queryByRole('button', { name: 'Load latest profile for comparison' })).not.toBeInTheDocument();
+    // A one-sided period changes the draft but is still omitted from the request.
+    fireEvent.change(screen.getByLabelText('Period start (optional)'), { target: { value: '2021' } });
+    expect(screen.queryByText(/Could not preview the claim:/)).not.toBeInTheDocument();
+    expect(request.mock.calls.filter(call => call[0] === '/claims/render')).toHaveLength(2);
+    const pendingPreview = request.mock.calls.filter(call => call[0] === '/claims/render')[1];
+    expect(pendingPreview?.[2]).toEqual({ claim: { schema_version: 1, verb: 'built', subject: 'the billing service' } });
+    await act(async () => { recovery.resolve({ language: 'en', rendering: 'Built the billing service.' }); });
+    expect(screen.getByLabelText('Claim rendering')).toHaveTextContent('Built the billing service.');
+    expect(screen.queryByText(/Could not preview the claim:/)).not.toBeInTheDocument();
+  });
+
+  it.each(['resolve', 'reject'] as const)('ignores an aborted stale preview that later %ss', async outcome => {
+    const user = userEvent.setup(); const api = new Api();
+    const stale = deferred<ClaimRendering>(); const current = deferred<ClaimRendering>();
+    let renderAttempts = 0;
+    const request = vi.spyOn(api, 'request').mockImplementation(async <T,>(path: string) => {
+      if (path === '/claims/vocabulary') return ownershipVocabulary as T;
+      if (path === '/claims/render') return (++renderAttempts === 1 ? stale.promise : current.promise) as Promise<T>;
+      throw new ApiError(404, 'not_found');
+    });
+    render(<ProfileEntries api={api} profile={profile} disabled={false} onProfile={vi.fn()} onDirtyChange={vi.fn()} onBusyChange={vi.fn()} />);
+    await user.click(screen.getByRole('button', { name: 'Work experience' }));
+    await user.click(screen.getByRole('button', { name: 'Add work experience entry' }));
+    await screen.findByLabelText('Ownership verb');
+    fireEvent.change(screen.getByLabelText('Subject'), { target: { value: 'old draft' } });
+    fireEvent.change(screen.getByLabelText('Subject'), { target: { value: 'current draft' } });
+    expect(request.mock.calls.find(call => call[0] === '/claims/render')?.[5]?.aborted).toBe(true);
+    await act(async () => { current.resolve({ language: 'en', rendering: 'Built current draft.' }); });
+    await act(async () => {
+      if (outcome === 'resolve') stale.resolve({ language: 'en', rendering: 'Built old draft.' });
+      else stale.reject(new ApiError(422, 'stale_claim'));
+    });
+    expect(screen.getByLabelText('Claim rendering')).toHaveTextContent('Built current draft.');
+    expect(screen.queryByText(/Could not preview the claim:/)).not.toBeInTheDocument();
+  });
+
+  it('blocks structured submission while vocabulary is pending or failed and saves after a successful retry', async () => {
+    const user = userEvent.setup(); const api = new Api(); const onProfile = vi.fn();
+    const initial = deferred<ClaimVocabulary>(); const retry = deferred<ClaimVocabulary>();
+    let vocabularyAttempts = 0;
+    const request = vi.spyOn(api, 'request').mockImplementation(async <T,>(path: string, method = 'GET') => {
+      if (path === '/claims/vocabulary') return (++vocabularyAttempts === 1 ? initial.promise : retry.promise) as Promise<T>;
+      if (path === '/claims/render') return { language: 'en', rendering: 'Built the billing service.' } as T;
+      if (path === '/claims' && method === 'POST') return profile as T;
+      throw new ApiError(404, 'not_found');
+    });
+    render(<ProfileEntries api={api} profile={profile} disabled={false} onProfile={onProfile} onDirtyChange={vi.fn()} onBusyChange={vi.fn()} />);
+    await user.click(screen.getByRole('button', { name: 'Work experience' }));
+    await user.click(screen.getByRole('button', { name: 'Add work experience entry' }));
+    await user.type(screen.getByLabelText('Subject'), 'the billing service');
+    await user.click(screen.getByRole('button', { name: 'Add evidence link' }));
+    await user.selectOptions(screen.getByLabelText('Evidence revision 1'), 'source-revision');
+    await user.type(screen.getByLabelText('Source excerpt 1'), 'Built the billing service.');
+    const save = screen.getByRole('button', { name: 'Save entry revision' });
+    expect(screen.getByText('Loading the ownership vocabulary…')).toBeVisible();
+    expect(save).toBeDisabled();
+    fireEvent.submit(save.closest('form')!);
+    expect(request.mock.calls.some(call => call[0] === '/claims')).toBe(false);
+    await act(async () => { initial.reject(new ApiError(503, 'vocabulary_unavailable')); });
+    expect(screen.getByText(/Could not load the ownership vocabulary:.*vocabulary_unavailable/)).toBeVisible();
+    expect(screen.queryByText('Loading the ownership vocabulary…')).not.toBeInTheDocument();
+    expect(save).toBeDisabled();
+    fireEvent.submit(save.closest('form')!);
+    expect(request.mock.calls.some(call => call[0] === '/claims')).toBe(false);
+    await user.click(screen.getByRole('button', { name: 'Retry ownership vocabulary' }));
+    expect(screen.getByText('Loading the ownership vocabulary…')).toBeVisible();
+    expect(save).toBeDisabled();
+    await act(async () => { retry.resolve(ownershipVocabulary); });
+    expect(screen.getByLabelText('Ownership verb')).toHaveValue('built');
+    expect(screen.queryByText(/Could not load the ownership vocabulary:/)).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Retry ownership vocabulary' })).not.toBeInTheDocument();
+    expect(vocabularyAttempts).toBe(2);
+    expect(save).toBeEnabled();
+    await user.click(save);
+    expect(onProfile).toHaveBeenCalledWith(profile);
+  });
+
+  it('states the exact complete-rendered-sentence grounding rule without the obsolete heuristic', async () => {
+    const user = userEvent.setup(); const api = new Api();
+    vi.spyOn(api, 'request').mockResolvedValue(ownershipVocabulary);
+    render(<ProfileEntries api={api} profile={profile} disabled={false} onProfile={vi.fn()} onDirtyChange={vi.fn()} onBusyChange={vi.fn()} />);
+    await user.click(screen.getByRole('button', { name: 'Work experience' }));
+    await user.click(screen.getByRole('button', { name: 'Add work experience entry' }));
+    expect(screen.getByText('The source excerpt must contain the complete rendered sentence as written.', { exact: true })).toBeVisible();
+    expect(screen.queryByText(/this ownership verb or a stronger one|One sentence of a linked source excerpt/)).not.toBeInTheDocument();
   });
 
   it('saves a claim period only with both bounds and blocks a one-sided period', async () => {

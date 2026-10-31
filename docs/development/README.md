@@ -959,6 +959,17 @@ but permits a structured claim's linked evidence only when its `direct` or `user
 excerpt is both a verbatim evidence quote and grounds the complete rendering. Literal
 claim coverage keeps its existing support-kind behavior.
 
+The experience/project editor previews the server-rendered English sentence and states:
+“The source excerpt must contain the complete rendered sentence as written.” Preview
+failures appear beside the rendering and clear after structured-field edits. Structured
+entries cannot be submitted until the ownership vocabulary loads; a failed vocabulary
+request offers a retry. Optional periods require both bounds and never invent an end.
+
+Literal import review still submits text-only decisions. Replacing a structured target
+or attaching source evidence warns before acceptance that it converts the target to free
+text and discards structured verb, metric and period fields, even when keeping the current
+description. Unchanged and skipped decisions do not perform that conversion.
+
 ## Development gates
 
 Backend gates require a disposable PostgreSQL 18 database, distinct migration/runtime roles and tracked migrations. Never use a personal or production database. `.github/backend_gate.py` creates an isolated CI namespace, PostgreSQL test database `bonafides_test` and scoped credentials, then runs the following gates; it also needs a locally built `bonafides:local` image for its one-shot preparation helper:

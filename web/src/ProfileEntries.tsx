@@ -80,7 +80,10 @@ export function ProfileEntries({ api, profile, disabled, onProfile, onDirtyChang
   const claimInput = useRef<HTMLTextAreaElement>(null);
   const subjectInput = useRef<HTMLInputElement>(null);
   const [vocabulary, setVocabulary] = useState<ClaimVocabulary | null>(null);
+  const [vocabularyError, setVocabularyError] = useState('');
+  const [vocabularyAttempt, setVocabularyAttempt] = useState(0);
   const [rendering, setRendering] = useState<string | null>(null);
+  const [renderingError, setRenderingError] = useState('');
   const evidenceInput = useRef<HTMLTextAreaElement>(null);
   const claimOpen = claim !== null;
   const evidenceOpen = evidence !== null;
@@ -89,20 +92,25 @@ export function ProfileEntries({ api, profile, disabled, onProfile, onDirtyChang
   useEffect(() => {
     if (!structuredOpen || vocabulary) return;
     const controller = new AbortController();
+    setVocabularyError('');
     api.request<ClaimVocabulary>('/claims/vocabulary', 'GET', undefined, undefined, false, controller.signal)
-      .then(setVocabulary, (failure: unknown) => { if (!controller.signal.aborted) setError(errorText(failure)); });
+      .then(value => { if (!controller.signal.aborted) setVocabulary(value); },
+        (failure: unknown) => { if (!controller.signal.aborted) setVocabularyError(errorText(failure)); });
     return () => controller.abort();
-  }, [api, structuredOpen, vocabulary]);
-  const renderable = claim?.structured?.subject.trim() ? JSON.stringify(claimOf(claim.structured)) : '';
+  }, [api, structuredOpen, vocabulary, vocabularyAttempt]);
+  const structuredDraft = claim?.structured;
+  const renderable = structuredDraft?.subject.trim() ? JSON.stringify(claimOf(structuredDraft)) : '';
   useEffect(() => {
     setRendering(null);
+    setRenderingError('');
     if (!renderable) return;
     // The server renderer is the only renderer, so the preview matches the saved profile and PDF.
     const controller = new AbortController();
     api.request<ClaimRendering>('/claims/render', 'POST', { claim: JSON.parse(renderable) as StructuredClaim }, undefined, false, controller.signal)
-      .then(value => setRendering(value.rendering), () => { if (!controller.signal.aborted) setRendering(null); });
+      .then(value => { if (!controller.signal.aborted) setRendering(value.rendering); },
+        (failure: unknown) => { if (!controller.signal.aborted) setRenderingError(errorText(failure)); });
     return () => controller.abort();
-  }, [api, renderable]);
+  }, [api, renderable, structuredDraft]);
   useEffect(() => { if (evidenceOpen) evidenceInput.current?.focus(); }, [evidenceOpen]);
   const dirty = !!(claim || evidence || archive);
   const locked = busy || disabled;
@@ -154,7 +162,7 @@ export function ProfileEntries({ api, profile, disabled, onProfile, onDirtyChang
     if (claim) setClaim({ ...claim, evidence_links: claim.evidence_links.map((link, position) => position === index ? { ...link, ...update } : link) });
   }
   function submitClaim(event: FormEvent) {
-    event.preventDefault(); if (!claim) return;
+    event.preventDefault(); if (!claim || (claim.structured && !vocabulary)) return;
     void mutate(claim.id ? `/claims/${encodeURIComponent(claim.id)}` : '/claims', claim.id ? 'PUT' : 'POST', {
       kind: claim.kind, payload: claim.structured ? { ...contextOf(claim.payload), claim: claimOf(claim.structured) } : claim.payload, evidence_links: claim.evidence_links,
     });
@@ -227,7 +235,10 @@ export function ProfileEntries({ api, profile, disabled, onProfile, onDirtyChang
         <p>Kind: {kinds.find(kind => kind.value === claim.kind)?.label}. Entry kind cannot change after creation.</p>
         {claim.structured ? <fieldset><legend>Structured claim</legend>
           {claim.legacyText && <p className="hint">Needs attention. Saved free-text statement: “{claim.legacyText}”. Saving stores the structured fields below instead of that sentence.</p>}
-          {vocabulary ? <label>Ownership verb<select required value={claim.structured.verb} onChange={event => structuredField('verb', event.target.value)}>{vocabulary.verbs.map((verb, index) => <option key={verb.key} value={verb.key}>{index + 1}. {verb.label}</option>)}</select></label> : <p>Loading the ownership vocabulary…</p>}
+          {vocabulary ? <label>Ownership verb<select required value={claim.structured.verb} onChange={event => structuredField('verb', event.target.value)}>{vocabulary.verbs.map((verb, index) => <option key={verb.key} value={verb.key}>{index + 1}. {verb.label}</option>)}</select></label> : vocabularyError ? <div>
+            <p className="error" role="alert">Could not load the ownership vocabulary: {vocabularyError}</p>
+            <button type="button" className="secondary" onClick={() => { setVocabularyError(''); setVocabularyAttempt(value => value + 1); }}>Retry ownership vocabulary</button>
+          </div> : <p>Loading the ownership vocabulary…</p>}
           <p className="hint">Verbs run from strongest to weakest ownership. Choose the one your evidence supports.</p>
           <label>Subject<input ref={subjectInput} required maxLength={300} value={claim.structured.subject} onChange={event => structuredField('subject', event.target.value)} /></label>
           <label>Scope (optional)<input maxLength={200} value={claim.structured.scope} onChange={event => structuredField('scope', event.target.value)} /></label>
@@ -241,8 +252,10 @@ export function ProfileEntries({ api, profile, disabled, onProfile, onDirtyChang
           </>}
           <label>Period start (optional)<input maxLength={7} placeholder="YYYY or YYYY-MM" required={claim.structured.end !== ''} value={claim.structured.start} onChange={event => structuredField('start', event.target.value)} /></label>
           <label>Period end (optional)<input maxLength={7} placeholder="YYYY or YYYY-MM" required={claim.structured.start !== ''} value={claim.structured.end} onChange={event => structuredField('end', event.target.value)} /></label>
-          <p className="hint">A period needs both a start and an end. One sentence of a linked source excerpt must state the subject, scope and measure, this ownership verb or a stronger one, the metric with its unit, magnitude, rate and direction, and the period years (and months when given) before documents can use the claim.</p>
-          <h4>Rendering (English)</h4><output aria-live="polite" aria-label="Claim rendering">{rendering ?? 'Complete the structured fields to preview the rendering.'}</output>
+          <p className="hint">A period needs both a start and an end.</p>
+          <p className="hint">The source excerpt must contain the complete rendered sentence as written.</p>
+          <h4>Rendering (English)</h4><output aria-live="polite" aria-label="Claim rendering">{rendering ?? (renderingError ? 'Preview unavailable.' : 'Complete the structured fields to preview the rendering.')}</output>
+          {renderingError && <p className="error" role="alert">Could not preview the claim: {renderingError}</p>}
         </fieldset> : <label>Entry statement<textarea ref={claimInput} required maxLength={4000} value={claim.payload.text} onChange={event => payloadField('text', event.target.value)} /></label>}
         <label>Organization<input maxLength={200} value={claim.payload.organization ?? ''} onChange={event => payloadField('organization', event.target.value)} /></label>
         <label>Role or qualification<input maxLength={200} value={claim.payload.role ?? ''} onChange={event => payloadField('role', event.target.value)} /></label>
@@ -261,7 +274,7 @@ export function ProfileEntries({ api, profile, disabled, onProfile, onDirtyChang
           <button type="button" className="secondary" onClick={() => setClaim({ ...claim, evidence_links: claim.evidence_links.filter((_, position) => position !== index) })}>Remove source link {index + 1}</button>
         </fieldset>)}
         <button type="button" className="secondary" disabled={claim.evidence_links.length >= 16} onClick={() => setClaim({ ...claim, evidence_links: [...claim.evidence_links, { evidence_revision_id: '', support_kind: 'user_asserted', excerpt: '' }] })}>Add evidence link</button>
-        <div className="actions"><button disabled={claim.evidence_links.length === 0}>Save entry revision</button><button type="button" className="secondary" onClick={() => { setClaim(null); setComparison(null); setError(''); }}>Discard entry changes</button></div>
+        <div className="actions"><button disabled={claim.evidence_links.length === 0 || (!!claim.structured && !vocabulary)}>Save entry revision</button><button type="button" className="secondary" onClick={() => { setClaim(null); setComparison(null); setError(''); }}>Discard entry changes</button></div>
       </fieldset></form>}
       {archive && <div className="comparison"><h3>Confirm archive</h3><p>{archive.text}</p><p>This removes the {archive.kind} from the active profile. Historical revisions and their source links remain readable. Only an explicit historical restore can reactivate archived records.</p>
         <button disabled={locked} onClick={() => { void mutate(`/${archive.kind === 'claim' ? 'claims' : 'evidence'}/${encodeURIComponent(archive.id)}`, 'DELETE'); }}>Confirm archive</button><button className="secondary" disabled={locked} onClick={() => setArchive(null)}>Keep active record</button>
