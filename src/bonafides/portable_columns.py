@@ -61,6 +61,10 @@ COLUMNS: dict[str, tuple[str, ...]] = {
         "blob_id",
         "content_sha256",
         "created_at",
+        "source_type",
+        "origin",
+        "privacy_class",
+        "employer_owned",
     ),
     "claim_evidence_links": (
         "owner_id",

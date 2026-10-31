@@ -64,6 +64,9 @@ def _source(context: SourceContext) -> tuple[PortableArchive, bytes]:
         archive_member=f"blobs/{digest}",
     )
     archive.manifest.records["evidence_revisions"][0]["blob_id"] = str(blob.blob_id)
+    archive.manifest.records["evidence_revisions"][0].update(
+        {"source_type": "work_sample", "privacy_class": "confidential", "employer_owned": True}
+    )
     archive.manifest.blob_manifest.append(blob)
     blobs[digest] = payload
     archive = _digest(archive)
@@ -295,6 +298,18 @@ def test_foreign_historical_import_preserves_native_rows_and_bytes_without_autho
         assert {
             (row["id"], row["content_sha256"]) for row in again.manifest.records[family]
         } == expected
+    provenance = ("source_type", "origin", "privacy_class", "employer_owned")
+    assert {
+        (row["id"], *(row[key] for key in provenance))
+        for row in again.manifest.records["evidence_revisions"]
+    } == {
+        (row["id"], *(row[key] for key in provenance))
+        for row in archive.manifest.records["evidence_revisions"]
+    }
+    assert ("work_sample", "confidential", True) in {
+        (row["source_type"], row["privacy_class"], row["employer_owned"])
+        for row in again.manifest.records["evidence_revisions"]
+    }
 
 
 @pytest.mark.postgres
@@ -440,7 +455,14 @@ def test_archive_from_before_structured_claims_rewrites_free_text_claims(
     version = catalog.client.get("/api/v1/profile").json()["version"]
     evidence = catalog.client.post(
         "/api/v1/evidence",
-        json={"payload": {"text": ". ".join(statements), "source": "Synthetic review"}},
+        json={
+            "payload": {"text": ". ".join(statements), "source": "Synthetic review"},
+            "provenance": {
+                "source_type": "document",
+                "privacy_class": "private",
+                "employer_owned": False,
+            },
+        },
         headers=catalog.headers(version),
     )
     assert evidence.status_code == 200, evidence.text
@@ -470,6 +492,10 @@ def test_archive_from_before_structured_claims_rewrites_free_text_claims(
         for row in rows:
             if "owner_id" in row:
                 row["owner_id"] = str(source_owner)
+    # Archives from before evidence provenance carry no provenance columns.
+    for row in original.manifest.records["evidence_revisions"]:
+        for key in ("source_type", "origin", "privacy_class", "employer_owned"):
+            del row[key]
     archive = _digest(
         PortableArchive(
             original.manifest.model_copy(
@@ -519,3 +545,9 @@ def test_archive_from_before_structured_claims_rewrites_free_text_claims(
     assert profile["current_revision"]["reason"] == "claims_restructured"
     assert claims[5]["revision"]["payload"]["claim"]["verb"] == "implemented"
     assert claims[5]["revision"]["evidence_links"][0]["excerpt"] == statements[5]
+    assert claims[5]["revision"]["evidence_links"][0]["evidence"]["provenance"] == {
+        "source_type": "owner_statement",
+        "origin": "owner_entry",
+        "privacy_class": "private",
+        "employer_owned": False,
+    }

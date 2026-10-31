@@ -18,6 +18,11 @@ from bonafides.config import Settings
 from bonafides.db import Database
 from bonafides.document_generation import revision_digest
 from bonafides.documents import parse_body
+from bonafides.frozen_migrations.evidence_provenance_v1 import (
+    EVIDENCE_PROVENANCE_SCHEMA,
+    PROVENANCE_COLUMNS,
+    legacy_provenance,
+)
 from bonafides.installation_control import Control
 from bonafides.portable_archive import (
     EXCLUSIONS,
@@ -37,7 +42,7 @@ from bonafides.storage import BlobStore
 
 JsonRow = dict[str, JsonValue]
 _BLOB_REFERENCES = ("evidence_revisions", "application_attachments", "document_artifacts")
-_SOURCE_SCHEMAS = frozenset({13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28})
+_SOURCE_SCHEMAS = frozenset({13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29})
 
 
 class _CollectedBlobs(Mapping[str, bytes]):
@@ -60,6 +65,26 @@ class _CollectedBlobs(Mapping[str, bytes]):
             return self._store.read(self._owner_id, key, digest, size)
         except (OSError, ValueError) as exc:
             raise ArchiveError("portable_blob_unavailable") from exc
+
+
+def portable_rows(manifest: Manifest, name: str) -> list[JsonRow]:
+    """Archive rows in the current column shape.
+
+    Evidence revisions from archives written before schema 29 carry no provenance and
+    receive exactly the values the schema 29 upgrade assigns.
+    """
+    rows = manifest.records[name]
+    if name != "evidence_revisions" or manifest.source_schema_version >= EVIDENCE_PROVENANCE_SCHEMA:
+        return rows
+    upgraded: list[JsonRow] = []
+    for row in rows:
+        payload = row.get("payload")
+        if any(column in row for column in PROVENANCE_COLUMNS):
+            raise ArchiveError("incompatible_portable_columns")
+        if not isinstance(payload, dict):
+            raise ArchiveError("invalid_portable_records")
+        upgraded.append({**row, **legacy_provenance(payload)})
+    return upgraded
 
 
 def _relation(name: str) -> str:
@@ -449,7 +474,7 @@ def quarantine_records(conn: Connection, archive: PortableArchive) -> None:
                     )
                 )
                 fields = ",".join(columns)
-                for row in manifest.records[name]:
+                for row in portable_rows(manifest, name):
                     _row_shape(row, columns, types)
                     if row["owner_id"] != source or (
                         "acknowledged_by_owner_id" in row

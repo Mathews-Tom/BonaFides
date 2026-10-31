@@ -1093,9 +1093,12 @@ def merge_reviewed(conn: Connection, task: Claim) -> dict[str, object]:
             {"owner": task.owner_id, "id": evidence_id, "revision": evidence_revision_id},
         )
         conn.execute(
+            # A literal résumé line is a private document the owner imported and reviewed.
             text("""INSERT INTO bonafides.evidence_revisions
-            (owner_id,id,evidence_id,revision_no,payload,blob_id,content_sha256)
-            VALUES(:owner,:id,:evidence,1,CAST(:payload AS jsonb),:blob,:sha)"""),
+            (owner_id,id,evidence_id,revision_no,payload,blob_id,content_sha256,
+            source_type,origin,privacy_class,employer_owned)
+            VALUES(:owner,:id,:evidence,1,CAST(:payload AS jsonb),:blob,:sha,
+            'document','resume_import','private',false)"""),
             {
                 "owner": task.owner_id,
                 "id": evidence_revision_id,

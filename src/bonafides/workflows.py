@@ -166,6 +166,7 @@ def migrate(settings: MigrationConfig) -> None:
                 "026_erasure_reservation.up.sql",
                 "027_streamed_portability.up.sql",
                 "028_structured_claims.up.sql",
+                "029_evidence_provenance.up.sql",
             )
             if len(rows) != len(names):
                 raise RuntimeError("unsupported migration ledger")

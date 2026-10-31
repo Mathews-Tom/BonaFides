@@ -27,7 +27,7 @@ from bonafides.portable_archive import (
     hash_stream,
 )
 from bonafides.portable_columns import COLUMNS
-from bonafides.portable_data import quarantine_records
+from bonafides.portable_data import portable_rows, quarantine_records
 from bonafides.portable_erasure import assert_checkpoint, erase_scope, orphan_inventory, purge_scope
 from bonafides.storage import BlobStore
 
@@ -106,7 +106,7 @@ def _persist_records(conn: Connection, owner: UUID, archive: PortableArchive) ->
         if name == "model_run_provenance":
             continue
         rows: list[dict[str, JsonValue]] = []
-        for original in archive.manifest.records[name]:
+        for original in portable_rows(archive.manifest, name):
             row = {**original, "owner_id": str(owner)}
             if "acknowledged_by_owner_id" in row:
                 row["acknowledged_by_owner_id"] = str(owner)

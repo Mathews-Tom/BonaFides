@@ -87,8 +87,10 @@ def test_owner_can_download_nonempty_blocked_document_and_exact_evidence_bytes(
         )
         conn.execute(
             text("""INSERT INTO bonafides.evidence_revisions
-            (owner_id,id,evidence_id,revision_no,payload,blob_id,content_sha256)
-            VALUES(:owner,:id,:evidence,1,CAST(:payload AS jsonb),:blob,:sha)"""),
+            (owner_id,id,evidence_id,revision_no,payload,blob_id,content_sha256,
+            source_type,origin,privacy_class,employer_owned)
+            VALUES(:owner,:id,:evidence,1,CAST(:payload AS jsonb),:blob,:sha,
+            'document','owner_entry','confidential',true)"""),
             {
                 "owner": catalog.owner_id,
                 "id": revision_id,
@@ -141,6 +143,15 @@ def test_owner_can_download_nonempty_blocked_document_and_exact_evidence_bytes(
         )
         assert evidence_revision["evidence_id"] == str(evidence_id)
         assert evidence_revision["blob_id"] == str(blob_id)
+        assert {
+            key: evidence_revision[key]
+            for key in ("source_type", "origin", "privacy_class", "employer_owned")
+        } == {
+            "source_type": "document",
+            "origin": "owner_entry",
+            "privacy_class": "confidential",
+            "employer_owned": True,
+        }
         assert (
             not {"sessions", "action_approvals", "portable_exports", "credentials"} & records.keys()
         )
@@ -229,8 +240,10 @@ def test_missing_live_blob_fails_export_without_false_success_or_leaving_writers
         )
         conn.execute(
             text("""INSERT INTO bonafides.evidence_revisions
-            (owner_id,id,evidence_id,revision_no,payload,blob_id,content_sha256)
-            VALUES(:owner,:revision,:evidence,1,CAST(:payload AS jsonb),:blob,:content)"""),
+            (owner_id,id,evidence_id,revision_no,payload,blob_id,content_sha256,
+            source_type,origin,privacy_class,employer_owned)
+            VALUES(:owner,:revision,:evidence,1,CAST(:payload AS jsonb),:blob,:content,
+            'document','owner_entry','private',false)"""),
             parameters,
         )
     (catalog.identity.settings.blob_root / str(catalog.owner_id) / stored.storage_key).unlink()

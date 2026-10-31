@@ -214,8 +214,10 @@ def _accepted_originals(context: SourceContext, inventory: BlobInventory) -> Non
             )
             conn.execute(
                 text("""INSERT INTO bonafides.evidence_revisions
-                (owner_id,id,evidence_id,revision_no,payload,blob_id,content_sha256)
-                VALUES(:owner,:id,:evidence,1,CAST(:payload AS jsonb),:blob,:sha)"""),
+                (owner_id,id,evidence_id,revision_no,payload,blob_id,content_sha256,
+                source_type,origin,privacy_class,employer_owned)
+                VALUES(:owner,:id,:evidence,1,CAST(:payload AS jsonb),:blob,:sha,
+                'document','owner_entry','private',false)"""),
                 {
                     "owner": context.owner_id,
                     "id": revision_id,

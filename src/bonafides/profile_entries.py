@@ -26,6 +26,7 @@ from bonafides.claims import (
 )
 from bonafides.commands import command
 from bonafides.db import Database
+from bonafides.evidence_provenance import EvidenceProvenance, provenance
 from bonafides.problems import Problem
 from bonafides.profiles import ProfileSnapshot, _save, canonical, content_hash
 
@@ -174,6 +175,7 @@ class ClaimWrite(StrictModel):
 
 class EvidenceWrite(StrictModel):
     payload: EvidencePayload
+    provenance: EvidenceProvenance
 
 
 class RenderRequest(StrictModel):
@@ -208,7 +210,7 @@ def evidence_revision(conn: Connection, owner_id: UUID, revision_id: UUID) -> di
     )
     if row is None:
         raise Problem(404, "evidence_revision_not_found")
-    return _revision(row, owner_id)
+    return {**_revision(row, owner_id), "provenance": provenance(row)}
 
 
 def hydrate_claim(
@@ -344,8 +346,10 @@ def write_evidence(
     revision_id = uuid4()
     payload = body.payload.model_dump(mode="json")
     conn.execute(
-        text("""INSERT INTO bonafides.evidence_revisions(owner_id,id,evidence_id,revision_no,payload,content_sha256)
-        SELECT :owner,:revision,:id,COALESCE(max(revision_no),0)+1,CAST(:payload AS jsonb),:sha
+        text("""INSERT INTO bonafides.evidence_revisions(owner_id,id,evidence_id,revision_no,payload,content_sha256,
+        source_type,origin,privacy_class,employer_owned)
+        SELECT :owner,:revision,:id,COALESCE(max(revision_no),0)+1,CAST(:payload AS jsonb),:sha,
+        :source_type,'owner_entry',:privacy_class,:employer_owned
         FROM bonafides.evidence_revisions WHERE owner_id=:owner AND evidence_id=:id"""),
         {
             "owner": owner_id,
@@ -353,6 +357,7 @@ def write_evidence(
             "id": entity_id,
             "payload": canonical(payload),
             "sha": content_hash(payload),
+            **body.provenance.model_dump(),
         },
     )
     conn.execute(
