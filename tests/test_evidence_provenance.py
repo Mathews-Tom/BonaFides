@@ -115,15 +115,15 @@ def test_evidence_save_rejects_missing_or_invalid_provenance(
 def test_provenance_upgrade_assigns_the_frozen_legacy_values_without_updating_revisions(
     profile_owner: IdentityContext,
 ) -> None:
+    sql = "\n".join(
+        line
+        for line in MIGRATION.read_text(encoding="utf-8").splitlines()
+        if not line.lstrip().startswith("--")
+    )
     statements = [
-        statement
-        for statement in (
-            "\n".join(
-                line for line in part.splitlines() if not line.lstrip().startswith("--")
-            ).strip()
-            for part in MIGRATION.read_text(encoding="utf-8").split(";")
-        )
-        if statement.startswith("ALTER TABLE evidence_revisions")
+        part.strip()
+        for part in sql.split(";")
+        if part.strip().startswith("ALTER TABLE evidence_revisions")
     ]
     assert len(statements) == 3
     payloads = [
@@ -212,10 +212,8 @@ def test_provenance_upgrade_assigns_the_frozen_legacy_values_without_updating_re
             text("""CREATE TEMP TABLE evidence_classification_changes ON COMMIT DROP AS
             SELECT * FROM bonafides.evidence_classification_changes WITH NO DATA""")
         )
-        for part in MIGRATION.read_text(encoding="utf-8").split(";"):
-            statement = "\n".join(
-                line for line in part.splitlines() if not line.lstrip().startswith("--")
-            ).strip()
+        for part in sql.split(";"):
+            statement = part.strip()
             if statement.startswith(
                 ("ALTER TABLE evidence_records", "INSERT INTO evidence_classification_changes")
             ):
@@ -417,7 +415,9 @@ def test_classification_rejects_invalid_or_extra_fields(
             body,
         )
         assert response.status_code == 422, response.text
-        assert _json(client.get("/api/v1/profile")) == created
+        assert _json(client.get("/api/v1/profile")) == {
+            key: value for key, value in created.items() if key != "changed_evidence_id"
+        }
 
 
 @pytest.mark.postgres
