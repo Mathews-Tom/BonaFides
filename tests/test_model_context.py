@@ -137,6 +137,75 @@ def test_document_generation_sends_the_claim_without_withheld_evidence_content(
 
 
 @pytest.mark.postgres
+@pytest.mark.parametrize("changed_text", [False, True])
+def test_document_generation_reclassified_pinned_evidence_requires_unchanged_content(
+    catalog: SourceContext,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    changed_text: bool,
+) -> None:
+    _profile(catalog)
+    application = _application(catalog, description_text=SOURCE)
+    _write(catalog, {"id": application["posting_id"]}, [_requirement(1, "Linux required.")])
+    profile, evidence_id, claim_id = _withheld_source(catalog, "private", False)
+    record = next(item for item in profile["evidence"] if item["revision"]["id"] == evidence_id)
+    _route(monkeypatch, tmp_path)
+    before = _preview(catalog, profile, application)
+    assert {"id": evidence_id, "text": f"{CLAIM}. Internal codename {SECRET}."} in before[
+        "model_projection"
+    ]["evidence"]
+
+    payload = copy.deepcopy(record["revision"]["payload"])
+    if changed_text:
+        payload["text"] = f"{payload['text']} Changed source text."
+    updated = catalog.client.put(
+        f"/api/v1/evidence/{record['id']}",
+        json={
+            "payload": payload,
+            "provenance": {
+                "source_type": "work_sample",
+                "privacy_class": "private",
+                "employer_owned": True,
+            },
+        },
+        headers=catalog.headers(profile["version"]),
+    )
+    assert updated.status_code == 200, updated.text
+    current = next(item for item in updated.json()["evidence"] if item["id"] == record["id"])
+    assert current["revision"]["id"] != evidence_id
+    assert current["revision"]["provenance"]["employer_owned"] is True
+    assert (current["revision"]["content_sha256"] != record["revision"]["content_sha256"]) is (
+        changed_text
+    )
+
+    if changed_text:
+        refused = catalog.client.get(
+            f"/api/v1/applications/{application['id']}/generation-context",
+            params={
+                "profile_revision_id": profile["current_revision"]["id"],
+                "template_version": "bonafides-evidence-v1",
+                "tone": "professional",
+                "language": "en",
+            },
+        )
+        assert refused.status_code == 409, refused.text
+        assert refused.json()["code"] == "profile_evidence_unavailable"
+        return
+
+    # Keep the original profile/claim citation pinned to the earlier private revision.
+    preview = _preview(catalog, profile, application)
+    _assert_withheld(preview["model_projection"], evidence_id, claim_id)
+    assert preview["model_projection"]["evidence"] != before["model_projection"]["evidence"]
+    task = _queue_pair(catalog, preview)
+    assert task.input["context"] == preview["model_projection"]
+    sent = _transmitted(
+        tmp_path, "generate_documents", cast(dict[str, object], task.input["context"])
+    )
+    assert sent == preview["model_projection"]
+    _assert_withheld(sent, evidence_id, claim_id)
+
+
+@pytest.mark.postgres
 def test_private_and_public_evidence_content_still_reaches_document_generation(
     catalog: SourceContext, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:

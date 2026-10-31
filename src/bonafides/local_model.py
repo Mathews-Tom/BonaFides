@@ -665,14 +665,14 @@ def load_route(path: Path | None) -> LocalRoute | None:
                     "match_requirements": {
                         "requirements": ["requirement_key", "text", "importance", "span"],
                         "claims": ["id", "text", "evidence_revision_ids"],
-                        "evidence": ["id", "text"],
+                        "evidence": {"oneOf": [["id", "text"], ["id", "withheld"]]},
                         "max_items": 100,
                     },
                     "generate_documents": {
                         "posting": ["title", "organization", "source_text"],
                         "requirements": ["requirement_key", "text", "importance", "span"],
                         "claims": ["id", "text", "structured_fields", "evidence_revision_ids"],
-                        "evidence": ["id", "text"],
+                        "evidence": {"oneOf": [["id", "text"], ["id", "withheld"]]},
                         "preferences": ["tone", "language"],
                         "max_items": 100,
                     },
