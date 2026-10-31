@@ -144,3 +144,35 @@ def professional_context(
             evidence_id, str(fact["evidence_text"]), UUID(evidence_id) in withheld
         )
     return list(claims.values()), list(evidence.values())
+
+
+def withheld_explanations(
+    conn: Connection, owner: UUID, facts: Sequence[Mapping[str, object]]
+) -> list[dict[str, object]]:
+    """Why each withheld evidence item carries no content, for the owner's preview only.
+
+    The explanation is never part of model context; it names the evidence, its source
+    reference, the reasons and the claims that are still sent.
+    """
+    withheld = withheld_evidence(
+        conn, owner, (UUID(str(fact["evidence_revision_id"])) for fact in facts)
+    )
+    explanations: dict[str, dict[str, object]] = {}
+    for fact in facts:
+        evidence_id = str(fact["evidence_revision_id"])
+        reasons = withheld.get(UUID(evidence_id))
+        if reasons is None:
+            continue
+        explanation = explanations.setdefault(
+            evidence_id,
+            {
+                "evidence_revision_id": evidence_id,
+                "source": fact["source"],
+                "reasons": reasons,
+                "claim_revision_ids": [],
+            },
+        )
+        claims = cast(list[str], explanation["claim_revision_ids"])
+        if str(fact["claim_revision_id"]) not in claims:
+            claims.append(str(fact["claim_revision_id"]))
+    return list(explanations.values())
