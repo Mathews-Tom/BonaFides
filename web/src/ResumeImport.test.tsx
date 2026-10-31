@@ -222,6 +222,20 @@ describe('structured résumé review', () => {
     expect(within(proposals).getByText(/Fully parsed lines become structured claims/)).toBeVisible();
     expect(state.submissions).toEqual([]);
   });
+  it('shows every repeated unparsed part without duplicate-key warnings', async () => {
+    const error = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const user = userEvent.setup(); const batch = staged();
+    batch.entries = [{ ...batch.entries[0]!, claim_proposals: [{
+      source_id: 'source-work', quote: 'Built 5% faster 5% cheaper service',
+      claim: { schema_version: 1, verb: 'built', subject: '5% faster 5% cheaper service' },
+      rendering: 'Built 5% faster 5% cheaper service',
+      unparsed: [{ text: '5%', reason: 'additional_metric' }, { text: '5%', reason: 'additional_metric' }],
+    }] }];
+    const { api } = server(batch); render(<Harness api={api} />); await open(user);
+    const parts = within(screen.getByRole('list', { name: 'Unparsed parts' }));
+    expect(parts.getAllByText('Unparsed: “5%” (additional metric)')).toHaveLength(2);
+    expect(error).not.toHaveBeenCalled();
+  });
   it('retains exact uniquely matched claims without a per-entry review or new-source promise', async () => {
     const user = userEvent.setup(); const batch = staged();
     batch.entries = [{ ...batch.entries[0]!, payload: { ...oldPayload }, comparison: { status: 'unchanged', target_claim_id: oldClaim.id, candidate_claim_ids: [oldClaim.id] } }];

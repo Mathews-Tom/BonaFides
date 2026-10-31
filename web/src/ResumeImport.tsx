@@ -28,7 +28,7 @@ function ClaimProposals({ entry, draft }: { entry: ImportEntry; draft: ReviewDra
       : 'Approving saves one claim per line. Fully parsed lines become structured claims; lines with unparsed parts stay free text that needs attention.'}</p>
     <ol>{proposals.map(proposal => <li key={proposal.source_id}>
       <p>{proposal.rendering ?? `No structured claim proposed for “${proposal.quote}”.`}</p>
-      {proposal.unparsed.length > 0 && <ul aria-label="Unparsed parts">{proposal.unparsed.map(part => <li key={`${part.reason}:${part.text}`}>Unparsed: “{part.text}” ({part.reason.replaceAll('_', ' ')})</li>)}</ul>}
+      {proposal.unparsed.length > 0 && <ul aria-label="Unparsed parts">{proposal.unparsed.map((part, index) => <li key={`${index}:${part.reason}:${part.text}`}>Unparsed: “{part.text}” ({part.reason.replaceAll('_', ' ')})</li>)}</ul>}
     </li>)}</ol></section>;
 }
 
