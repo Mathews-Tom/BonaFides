@@ -81,16 +81,23 @@ def test_owner_can_download_nonempty_blocked_document_and_exact_evidence_bytes(
             },
         )
         conn.execute(
-            text("""INSERT INTO bonafides.evidence_records(owner_id,id,current_revision_id)
-            VALUES(:owner,:id,:revision)"""),
+            text("""INSERT INTO bonafides.evidence_records
+            (owner_id,id,current_revision_id,privacy_class,employer_owned)
+            VALUES(:owner,:id,:revision,'confidential',true)"""),
             {"owner": catalog.owner_id, "id": evidence_id, "revision": revision_id},
+        )
+        conn.execute(
+            text("""INSERT INTO bonafides.evidence_classification_changes
+            (owner_id,evidence_id,sequence,privacy_class,employer_owned)
+            VALUES(:owner,:id,1,'private',false),(:owner,:id,2,'confidential',true)"""),
+            {"owner": catalog.owner_id, "id": evidence_id},
         )
         conn.execute(
             text("""INSERT INTO bonafides.evidence_revisions
             (owner_id,id,evidence_id,revision_no,payload,blob_id,content_sha256,
-            source_type,origin,privacy_class,employer_owned)
+            source_type,origin)
             VALUES(:owner,:id,:evidence,1,CAST(:payload AS jsonb),:blob,:sha,
-            'document','owner_entry','confidential',true)"""),
+            'document','owner_entry')"""),
             {
                 "owner": catalog.owner_id,
                 "id": revision_id,
@@ -143,15 +150,21 @@ def test_owner_can_download_nonempty_blocked_document_and_exact_evidence_bytes(
         )
         assert evidence_revision["evidence_id"] == str(evidence_id)
         assert evidence_revision["blob_id"] == str(blob_id)
-        assert {
-            key: evidence_revision[key]
-            for key in ("source_type", "origin", "privacy_class", "employer_owned")
-        } == {
-            "source_type": "document",
-            "origin": "owner_entry",
-            "privacy_class": "confidential",
-            "employer_owned": True,
-        }
+        assert (evidence_revision["source_type"], evidence_revision["origin"]) == (
+            "document",
+            "owner_entry",
+        )
+        assert not {"privacy_class", "employer_owned"} & evidence_revision.keys()
+        evidence_record = next(
+            row for row in records["evidence_records"] if row["id"] == str(evidence_id)
+        )
+        assert evidence_record["privacy_class"] == "confidential"
+        assert evidence_record["employer_owned"] is True
+        assert [
+            (row["sequence"], row["privacy_class"], row["employer_owned"])
+            for row in records["evidence_classification_changes"]
+            if row["evidence_id"] == str(evidence_id)
+        ] == [(1, "private", False), (2, "confidential", True)]
         assert (
             not {"sessions", "action_approvals", "portable_exports", "credentials"} & records.keys()
         )
@@ -235,15 +248,22 @@ def test_missing_live_blob_fails_export_without_false_success_or_leaving_writers
         )
         conn.execute(
             text("""INSERT INTO bonafides.evidence_records
-            (owner_id,id,current_revision_id) VALUES(:owner,:evidence,:revision)"""),
+            (owner_id,id,current_revision_id,privacy_class,employer_owned)
+            VALUES(:owner,:evidence,:revision,'private',false)"""),
+            parameters,
+        )
+        conn.execute(
+            text("""INSERT INTO bonafides.evidence_classification_changes
+            (owner_id,evidence_id,sequence,privacy_class,employer_owned)
+            VALUES(:owner,:evidence,1,'private',false)"""),
             parameters,
         )
         conn.execute(
             text("""INSERT INTO bonafides.evidence_revisions
             (owner_id,id,evidence_id,revision_no,payload,blob_id,content_sha256,
-            source_type,origin,privacy_class,employer_owned)
+            source_type,origin)
             VALUES(:owner,:revision,:evidence,1,CAST(:payload AS jsonb),:blob,:content,
-            'document','owner_entry','private',false)"""),
+            'document','owner_entry')"""),
             parameters,
         )
     (catalog.identity.settings.blob_root / str(catalog.owner_id) / stored.storage_key).unlink()

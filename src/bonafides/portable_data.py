@@ -19,8 +19,10 @@ from bonafides.db import Database
 from bonafides.document_generation import revision_digest
 from bonafides.documents import parse_body
 from bonafides.frozen_migrations.evidence_provenance_v1 import (
+    CLASSIFICATION_COLUMNS,
     EVIDENCE_PROVENANCE_SCHEMA,
     PROVENANCE_COLUMNS,
+    legacy_classification,
     legacy_provenance,
 )
 from bonafides.installation_control import Control
@@ -68,19 +70,31 @@ class _CollectedBlobs(Mapping[str, bytes]):
 
 
 def portable_rows(manifest: Manifest, name: str) -> list[JsonRow]:
-    """Archive rows in the current column shape.
-
-    Evidence revisions from archives written before schema 29 carry no provenance and
-    receive exactly the values the schema 29 upgrade assigns.
-    """
+    """Archive rows in the current column shape, using frozen pre-schema-29 values."""
+    if manifest.source_schema_version >= EVIDENCE_PROVENANCE_SCHEMA:
+        return manifest.records[name]
+    if name == "evidence_classification_changes":
+        return [
+            {
+                "owner_id": row["owner_id"],
+                "evidence_id": row["id"],
+                "sequence": 1,
+                **legacy_classification(),
+                "changed_at": row["created_at"],
+            }
+            for row in portable_rows(manifest, "evidence_records")
+        ]
     rows = manifest.records[name]
-    if name != "evidence_revisions" or manifest.source_schema_version >= EVIDENCE_PROVENANCE_SCHEMA:
+    if name not in {"evidence_records", "evidence_revisions"}:
         return rows
     upgraded: list[JsonRow] = []
     for row in rows:
-        payload = row.get("payload")
-        if any(column in row for column in PROVENANCE_COLUMNS):
+        if any(column in row for column in (*PROVENANCE_COLUMNS, *CLASSIFICATION_COLUMNS)):
             raise ArchiveError("incompatible_portable_columns")
+        if name == "evidence_records":
+            upgraded.append({**row, **legacy_classification()})
+            continue
+        payload = row.get("payload")
         if not isinstance(payload, dict):
             raise ArchiveError("invalid_portable_records")
         upgraded.append({**row, **legacy_provenance(payload)})
@@ -146,6 +160,15 @@ def _collect_owner_data(conn: Connection, settings: Settings, owner_id: UUID) ->
     records: dict[str, list[JsonRow]] = {}
     count, remaining = 0, MAX_MANIFEST_BYTES
     for name, columns in COLUMNS.items():
+        if schema < EVIDENCE_PROVENANCE_SCHEMA:
+            if name == "evidence_classification_changes":
+                continue
+            if name == "evidence_records":
+                columns = tuple(
+                    column for column in columns if column not in CLASSIFICATION_COLUMNS
+                )
+            elif name == "evidence_revisions":
+                columns = tuple(column for column in columns if column not in PROVENANCE_COLUMNS)
         relation = _relation(name)
         fields = ",".join(columns)
         if schema >= 18 and name in {
@@ -165,7 +188,11 @@ def _collect_owner_data(conn: Connection, settings: Settings, owner_id: UUID) ->
                 )
                 for column in columns
             )
-        order = ",".join(column for column in columns if column == "id" or column.endswith("_id"))
+        order = ",".join(
+            column
+            for column in columns
+            if column == "id" or column.endswith("_id") or column == "sequence"
+        )
         query = text(f"""SELECT CASE WHEN octet_length(to_jsonb(r)::text)<=:maximum
             THEN to_jsonb(r) ELSE NULL END FROM (
             SELECT {fields} FROM bonafides.{relation} WHERE owner_id=:owner
@@ -391,8 +418,12 @@ def quarantine_records(conn: Connection, archive: PortableArchive) -> None:
     bonafides. Model provenance is historical data, never a fabricated ModelRun.
     """
     manifest = archive.manifest
-    if manifest.source_schema_version not in _SOURCE_SCHEMAS or set(manifest.records) != set(
-        COLUMNS
+    expected_tables = set(COLUMNS)
+    if manifest.source_schema_version < EVIDENCE_PROVENANCE_SCHEMA:
+        expected_tables.remove("evidence_classification_changes")
+    if (
+        manifest.source_schema_version not in _SOURCE_SCHEMAS
+        or set(manifest.records) != expected_tables
     ):
         raise ArchiveError("incompatible_portable_schema")
     source = str(manifest.source_owner_id)

@@ -1,9 +1,8 @@
 # SPDX-License-Identifier: MIT OR Apache-2.0
 """What an evidence source is, how it entered BonaFides and who may read its content.
 
-Every evidence revision records its source type, origin, privacy class and whether
-its employer owns the content. The owner chooses the source type, privacy class and
-employer ownership; BonaFides sets the origin from the path that saved the revision.
+Every revision records immutable source type and origin. Current privacy and employer
+ownership belong to the record, independently of content revisions and claim pins.
 """
 
 from __future__ import annotations
@@ -23,15 +22,24 @@ PrivacyClass = Literal["public", "private", "confidential"]
 
 
 class EvidenceProvenance(StrictModel):
-    """The owner's classification of one evidence revision."""
+    """Immutable source information supplied for a content revision."""
 
     source_type: SourceType
+
+
+class EvidenceClassification(StrictModel):
+    """The owner's current classification of an evidence record."""
+
     privacy_class: PrivacyClass
     employer_owned: StrictBool
 
 
+class InitialEvidenceProvenance(EvidenceProvenance, EvidenceClassification):
+    """Source information and initial classification when creating a record."""
+
+
 def provenance(row: RowMapping) -> dict[str, object]:
-    """The provenance columns of one evidence revision row."""
+    """Revision provenance with the evidence record's current classification."""
     return {
         "source_type": row["source_type"],
         "origin": row["origin"],

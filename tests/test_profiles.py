@@ -539,8 +539,6 @@ def test_evidence_isolation_archive_and_exact_revision_attribution(
                 "payload": {"text": "Revised owner assertion", "source": "New synthetic source"},
                 "provenance": {
                     "source_type": "owner_statement",
-                    "privacy_class": "private",
-                    "employer_owned": False,
                 },
             },
         )
@@ -567,8 +565,6 @@ def test_evidence_isolation_archive_and_exact_revision_attribution(
                 "payload": {"text": "Delayed", "source": "Owner"},
                 "provenance": {
                     "source_type": "owner_statement",
-                    "privacy_class": "private",
-                    "employer_owned": False,
                 },
             },
         )
@@ -584,8 +580,6 @@ def test_evidence_isolation_archive_and_exact_revision_attribution(
                 "payload": {"text": "Delayed", "source": "Owner"},
                 "provenance": {
                     "source_type": "owner_statement",
-                    "privacy_class": "private",
-                    "employer_owned": False,
                 },
             },
         )
@@ -779,8 +773,6 @@ def test_unattached_evidence_history_restore_and_post_delete_replay(
                 "payload": {"text": "Later revision", "source": "Owner"},
                 "provenance": {
                     "source_type": "owner_statement",
-                    "privacy_class": "private",
-                    "employer_owned": False,
                 },
             },
         )

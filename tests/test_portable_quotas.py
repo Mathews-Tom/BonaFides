@@ -208,16 +208,23 @@ def _accepted_originals(context: SourceContext, inventory: BlobInventory) -> Non
                 },
             )
             conn.execute(
-                text("""INSERT INTO bonafides.evidence_records(owner_id,id,current_revision_id)
-                VALUES(:owner,:id,:revision)"""),
+                text("""INSERT INTO bonafides.evidence_records
+                (owner_id,id,current_revision_id,privacy_class,employer_owned)
+                VALUES(:owner,:id,:revision,'private',false)"""),
                 {"owner": context.owner_id, "id": evidence_id, "revision": revision_id},
+            )
+            conn.execute(
+                text("""INSERT INTO bonafides.evidence_classification_changes
+                (owner_id,evidence_id,sequence,privacy_class,employer_owned)
+                VALUES(:owner,:id,1,'private',false)"""),
+                {"owner": context.owner_id, "id": evidence_id},
             )
             conn.execute(
                 text("""INSERT INTO bonafides.evidence_revisions
                 (owner_id,id,evidence_id,revision_no,payload,blob_id,content_sha256,
-                source_type,origin,privacy_class,employer_owned)
+                source_type,origin)
                 VALUES(:owner,:id,:evidence,1,CAST(:payload AS jsonb),:blob,:sha,
-                'document','owner_entry','private',false)"""),
+                'document','owner_entry')"""),
                 {
                     "owner": context.owner_id,
                     "id": revision_id,
@@ -400,6 +407,7 @@ def test_real_owner_quotas_roundtrip_streamed_archive(
             "claim_revisions",
             "evidence_records",
             "evidence_revisions",
+            "evidence_classification_changes",
             "claim_evidence_links",
             "profile_revision_claims",
             "profile_revision_evidence",

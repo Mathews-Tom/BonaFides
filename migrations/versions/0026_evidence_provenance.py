@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: MIT OR Apache-2.0
-"""Record source type, origin, privacy class and employer ownership on evidence revisions."""
+"""Record immutable source provenance and independently audited record classification."""
 
 import hashlib
 from pathlib import Path

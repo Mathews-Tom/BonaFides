@@ -582,13 +582,62 @@ describe('focused profile sections', () => {
     });
   });
 
-  it('opens a saved source with its recorded provenance', async () => {
-    const user = userEvent.setup();
-    render(<ProfileEntries api={new Api()} profile={profile} disabled={false} onProfile={vi.fn()} onDirtyChange={vi.fn()} onBusyChange={vi.fn()} />);
+  it('edits source content with source type only, without changing claim pins', async () => {
+    const user = userEvent.setup(); const api = new Api(); const onProfile = vi.fn();
+    const saved = { ...profile, version: 2 };
+    const request = vi.spyOn(api, 'request').mockResolvedValue(saved);
+    render(<ProfileEntries api={api} profile={profile} disabled={false} onProfile={onProfile} onDirtyChange={vi.fn()} onBusyChange={vi.fn()} />);
     await user.click(screen.getByRole('button', { name: 'Sources' }));
+    expect(within(screen.getByRole('region', { name: 'Sources and owner attestations' })).getByText(/Current privacy: Private/)).toBeVisible();
     await user.click(screen.getByRole('button', { name: 'Edit source 1' }));
     expect(screen.getByLabelText('Source type')).toHaveValue('owner_statement');
+    expect(screen.queryByLabelText('Privacy class')).not.toBeInTheDocument();
+    expect(screen.queryByLabelText('My employer owns this content')).not.toBeInTheDocument();
+    await user.type(screen.getByLabelText('Source text'), ' Revised.');
+    await user.selectOptions(screen.getByLabelText('Source type'), 'work_sample');
+    await user.click(screen.getByRole('button', { name: 'Save source revision' }));
+    expect(request).toHaveBeenCalledExactlyOnceWith('/evidence/source', 'PUT', {
+      payload: { text: 'Synthetic workshop notes. Revised.', source: 'Owner attestation' },
+      provenance: { source_type: 'work_sample' },
+    }, profile.version, expect.any(String));
+    expect(onProfile).toHaveBeenCalledWith(saved);
+    expect(profile.current_revision.claims[0]!.revision.evidence_links[0]!.evidence_revision_id).toBe('source-revision');
+  });
+
+  it('changes current classification separately and preserves source revisions and claim pins', async () => {
+    const user = userEvent.setup(); const api = new Api(); const onProfile = vi.fn(); const onDirtyChange = vi.fn();
+    const provenance = { ...source.revision.provenance, privacy_class: 'confidential' as const, employer_owned: true };
+    const classifiedSource = { ...source, revision: { ...source.revision, provenance } };
+    const saved: Profile = { ...profile, version: 2, evidence: [classifiedSource], current_revision: {
+      ...profile.current_revision, claims: profile.current_revision.claims.map(claim => ({ ...claim, revision: { ...claim.revision,
+        evidence_links: claim.revision.evidence_links.map(link => ({ ...link, evidence: { ...link.evidence, provenance } })),
+      } })),
+    } };
+    const request = vi.spyOn(api, 'request').mockResolvedValue(saved);
+    const view = render(<ProfileEntries api={api} profile={profile} disabled={false} onProfile={onProfile} onDirtyChange={onDirtyChange} onBusyChange={vi.fn()} />);
+    await user.click(screen.getByRole('button', { name: 'Sources' }));
+    await user.click(screen.getByRole('button', { name: 'Change classification 1' }));
     expect(screen.getByLabelText('Privacy class')).toHaveValue('private');
     expect(screen.getByLabelText('My employer owns this content')).not.toBeChecked();
+    expect(screen.queryByLabelText('Source text')).not.toBeInTheDocument();
+    expect(onDirtyChange).toHaveBeenLastCalledWith(true);
+    expect(screen.getByRole('button', { name: 'Skills' })).toBeDisabled();
+    await user.selectOptions(screen.getByLabelText('Privacy class'), 'confidential');
+    await user.click(screen.getByLabelText('My employer owns this content'));
+    await user.click(screen.getByRole('button', { name: 'Save source classification' }));
+    expect(request).toHaveBeenCalledExactlyOnceWith('/evidence/source/classification', 'PUT',
+      { privacy_class: 'confidential', employer_owned: true }, profile.version, expect.any(String));
+    expect(onProfile).toHaveBeenCalledWith(saved);
+    expect(screen.getByText('Source classification updated. Source revisions and claim pins are unchanged.')).toBeVisible();
+    view.rerender(<ProfileEntries api={api} profile={saved} disabled={false} onProfile={onProfile} onDirtyChange={onDirtyChange} onBusyChange={vi.fn()} />);
+    expect(within(screen.getByRole('region', { name: 'Sources and owner attestations' })).getByText(/Current privacy: Confidential/)).toBeVisible();
+    expect(saved.evidence[0]!.current_revision_id).toBe(source.current_revision_id);
+    expect(saved.current_revision.snapshot.claim_revision_ids).toEqual(profile.current_revision.snapshot.claim_revision_ids);
+    expect(saved.current_revision.claims[0]!.revision.id).toBe('skill-revision');
+    expect(saved.current_revision.claims[0]!.revision.evidence_links[0]!.evidence_revision_id).toBe('source-revision');
+    await user.click(screen.getByRole('button', { name: 'Skills' }));
+    await user.click(screen.getByText('Evidence and authorship · revision 1'));
+    expect(within(screen.getByText('Evidence and authorship · revision 1').parentElement!).getByText(/Current privacy: Confidential/)).toBeVisible();
+    expect(screen.getByText(/Evidence revision source-revision/)).toBeVisible();
   });
 });

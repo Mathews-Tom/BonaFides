@@ -11,6 +11,7 @@ from pydantic import JsonValue
 from sqlalchemy import text
 from test_document_generation import _base, _document, _save
 from test_identity import identity as identity
+from test_portable_archive import sample
 from test_sources import SourceContext
 from test_sources import catalog as catalog
 from test_suitability import _profile
@@ -23,7 +24,12 @@ from bonafides.portable_archive import (
     encode_archive,
     manifest_digest,
 )
-from bonafides.portable_data import collect_owner_data, export_owner_data, quarantine_records
+from bonafides.portable_data import (
+    collect_owner_data,
+    export_owner_data,
+    portable_rows,
+    quarantine_records,
+)
 from bonafides.profiles import content_hash
 from bonafides.storage import BlobStore
 
@@ -100,15 +106,22 @@ def test_nonempty_document_evidence_and_blob_survive_byte_and_relational_validat
             },
         )
         conn.execute(
-            text("""INSERT INTO bonafides.evidence_records(owner_id,id,current_revision_id)
-            VALUES(:owner,:id,:revision)"""),
+            text("""INSERT INTO bonafides.evidence_records
+            (owner_id,id,current_revision_id,privacy_class,employer_owned)
+            VALUES(:owner,:id,:revision,'confidential',true)"""),
             {"owner": catalog.owner_id, "id": evidence_id, "revision": revision_id},
         )
         conn.execute(
+            text("""INSERT INTO bonafides.evidence_classification_changes
+            (owner_id,evidence_id,sequence,privacy_class,employer_owned)
+            VALUES(:owner,:id,1,'private',false),(:owner,:id,2,'confidential',true)"""),
+            {"owner": catalog.owner_id, "id": evidence_id},
+        )
+        conn.execute(
             text("""INSERT INTO bonafides.evidence_revisions(owner_id,id,evidence_id,revision_no,payload,blob_id,content_sha256,
-            source_type,origin,privacy_class,employer_owned)
+            source_type,origin)
             VALUES(:owner,:id,:evidence,1,CAST(:payload AS jsonb),:blob,:sha,
-            'work_sample','owner_entry','confidential',true)"""),
+            'work_sample','owner_entry')"""),
             {
                 "owner": catalog.owner_id,
                 "id": revision_id,
@@ -177,6 +190,18 @@ def test_nonempty_document_evidence_and_blob_survive_byte_and_relational_validat
         if row["id"] == str(revision_id)
     )
     assert exported_evidence["blob_id"] == str(blob_id)
+    assert exported_evidence["source_type"] == "work_sample"
+    assert not {"privacy_class", "employer_owned"} & exported_evidence.keys()
+    exported_record = next(
+        row for row in archive.manifest.records["evidence_records"] if row["id"] == str(evidence_id)
+    )
+    assert exported_record["privacy_class"] == "confidential"
+    assert exported_record["employer_owned"] is True
+    assert [
+        (row["sequence"], row["privacy_class"], row["employer_owned"])
+        for row in archive.manifest.records["evidence_classification_changes"]
+        if row["evidence_id"] == str(evidence_id)
+    ] == [(1, "private", False), (2, "confidential", True)]
     assert archive.blobs[stored.sha256] == payload
     with catalog.identity.admin.transaction() as conn:
         session_hash = conn.execute(
@@ -431,3 +456,75 @@ def test_proposal_requires_matching_historical_model(catalog: SourceContext, dam
     with catalog.runtime.transaction() as conn, pytest.raises(ArchiveError, match=expected):
         quarantine_records(conn, _digest(archive))
     assert _snapshot(catalog) == before
+
+
+@pytest.mark.parametrize("imported", [False, True])
+def test_schema28_rows_upgrade_frozen_revision_provenance_and_initial_record_history(
+    imported: bool,
+) -> None:
+    manifest, _ = sample()
+    evidence_id = str(uuid4())
+    payload: dict[str, JsonValue] = {"text": "Legacy evidence", "source": "Owner supplied"}
+    if imported:
+        payload["import_id"] = str(uuid4())
+    record: dict[str, JsonValue] = {
+        "owner_id": str(manifest.source_owner_id),
+        "id": evidence_id,
+        "created_at": "2026-10-25T12:34:56.123456+00:00",
+    }
+    revision: dict[str, JsonValue] = {
+        "owner_id": str(manifest.source_owner_id),
+        "id": str(uuid4()),
+        "evidence_id": evidence_id,
+        "payload": payload,
+    }
+    manifest = manifest.model_copy(
+        update={
+            "source_schema_version": 28,
+            "records": {"evidence_records": [record], "evidence_revisions": [revision]},
+        }
+    )
+    assert portable_rows(manifest, "evidence_revisions") == [
+        {
+            **revision,
+            "source_type": "document" if imported else "owner_statement",
+            "origin": "resume_import" if imported else "owner_entry",
+        }
+    ]
+    assert portable_rows(manifest, "evidence_records") == [
+        {**record, "privacy_class": "private", "employer_owned": False}
+    ]
+    assert portable_rows(manifest, "evidence_classification_changes") == [
+        {
+            "owner_id": record["owner_id"],
+            "evidence_id": evidence_id,
+            "sequence": 1,
+            "privacy_class": "private",
+            "employer_owned": False,
+            "changed_at": record["created_at"],
+        }
+    ]
+    assert manifest.records == {"evidence_records": [record], "evidence_revisions": [revision]}
+    assert not {"source_type", "origin", "privacy_class", "employer_owned"} & revision.keys()
+    assert not {"privacy_class", "employer_owned"} & record.keys()
+
+
+@pytest.mark.parametrize(
+    ("name", "column", "value"),
+    [
+        ("evidence_records", "privacy_class", "public"),
+        ("evidence_records", "employer_owned", True),
+        ("evidence_revisions", "source_type", "document"),
+        ("evidence_revisions", "origin", "resume_import"),
+        ("evidence_revisions", "privacy_class", "public"),
+        ("evidence_revisions", "employer_owned", True),
+    ],
+)
+def test_schema28_rows_cannot_override_frozen_legacy_defaults(
+    name: str, column: str, value: JsonValue
+) -> None:
+    manifest, _ = sample()
+    row: dict[str, JsonValue] = {"payload": {"text": "Legacy evidence"}, column: value}
+    manifest = manifest.model_copy(update={"source_schema_version": 28, "records": {name: [row]}})
+    with pytest.raises(ArchiveError, match="incompatible_portable_columns"):
+        portable_rows(manifest, name)

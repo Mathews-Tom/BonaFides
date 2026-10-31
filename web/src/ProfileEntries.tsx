@@ -72,6 +72,12 @@ function contextOf(payload: ClaimPayload): Omit<ClaimPayload, 'text'> {
 }
 interface EvidenceDraft { id?: string; text: string; source: string; attestation: boolean; source_type: EvidenceSourceType | ''; privacy_class: EvidencePrivacyClass | ''; employer_owned: boolean }
 interface ArchiveChoice { kind: 'claim' | 'evidence'; id: string; text: string }
+interface ClassificationDraft { id: string; privacy_class: EvidencePrivacyClass; employer_owned: boolean }
+
+function EvidenceProvenance({ revision }: { revision: EvidenceRevision }) {
+  const provenance = revision.provenance;
+  return <p className="hint">Source type: {evidenceSourceTypes[provenance.source_type]} · Origin: {provenance.origin.replaceAll('_', ' ')} · Current privacy: {evidencePrivacyClasses[provenance.privacy_class]} · Employer owned: {provenance.employer_owned ? 'Yes' : 'No'}</p>;
+}
 
 function ClaimWords({ claim }: { claim: PinnedClaim }) {
   const payload = claim.revision.payload;
@@ -84,6 +90,7 @@ function ClaimWords({ claim }: { claim: PinnedClaim }) {
       <p>Claim revision {claim.revision.id} · SHA-256 {claim.revision.content_sha256}</p>
       {claim.revision.evidence_links.map(link => <blockquote key={link.evidence_revision_id}><p>{link.excerpt}</p>
         <p>{link.support_kind.replaceAll('_', ' ')} · {link.evidence.payload.source}</p><p>{link.evidence.payload.text}</p>
+        <EvidenceProvenance revision={link.evidence} />
         <small>Evidence revision {link.evidence_revision_id} · {link.evidence.created_at} · owner {link.evidence.author_owner_id} · SHA-256 {link.evidence.content_sha256}</small></blockquote>)}
     </details></>;
 }
@@ -95,6 +102,7 @@ export function ProfileEntries({ api, profile, disabled, onProfile, onDirtyChang
   const [claim, setClaim] = useState<ClaimDraft | null>(null);
   const [section, setSection] = useState<ClaimKind | 'sources' | 'history'>('skill');
   const [evidence, setEvidence] = useState<EvidenceDraft | null>(null);
+  const [classification, setClassification] = useState<ClassificationDraft | null>(null);
   const [archive, setArchive] = useState<ArchiveChoice | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
@@ -142,7 +150,7 @@ export function ProfileEntries({ api, profile, disabled, onProfile, onDirtyChang
     return () => controller.abort();
   }, [api, renderable, structuredDraft]);
   useEffect(() => { if (evidenceOpen) evidenceInput.current?.focus(); }, [evidenceOpen]);
-  const dirty = !!(claim || evidence || archive);
+  const dirty = !!(claim || evidence || classification || archive);
   const locked = busy || disabled;
   useEffect(() => { onDirtyChange(dirty); }, [dirty, onDirtyChange]);
   useEffect(() => { onBusyChange(busy); }, [busy, onBusyChange]);
@@ -164,9 +172,9 @@ export function ProfileEntries({ api, profile, disabled, onProfile, onDirtyChang
     if (mutation.current?.fingerprint !== fingerprint) mutation.current = { fingerprint, key: crypto.randomUUID() };
     try {
       const value = await api.request<Profile>(path, method, body, profile.version, mutation.current.key);
-      mutation.current = null; onProfile(value); setClaim(null); setEvidence(null); setArchive(null);
+      mutation.current = null; onProfile(value); setClaim(null); setEvidence(null); setClassification(null); setArchive(null);
       setComparison(null); setHistory(null); setPreview(null); setRestoreConfirmed(false);
-      setNotice(`Saved profile revision ${value.current_revision.revision_no}. Earlier revisions are unchanged.`);
+      setNotice(path.endsWith('/classification') ? 'Source classification updated. Source revisions and claim pins are unchanged.' : `Saved profile revision ${value.current_revision.revision_no}. Earlier content revisions are unchanged; source classification always reflects the current record.`);
     } catch (failure) { setError(errorText(failure)); } finally { setBusy(false); }
   }
   function editClaim(value: ClaimRecord) {
@@ -201,10 +209,10 @@ export function ProfileEntries({ api, profile, disabled, onProfile, onDirtyChang
   function submitEvidence(event: FormEvent) {
     event.preventDefault(); if (!evidence) return;
     const { source_type, privacy_class, employer_owned } = evidence;
-    if (!source_type || !privacy_class) { setError('Choose the source type and privacy class.'); return; }
+    if (!source_type || (!evidence.id && !privacy_class)) { setError('Choose the source type and privacy class.'); return; }
     void mutate(evidence.id ? `/evidence/${encodeURIComponent(evidence.id)}` : '/evidence', evidence.id ? 'PUT' : 'POST', {
       payload: { text: evidence.text, source: evidence.attestation ? 'Owner attestation' : evidence.source },
-      provenance: { source_type, privacy_class, employer_owned },
+      provenance: evidence.id ? { source_type } : { source_type, privacy_class, employer_owned },
     });
   }
   async function loadHistory(before?: number) {
@@ -325,7 +333,9 @@ export function ProfileEntries({ api, profile, disabled, onProfile, onDirtyChang
       <p>Manual, versioned source text only. No file import, external verification or provider calls. Archiving removes a source from the active editor, not from immutable historical links.</p>
       {profile.evidence.length === 0 ? <p>No saved sources.</p> : <ul>{profile.evidence.map((item, index) => <li key={item.id}><h3>{item.revision.payload.source}</h3><p>{item.revision.payload.text}</p>
         <small>Revision {item.revision.revision_no} · {item.revision.id} · {item.revision.created_at} · owner {item.revision.author_owner_id}</small>
+        <EvidenceProvenance revision={item.revision} />
         <div className="actions"><button className="secondary" disabled={locked || dirty} onClick={() => editEvidence(item)}>Edit source {index + 1}</button><button className="secondary" disabled={locked || dirty} onClick={() => setArchive({ kind: 'evidence', id: item.id, text: item.revision.payload.text })}>Archive source {index + 1}</button></div>
+        <button className="secondary" disabled={locked || dirty} onClick={() => { setError(''); setNotice(''); setClassification({ id: item.id, privacy_class: item.revision.provenance.privacy_class, employer_owned: item.revision.provenance.employer_owned }); }}>Change classification {index + 1}</button>
       </li>)}</ul>}
       <button className="secondary" disabled={locked || dirty} onClick={() => { setError(''); setEvidence({ text: '', source: '', attestation: false, source_type: '', privacy_class: '', employer_owned: false }); }}>Add source or owner attestation</button>
       {evidence && <form onSubmit={submitEvidence}><fieldset disabled={locked}><legend>{evidence.id ? 'Edit saved source' : 'New source'}</legend>
@@ -333,9 +343,16 @@ export function ProfileEntries({ api, profile, disabled, onProfile, onDirtyChang
         <label className="check"><input type="checkbox" checked={evidence.attestation} onChange={event => setEvidence({ ...evidence, attestation: event.target.checked })} />This is my explicit owner attestation, not independent verification</label>
         <label>Source reference<input required={!evidence.attestation} disabled={evidence.attestation} maxLength={500} value={evidence.attestation ? 'Owner attestation' : evidence.source} onChange={event => setEvidence({ ...evidence, source: event.target.value })} /></label>
         <label>Source type<select required value={evidence.source_type} onChange={event => setEvidence({ ...evidence, source_type: event.target.value as EvidenceSourceType | '' })}><option value="">Choose a source type</option>{Object.entries(evidenceSourceTypes).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
-        <label>Privacy class<select required value={evidence.privacy_class} onChange={event => setEvidence({ ...evidence, privacy_class: event.target.value as EvidencePrivacyClass | '' })}><option value="">Choose a privacy class</option>{Object.entries(evidencePrivacyClasses).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
-        <label className="check"><input type="checkbox" checked={evidence.employer_owned} onChange={event => setEvidence({ ...evidence, employer_owned: event.target.checked })} />My employer owns this content</label>
+        {!evidence.id && <><label>Privacy class<select required value={evidence.privacy_class} onChange={event => setEvidence({ ...evidence, privacy_class: event.target.value as EvidencePrivacyClass | '' })}><option value="">Choose a privacy class</option>{Object.entries(evidencePrivacyClasses).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
+        <label className="check"><input type="checkbox" checked={evidence.employer_owned} onChange={event => setEvidence({ ...evidence, employer_owned: event.target.checked })} />My employer owns this content</label></>}
+        {evidence.id && <p className="hint">Content edits create a source revision without changing its classification. Use Change classification separately; existing claim pins stay unchanged.</p>}
         <div className="actions"><button>Save source revision</button><button type="button" className="secondary" onClick={() => { setEvidence(null); setComparison(null); setError(''); }}>Discard source changes</button></div>
+      </fieldset></form>}
+      {classification && <form onSubmit={event => { event.preventDefault(); void mutate(`/evidence/${encodeURIComponent(classification.id)}/classification`, 'PUT', { privacy_class: classification.privacy_class, employer_owned: classification.employer_owned }); }}><fieldset disabled={locked}><legend>Change source classification</legend>
+        <p className="hint">Classification applies to this source across all revisions, including historical claim links. It does not edit source content or re-pin claims.</p>
+        <label>Privacy class<select required value={classification.privacy_class} onChange={event => setClassification({ ...classification, privacy_class: event.target.value as EvidencePrivacyClass })}>{Object.entries(evidencePrivacyClasses).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
+        <label className="check"><input type="checkbox" checked={classification.employer_owned} onChange={event => setClassification({ ...classification, employer_owned: event.target.checked })} />My employer owns this content</label>
+        <div className="actions"><button>Save source classification</button><button type="button" className="secondary" onClick={() => { setClassification(null); setError(''); }}>Discard classification changes</button></div>
       </fieldset></form>}
     </section>
     <section className="panel" hidden={section !== 'history'} aria-labelledby="profile-history-title"><h2 id="profile-history-title">Immutable profile history</h2>

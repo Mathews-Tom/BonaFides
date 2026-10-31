@@ -51,6 +51,8 @@ COLUMNS: dict[str, tuple[str, ...]] = {
         "current_revision_id",
         "archived_at",
         "created_at",
+        "privacy_class",
+        "employer_owned",
     ),
     "evidence_revisions": (
         "owner_id",
@@ -63,8 +65,14 @@ COLUMNS: dict[str, tuple[str, ...]] = {
         "created_at",
         "source_type",
         "origin",
+    ),
+    "evidence_classification_changes": (
+        "owner_id",
+        "evidence_id",
+        "sequence",
         "privacy_class",
         "employer_owned",
+        "changed_at",
     ),
     "claim_evidence_links": (
         "owner_id",
