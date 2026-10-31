@@ -70,7 +70,7 @@ function contextOf(payload: ClaimPayload): Omit<ClaimPayload, 'text'> {
   delete context.text;
   return context;
 }
-function EvidenceProvenanceSummary({ provenance }: { provenance: EvidenceProvenance }) {
+export function EvidenceProvenanceSummary({ provenance }: { provenance: EvidenceProvenance }) {
   const withheld = provenance.privacy_class === 'confidential' || provenance.employer_owned;
   return <p className="evidence-provenance">Source type: {evidenceSourceTypes[provenance.source_type]} · Origin: {evidenceOrigins[provenance.origin]} · Privacy: {evidencePrivacyClasses[provenance.privacy_class]}{provenance.employer_owned ? ' · Employer-owned' : ''}{withheld ? ' · Content never sent to a model' : ''}</p>;
 }
@@ -316,7 +316,7 @@ export function ProfileEntries({ api, profile, disabled, onProfile, onDirtyChang
         <h4>Pinned evidence links</h4><p className="hint">Select at least one exact source revision. Updating a source later never silently updates an existing entry.</p>
         {claim.evidence_links.map((link, index) => <fieldset key={index}><legend>Source link {index + 1}</legend>
           <label>Evidence revision {index + 1}<select required value={link.evidence_revision_id} onChange={event => changeLink(index, { evidence_revision_id: event.target.value })}><option value="">Choose a saved source</option>{Array.from(sources.values()).map(source => <option key={source.id} value={source.id}>{source.payload.source} · revision {source.revision_no} · {source.payload.text.slice(0, 100)} · {source.id}</option>)}</select></label>
-          {sources.get(link.evidence_revision_id) && <blockquote>{sources.get(link.evidence_revision_id)?.payload.text}</blockquote>}
+          {sources.get(link.evidence_revision_id) && <blockquote><EvidenceProvenanceSummary provenance={sources.get(link.evidence_revision_id)!.provenance} />{sources.get(link.evidence_revision_id)?.payload.text}</blockquote>}
           <label>Support type {index + 1}<select value={link.support_kind} onChange={event => changeLink(index, { support_kind: event.target.value as EvidenceLink['support_kind'] })}><option value="direct">Direct source (owner supplied)</option><option value="user_asserted">Owner attestation (unverified)</option><option value="context">Context only</option></select></label>
           <label>Source excerpt {index + 1}<textarea required maxLength={4000} value={link.excerpt} onChange={event => changeLink(index, { excerpt: event.target.value })} /></label>
           <button type="button" className="secondary" onClick={() => setClaim({ ...claim, evidence_links: claim.evidence_links.filter((_, position) => position !== index) })}>Remove source link {index + 1}</button>
@@ -342,7 +342,7 @@ export function ProfileEntries({ api, profile, disabled, onProfile, onDirtyChang
         <label>Source reference<input required={!evidence.attestation} disabled={evidence.attestation} maxLength={500} value={evidence.attestation ? 'Owner attestation' : evidence.source} onChange={event => setEvidence({ ...evidence, source: event.target.value })} /></label>
         <label>Source type<select required value={evidence.source_type} onChange={event => setEvidence({ ...evidence, source_type: event.target.value as EvidenceSourceType | '' })}><option value="">Choose a source type</option>{Object.entries(evidenceSourceTypes).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
         {!evidence.id && <><label>Privacy class<select required aria-describedby="evidence-privacy-hint" value={evidence.privacy_class} onChange={event => setEvidence({ ...evidence, privacy_class: event.target.value as EvidencePrivacyClass | '' })}><option value="">Choose a privacy class</option>{Object.entries(evidencePrivacyClasses).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
-        <label className="check"><input type="checkbox" checked={evidence.employer_owned} onChange={event => setEvidence({ ...evidence, employer_owned: event.target.checked })} />My employer owns this content</label>
+        <label className="check"><input type="checkbox" aria-describedby="evidence-privacy-hint" checked={evidence.employer_owned} onChange={event => setEvidence({ ...evidence, employer_owned: event.target.checked })} />My employer owns this content</label>
         <p className="hint" id="evidence-privacy-hint">Confidential or employer-owned source text is never sent to a model. Entries citing it are still sent as their own text and are checked locally against the full source.</p></>}
         {evidence.id && <p className="hint">Content edits create a source revision without changing its classification. Use Change classification separately; existing claim pins stay unchanged.</p>}
         <div className="actions"><button>Save source revision</button><button type="button" className="secondary" onClick={() => { setEvidence(null); setComparison(null); setError(''); }}>Discard source changes</button></div>
