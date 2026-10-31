@@ -116,7 +116,23 @@ def _reclassify(
     assert current["revision"]["provenance"]["source_type"] == "work_sample"
     assert current["revision"]["provenance"]["privacy_class"] == privacy_class
     assert current["revision"]["provenance"]["employer_owned"] is employer_owned
-    assert updated["current_revision"] == profile["current_revision"]
+    assert updated["current_revision"]["snapshot"] == profile["current_revision"]["snapshot"]
+    assert updated["current_revision"]["id"] != profile["current_revision"]["id"]
+    before_claims = profile["current_revision"]["claims"]
+    after_claims = updated["current_revision"]["claims"]
+    assert [item["id"] for item in after_claims] == [item["id"] for item in before_claims]
+    for before, after in zip(before_claims, after_claims, strict=True):
+        # Hydrated source classification is live; the claim and its exact pins are not.
+        assert {
+            key: value for key, value in after["revision"].items() if key != "evidence_links"
+        } == {key: value for key, value in before["revision"].items() if key != "evidence_links"}
+        assert [
+            {key: value for key, value in link.items() if key != "evidence"}
+            for link in after["revision"]["evidence_links"]
+        ] == [
+            {key: value for key, value in link.items() if key != "evidence"}
+            for link in before["revision"]["evidence_links"]
+        ]
     return updated
 
 
