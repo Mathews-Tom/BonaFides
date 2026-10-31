@@ -357,6 +357,8 @@ Profile details exposes optional Highlight / tagline and multiline Description f
 
 Derived experience coverage merges overlapping inclusive calendar intervals once. Partial dates produce conservative minimum/maximum day counts; open or undated entries are reported separately and excluded rather than assigned today's date. This is owner-supplied date coverage, not verified employment, seniority or qualification. Proficiency preserves the owner's explicit scale, such as `CEFR B2`; a language name alone cannot prove a required level. Project references accept bounded HTTP/HTTPS syntax only, reject credentials/control characters, remain inert displayed text and are never crawled or inserted into model projections. Section links such as `#profile-experience`, `#profile-project`, `#profile-evidence-title` and `#profile-history-title` focus the named section; newly opened claim/source editors focus their first input.
 
+The schema-28 upgrade and imports of archives from earlier schemas use the same frozen, application-independent claim rewrite. A free-text experience or project claim is rewritten only if its complete rendering is byte-for-byte identical to the saved statement and every linked evidence excerpt contains that rendering under the strict whole-phrase normalization rule. Synonym-only evidence, punctuation-changing renderings, unknown verbs such as `Hired` or `Proposed`, and partially mapped statements stay as their original free text needing attention. Previous revisions and evidence links remain intact; explicit history restoration can bring back the original free-text revision. Later changes to the live mapper or grounding implementation cannot change this migration.
+
 The far-right header control has three icon buttons: monitor for System, sun for Light and moon for Dark. Tooltips and accessible names identify each mode, and the selected button exposes its pressed state. Theme defaults to System and follows device changes. Explicit Light/Dark stores only `bonafides.theme = {version: 1, theme, expiresAt}`, expiring exactly 365 days after selection; reload never extends it. System removes the override. Unknown, malformed, expired or cleared storage returns to System. Denied storage visibly limits the choice to the current visit. Theme does not alter document text, fixed light paper palette/typography or PDF rendering; no profile/session data is stored with it.
 
 The ignored design-stage full private-alpha OpenAPI remains a **future proposal**, not the deployed profile/import contract. Its `ProfileWrite`, `ClaimPayload.statement`, full-date-only fields, proposed upload-evidence shapes and entity-level preconditions are not implemented compatibility aliases. Upload itself is implemented through the distinct raw `/imports` contract below; manual `/evidence` writes remain text-only. This guide and application source are authoritative; a future contract promotion must explicitly reconcile affected consumers.
@@ -935,6 +937,119 @@ All 20 current generic architecture proof/catalog checks passed against the unch
 Earlier fresh namespaces A/B failed cold start because Docker's predefined address pools were fully subnetted; their failed receipts remain retained, not relabelled as product failures or successful runtime proof. Only verified session-owned stopped containers/networks were retired; named volumes, keys, receipts and unrelated services were preserved. Retiring prior explicit-IPAM networks did not free the automatic pool, as the corrected cleanup receipt states. The complete successful C run used verified-unused explicit subnets in fresh original/restore namespaces without changing the daemon or globally pruning Docker.
 
 Private evidence under `.local/m1-autonomous-20261025/` includes `ol009-backend-gate/reviewed-gap-final.receipt.json` and its stdout, `ol009-reviewed-web-*-fence.*`, `ol009-api-proof.json`, `ol009-browser-proof.json`, `ol009-browser-screenshots/`, `ol009-mutation-proof.json`, `ol009-ui-delayed-read-before.*`, `ol009-security-summary.json`, `ol009-transport-{api,worker}.json`, `ol009-transport-proof.json`, `ol009-address-pool-cleanup-proof.json`, `ol009-recovery-121940/bonafides-proof-m1-ol009-c/receipt.json` and the reviewed preparation/migration/startup receipts. They are retained local evidence, not a clean-clone dependency or public reproducibility bundle. No real board, real inference, paid call or human review approval is inferred. Exact-board terms/read authorization, an explicitly authorized and genuinely qualified real local route, and genuine human factual review remain unmet. Complete the local story's commit/prefix gates, then continue independent model-free application tracking; missing live qualification does not authorize a dependent unqualified route or stop eligible local work.
+
+## Structured claim evidence matching
+
+Claim schema v1 keeps structured fields and derives its English sentence through the
+language-keyed renderer. `claims.grounded(claim, excerpt)` supports a structured claim only
+when that complete rendered sentence occurs verbatim inside its evidence excerpt after
+Unicode NFKC normalization, casefolding, whitespace collapse and conversion of typographic
+quotes/dashes to ASCII. A trailing `.` or `;` on the rendering is ignored.
+The rendering must match a whole phrase, not part of a longer word or amount: a trailing
+count of `30` cannot match `300`, `30%`, `30x`, `30×`, `30,200`, `30.5` or `30€`.
+
+This is literal containment, not semantic inference about surrounding text. Alternate verbs,
+paraphrases, reordered phrases, alternate number/date formats and separated fragments do not
+substitute for the rendering: `Cut batch runtime by 30%` does not support
+`Reduced batch runtime by 30%`. Abbreviations such as `Acme Inc.` or `U.S.` do not split the
+rendering. Schema validation and language-keyed rendering are unchanged.
+
+Document assembly uses the same rendered sentence and grounding rule for base résumés and
+tailored-document fact context. Unsupported structured claims cannot become exportable
+through document edits or owner review. Suitability coverage projects that rendering too,
+but permits a structured claim's linked evidence only when its `direct` or `user_asserted`
+excerpt is both a verbatim evidence quote and grounds the complete rendering. Literal
+claim coverage keeps its existing support-kind behavior.
+
+The experience/project editor previews the server-rendered English sentence and states:
+“The source excerpt must contain the complete rendered sentence as written.” Preview
+failures appear beside the rendering and clear after structured-field edits. Structured
+entries cannot be submitted until the ownership vocabulary loads; a failed vocabulary
+request offers a retry. Optional periods require both bounds and never invent an end.
+
+Literal import review still submits text-only decisions. Replacing a structured target
+or attaching source evidence warns before acceptance that it converts the target to free
+text and discards structured verb, metric and period fields, even when keeping the current
+description. Unchanged and skipped decisions do not perform that conversion.
+
+Imported experience/project entries show one proposal per source line, including headings.
+The mapper retains each recognized source action as its own vocabulary key; it never folds
+`implemented` into `built`, `spearheaded` into `led`, or another action into a synonym.
+A fully parsed proposal is eligible for structured approval only when its complete rendering
+passes the strict source-quotation rule. Unsupported notation or reordered phrases are
+flagged `unquoted_rendering`; approval retains the original line as free text needing attention.
+Other unplaced parts remain visible and also select literal approval. The profile stays unchanged until
+the approved import command runs. Reimports match all saved line claims, preserve their
+unchanged status and supporting evidence, and do not duplicate them in the review preview.
+
+### Source-preserving action inventory
+
+The release vocabulary is selected before re-measuring individual corpus failures, from
+general leadership, technical delivery, analysis, communication and support actions.
+Vocabulary keys identify the stated action, not interchangeable synonyms. Each key has
+an individual rank rationale beside its declaration in `claims.py`. The conservative
+strongest-to-weakest groups are:
+
+| Group | Action keys, in order | Rank boundary |
+| --- | --- | --- |
+| Leadership | led, spearheaded, headed, directed | Explicit leadership only. |
+| Accountability | owned, took_ownership_of, responsible_for, was_responsible_for | Explicit responsibility, below leadership. |
+| Management | managed, supervised, oversaw | Supervision, not inferred creation or leadership. |
+| Initiation | initiated, founded, established, introduced, pioneered | Starting work, not necessarily owning its execution. |
+| Design | designed, architected, planned | Design or planning, without asserting delivery. |
+| Construction | built, developed, implemented, created, engineered, coded, programmed, automated, integrated, migrated, prototyped | Hands-on implementation, not project leadership. |
+| Delivery | delivered, shipped, launched, completed, executed, released, rolled_out, deployed | Execution or release, not inferred design or ownership. |
+| Outcomes | increased, grew, raised, boosted, expanded, scaled, generated, achieved, reduced, cut, decreased, lowered, shortened, minimized, slashed, trimmed, saved, improved, optimized, enhanced, streamlined, modernized, stabilized, strengthened, hardened, accelerated, resolved, fixed | Stated change or result, without leadership inference. |
+| Communication | wrote, authored, documented, drafted, produced, prepared, published, presented | Creating or communicating an artifact only. |
+| Stewardship | maintained, administered, operated, configured, monitored, upgraded, refactored | Work on an existing system, not inferred ownership. |
+| Instruction | mentored, coached, trained | Teaching others, not managing them. |
+| Investigation | analyzed, assessed, audited, evaluated, investigated, researched, reviewed, measured, inspected, conducted, identified, defined | Investigation or bounded activity, not inferred delivery. |
+| Coordination | coordinated, orchestrated, organized, facilitated, scheduled, negotiated, partnered, collaborated | Coordination or joint work, not unilateral leadership. |
+| Participation | contributed, contributed_to, worked_on, participated_in, took_part_in | A contribution or participation only. |
+| Support | supported, handled, processed, answered, responded | Service/support activity only. |
+| Assistance | assisted_with, assisted_in, helped, helped_to, assisted | Assistance, never inflated into ownership or an outcome. |
+
+This order is an explicit conservative policy, not permission to replace one action with
+another. English renders each key in its own words. `Hired`, `Proposed` and leading adverbs
+such as `Successfully` remain outside this action vocabulary and must stay flagged.
+
+Periods store semantic dates with a `style` key (`parenthetical`, `in_year`, or `range`)
+and an optional separator key (`hyphen`, `en_dash`, or `em_dash`). Rates retain their unit
+and a `rate_wording` key (`per`, `a`, `an`, `each`, `every`, `adverbial`, or `annual`).
+English reproduces the selected form instead of substituting “(2022)” for “in 2022” or
+“per year” for “annually”. `in_year` requires one identical year; annual wording requires
+the year rate. Omitted keys retain the deterministic parenthetical/en-dash and per-unit
+defaults. The editor exposes the server's choices and blocks invalid combinations.
+
+The unshipped frozen schema-v1 copy is synchronized with this release contract and is now
+fixed for release. Future changes must not alter that copy. Schema-27 upgrade and older
+archive import still restructure only byte-identical statement/rendering pairs with quoted
+evidence: an exact “Implemented …” may convert, while `Hired`, `Proposed`, leading adverbs,
+or any changed wording remains literal needing attention.
+
+`uv run --frozen bonafides claims coverage <file>` reads a local UTF-8 file (with an optional BOM), counts
+every nonblank line, and reports fully mapped, strictly self-grounded claims plus unparsed
+reasons and source line numbers. It does not store or send the file. Compound ownership
+openers, including irregular verbs such as “Built and ran”, remain flagged rather than
+silently becoming part of the subject.
+
+The unchanged 305-bullet synthetic corpus includes its 64-bullet held-out block. The fixed
+general action inventory was committed before this re-measurement; no further tuning follows.
+
+| Block | Schema only before | Strict before | Schema only after | Strict after |
+| --- | --- | --- | --- | --- |
+| Original (241 bullets) | 186/241 (77.1784%) | 109/241 (45.2282%) | 231/241 (95.8506%) | 226/241 (93.7759%) |
+| Held-out (64 bullets) | 38/64 (59.375%) | 16/64 (25%) | 50/64 (78.125%) | 49/64 (76.5625%) |
+| Whole file (305 bullets) | 224/305 (73.4426%) | 125/305 (40.9836%) | 281/305 (92.1311%) | 275/305 (90.1639%) |
+
+The command reports strict coverage, floored to **90.1%**. Schema only ignores the
+`unquoted_rendering` flag; it is diagnostic, not the approval criterion. Remaining reasons
+are `additional_metric` (11), `unknown_verb` (9), `unquoted_rendering` (6), and `compound_verb`
+(5); reason counts overlap across 30 bullets. Examples include embedded budget amounts,
+unlisted actions such as `Closed`, leading `Successfully`, dual-action openers, “cutting”
+instead of “reducing”, and a scope separated from its metric.
+The development plan's **≥95% whole-file strict acceptance is still not met**. The corpus
+and threshold are unchanged; further tuning is stopped and the measured gap is reported.
 
 ## Development gates
 

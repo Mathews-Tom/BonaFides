@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react';
-import { Api, ApiError, errorText, MAX_IMPORT_BYTES, terminal, type ClaimKind, type ClaimPayload, type ClaimRecord, type ImportAccepted, type ImportBatch, type ImportDecision, type ImportEntry, type ImportMediaType, type ImportMergeRequest, type ImportPage, type ImportSummary, type Profile, type Workflow } from './api';
+import { Api, ApiError, errorText, literalClaimPayload, MAX_IMPORT_BYTES, terminal, type ClaimKind, type ClaimPayload, type ClaimRecord, type ImportAccepted, type ImportBatch, type ImportDecision, type ImportEntry, type ImportMediaType, type ImportMergeRequest, type ImportPage, type ImportSummary, type Profile, type Workflow } from './api';
 import './ResumeImport.css';
 
 export interface ResumeImportProps {
@@ -13,7 +13,25 @@ interface ReviewDraft {
   action: ImportDecision['action']; kind: ImportEntry['kind']; identity_field: ImportEntry['identity_field'];
   claim_id: string; payload: ClaimPayload; reviewed: boolean; editing: boolean; identityConfirmed: boolean;
   choices: Partial<Record<PayloadField, FieldChoice>>;
+  /** Saved claims an earlier approval split this unedited entry into, one per line. */
+  lines: { claimIds: string[]; payload: ClaimPayload } | null;
 }
+
+/** Statement lines of experience and project entries arrive as structured claim proposals. */
+function ClaimProposals({ entry, draft }: { entry: ImportEntry; draft: ReviewDraft }) {
+  const proposals = entry.claim_proposals ?? [];
+  if (proposals.length === 0 || draft.kind !== entry.kind) return null;
+  const literal = draft.action !== 'add' || draft.payload.text !== entry.payload.text;
+  return <section className="import-claim-proposals" aria-label="Proposed structured claims"><h4>Proposed structured claims</h4>
+    <p className="hint">{draft.action === 'unchanged' ? 'These lines match saved claims. Nothing new is saved; the existing claims and evidence are retained.'
+      : literal ? 'This entry is saved as one free-text statement that needs attention: the statement was edited or replaces a saved entry.'
+      : 'Approving saves one claim per line. Fully parsed lines become structured claims; lines with unparsed parts stay free text that needs attention.'}</p>
+    <ol>{proposals.map(proposal => <li key={proposal.source_id}>
+      <p>{proposal.rendering ?? `No structured claim proposed for “${proposal.quote}”.`}</p>
+      {proposal.unparsed.length > 0 && <ul aria-label="Unparsed parts">{proposal.unparsed.map((part, index) => <li key={`${index}:${part.reason}:${part.text}`}>Unparsed: “{part.text}” ({part.reason.replaceAll('_', ' ')})</li>)}</ul>}
+    </li>)}</ol></section>;
+}
+
 const fields: { key: PayloadField; label: string; limit: number }[] = [
   { key: 'text', label: 'Description', limit: 4000 }, { key: 'organization', label: 'Organization', limit: 200 },
   { key: 'role', label: 'Role or qualification', limit: 200 }, { key: 'start_date', label: 'Start date', limit: 10 },
@@ -43,12 +61,13 @@ function samePayload(left: ClaimPayload, right: ClaimPayload): boolean {
 function initialDraft(entry: ImportEntry, profile: Profile): ReviewDraft {
   const action = entry.comparison.status === 'unchanged' ? 'unchanged' : entry.comparison.status === 'conflict' ? 'replace' : 'add';
   const draft: ReviewDraft = { action, kind: entry.kind, identity_field: entry.identity_field, claim_id: entry.comparison.target_claim_id ?? '',
-    payload: entry.kind === 'identity' ? { text: entry.payload.text } : { ...entry.payload }, reviewed: false, editing: false, identityConfirmed: false, choices: {} };
+    payload: entry.kind === 'identity' ? { text: entry.payload.text } : { ...entry.payload }, reviewed: false, editing: false, identityConfirmed: false, choices: {},
+    lines: entry.comparison.status === 'unchanged' && (entry.claim_proposals?.length ?? 0) > 0 && entry.comparison.candidate_claim_ids.length > 0 ? { claimIds: entry.comparison.candidate_claim_ids, payload: { ...entry.payload } } : null };
   const target = action === 'replace' ? replacement(profile, draft) : undefined;
   if (target) {
     for (const field of fields) {
-      if (!entry.payload[field.key] && target.revision.payload[field.key]) {
-        draft.payload = payloadValue(draft.payload, field.key, target.revision.payload[field.key]!);
+      if (!entry.payload[field.key] && literalClaimPayload(target)[field.key]) {
+        draft.payload = payloadValue(draft.payload, field.key, literalClaimPayload(target)[field.key]!);
         draft.choices[field.key] = 'keep';
       }
     }
@@ -60,9 +79,14 @@ function initialDrafts(batch: ImportBatch, profile: Profile): Record<string, Rev
 }
 function isUnchanged(draft: ReviewDraft, profile: Profile): boolean {
   if (draft.kind === 'identity' && draft.identity_field) return draft.payload.text === profile.current_revision.snapshot[draft.identity_field];
+  if (draft.lines) {
+    // The server matched every line's saved claim; it re-verifies each payload when merging.
+    const active = new Set(profile.current_revision.claims.filter(claim => !claim.archived).map(claim => claim.id));
+    return draft.lines.claimIds[0] === draft.claim_id && samePayload(draft.payload, draft.lines.payload) && draft.lines.claimIds.every(id => active.has(id));
+  }
   const target = replacement(profile, draft);
-  return !!target && samePayload(draft.payload, target.revision.payload)
-    && profile.current_revision.claims.filter(claim => !claim.archived && claim.kind === draft.kind && samePayload(claim.revision.payload, draft.payload)).length === 1;
+  return !!target && samePayload(draft.payload, literalClaimPayload(target))
+    && profile.current_revision.claims.filter(claim => !claim.archived && claim.kind === draft.kind && samePayload(literalClaimPayload(claim), draft.payload)).length === 1;
 }
 function needsConfirmation(entry: ImportEntry, draft: ReviewDraft): boolean {
   return entry.comparison.status === 'needs_attention' && !draft.reviewed;
@@ -71,8 +95,8 @@ function previewPayload(draft: ReviewDraft, profile: Profile): ClaimPayload {
   if (draft.action === 'replace') {
     const target = replacement(profile, draft);
     if (target) {
-      const payload = { ...target.revision.payload };
-      for (const field of fields) if (draft.choices[field.key] || (draft.payload[field.key] ?? '') === (target.revision.payload[field.key] ?? '')) {
+      const payload = { ...literalClaimPayload(target) };
+      for (const field of fields) if (draft.choices[field.key] || (draft.payload[field.key] ?? '') === (literalClaimPayload(target)[field.key] ?? '')) {
         const value = draft.payload[field.key];
         if (value === undefined) delete payload[field.key]; else payload[field.key] = value;
       }
@@ -86,7 +110,7 @@ function entryFields(draft: ReviewDraft, target?: ClaimRecord) {
   const keys: PayloadField[] = draft.kind === 'identity' ? ['text'] : draft.kind === 'skill' || draft.kind === 'language' ? ['text', 'proficiency']
     : draft.kind === 'preference' || draft.kind === 'other' || !draft.kind ? ['text']
     : ['text', 'organization', 'role', 'start_date', 'end_date', ...(draft.kind === 'project' ? ['project_url' as const] : [])];
-  return fields.filter(field => keys.includes(field.key) || !!draft.payload[field.key] || !!target?.revision.payload[field.key]).map(field => ({
+  return fields.filter(field => keys.includes(field.key) || !!draft.payload[field.key] || !!(target ? literalClaimPayload(target)[field.key] : undefined)).map(field => ({
     ...field, label: field.key === 'text' ? draft.kind === 'identity' ? draft.identity_field === 'display_name' ? 'Full name' : 'Highlight / tagline'
       : draft.kind === 'skill' ? 'Skill' : draft.kind === 'language' ? 'Language' : 'Description'
       : field.key === 'organization' && draft.kind === 'education' ? 'School or institution'
@@ -104,7 +128,7 @@ function replacement(profile: Profile, draft: ReviewDraft): ClaimRecord | undefi
   return profile.current_revision.claims.find(claim => claim.id === draft.claim_id && claim.kind === draft.kind && !claim.archived && claim.kind !== 'identity');
 }
 function unresolvedFields(entry: ImportEntry, draft: ReviewDraft, target: ClaimRecord): PayloadField[] {
-  return fields.filter(field => ((target.revision.payload[field.key] ?? '') !== (entry.payload[field.key] ?? '') || (target.revision.payload[field.key] ?? '') !== (draft.payload[field.key] ?? ''))
+  return fields.filter(field => ((literalClaimPayload(target)[field.key] ?? '') !== (entry.payload[field.key] ?? '') || (literalClaimPayload(target)[field.key] ?? '') !== (draft.payload[field.key] ?? ''))
     && !!(entry.payload[field.key] || draft.payload[field.key]) && !draft.choices[field.key]).map(field => field.key);
 }
 function dateBounds(value: string): [number, number] | null {
@@ -374,7 +398,7 @@ export function ResumeImport({ api, profile, disabled, onProfile, onDirtyChange,
     setReviewDirty(true); setAttested(false); setError('');
   }
   function chooseField(entry: ImportEntry, draft: ReviewDraft, target: ClaimRecord, key: PayloadField, choice: 'keep' | 'import') {
-    const value = (choice === 'keep' ? target.revision.payload[key] : entry.payload[key]) ?? '';
+    const value = (choice === 'keep' ? literalClaimPayload(target)[key] : entry.payload[key]) ?? '';
     updateDraft(entry.entry_id, () => ({ ...draft, payload: payloadValue(draft.payload, key, value), choices: { ...draft.choices, [key]: choice } }));
   }
   function regroup(index: number, split: boolean) {
@@ -456,13 +480,14 @@ export function ResumeImport({ api, profile, disabled, onProfile, onDirtyChange,
       if (draft.action !== 'replace' && draft.action !== 'unchanged') return [entry.entry_id, draft];
       const before = replacement(current, draft);
       const after = replacement(latest, draft);
-      const changed = fields.filter(field => (before?.revision.payload[field.key] ?? '') !== (after?.revision.payload[field.key] ?? ''));
+      const changed = fields.filter(field => ((before ? literalClaimPayload(before)[field.key] : undefined) ?? '') !== ((after ? literalClaimPayload(after)[field.key] : undefined) ?? ''));
       const choices = { ...draft.choices };
       const payload = { ...draft.payload };
       for (const field of changed) {
         delete choices[field.key];
-        if (!entry.payload[field.key] && draft.choices[field.key] === 'keep' && after?.revision.payload[field.key]) {
-          payload[field.key] = after.revision.payload[field.key]!;
+        const kept = after ? literalClaimPayload(after)[field.key] : undefined;
+        if (!entry.payload[field.key] && draft.choices[field.key] === 'keep' && kept) {
+          payload[field.key] = kept;
           choices[field.key] = 'keep';
         }
       }
@@ -607,8 +632,8 @@ export function ResumeImport({ api, profile, disabled, onProfile, onDirtyChange,
                 const choices: ReviewDraft['choices'] = {};
                 for (const field of fields) {
                   if (previous.choices[field.key] === 'edit') choices[field.key] = 'edit';
-                  else if (!entry.payload[field.key] && selectedTarget?.revision.payload[field.key]) {
-                    payload[field.key] = selectedTarget.revision.payload[field.key]!;
+                  else if (!entry.payload[field.key] && selectedTarget && literalClaimPayload(selectedTarget)[field.key]) {
+                    payload[field.key] = literalClaimPayload(selectedTarget)[field.key]!;
                     choices[field.key] = 'keep';
                   }
                 }
@@ -617,17 +642,17 @@ export function ResumeImport({ api, profile, disabled, onProfile, onDirtyChange,
             }}>
               <option value="">Choose an existing entry</option>
               {draft.claim_id && !target && <option value={draft.claim_id}>Previous target unavailable · {draft.claim_id}</option>}
-              {available.map(claim => <option key={claim.id} value={claim.id}>{claim.revision.payload.text} · {claim.id}</option>)}
+              {available.map(claim => <option key={claim.id} value={claim.id}>{literalClaimPayload(claim).text} · {claim.id}</option>)}
             </select></label><p className="hint">Compare against profile revision {current.current_revision.revision_no}. Choose current, imported, or your own edited value for each differing field.</p></>}
             {(draft.editing || target) && <div className="import-entry-fields">
               {draft.kind !== 'identity' && <p className="hint">Dates accept YYYY, YYYY-MM or YYYY-MM-DD. Leave unknown values empty; do not invent precision.</p>}
               {visibleFields.map(field => <div className={target ? 'comparison' : undefined} key={field.key}>
-                {target && <><h4>{field.label} comparison</h4><p>Current: {target.revision.payload[field.key] || 'Not supplied'}</p><p>Imported: {entry.payload[field.key] || 'Not supplied'}</p>
-                  {(target.revision.payload[field.key] ?? '') !== (entry.payload[field.key] ?? '') && <div className="actions">
+                {target && <><h4>{field.label} comparison</h4><p>Current: {literalClaimPayload(target)[field.key] || 'Not supplied'}</p><p>Imported: {entry.payload[field.key] || 'Not supplied'}</p>
+                  {(literalClaimPayload(target)[field.key] ?? '') !== (entry.payload[field.key] ?? '') && <div className="actions">
                     <button type="button" className="secondary" aria-pressed={draft.choices[field.key] === 'keep'} onClick={() => chooseField(entry, draft, target, field.key, 'keep')}>Keep current {field.label.toLowerCase()}</button>
                     <button type="button" className="secondary" aria-pressed={draft.choices[field.key] === 'import'} onClick={() => chooseField(entry, draft, target, field.key, 'import')}>{entry.payload[field.key] ? 'Use imported' : 'Explicitly clear'} {field.label.toLowerCase()}</button>
                   </div>}
-                  <p className="hint">Choice: {draft.choices[field.key] === 'keep' ? 'keep current' : draft.choices[field.key] === 'import' ? 'use imported' : draft.choices[field.key] === 'edit' ? 'your edited value' : (target.revision.payload[field.key] ?? '') === (entry.payload[field.key] ?? '') ? 'values match' : 'not yet chosen'}</p>
+                  <p className="hint">Choice: {draft.choices[field.key] === 'keep' ? 'keep current' : draft.choices[field.key] === 'import' ? 'use imported' : draft.choices[field.key] === 'edit' ? 'your edited value' : (literalClaimPayload(target)[field.key] ?? '') === (entry.payload[field.key] ?? '') ? 'values match' : 'not yet chosen'}</p>
                 </>}
                 <label>{field.label}{field.key === 'text' ? <textarea maxLength={draft.kind === 'identity' ? draft.identity_field === 'display_name' ? 120 : undefined : field.limit} value={draft.payload[field.key] ?? ''} onChange={event => updateDraft(entry.entry_id, previous => ({ ...previous, payload: payloadValue(previous.payload, field.key, event.target.value), choices: { ...previous.choices, [field.key]: 'edit' }, identityConfirmed: false }))} />
                   : <input maxLength={field.limit} value={draft.payload[field.key] ?? ''} onChange={event => updateDraft(entry.entry_id, previous => ({ ...previous, payload: payloadValue(previous.payload, field.key, event.target.value), choices: { ...previous.choices, [field.key]: 'edit' } }))} />}</label>
@@ -685,7 +710,7 @@ export function ResumeImport({ api, profile, disabled, onProfile, onDirtyChange,
     {comparison && <div className="comparison"><h3>Current server profile revision {comparison.current_revision.revision_no}</h3>
       <p>{comparison.current_revision.snapshot.display_name} · {comparison.current_revision.snapshot.headline}</p>
       <p className="profile-description-preview">Description: {comparison.current_revision.snapshot.description || 'Not supplied'}</p>
-      {comparison.current_revision.claims.map(claim => <div key={claim.id}><strong>{claim.kind} · {claim.id}</strong><dl>{fields.map(field => <div key={field.key}><dt>{field.label}</dt><dd>{claim.revision.payload[field.key] || 'Not supplied'}</dd></div>)}</dl></div>)}
+      {comparison.current_revision.claims.map(claim => <div key={claim.id}><strong>{claim.kind} · {claim.id}</strong><dl>{fields.map(field => <div key={field.key}><dt>{field.label}</dt><dd>{literalClaimPayload(claim)[field.key] || 'Not supplied'}</dd></div>)}</dl></div>)}
       <p>Use this version only after comparison. Your reviewed values remain buffered; replacement fields whose current values changed need a fresh choice. Missing or archived targets must be selected again.</p>
       <button className="secondary" disabled={operation || disabled || mergeAwaiting} onClick={rebase}>Use latest profile and retain review</button>
     </div>}
@@ -725,19 +750,21 @@ export function ResumeImport({ api, profile, disabled, onProfile, onDirtyChange,
               if (group) group.push(entry); else previewGroups.set(key, [entry]);
             }
             const retained = mode === 'merge' ? current.current_revision.claims.filter(claim => !claim.archived && claim.kind === section.value
-              && !entries.some(entry => { const draft = drafts[entry.entry_id]; return draft && draft.action !== 'skip' && (draft.action === 'replace' || draft.action === 'unchanged') && draft.claim_id === claim.id; })) : [];
+              && !entries.some(entry => { const draft = drafts[entry.entry_id]; return draft && (draft.action === 'replace' && draft.claim_id === claim.id
+                || draft.action === 'unchanged' && (draft.claim_id === claim.id || draft.lines?.claimIds.includes(claim.id))); })) : [];
             const retainedIdentity = section.value === 'identity' ? (['display_name', 'headline', 'description'] as const).filter(key => current.current_revision.snapshot[key]
               && !entries.some(entry => drafts[entry.entry_id]?.kind === 'identity' && drafts[entry.entry_id]?.identity_field === key && drafts[entry.entry_id]?.action !== 'skip')) : [];
             if (!sectionEntries.length && !retained.length && !retainedIdentity.length) return null;
             return <section className={`import-document-section${section.value === 'skill' || section.value === 'language' ? ' import-token-section' : ''}`} aria-label={section.label} key={section.value}>
               <h5>{section.label}</h5>
               {retainedIdentity.map(key => <div className="import-document-entry" key={key}><dl><dt>{key === 'display_name' ? 'Full name' : key === 'headline' ? 'Highlight / tagline' : 'Description'}</dt><dd className={key === 'description' ? 'profile-description-preview' : undefined}>{current.current_revision.snapshot[key]}</dd></dl><p className="hint">Current value retained</p></div>)}
-              {retained.map(claim => <div className="import-document-entry" key={claim.id}><dl>{fields.filter(field => claim.revision.payload[field.key]).map(field => <div key={field.key}><dt>{field.label}</dt><dd>{claim.revision.payload[field.key]}</dd></div>)}</dl><p className="hint">Current entry retained</p></div>)}
+              {retained.map(claim => <div className="import-document-entry" key={claim.id}><dl>{fields.filter(field => literalClaimPayload(claim)[field.key]).map(field => <div key={field.key}><dt>{field.label}</dt><dd>{literalClaimPayload(claim)[field.key]}</dd></div>)}</dl><p className="hint">Current entry retained</p></div>)}
               {[...previewGroups.values()].map(group => {
                 const entry = group[0]!;
                 const editorEntry = group.find(item => item.entry_id === entries[currentIndex]?.entry_id);
                 const draft = drafts[entry.entry_id] ?? initialDraft(entry, current);
                 const payload = previewPayload(draft, current);
+                const target = replacement(current, draft);
                 const issues = entryProblems(entry, draft, current);
                 const attention = needsConfirmation(entry, draft) || issues.length > 0 || duplicateEntryIds.has(entry.entry_id);
                 const status = draft.action === 'skip' ? 'Excluded' : attention ? 'Needs attention' : draft.action === 'unchanged' ? 'Unchanged' : draft.action === 'replace' ? 'Ready to update' : 'New entry';
@@ -749,6 +776,10 @@ export function ResumeImport({ api, profile, disabled, onProfile, onDirtyChange,
                   </button> : <>
                   {draft.action === 'skip' ? <p>{snippet(draft.payload.text)} — not included in the saved profile.</p>
                     : <dl>{entryFields(draft, replacement(current, draft)).filter(field => payload[field.key]).map(field => <div className={field.key === 'text' && draft.kind !== 'identity' ? 'import-primary-field' : undefined} key={field.key}><dt>{field.label}</dt><dd>{payload[field.key]}</dd></div>)}</dl>}
+                  {draft.action === 'replace' && target && 'claim' in target.revision.payload && <p className="disclosure" role="note">
+                    Accepting this replacement or source attachment converts the structured target to free text and discards its structured verb, metric, and period. Choosing “Keep current description” keeps only the rendered text; it still converts the stored representation. The import request sends the Description shown in this preview as text, not a structured claim.
+                  </p>}
+                  {draft.action !== 'skip' && <ClaimProposals entry={entry} draft={draft} />}
                   {attention && draft.action !== 'skip' && <p className="hint">{issues[0] ?? 'Check the extraction, choose a target if needed, then confirm or exclude this entry.'}</p>}
                   <div className="import-preview-actions">
                     <span className="import-entry-status">{status}{draft.action === 'replace' && issues.length ? ' · current values retained until resolved' : ''}</span>

@@ -421,3 +421,101 @@ def test_replacement_publication_failure_rolls_back_erasure_and_preserves_origin
             with catalog.identity.admin.transaction() as conn:
                 conn.exec_driver_sql("""DROP TRIGGER test_portable_publication_failure ON bonafides.document_revisions;
                 DROP FUNCTION bonafides.test_portable_publication_failure();""")
+
+
+@pytest.mark.postgres
+def test_archive_from_before_structured_claims_rewrites_free_text_claims(
+    catalog: SourceContext,
+    parser: ImportParserClient,
+    renderer_spool: Path,
+) -> None:
+    statements = (
+        "Reduced batch runtime by 30% across 3 warehouses",
+        "Hired 4 engineers for the platform team",
+        "Proposed a new on-call rotation",
+        "Cut batch runtime by 30% across 3 warehouses",
+        "Reduced batch runtime by 30% across 3 warehouses.",
+        "Implemented a new on-call rotation",
+    )
+    version = catalog.client.get("/api/v1/profile").json()["version"]
+    evidence = catalog.client.post(
+        "/api/v1/evidence",
+        json={"payload": {"text": ". ".join(statements), "source": "Synthetic review"}},
+        headers=catalog.headers(version),
+    )
+    assert evidence.status_code == 200, evidence.text
+    evidence_id = evidence.json()["evidence"][-1]["revision"]["id"]
+    version = evidence.json()["version"]
+    for statement in statements:
+        saved = catalog.client.post(
+            "/api/v1/claims",
+            json={
+                "kind": "experience",
+                "payload": {"role": "Platform engineer", "text": statement},
+                "evidence_links": [
+                    {
+                        "evidence_revision_id": evidence_id,
+                        "support_kind": "direct",
+                        "excerpt": statement,
+                    }
+                ],
+            },
+            headers=catalog.headers(version),
+        )
+        assert saved.status_code == 200, saved.text
+        version = saved.json()["version"]
+    original = _export(catalog)
+    source_owner = uuid4()
+    for rows in original.manifest.records.values():
+        for row in rows:
+            if "owner_id" in row:
+                row["owner_id"] = str(source_owner)
+    archive = _digest(
+        PortableArchive(
+            original.manifest.model_copy(
+                update={"source_owner_id": source_owner, "source_schema_version": 27}
+            ),
+            original.blobs,
+        )
+    )
+    payload = _encoded(archive.manifest, archive.blobs)
+    checkpoint_id, runtime_pins = _checkpoint(catalog, parser.spool, renderer_spool)
+    prepared = _approved_import(catalog, payload)
+    with catalog.runtime.transaction() as conn:
+        task = claim_control(conn, uuid4())
+        assert task is not None and task.id == prepared.workflow_id
+        consume_action_approval(
+            conn,
+            task,
+            action_kind="replace_workspace",
+            destination=prepared.destination,
+            payload=prepared.payload,
+            target_version=cast(int, prepared.approval["target_version"]),
+        )
+        control = begin_control(conn, task)
+    maintenance = InstallationMaintenance(catalog.runtime, control, parser.spool, renderer_spool)
+    with maintenance.quiescent():
+        result = import_controlled_owner_data(
+            catalog.runtime,
+            catalog.identity.settings,
+            control,
+            payload,
+            expected_source_owner=source_owner,
+            checkpoint_id=checkpoint_id,
+            runtime_pins=runtime_pins,
+        )
+        maintenance.finish(result)
+    assert _login(catalog.identity, catalog.client).status_code == 201
+    profile = catalog.client.get("/api/v1/profile").json()
+    claims = profile["current_revision"]["claims"]
+    assert [(item["rendering"], item["needs_attention"]) for item in claims] == [
+        (statements[0], False),
+        (statements[1], True),
+        (statements[2], True),
+        (statements[3], False),
+        (statements[4], True),
+        (statements[5], False),
+    ]
+    assert profile["current_revision"]["reason"] == "claims_restructured"
+    assert claims[5]["revision"]["payload"]["claim"]["verb"] == "implemented"
+    assert claims[5]["revision"]["evidence_links"][0]["excerpt"] == statements[5]

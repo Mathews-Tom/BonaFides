@@ -1,0 +1,306 @@
+- Reduced checkout latency by 35% across 4 regions
+- Led migration of 40 services to Kubernetes for the payments team (2021-2022)
+- Built an internal reporting dashboard, reducing manual reconciliation by 6 hours per week
+- Spearheaded vendor consolidation, saving $1.2M annually
+- Designed the event schema for the synthetic order pipeline
+- Mentored 5 junior engineers on code review practices
+- Improved test coverage by 25% through contract tests
+- Increased weekly active users by 12,000
+- Owned the on-call rotation for the billing platform
+- Managed a team of 8 support analysts across two time zones
+- Wrote the onboarding guide for new platform engineers
+- Automated nightly data exports, cutting processing time by 3 hours per day
+- Delivered the customer portal redesign two weeks ahead of schedule
+- Grew newsletter subscribers by 40% in 2022
+- Analyzed churn drivers for the subscription product
+- Coordinated quarterly release planning with product and design
+- Contributed to the open-source scheduler
+- Supported the finance team during the annual audit
+- Assisted with the data center decommissioning
+- Implemented role-based access control for the admin console
+- Optimized warehouse picking routes, reducing travel time by 18%
+- Launched a referral program, increasing sign-ups by 22%
+- Negotiated a three-year hosting contract, saving $240K per year
+- Developed a forecasting model for regional demand
+- Streamlined the expense approval workflow, reducing turnaround by 2 days
+- Introduced trunk-based development for the mobile team
+- Migrated the legacy CRM to a cloud platform (2020)
+- Directed a cross-functional team of 12 through the platform rebuild
+- Reduced cloud spend by $380K per year through rightsizing
+- Created a design system used across 6 product teams
+- Authored the incident response runbook for the storage tier
+- Scaled the ingestion pipeline by 5x without new hardware
+- Facilitated weekly retrospectives for the infrastructure squad
+- Investigated recurring payment failures for the merchant API
+- Resolved 300 escalated support tickets per month
+- Cut deployment time by 70% with a parallel build pipeline
+- Architected the multi-tenant storage layer for the analytics product
+- Shipped offline mode for the field inspection app
+- Established a weekly security review for the platform group
+- Trained 30 store managers on the new inventory system
+- Boosted email open rates by 9 points
+- Lowered infrastructure costs by 22% across the data platform
+- Configured single sign-on for 14 internal applications
+- Evaluated three observability vendors for the platform team
+- Organized the annual internal hackathon for 200 engineers
+- Raised the customer satisfaction score by 11 points
+- Maintained the release tooling for the desktop client
+- Oversaw the rollout of a new point-of-sale system across 45 stores
+- Deployed a canary release process for the API gateway
+- Partnered with legal to define the data retention policy
+- Decreased average handle time by 90 seconds
+- Engineered a deduplication service for customer records
+- Accelerated month-end close by 3 days
+- Audited access permissions for the finance systems
+- Prototyped a voice interface for the scheduling assistant
+- Expanded the partner network by 35% in 2023
+- Documented the public API for third-party developers
+- Integrated the payment provider with the mobile checkout
+- Shortened onboarding time for new hires by 40%
+- Established the data governance council for the analytics group
+- Managed a $2M annual marketing budget
+- Improved page load time by 1.8 seconds on the product catalog
+- Developed a training curriculum for the customer success team
+- Achieved 99.95% uptime for the core API (2022)
+- Led the redesign of the clinic scheduling workflow
+- Reduced patient wait times by 25% at the outpatient clinic
+- Coordinated vaccine clinic logistics for 3 community sites
+- Streamlined intake paperwork, cutting registration time by 10 minutes
+- Implemented an electronic health record module for lab results
+- Trained 60 nursing staff on the new charting system
+- Analyzed readmission trends for the cardiology unit
+- Supported the compliance team during the accreditation review
+- Designed a lesson plan series for introductory statistics
+- Increased course completion rates by 15%
+- Mentored 4 student teachers through their practicum
+- Organized a district science fair for 400 students
+- Developed an online assessment bank for algebra courses
+- Wrote grant proposals securing $150K in program funding
+- Led a curriculum review committee for the mathematics department
+- Coordinated parent-teacher conferences for 600 families
+- Managed a fleet of 25 delivery vehicles
+- Reduced fuel costs by 12% through route optimization
+- Implemented a barcode scanning system across 3 warehouses
+- Improved on-time delivery by 8 points
+- Negotiated freight rates with 10 regional carriers
+- Cut inventory shrinkage by 30%
+- Oversaw daily operations of a 120,000 square foot distribution center
+- Designed a cross-docking process for seasonal inventory
+- Increased order throughput by 20% during peak season
+- Analyzed carrier performance data for the logistics team
+- Closed $3.4M in new enterprise contracts in 2021
+- Grew the regional sales pipeline by 60%
+- Managed 35 key accounts across the healthcare vertical
+- Exceeded the annual sales quota by 18%
+- Built a partner channel generating $800K in annual revenue
+- Negotiated renewal terms with the top 20 customers
+- Expanded into 3 new territories for the mid-market segment
+- Trained 12 new account executives on the sales playbook
+- Led a pricing review for the professional services catalog
+- Increased average deal size by 14%
+- Launched a paid search campaign, increasing qualified leads by 45%
+- Managed social media channels for the consumer brand
+- Wrote product copy for 120 catalog pages
+- Produced a monthly webinar series for small business customers
+- Grew organic traffic by 70% through content strategy
+- Coordinated the rebrand across web, print and packaging
+- Reduced cost per acquisition by 28%
+- Analyzed campaign attribution for the growth team
+- Designed email nurture journeys for trial users
+- Directed the annual customer conference for 1,500 attendees
+- Reduced month-end reporting time by 4 days
+- Prepared quarterly financial statements for the board
+- Implemented a new accounts payable system for the finance team
+- Audited expense reports for policy compliance
+- Managed a $12M capital budget for facility upgrades
+- Built a cash flow forecasting model for the treasury team
+- Identified $450K in duplicate vendor payments
+- Streamlined the invoicing process, reducing errors by 35%
+- Led the transition to rolling forecasts (2019-2020)
+- Coordinated the external audit with 2 accounting firms
+- Recruited 40 engineers in 12 months
+- Reduced time to hire by 15 days
+- Designed a structured interview program for engineering roles
+- Launched an employee mentorship program for 80 participants
+- Managed benefits enrollment for 900 employees
+- Improved employee retention by 10 points
+- Implemented a new applicant tracking system
+- Facilitated leadership training for 50 first-time managers
+- Wrote the remote work policy for the company
+- Analyzed compensation benchmarks for the sales organization
+- Designed the mobile onboarding flow for the banking app
+- Conducted 40 user interviews for the checkout redesign
+- Increased task completion rates by 23% in usability tests
+- Created the accessibility guidelines for the product team
+- Prototyped the navigation redesign for the help center
+- Led the visual refresh of the marketing website
+- Reduced support contacts by 17% after the settings redesign
+- Built a component library in collaboration with engineering
+- Facilitated design critiques for 3 product squads
+- Documented interaction patterns for the design system
+- Built a churn prediction model for the subscription business
+- Reduced report generation time from 2 hours to 5 minutes
+- Designed the data warehouse schema for the retail analytics product
+- Automated weekly KPI reporting for the executive team
+- Analyzed A/B test results for 30 product experiments
+- Developed a recommendation engine, increasing basket size by 6%
+- Migrated 200 dashboards to the new BI platform
+- Improved data pipeline reliability by 40%
+- Established data quality checks for the customer data platform
+- Created a self-serve analytics portal for 300 internal users
+- Upgraded the database cluster to the latest major version
+- Reduced mean time to recovery by 45%
+- Implemented infrastructure as code for 60 cloud accounts
+- Maintained 99.9% availability for the authentication service
+- Built a centralized logging platform for 150 services
+- Automated certificate renewal across the edge network
+- Migrated CI pipelines to ephemeral runners, cutting queue time by 50%
+- Hardened container images for the production cluster
+- Monitored capacity for the primary database fleet
+- Led the incident review process for the infrastructure group
+- Reduced false positive alerts by 60%
+- Deployed a secrets management service for 40 teams
+- Implemented multi-factor authentication for all staff accounts
+- Audited firewall rules for the corporate network
+- Responded to 25 security incidents in 2022
+- Designed a vulnerability management program for the engineering org
+- Reduced critical vulnerabilities by 80% across production services
+- Trained 500 employees on phishing awareness
+- Led the SOC 2 readiness effort for the platform
+- Established a bug bounty program for the public API
+- Evaluated endpoint protection vendors for the IT team
+- Built a native iOS app for appointment booking
+- Improved app startup time by 40%
+- Reduced crash rate by 60% across Android releases
+- Implemented push notifications for order updates
+- Shipped a redesigned onboarding flow, increasing activation by 12%
+- Maintained the React Native codebase for the consumer app
+- Integrated in-app purchases for the premium tier
+- Wrote end-to-end tests for the checkout flow
+- Led the mobile platform team through a framework upgrade
+- Refactored the networking layer for the iOS client
+- Managed the product roadmap for the payments platform
+- Defined requirements for the merchant onboarding experience
+- Launched a self-service billing portal, reducing support tickets by 30%
+- Prioritized the backlog for 2 engineering teams
+- Increased trial-to-paid conversion by 4 points
+- Conducted competitive analysis for the scheduling product
+- Led discovery interviews with 25 enterprise customers
+- Delivered the API marketplace launch on schedule
+- Coordinated beta programs with 15 pilot customers
+- Wrote product requirement documents for the analytics suite
+- Resolved 95% of customer tickets within 24 hours
+- Improved first contact resolution by 12 points
+- Built a knowledge base with 200 support articles
+- Reduced average response time by 3 hours
+- Managed escalations for the enterprise support queue
+- Trained new support agents on the ticketing workflow
+- Handled 60 customer calls per day
+- Organized a customer advisory board for the healthcare segment
+- Increased renewal rates by 9%
+- Supported the migration of 500 customers to the new platform
+- Built a fraud detection rule engine for card payments
+- Reduced chargebacks by 25%
+- Implemented real-time transaction monitoring for the lending product
+- Designed a reconciliation service for ledger entries
+- Optimized batch settlement jobs, cutting runtime by 2 hours
+- Led the PCI compliance program for the payments team
+- Developed pricing models for the consumer loan portfolio
+- Analyzed credit risk for the small business segment
+- Managed a portfolio of 300 commercial accounts
+- Grew assets under management by $40M
+- Researched battery degradation for the energy storage project
+- Published 3 papers on distributed consensus
+- Designed experiments for the materials testing lab
+- Built a simulation framework for traffic flow analysis
+- Presented findings at 4 industry conferences
+- Secured $500K in research funding
+- Led a team of 6 researchers on the sensor calibration study
+- Developed signal processing algorithms for wearable devices
+- Reduced simulation runtime by 10x through parallelization
+- Analyzed survey data from 2,000 respondents
+- Managed construction of a 40-unit residential building
+- Delivered the hospital wing renovation $300K under budget
+- Coordinated 15 subcontractors on the office fit-out
+- Reduced safety incidents by 50% across job sites
+- Implemented a digital permitting workflow for the city
+- Scheduled maintenance for 80 municipal buildings
+- Oversaw the replacement of 12 miles of water main
+- Improved permit processing time by 30%
+- Inspected 200 properties for code compliance
+- Planned the downtown bike lane network
+- Partnered with 10 nonprofits on community outreach
+- Raised $75K for the food bank through a spring campaign
+- Managed 120 volunteers across 4 event sites
+- Wrote the annual impact report for donors
+- Coordinated disaster relief logistics for 2 counties
+- Grew monthly recurring donations by 30%
+- Answered calls for the regional help line
+- Processed 150 benefit applications per week
+- Supported 40 families through housing applications
+- Collaborated with city agencies to expand shelter capacity
+
+Designed and implemented a self-service onboarding flow for new merchants.
+Developed and maintained internal tooling for the finance team.
+Built and deployed a fraud scoring service handling 2M requests per day.
+Led a 12-person team through a full rewrite of the billing platform.
+Successfully migrated 300 customer accounts to the new CRM.
+Successfully delivered the warehouse routing project two weeks early.
+Drove a 35% increase in trial-to-paid conversion.
+Achieved a 20% reduction in support ticket volume.
+Delivered a 15% improvement in page load time.
+Saved $250K annually by consolidating cloud vendors.
+Saved 10 hours per week of manual reporting.
+Generated $1.2M in new pipeline through partner campaigns.
+Generated 400 qualified leads per quarter.
+Reduced onboarding time from 14 days to 5 days.
+Improved test coverage from 45% to 80%.
+Increased monthly active users from 20K to 55K.
+Redesigned the checkout page, resulting in a 12% lift in conversion.
+Automated invoice reconciliation, resulting in 30% fewer errors.
+Implemented caching for the search API, resulting in a 40% latency reduction.
+Managed a portfolio of 25 enterprise accounts.
+Mentored 6 junior engineers.
+Wrote technical documentation for the payments API.
+Collaborated with product and design to launch a mobile app.
+Partnered with sales to define pricing for the new tier.
+Analyzed churn data to identify at-risk customers.
+Conducted user interviews with 40 customers.
+Created dashboards in Looker for executive reporting.
+Established a weekly incident review process.
+Coordinated release planning across 5 teams.
+Responsible for the on-call rotation for core services.
+Oversaw vendor relationships for logistics partners.
+Streamlined the hiring process, cutting time-to-hire by 25%.
+Optimized SQL queries, reducing report runtime by 60%.
+Introduced code review guidelines adopted by 4 teams.
+Spearheaded the adoption of infrastructure as code.
+Contributed to the open-source logging library.
+Supported customers across 3 time zones.
+Assisted with quarterly financial audits.
+Maintained CI pipelines for 20 repositories.
+Trained 50 support agents on the new ticketing system.
+Presented quarterly results to the leadership team.
+Negotiated contracts with 3 shipping carriers, saving $80K per year.
+Resolved 95% of escalated tickets within 24 hours.
+Launched a referral program that generated 1,500 sign-ups.
+Scaled the data platform to process 5TB per day.
+Owned the end-to-end delivery of the analytics module.
+Directed a cross-functional team of 9 people.
+Increased email open rates by 18%.
+Decreased infrastructure costs by $120K per year.
+Grew the newsletter audience to 30,000 subscribers.
+Boosted NPS by 14 points.
+Lowered the defect escape rate by 22%.
+Shortened the release cycle from 6 weeks to 2 weeks.
+Enhanced accessibility of the customer portal.
+Built a data pipeline in Python and Airflow.
+Developed REST APIs for the inventory service.
+Designed a database schema for multi-tenant reporting.
+Implemented single sign-on for internal tools.
+Planned and executed a data center migration.
+Researched and evaluated three observability vendors.
+Reviewed pull requests for the platform team.
+Facilitated sprint retrospectives for two squads.
+Organized a company-wide hackathon with 120 participants.
+Completed the migration of legacy reports ahead of schedule.

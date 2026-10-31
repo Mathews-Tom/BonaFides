@@ -26,6 +26,7 @@ from test_identity import identity as identity
 from bonafides import imports
 from bonafides.commands import canonical_json
 from bonafides.db import Database
+from bonafides.documents import prepare_synthetic
 from bonafides.import_parser import (
     MAX_UPLOAD_BYTES,
     ImportFailure,
@@ -33,6 +34,7 @@ from bonafides.import_parser import (
     ParsedImport,
 )
 from bonafides.problems import Problem
+from bonafides.profile_entries import experience_coverage
 from bonafides.profiles import ProfileSnapshot, _save
 from bonafides.worker import Worker
 from bonafides.workflows import Claim, cancel_workflow, claim, reap
@@ -534,6 +536,119 @@ def test_repeated_sources_can_share_only_an_unchanged_target(importing: ImportCo
     assert importing.batch(repeated["id"])["state"] == "succeeded"
     assert importing.profile() == original
     assert _counts(importing) == before
+
+
+@pytest.mark.postgres
+@pytest.mark.parametrize("replacement_index", [None, 0, 1])
+@pytest.mark.parametrize("mode", ["merge", "replace_all"])
+def test_split_entry_targets_can_overlap_only_when_both_decisions_are_unchanged(
+    importing: ImportContext, replacement_index: int | None, mode: str
+) -> None:
+    entry = "Platform Engineer | Fictional Freight | 2021 – 2023\n- Reduced batch runtime by 30%\n"
+    first = importing.staged("Experience\n" + entry)
+    assert importing.approve(first).status_code == 202
+    importing.run()
+    original = importing.profile()
+    before = _counts(importing)
+    repeated = importing.staged("Experience\n" + entry + "\n" + entry)
+    assert len(repeated["entries"]) == 2
+    targets = repeated["entries"][0]["comparison"]["candidate_claim_ids"]
+    assert len(targets) == 2
+    assert repeated["entries"][1]["comparison"]["candidate_claim_ids"] == targets
+    review = _unchanged_review(repeated, mode)
+    if replacement_index is not None:
+        _decisions(review)[replacement_index].update(action="replace", claim_id=targets[1])
+    response = importing.approve(repeated, review)
+    if replacement_index is not None:
+        assert response.status_code == 422, response.text
+        assert response.json()["code"] == "import_target_invalid"
+        assert importing.batch(repeated["id"])["state"] == "waiting_for_approval"
+        assert importing.profile() == original
+        assert _counts(importing) == before
+    else:
+        assert response.status_code == 202, response.text
+        importing.run()
+        assert importing.batch(repeated["id"])["state"] == "succeeded"
+        current = importing.profile()
+        assert current["current_revision"]["claims"] == original["current_revision"]["claims"]
+        assert current["evidence"] == original["evidence"]
+        if mode == "merge":
+            assert current == original
+            assert _counts(importing) == before
+
+
+@pytest.mark.postgres
+def test_replace_all_overlapping_unchanged_split_sets_keep_every_target_and_its_evidence(
+    importing: ImportContext,
+) -> None:
+    heading = "Platform Engineer | Fictional Freight | 2021 – 2023\n"
+    first_entry = heading + "- Reduced batch runtime by 30%\n"
+    second_entry = heading + "- Reduced deployment time by 20%\n"
+    for entry in (first_entry, second_entry):
+        batch = importing.staged("Experience\n" + entry)
+        assert importing.approve(batch).status_code == 202
+        importing.run()
+    original = importing.profile()
+    claims = original["current_revision"]["claims"]
+    assert len(claims) == 4
+    assert len(original["evidence"]) == 2
+    repeated = importing.staged("Experience\n" + first_entry + "\n" + second_entry)
+    assert len(repeated["entries"]) == 2
+    first_targets, second_targets = [
+        entry["comparison"]["candidate_claim_ids"] for entry in repeated["entries"]
+    ]
+    assert first_targets == [claims[0]["id"], claims[1]["id"]]
+    assert second_targets == [claims[0]["id"], claims[3]["id"]]
+    accepted = importing.approve(repeated, _unchanged_review(repeated, "replace_all"))
+    assert accepted.status_code == 202, accepted.text
+    importing.run()
+    assert importing.batch(repeated["id"])["state"] == "succeeded"
+    current = importing.profile()
+    assert current["current_revision"]["claims"] == [claims[0], claims[1], claims[3]]
+    assert current["evidence"] == original["evidence"]
+
+
+@pytest.mark.postgres
+@pytest.mark.parametrize(
+    ("statement", "needs_attention", "rendering"),
+    [
+        ("Reduced batch runtime by 30 percent", True, "Reduced batch runtime by 30%"),
+        ("Reduced batch runtime by 30%", False, "Reduced batch runtime by 30%"),
+        ("Cut batch runtime by 30%", False, "Cut batch runtime by 30%"),
+    ],
+)
+def test_import_approval_and_document_preserve_exact_source_when_rendering_is_unquoted(
+    importing: ImportContext, statement: str, needs_attention: bool, rendering: str
+) -> None:
+    batch = importing.staged(f"Experience\n{statement}\n")
+    proposal = batch["entries"][0]["claim_proposals"][0]
+    assert proposal["rendering"] == rendering
+    if needs_attention:
+        assert proposal["unparsed"] == [{"text": statement, "reason": "unquoted_rendering"}]
+    else:
+        assert proposal["unparsed"] == []
+    accepted = importing.approve(batch)
+    assert accepted.status_code == 202, accepted.text
+    importing.run()
+    assert importing.batch(batch["id"])["state"] == "succeeded"
+    profile = importing.profile()
+    claim = profile["current_revision"]["claims"][0]
+    assert len(profile["current_revision"]["claims"]) == 1
+    assert claim["rendering"] == statement
+    assert claim["needs_attention"] is needs_attention
+    payload = claim["revision"]["payload"]
+    if needs_attention:
+        assert payload["text"] == statement
+        assert "claim" not in payload
+    else:
+        assert "claim" in payload
+        assert "text" not in payload
+    assert claim["revision"]["evidence_links"][0]["excerpt"] == statement
+    with importing.identity.admin.transaction() as conn:
+        prepared = prepare_synthetic(
+            conn, importing.owner_id, UUID(profile["current_revision"]["id"])
+        )
+    assert [block.text for block in prepared.body.sections[0].blocks] == [statement]
 
 
 @pytest.mark.postgres
@@ -1594,3 +1709,145 @@ def test_projection_groups_plain_date_headers_without_guessing_labels_or_crossin
     assert entries[1].payload.start_date == "2023" and entries[1].payload.end_date is None
     assert entries[2].payload.text.startswith("Project: Alpha\n")
     assert entries[3].payload.text.startswith("Project: Beta\n")
+
+
+CLAIM_SOURCE = (
+    "Experience\nPlatform Engineer | Fictional Freight | 2021 – 2023\n"
+    "- Reduced batch runtime by 30% across 3 warehouses\n"
+    "- Successfully saved $90K in synthetic licensing costs\n"
+)
+
+
+def test_projection_proposes_each_statement_line_as_a_structured_claim() -> None:
+    entries = _entries(CLAIM_SOURCE)
+    assert [entry.kind for entry in entries] == ["experience"]
+    proposals = entries[0].claim_proposals
+    assert [item.quote for item in proposals] == [
+        "Platform Engineer | Fictional Freight | 2021 – 2023",
+        "- Reduced batch runtime by 30% across 3 warehouses",
+        "- Successfully saved $90K in synthetic licensing costs",
+    ]
+    assert proposals[0].claim is None
+    assert [(part.text, part.reason) for part in proposals[0].unparsed] == [
+        ("Platform", "unknown_verb")
+    ]
+    assert proposals[1].rendering == "Reduced batch runtime by 30% across 3 warehouses"
+    assert proposals[1].unparsed == []
+    assert proposals[2].claim is None
+    assert [(part.text, part.reason) for part in proposals[2].unparsed] == [
+        ("Successfully", "unknown_verb")
+    ]
+    assert _entries("Skills\nSQL\n")[0].claim_proposals == []
+
+
+@pytest.mark.postgres
+def test_reviewed_import_adds_structured_claims_only_after_approval(
+    importing: ImportContext,
+) -> None:
+    original = importing.profile()
+    batch = importing.staged(CLAIM_SOURCE)
+    proposals = batch["entries"][0]["claim_proposals"]
+    assert [item["rendering"] for item in proposals] == [
+        None,
+        "Reduced batch runtime by 30% across 3 warehouses",
+        None,
+    ]
+    assert proposals[2]["unparsed"] == [{"text": "Successfully", "reason": "unknown_verb"}]
+    assert importing.profile() == original
+    accepted = importing.approve(batch)
+    assert accepted.status_code == 202, accepted.text
+    assert importing.profile() == original
+    importing.run()
+    claims = importing.profile()["current_revision"]["claims"]
+    assert [(item["rendering"], item["needs_attention"]) for item in claims] == [
+        ("Platform Engineer | Fictional Freight | 2021 – 2023", True),
+        ("Reduced batch runtime by 30% across 3 warehouses", False),
+        ("Successfully saved $90K in synthetic licensing costs", True),
+    ]
+    structured = claims[1]["revision"]["payload"]
+    assert structured["role"] == "Platform Engineer"
+    assert structured["organization"] == "Fictional Freight"
+    assert structured["claim"]["metric"] == {"value": "30", "unit": "percent", "change": "decrease"}
+    assert "text" not in structured
+    assert proposals[1]["quote"] == "- Reduced batch runtime by 30% across 3 warehouses"
+    assert claims[1]["revision"]["evidence_links"][0]["excerpt"] == proposals[1]["quote"][2:]
+    assert (
+        claims[2]["revision"]["payload"]["text"]
+        == "Successfully saved $90K in synthetic licensing costs"
+    )
+    with importing.identity.admin.transaction() as conn:
+        prepared = prepare_synthetic(
+            conn, importing.owner_id, UUID(importing.profile()["current_revision"]["id"])
+        )
+    assert [block.text for block in prepared.body.sections[0].blocks] == [
+        "Platform Engineer | Fictional Freight | 2021 – 2023",
+        "Reduced batch runtime by 30% across 3 warehouses",
+        "Successfully saved $90K in synthetic licensing costs",
+    ]
+
+
+@pytest.mark.parametrize(
+    "heading",
+    [
+        "Platform Engineer, Fictional Freight",
+        "Project: Fictional Ledger",
+        "Data Analyst | Fictional Freight | 2019 – 2020",
+    ],
+)
+def test_entry_headings_are_proposed_as_literal_lines_needing_attention(heading: str) -> None:
+    section = "Projects" if heading.startswith("Project") else "Experience"
+    entries = _entries(f"{section}\n{heading}\n- Reduced batch runtime by 30%\n")
+    proposals = [proposal for entry in entries for proposal in entry.claim_proposals]
+    quotes = [proposal.quote for proposal in proposals]
+    assert heading in quotes
+    assert next(p for p in proposals if p.quote == heading).claim is None
+
+
+@pytest.mark.postgres
+def test_reimporting_a_split_experience_entry_is_unchanged(importing: ImportContext) -> None:
+    first = importing.staged(CLAIM_SOURCE)
+    assert importing.approve(first).status_code == 202
+    importing.run()
+    original = importing.profile()
+    before = _counts(importing)
+    for mode in ("merge", "replace_all"):
+        repeated = importing.staged(CLAIM_SOURCE)
+        comparison = repeated["entries"][0]["comparison"]
+        assert comparison["status"] == "unchanged"
+        assert len(comparison["candidate_claim_ids"]) == 3
+        assert comparison["target_claim_id"] == original["current_revision"]["claims"][0]["id"]
+        accepted = importing.approve(repeated, _unchanged_review(repeated, mode))
+        assert accepted.status_code == 202, accepted.text
+        importing.run()
+        assert importing.batch(repeated["id"])["state"] == "succeeded"
+        current = importing.profile()
+        claims = current["current_revision"]["claims"]
+        assert claims == original["current_revision"]["claims"]
+        if mode == "merge":
+            assert current == original
+            assert _counts(importing) == before
+
+
+@pytest.mark.postgres
+def test_approval_counts_one_claim_per_line_against_the_claim_limit(
+    importing: ImportContext,
+) -> None:
+    with importing.identity.admin.transaction() as conn:
+        conn.execute(
+            text("""INSERT INTO bonafides.professional_claims(owner_id,id,profile_id,kind)
+            SELECT :owner,gen_random_uuid(),p.id,'other' FROM bonafides.profiles p,
+            generate_series(1,98) WHERE p.owner_id=:owner"""),
+            {"owner": importing.owner_id},
+        )
+    batch = importing.staged(CLAIM_SOURCE)
+    refused = importing.approve(batch)
+    assert refused.status_code == 422 and refused.json()["code"] == "claim_limit"
+
+
+def test_undated_entries_are_counted_once_however_many_lines_they_hold() -> None:
+    def line(identifier: str, organization: str) -> dict[str, object]:
+        payload = {"organization": organization, "role": "Engineer", "text": identifier}
+        return {"id": identifier, "kind": "experience", "revision": {"payload": payload}}
+
+    claims = [line("a", "Fictional Freight"), line("b", "Fictional Freight"), line("c", "Other")]
+    assert experience_coverage(claims)["undated_or_open_entries"] == 2

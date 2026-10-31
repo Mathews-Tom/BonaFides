@@ -14,6 +14,10 @@ from sqlalchemy import Connection, text
 from bonafides.commands import canonical_json
 from bonafides.config import Settings
 from bonafides.db import Database
+from bonafides.frozen_migrations.structured_claims_v1 import (
+    STRUCTURED_CLAIMS_SCHEMA,
+    restructure_free_text_claims,
+)
 from bonafides.installation_control import Control, assert_control
 from bonafides.portable_archive import (
     MAX_ARCHIVE_BYTES,
@@ -196,6 +200,10 @@ def import_controlled_owner_data(
             )
             _empty_target(conn, control.owner_id)
             _persist_records(conn, control.owner_id, archive)
+            # Claims written before the structured-claims schema are rewritten exactly as the
+            # schema upgrade rewrites them; the rest stay free text that needs attention.
+            if archive.manifest.source_schema_version < STRUCTURED_CLAIMS_SCHEMA:
+                restructure_free_text_claims(conn, control.owner_id)
             # The final guard also refuses a lease that elapsed during a large insert.
             _authorize(conn, control, digest)
         purge_scope(db, settings, control)

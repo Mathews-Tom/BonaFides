@@ -10,7 +10,7 @@ from sqlalchemy.engine import make_url
 from bonafides.config import Settings
 from bonafides.execution_guard import ExecutionGuard
 
-SCHEMA_VERSION = 27
+SCHEMA_VERSION = 28
 
 
 class Database:

@@ -1302,3 +1302,105 @@ def test_reviewed_safe_language_is_not_a_professional_assertion_escape() -> None
         [],
         "cover_letter",
     ) == [{"path": "/sections/0/blocks/0", "code": "unestablished_nonfactual_text"}]
+
+
+@pytest.mark.postgres
+@pytest.mark.parametrize(
+    ("excerpt", "supported"),
+    [
+        ("Led the billing migration, reducing cloud spend by 30%", True),
+        ("Assisted with the billing migration, reducing cloud spend by 30%", False),
+        ("Spearheaded the billing migration, reducing cloud spend by 30%", False),
+        ("I never led the billing migration, but reduced cloud spend by 30%", False),
+        ("Cut cloud spend by 30% while leading the billing migration", False),
+        ("Led the billing migration, increasing cloud spend by 30%", False),
+        ("Led the billing migration but did not reduce cloud spend by 30%", False),
+        ("Led the billing migration. Separately, cloud spend fell by 30%", False),
+    ],
+)
+def test_contradicted_structured_claim_cannot_escape_review_and_render(
+    catalog: SourceContext, excerpt: str, supported: bool
+) -> None:
+    document = _base(catalog, _profile(catalog))
+    current = catalog.client.get("/api/v1/profile").json()
+    evidence = catalog.client.post(
+        "/api/v1/evidence",
+        json={"payload": {"text": excerpt, "source": "Synthetic review"}},
+        headers=catalog.headers(current["version"]),
+    )
+    assert evidence.status_code == 200, evidence.text
+    evidence_id = evidence.json()["evidence"][-1]["revision"]["id"]
+    claimed = catalog.client.post(
+        "/api/v1/claims",
+        json={
+            "kind": "experience",
+            "payload": {
+                "claim": {
+                    "schema_version": 1,
+                    "verb": "led",
+                    "subject": "the billing migration",
+                    "metric": {
+                        "value": "30",
+                        "unit": "percent",
+                        "change": "decrease",
+                        "measure": "cloud spend",
+                    },
+                }
+            },
+            "evidence_links": [
+                {
+                    "evidence_revision_id": evidence_id,
+                    "support_kind": "user_asserted",
+                    "excerpt": excerpt,
+                }
+            ],
+        },
+        headers=catalog.headers(evidence.json()["version"]),
+    )
+    assert claimed.status_code == 200, claimed.text
+    claim = next(
+        item
+        for item in claimed.json()["current_revision"]["claims"]
+        if item["id"] == claimed.json()["changed_claim_id"]
+    )
+    rendering = "Led the billing migration, reducing cloud spend by 30%"
+    assert claim["rendering"] == rendering
+    base = catalog.client.post(
+        "/api/v1/profile/base-resume",
+        json={
+            "profile_revision_id": claimed.json()["current_revision"]["id"],
+            "template_version": "bonafides-evidence-v1",
+        },
+        headers=catalog.headers(claimed.json()["version"]),
+    )
+    assert base.status_code == (202 if supported else 409), base.text
+    if supported:
+        return
+    assert base.json()["code"] == "profile_claim_not_supported"
+    document = _document(catalog, document["id"])
+    body = copy.deepcopy(document["current_revision"]["body"])
+    blocks = body["sections"][0]["blocks"]
+    blocks.append(
+        {
+            "block_key": "contradicted-claim",
+            "text": rendering,
+            "claim_kind": "factual",
+            "claim_revision_ids": [claim["revision"]["id"]],
+            "evidence_revision_ids": [evidence_id],
+        }
+    )
+    saved = _save(catalog, document, body)
+    assert saved.status_code == 200, saved.text
+    blocked = saved.json()
+    assert f"/sections/0/blocks/{len(blocks) - 1}" in blocked["unsupported_claims"]
+    assert _review(catalog, blocked).status_code == 409
+    rendered = catalog.client.post(
+        f"/api/v1/documents/{document['id']}/renders",
+        json={
+            "revision_id": blocked["current_revision"]["id"],
+            "content_sha256": blocked["current_revision"]["content_sha256"],
+            "format": "pdf",
+        },
+        headers=catalog.headers(blocked["version"]),
+    )
+    assert rendered.status_code == 409 and rendered.json()["code"] == "unsupported_claims"

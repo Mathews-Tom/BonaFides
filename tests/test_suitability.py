@@ -142,6 +142,109 @@ def _coverage(
     }
 
 
+@pytest.mark.postgres
+@pytest.mark.parametrize(
+    ("structured", "evidence_text", "excerpt", "support_kind", "supported"),
+    [
+        (True, "Led the billing migration", "Led the billing migration", "direct", True),
+        (True, "Led the billing migration", "Led the billing migration", "user_asserted", True),
+        (
+            True,
+            "Assisted with the billing migration",
+            "Assisted with the billing migration",
+            "direct",
+            False,
+        ),
+        (
+            True,
+            "Spearheaded the billing migration",
+            "Spearheaded the billing migration",
+            "user_asserted",
+            False,
+        ),
+        (True, "Assisted with the billing migration", "Led the billing migration", "direct", False),
+        (True, "Led the billing migration", "Led the billing migration", "context", False),
+        (False, "Assisted with the billing migration", "Led the billing migration", "direct", True),
+        (
+            False,
+            "Assisted with the billing migration",
+            "Led the billing migration",
+            "user_asserted",
+            True,
+        ),
+        (False, "Led the billing migration", "Led the billing migration", "context", False),
+    ],
+)
+def test_coverage_projection_requires_quoted_rendering_for_structured_claims(
+    catalog: SourceContext,
+    structured: bool,
+    evidence_text: str,
+    excerpt: str,
+    support_kind: str,
+    supported: bool,
+) -> None:
+    current = catalog.client.get("/api/v1/profile").json()
+    evidence = catalog.client.post(
+        "/api/v1/evidence",
+        json={"payload": {"text": evidence_text, "source": "Synthetic review"}},
+        headers=catalog.headers(current["version"]),
+    )
+    assert evidence.status_code == 200, evidence.text
+    evidence_id = evidence.json()["evidence"][-1]["revision"]["id"]
+    rendering = "Led the billing migration"
+    payload: dict[str, object] = (
+        {"claim": {"schema_version": 1, "verb": "led", "subject": "the billing migration"}}
+        if structured
+        else {"text": rendering}
+    )
+    saved = catalog.client.post(
+        "/api/v1/claims",
+        json={
+            "kind": "experience",
+            "payload": payload,
+            "evidence_links": [
+                {
+                    "evidence_revision_id": evidence_id,
+                    "support_kind": support_kind,
+                    "excerpt": excerpt,
+                }
+            ],
+        },
+        headers=catalog.headers(evidence.json()["version"]),
+    )
+    assert saved.status_code == 200, saved.text
+    profile = saved.json()["current_revision"]
+    claim = next(
+        item for item in profile["claims"] if item["id"] == saved.json()["changed_claim_id"]
+    )
+    claim_id, evidence_uuid = UUID(claim["revision"]["id"]), UUID(evidence_id)
+    with catalog.identity.admin.transaction() as conn:
+        projection = suitability._profile_projection(conn, catalog.owner_id, UUID(profile["id"]))
+    expected = {evidence_uuid} if supported else set()
+    assert projection.claims[claim_id]["text"] == rendering
+    assert projection.claims[claim_id]["evidence_revision_ids"] == sorted(
+        str(item) for item in expected
+    )
+    assert projection.links[claim_id] == expected
+    requirement = suitability.Requirement.model_validate(
+        _requirement(1, "billing migration required.", "billing migration required.")
+    )
+    coverage = suitability.Coverage.model_validate(
+        {
+            "requirement_key": "req-1",
+            "coverage": "supported",
+            "claim_revision_ids": [str(claim_id)],
+            "evidence_revision_ids": [evidence_id],
+            "explanation": "billing migration",
+        }
+    )
+    if supported:
+        suitability.validate_coverage([coverage], [requirement], projection)
+    else:
+        with pytest.raises(Problem, match="unconnected_coverage_citation"):
+            suitability.validate_coverage([coverage], [requirement], projection)
+
+
 def _body(
     view: dict[str, Any], profile: dict[str, Any], assessments: list[dict[str, object]]
 ) -> dict[str, object]:

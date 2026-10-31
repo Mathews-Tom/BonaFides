@@ -5,11 +5,29 @@ export interface ProfileContact { email: string; phone: string; location: string
 export interface Snapshot { display_name: string; headline: string; description?: string; claim_revision_ids: string[]; evidence_revision_ids?: string[]; contact?: ProfileContact | null }
 export type ClaimKind = 'identity' | 'experience' | 'education' | 'skill' | 'project' | 'certification' | 'preference' | 'other' | 'language';
 export interface ClaimPayload { text: string; organization?: string; role?: string; start_date?: string; end_date?: string; proficiency?: string; project_url?: string }
+export type ClaimRateWording = 'per' | 'a' | 'an' | 'each' | 'every' | 'adverbial' | 'annual';
+export type ClaimPeriodStyle = 'parenthetical' | 'in_year' | 'range';
+export type ClaimPeriodSeparator = 'hyphen' | 'en_dash' | 'em_dash';
+export interface ClaimMetric { value: string; unit: string; magnitude?: string; change?: string; per?: string; rate_wording?: ClaimRateWording | null; measure?: string }
+export interface ClaimPeriod { start: string; end: string; style?: ClaimPeriodStyle | null; separator?: ClaimPeriodSeparator | null }
+export interface StructuredClaim { schema_version: 1; verb: string; subject: string; scope?: string; metric?: ClaimMetric; period?: ClaimPeriod }
+export type StructuredClaimPayload = Omit<ClaimPayload, 'text'> & { claim: StructuredClaim };
+export type ProfileClaimPayload = ClaimPayload | StructuredClaimPayload;
+export interface ClaimVocabulary { language: string; verbs: { key: string; label: string }[]; units: string[]; changes: string[]; magnitudes: string[]; rates: string[]; rate_wordings: ClaimRateWording[]; period_styles: ClaimPeriodStyle[]; period_separators: ClaimPeriodSeparator[] }
+export interface ClaimRendering { language: string; rendering: string }
+/** Literal view of a saved claim: structured statements contribute their rendering as text. */
+export function literalClaimPayload(claim: PinnedClaim): ClaimPayload {
+  const payload = claim.revision.payload;
+  if (!('claim' in payload)) return payload;
+  const context: Partial<StructuredClaimPayload> = { ...payload };
+  delete context.claim;
+  return { ...context, text: claim.rendering };
+}
 export interface RevisionMetadata { id: string; revision_no: number; content_sha256: string; created_at: string; author_owner_id: string }
 export interface EvidenceRevision extends RevisionMetadata { payload: { text: string; source: string } }
 export interface EvidenceLink { evidence_revision_id: string; support_kind: 'direct' | 'user_asserted' | 'context'; excerpt: string }
-export interface ClaimRevision extends RevisionMetadata { payload: ClaimPayload; evidence_links: (EvidenceLink & { evidence: EvidenceRevision })[] }
-export interface PinnedClaim { id: string; kind: ClaimKind; revision: ClaimRevision }
+export interface ClaimRevision extends RevisionMetadata { payload: ProfileClaimPayload; evidence_links: (EvidenceLink & { evidence: EvidenceRevision })[] }
+export interface PinnedClaim { id: string; kind: ClaimKind; revision: ClaimRevision; rendering: string; needs_attention: boolean }
 export interface ClaimRecord extends PinnedClaim { version: number; archived: boolean; current_revision_id: string }
 export interface PinnedEvidence { id: string; revision: EvidenceRevision }
 export interface EvidenceRecord extends PinnedEvidence { version: number; archived: boolean; current_revision_id: string }
@@ -161,7 +179,9 @@ export const MAX_IMPORT_BYTES = 10 * 1024 * 1024;
 export type ImportMediaType = 'application/pdf' | 'text/plain';
 export interface ImportSource { source_id: string; start: number; end: number; quote: string }
 export interface ImportComparison { status: 'new' | 'unchanged' | 'conflict' | 'needs_attention'; target_claim_id: string | null; candidate_claim_ids: string[] }
-export interface ImportEntry { entry_id: string; kind: ClaimKind | null; identity_field: 'display_name' | 'headline' | null; payload: ClaimPayload; sources: ImportSource[]; issues: string[]; comparison: ImportComparison }
+export interface UnparsedPart { text: string; reason: 'unknown_verb' | 'missing_subject' | 'additional_metric' | 'multiple_statements' | 'invalid_value' | 'unplaced_scope' | 'compound_verb' }
+export interface ClaimLineProposal { source_id: string; quote: string; claim: StructuredClaim | null; rendering: string | null; unparsed: UnparsedPart[] }
+export interface ImportEntry { entry_id: string; kind: ClaimKind | null; identity_field: 'display_name' | 'headline' | null; payload: ClaimPayload; sources: ImportSource[]; issues: string[]; claim_proposals?: ClaimLineProposal[]; comparison: ImportComparison }
 export interface ImportBatch { id: string; workflow_id: string; state: WorkflowState; version: number; media_type: ImportMediaType; byte_size: number; created_at: string; source_sha256: string | null; text: string | null; entries: ImportEntry[]; warnings: string[]; profile_version: number; comparison_profile_version: number; error_code: string | null }
 export interface ImportDecision { source_ids: string[]; action: 'skip' | 'add' | 'replace' | 'unchanged'; claim_id?: string; kind: ClaimKind | null; identity_field: ImportEntry['identity_field']; payload: ClaimPayload }
 export interface ImportMergeRequest { mode: 'merge' | 'replace_all'; replace_all_confirmed: boolean; decisions: ImportDecision[] }

@@ -3,10 +3,8 @@
 
 from __future__ import annotations
 
-import calendar
-import re
 from collections.abc import Callable, Mapping, Sequence
-from datetime import date, datetime
+from datetime import datetime
 from typing import Annotated, Literal, cast
 from uuid import UUID, uuid4
 
@@ -16,6 +14,16 @@ from sqlalchemy import Connection, text
 from sqlalchemy.engine import RowMapping
 
 from bonafides.auth import Owner, StrictModel, require_owner
+from bonafides.claims import (
+    STRUCTURED_KINDS,
+    RenderLanguage,
+    StructuredClaim,
+    claim_text,
+    date_bounds,
+    needs_attention,
+    render_claim,
+    vocabulary,
+)
 from bonafides.commands import command
 from bonafides.db import Database
 from bonafides.problems import Problem
@@ -34,19 +42,6 @@ ClaimKind = Literal[
 ]
 
 
-def _date_bounds(value: str) -> tuple[date, date]:
-    if re.fullmatch(r"[0-9]{4}(?:-[0-9]{2}(?:-[0-9]{2})?)?", value) is None:
-        raise ValueError("invalid_date")
-    parts = [int(part) for part in value.split("-")]
-    year = parts[0]
-    month = parts[1] if len(parts) > 1 else 1
-    day = parts[2] if len(parts) > 2 else 1
-    lower = date(year, month, day)
-    upper_month = month if len(parts) > 1 else 12
-    upper_day = day if len(parts) > 2 else calendar.monthrange(year, upper_month)[1]
-    return lower, date(year, upper_month, upper_day)
-
-
 def _covered_days(intervals: list[tuple[int, int]]) -> int:
     total, last_end = 0, 0
     for start, end in sorted(intervals):
@@ -60,7 +55,8 @@ def experience_coverage(claims: Sequence[Mapping[str, object]]) -> dict[str, int
     """Conservative calendar-day bounds, not verified employment or seniority."""
     minimum: list[tuple[int, int]] = []
     maximum: list[tuple[int, int]] = []
-    unbounded = 0
+    # An entry approved as one claim per line shares its context; count entries, not lines.
+    unbounded: set[object] = set()
     for claim in claims:
         if claim["kind"] != "experience":
             continue
@@ -68,21 +64,21 @@ def experience_coverage(claims: Sequence[Mapping[str, object]]) -> dict[str, int
         payload = cast(Mapping[str, object], revision["payload"])
         start, end = payload.get("start_date"), payload.get("end_date")
         if not isinstance(start, str) or not isinstance(end, str):
-            unbounded += 1
+            context = tuple(payload.get(field) for field in ("organization", "role", "start_date"))
+            unbounded.add(context if any(context[:2]) else claim["id"])
             continue
-        start_min, start_max = _date_bounds(start)
-        end_min, end_max = _date_bounds(end)
+        start_min, start_max = date_bounds(start)
+        end_min, end_max = date_bounds(end)
         minimum.append((start_max.toordinal(), end_min.toordinal()))
         maximum.append((start_min.toordinal(), end_max.toordinal()))
     return {
         "minimum_days": _covered_days(minimum),
         "maximum_days": _covered_days(maximum),
-        "undated_or_open_entries": unbounded,
+        "undated_or_open_entries": len(unbounded),
     }
 
 
-class ClaimPayload(StrictModel):
-    text: str = Field(min_length=1, max_length=4000)
+class ClaimContext(StrictModel):
     organization: str | None = Field(default=None, max_length=200)
     role: str | None = Field(default=None, max_length=200)
     start_date: str | None = Field(default=None, max_length=10)
@@ -108,7 +104,7 @@ class ClaimPayload(StrictModel):
     @classmethod
     def valid_date(cls, value: str | None) -> str | None:
         if value is not None:
-            _date_bounds(value)
+            date_bounds(value)
         return value
 
     @field_validator("end_date")
@@ -118,10 +114,14 @@ class ClaimPayload(StrictModel):
         if (
             isinstance(start, str)
             and value is not None
-            and _date_bounds(start)[0] > _date_bounds(value)[1]
+            and date_bounds(start)[0] > date_bounds(value)[1]
         ):
             raise ValueError("invalid_interval")
         return value
+
+
+class ClaimPayload(ClaimContext):
+    text: str = Field(min_length=1, max_length=4000)
 
     @field_validator("text")
     @classmethod
@@ -129,6 +129,12 @@ class ClaimPayload(StrictModel):
         if not value.strip():
             raise ValueError("blank_text")
         return value
+
+
+class StructuredClaimPayload(ClaimContext):
+    """Claim schema v1: the stored statement is its structure, never a sentence."""
+
+    claim: StructuredClaim
 
 
 class EvidencePayload(StrictModel):
@@ -151,12 +157,28 @@ class EvidenceLink(StrictModel):
 
 class ClaimWrite(StrictModel):
     kind: ClaimKind
-    payload: ClaimPayload
+    payload: StructuredClaimPayload | ClaimPayload
     evidence_links: list[EvidenceLink] = Field(min_length=1, max_length=16)
+
+    @field_validator("payload")
+    @classmethod
+    def structured_kind(
+        cls, value: StructuredClaimPayload | ClaimPayload, info: ValidationInfo
+    ) -> StructuredClaimPayload | ClaimPayload:
+        if isinstance(value, StructuredClaimPayload) and info.data.get("kind") not in (
+            STRUCTURED_KINDS
+        ):
+            raise ValueError("structured_claim_kind")
+        return value
 
 
 class EvidenceWrite(StrictModel):
     payload: EvidencePayload
+
+
+class RenderRequest(StrictModel):
+    claim: StructuredClaim
+    language: RenderLanguage = "en"
 
 
 class RestoreProfile(StrictModel):
@@ -223,10 +245,13 @@ def hydrate_claim(
         }
         for link in links
     ]
+    payload = cast(dict[str, object], row["payload"])
     result: dict[str, object] = {
         "id": str(row["entity_id"]),
         "kind": row["kind"],
         "revision": revision,
+        "rendering": claim_text(payload),
+        "needs_attention": needs_attention(str(row["kind"]), payload),
     }
     if not historical:
         result.update(
@@ -346,6 +371,55 @@ def write_evidence(
     return result
 
 
+def append_claim_revision(
+    conn: Connection,
+    owner_id: UUID,
+    entity_id: UUID,
+    payload: dict[str, object],
+    evidence_links: Sequence[EvidenceLink],
+    *,
+    increment: int,
+) -> UUID:
+    """Append an immutable claim revision with its evidence links and make it current."""
+    revision_id = uuid4()
+    conn.execute(
+        text("""INSERT INTO bonafides.claim_revisions(owner_id,id,claim_id,revision_no,payload,content_sha256)
+        SELECT :owner,:revision,:id,COALESCE(max(revision_no),0)+1,CAST(:payload AS jsonb),:sha
+        FROM bonafides.claim_revisions WHERE owner_id=:owner AND claim_id=:id"""),
+        {
+            "owner": owner_id,
+            "revision": revision_id,
+            "id": entity_id,
+            "payload": canonical(payload),
+            "sha": content_hash(payload),
+        },
+    )
+    for link in evidence_links:
+        conn.execute(
+            text("""INSERT INTO bonafides.claim_evidence_links(owner_id,claim_revision_id,evidence_revision_id,support_kind,excerpt)
+            VALUES(:owner,:claim,:evidence,:support,:excerpt)"""),
+            {
+                "owner": owner_id,
+                "claim": revision_id,
+                "evidence": link.evidence_revision_id,
+                "support": link.support_kind,
+                "excerpt": link.excerpt,
+            },
+        )
+    conn.execute(
+        text(
+            "UPDATE bonafides.professional_claims SET current_revision_id=:revision,version=version+:increment WHERE owner_id=:owner AND id=:id"
+        ),
+        {
+            "owner": owner_id,
+            "id": entity_id,
+            "revision": revision_id,
+            "increment": increment,
+        },
+    )
+    return revision_id
+
+
 def write_claim(
     conn: Connection, owner_id: UUID, body: ClaimWrite, entity_id: UUID | None
 ) -> dict[str, object]:
@@ -384,42 +458,13 @@ def write_claim(
         if current["kind"] != body.kind:
             raise Problem(422, "claim_kind_immutable")
         previous = current["current_revision_id"]
-    revision_id = uuid4()
-    payload = body.payload.model_dump(mode="json", exclude_none=True)
-    conn.execute(
-        text("""INSERT INTO bonafides.claim_revisions(owner_id,id,claim_id,revision_no,payload,content_sha256)
-        SELECT :owner,:revision,:id,COALESCE(max(revision_no),0)+1,CAST(:payload AS jsonb),:sha
-        FROM bonafides.claim_revisions WHERE owner_id=:owner AND claim_id=:id"""),
-        {
-            "owner": owner_id,
-            "revision": revision_id,
-            "id": entity_id,
-            "payload": canonical(payload),
-            "sha": content_hash(payload),
-        },
-    )
-    for link in body.evidence_links:
-        conn.execute(
-            text("""INSERT INTO bonafides.claim_evidence_links(owner_id,claim_revision_id,evidence_revision_id,support_kind,excerpt)
-            VALUES(:owner,:claim,:evidence,:support,:excerpt)"""),
-            {
-                "owner": owner_id,
-                "claim": revision_id,
-                "evidence": link.evidence_revision_id,
-                "support": link.support_kind,
-                "excerpt": link.excerpt,
-            },
-        )
-    conn.execute(
-        text(
-            "UPDATE bonafides.professional_claims SET current_revision_id=:revision,version=version+:increment WHERE owner_id=:owner AND id=:id"
-        ),
-        {
-            "owner": owner_id,
-            "id": entity_id,
-            "revision": revision_id,
-            "increment": 0 if creating else 1,
-        },
+    revision_id = append_claim_revision(
+        conn,
+        owner_id,
+        entity_id,
+        body.payload.model_dump(mode="json", exclude_none=True),
+        body.evidence_links,
+        increment=0 if creating else 1,
     )
     ids = [revision_id if item == previous else item for item in snapshot.claim_revision_ids]
     if revision_id not in ids:
@@ -587,6 +632,19 @@ def build_entry_router(db: Database) -> APIRouter:
         response.status_code = status
         response.headers["ETag"] = f'"{result["version"]}"'
         return result
+
+    @router.get("/claims/vocabulary")
+    def claim_vocabulary(
+        owner: Annotated[Owner, Depends(require_owner)], language: RenderLanguage = "en"
+    ) -> dict[str, object]:
+        return vocabulary(language)
+
+    @router.post("/claims/render")
+    def render(
+        body: RenderRequest, owner: Annotated[Owner, Depends(require_owner)]
+    ) -> dict[str, object]:
+        # Side-effect free preview; the stored claim is rendered by the same function on read.
+        return {"language": body.language, "rendering": render_claim(body.claim, body.language)}
 
     @router.get("/claims")
     def claims(owner: Annotated[Owner, Depends(require_owner)]) -> dict[str, object]:

@@ -6,10 +6,11 @@ import { useCallback, useState } from 'react';
 import { ResumeImport } from './ResumeImport';
 import { Api, ApiError, MAX_IMPORT_BYTES, type ClaimRecord, type ImportBatch, type ImportEntry, type ImportMergeRequest, type Profile } from './api';
 
+const oldPayload = { text: 'Existing fictional work.', organization: 'Fictional North', role: 'Engineer', start_date: '2020', end_date: '2022' };
 const oldClaim: ClaimRecord = {
-  id: 'claim-work', kind: 'experience', archived: false, version: 1, current_revision_id: 'claim-r1',
+  id: 'claim-work', kind: 'experience', archived: false, version: 1, current_revision_id: 'claim-r1', rendering: oldPayload.text, needs_attention: true,
   revision: { id: 'claim-r1', revision_no: 1, content_sha256: 'c'.repeat(64), created_at: '2026-01-01', author_owner_id: 'owner',
-    payload: { text: 'Existing fictional work.', organization: 'Fictional North', role: 'Engineer', start_date: '2020', end_date: '2022' }, evidence_links: [] },
+    payload: oldPayload, evidence_links: [] },
 };
 const profile: Profile = {
   id: 'profile', version: 1, current_revision: { id: 'profile-r1', revision_no: 1, content_sha256: 'a'.repeat(64), created_at: '2026-01-01', author_owner_id: 'owner',
@@ -88,6 +89,56 @@ function approve() { return screen.getByRole('button', { name: /^Save profile$|^
 afterEach(() => { vi.useRealTimers(); vi.restoreAllMocks(); });
 
 describe('structured résumé review', () => {
+  it.each(['new', 'conflict'] as const)('warns before accepting a structured target as text for a %s replacement or source attachment, even when keeping its description', async status => {
+    const user = userEvent.setup(); const batch = staged();
+    const rendering = 'Reduced batch runtime by 30% during 2020–2022.';
+    const structured: ClaimRecord = { ...oldClaim, rendering, revision: { ...oldClaim.revision, payload: {
+      organization: oldPayload.organization, role: oldPayload.role, start_date: oldPayload.start_date, end_date: oldPayload.end_date,
+      claim: { schema_version: 1, verb: 'reduced', subject: 'batch runtime', metric: { value: '30', unit: 'percent', change: 'decrease' }, period: { start: '2020', end: '2022' } },
+    } } };
+    batch.entries = [{ ...batch.entries[0]!, payload: { ...oldPayload, text: quote },
+      comparison: { status, target_claim_id: status === 'conflict' ? structured.id : null, candidate_claim_ids: [structured.id] } }];
+    const { api, state } = server(batch);
+    const saved = { ...profile, current_revision: { ...profile.current_revision, claims: [structured] } };
+    render(<ResumeImport api={api} profile={saved} disabled={false} onProfile={vi.fn()} />); await open(user);
+    if (status === 'new') expect(screen.queryByText(/Accepting this replacement or source attachment converts/)).not.toBeInTheDocument();
+    await edit(user);
+    if (status === 'new') {
+      await user.selectOptions(screen.getByLabelText('Existing profile entry'), 'replace');
+      await user.selectOptions(screen.getByLabelText('Replacement target'), structured.id);
+    }
+    const warning = screen.getByRole('note');
+    expect(warning).toHaveTextContent('discards its structured verb, metric, and period');
+    expect(warning).toHaveTextContent('Choosing “Keep current description” keeps only the rendered text; it still converts the stored representation');
+    expect(warning).toHaveTextContent('The import request sends the Description shown in this preview as text, not a structured claim');
+    expect(state.submissions).toHaveLength(0);
+    await user.click(screen.getByRole('button', { name: 'Keep current description' }));
+    expect(warning).toBeVisible();
+    expect(screen.getByLabelText('Description')).toHaveValue(rendering);
+    expect(within(screen.getByRole('article', { name: 'Preview entry 1' })).getByText(rendering, { selector: 'dd' })).toBeVisible();
+    await user.click(attest()); await user.click(approve());
+    expect(state.submissions[0]?.body.decisions).toEqual([expect.objectContaining({
+      action: 'replace', claim_id: structured.id, payload: { ...oldPayload, text: rendering },
+    })]);
+    expect(state.submissions[0]?.body.decisions[0]?.payload).not.toHaveProperty('claim');
+  });
+
+  it.each(['literal', 'unchanged', 'skipped'] as const)('does not warn about structured conversion for a %s target or decision', async scenario => {
+    const user = userEvent.setup(); const batch = staged();
+    const target: ClaimRecord = scenario === 'literal' ? oldClaim : { ...oldClaim, revision: { ...oldClaim.revision,
+      payload: { claim: { schema_version: 1, verb: 'built', subject: 'fictional systems', metric: { value: '3', unit: 'count' }, period: { start: '2020', end: '2022' } } } } };
+    batch.entries = [{ ...batch.entries[0]!, payload: scenario === 'unchanged' ? { text: target.rendering } : { ...oldPayload },
+      comparison: { status: scenario === 'unchanged' ? 'unchanged' : 'conflict', target_claim_id: target.id, candidate_claim_ids: [target.id] } }];
+    const { api } = server(batch);
+    const saved = { ...profile, current_revision: { ...profile.current_revision, claims: [target] } };
+    render(<ResumeImport api={api} profile={saved} disabled={false} onProfile={vi.fn()} />); await open(user);
+    if (scenario === 'skipped') {
+      expect(screen.getByText(/Accepting this replacement or source attachment converts/)).toBeVisible();
+      await edit(user); await user.click(screen.getByRole('button', { name: 'Exclude entry' }));
+    } else await edit(user);
+    expect(screen.queryByText(/Accepting this replacement or source attachment converts/)).not.toBeInTheDocument();
+  });
+
   it('keeps the saved description visible in merge and replace-all previews without making it an imported fact', async () => {
     const user = userEvent.setup(); const { api, state } = server();
     const described = { ...profile, current_revision: { ...profile.current_revision, snapshot: { ...profile.current_revision.snapshot, description: 'Saved personal introduction.' } } };
@@ -157,9 +208,37 @@ describe('structured résumé review', () => {
   });
 
 
+  it('shows each statement line as a proposed structured claim with unparsed parts flagged before approval', async () => {
+    const user = userEvent.setup(); const batch = staged();
+    batch.entries = [{ ...batch.entries[0]!, claim_proposals: [
+      { source_id: 'source-work', quote: '- Reduced fictional batch runtime by 30%', claim: { schema_version: 1, verb: 'reduced', subject: 'fictional batch runtime', metric: { value: '30', unit: 'percent', change: 'decrease' } }, rendering: 'Reduced fictional batch runtime by 30%', unparsed: [] },
+      { source_id: 'source-extra', quote: '- Saved $90K in fictional costs', claim: null, rendering: null, unparsed: [{ text: 'Saved', reason: 'unknown_verb' }] },
+    ] }];
+    const { api, state } = server(batch); render(<Harness api={api} />); await open(user);
+    const proposals = within(screen.getByRole('article', { name: 'Preview entry 1' })).getByRole('region', { name: 'Proposed structured claims' });
+    expect(within(proposals).getByText('Reduced fictional batch runtime by 30%')).toBeVisible();
+    expect(within(proposals).getByText('No structured claim proposed for “- Saved $90K in fictional costs”.')).toBeVisible();
+    expect(within(proposals).getByText('Unparsed: “Saved” (unknown verb)')).toBeVisible();
+    expect(within(proposals).getByText(/Fully parsed lines become structured claims/)).toBeVisible();
+    expect(state.submissions).toEqual([]);
+  });
+  it('shows every repeated unparsed part without duplicate-key warnings', async () => {
+    const error = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const user = userEvent.setup(); const batch = staged();
+    batch.entries = [{ ...batch.entries[0]!, claim_proposals: [{
+      source_id: 'source-work', quote: 'Built 5% faster 5% cheaper service',
+      claim: { schema_version: 1, verb: 'built', subject: '5% faster 5% cheaper service' },
+      rendering: 'Built 5% faster 5% cheaper service',
+      unparsed: [{ text: '5%', reason: 'additional_metric' }, { text: '5%', reason: 'additional_metric' }],
+    }] }];
+    const { api } = server(batch); render(<Harness api={api} />); await open(user);
+    const parts = within(screen.getByRole('list', { name: 'Unparsed parts' }));
+    expect(parts.getAllByText('Unparsed: “5%” (additional metric)')).toHaveLength(2);
+    expect(error).not.toHaveBeenCalled();
+  });
   it('retains exact uniquely matched claims without a per-entry review or new-source promise', async () => {
     const user = userEvent.setup(); const batch = staged();
-    batch.entries = [{ ...batch.entries[0]!, payload: { ...oldClaim.revision.payload }, comparison: { status: 'unchanged', target_claim_id: oldClaim.id, candidate_claim_ids: [oldClaim.id] } }];
+    batch.entries = [{ ...batch.entries[0]!, payload: { ...oldPayload }, comparison: { status: 'unchanged', target_claim_id: oldClaim.id, candidate_claim_ids: [oldClaim.id] } }];
     const { api, state } = server(batch); render(<Harness api={api} />); await open(user);
     expect(within(screen.getByRole('article', { name: 'Preview entry 1' })).getByText('Unchanged')).toBeVisible();
     expect(attest()).toBeEnabled(); expect(approve()).toHaveAccessibleName('Complete import without profile changes');
@@ -168,6 +247,34 @@ describe('structured résumé review', () => {
     expect(screen.getByText(/This exact saved entry is retained without new evidence/)).toBeVisible();
     await user.click(attest()); await user.click(approve());
     expect(state.submissions[0]?.body.decisions[0]).toMatchObject({ action: 'unchanged', claim_id: oldClaim.id, payload: oldClaim.revision.payload });
+  });
+  it.each([1, 2])('retains an entry an earlier approval saved as %i claims without duplicate retained previews', async count => {
+    const user = userEvent.setup(); const batch = staged();
+    const proposals = Array.from({ length: count }, (_, index) => ({
+      source_id: `source-line-${index + 1}`, quote: `- Built fictional system ${index + 1}.`,
+      claim: { schema_version: 1 as const, verb: 'built' as const, subject: `fictional system ${index + 1}` },
+      rendering: `Built fictional system ${index + 1}.`, unparsed: [],
+    }));
+    const lines: ClaimRecord[] = proposals.map((proposal, index) => ({ ...oldClaim, id: `claim-line-${index + 1}`, rendering: proposal.rendering,
+      revision: { ...oldClaim.revision, id: `claim-line-${index + 1}-revision`, payload: { claim: proposal.claim } } }));
+    const saved = { ...profile, current_revision: { ...profile.current_revision, claims: [...lines, oldClaim] } };
+    batch.entries = [{ ...batch.entries[0]!, payload: { text: proposals.map(proposal => proposal.quote).join('\n') }, claim_proposals: proposals,
+      comparison: { status: 'unchanged', target_claim_id: lines[0]!.id, candidate_claim_ids: lines.map(line => line.id) } }];
+    const { api, state } = server(batch); render(<ResumeImport api={api} profile={saved} disabled={false} onProfile={() => undefined} />); await open(user);
+    const preview = within(screen.getByRole('region', { name: 'Assembled profile preview' }));
+    const proposed = within(preview.getByRole('region', { name: 'Proposed structured claims' }));
+    expect(proposed.getByText('These lines match saved claims. Nothing new is saved; the existing claims and evidence are retained.')).toBeVisible();
+    expect(proposed.queryByText(/saved as one free-text statement|Approving saves one claim per line/)).not.toBeInTheDocument();
+    expect(preview.getAllByRole('article')).toHaveLength(1);
+    expect(preview.getAllByText('Current entry retained')).toHaveLength(1);
+    expect(preview.getByText(oldPayload.text, { selector: 'dd' })).toBeVisible();
+    for (const proposal of proposals) expect(preview.getAllByText(proposal.rendering)).toHaveLength(1);
+    expect(screen.queryByText('The saved value changed. Compare this entry with the latest profile.')).not.toBeInTheDocument();
+    expect(screen.queryByText(/Accepting this replacement or source attachment converts/)).not.toBeInTheDocument();
+    expect(screen.getByText(/1 unchanged · 0 excluded · 0 need attention/)).toBeVisible();
+    expect(attest()).toBeEnabled(); expect(approve()).toHaveAccessibleName('Complete import without profile changes');
+    await user.click(attest()); await user.click(approve());
+    expect(state.submissions[0]?.body.decisions[0]).toMatchObject({ action: 'unchanged', claim_id: 'claim-line-1', payload: batch.entries[0]!.payload });
   });
   it('allows repeated source occurrences that retain the same unchanged claim without duplicate-target approval', async () => {
     const user = userEvent.setup(); const batch = staged();
@@ -202,7 +309,7 @@ describe('structured résumé review', () => {
 
   it('invalidates an edited unchanged value immediately without requiring Keep after a valid correction', async () => {
     const user = userEvent.setup(); const batch = staged();
-    batch.entries = [{ ...batch.entries[0]!, payload: { ...oldClaim.revision.payload }, comparison: { status: 'unchanged', target_claim_id: oldClaim.id, candidate_claim_ids: [oldClaim.id] } }];
+    batch.entries = [{ ...batch.entries[0]!, payload: { ...oldPayload }, comparison: { status: 'unchanged', target_claim_id: oldClaim.id, candidate_claim_ids: [oldClaim.id] } }];
     const { api, state } = server(batch); render(<Harness api={api} />); await open(user);
     await user.click(attest()); await edit(user); await user.type(screen.getByLabelText('Description'), ' Corrected by owner.');
     expect(attest()).not.toBeChecked(); expect(attest()).toBeEnabled();
@@ -336,16 +443,16 @@ describe('local résumé source buffers', () => {
 describe('reviewed conflict resolution and durable completion', () => {
   it('preselects suggested targets, retains current preview fields until chosen and preserves typed edits through a 412 rebase', async () => {
     const user = userEvent.setup(); const batch = staged();
-    batch.entries[0] = { ...batch.entries[0]!, payload: { ...oldClaim.revision.payload, text: quote }, comparison: { status: 'conflict', target_claim_id: oldClaim.id, candidate_claim_ids: [oldClaim.id] } };
+    batch.entries[0] = { ...batch.entries[0]!, payload: { ...oldPayload, text: quote }, comparison: { status: 'conflict', target_claim_id: oldClaim.id, candidate_claim_ids: [oldClaim.id] } };
     const { api, state } = server(batch); const acceptedProfiles = vi.fn(); render(<Harness api={api} onProfile={acceptedProfiles} />);
     await open(user);
-    expect(within(screen.getByRole('article', { name: 'Preview entry 1' })).getByText(oldClaim.revision.payload.text)).toBeVisible();
+    expect(within(screen.getByRole('article', { name: 'Preview entry 1' })).getByText(oldPayload.text)).toBeVisible();
     expect(attest()).toBeDisabled(); await edit(user);
     expect(screen.getByLabelText('Replacement target')).toHaveValue(oldClaim.id);
     await user.clear(screen.getByLabelText('Description')); await user.type(screen.getByLabelText('Description'), 'My retained typed statement.');
     expect(attest()).toBeEnabled(); await user.click(attest()); state.failures.push(new ApiError(412, 'version_conflict')); await user.click(approve());
     expect(await screen.findByRole('alert')).toHaveTextContent('A newer revision exists');
-    const newerClaim = { ...oldClaim, revision: { ...oldClaim.revision, payload: { ...oldClaim.revision.payload, role: 'Senior engineer' } } };
+    const newerClaim = { ...oldClaim, revision: { ...oldClaim.revision, payload: { ...oldPayload, role: 'Senior engineer' } } };
     state.currentProfile = { ...profile, version: 2, current_revision: { ...profile.current_revision, id: 'profile-r2', revision_no: 2, claims: [newerClaim] } };
     state.batch = { ...state.batch, comparison_profile_version: 2 };
     await user.click(screen.getByRole('button', { name: 'Load current profile for comparison' }));
@@ -382,10 +489,10 @@ describe('reviewed conflict resolution and durable completion', () => {
 
   it('blocks stale comparison versions and invalidates previously unchanged targets after loading the latest profile', async () => {
     const user = userEvent.setup(); const batch = staged(); batch.comparison_profile_version = 2;
-    batch.entries = [{ ...batch.entries[0]!, payload: { ...oldClaim.revision.payload }, comparison: { status: 'unchanged', target_claim_id: oldClaim.id, candidate_claim_ids: [oldClaim.id] } }];
+    batch.entries = [{ ...batch.entries[0]!, payload: { ...oldPayload }, comparison: { status: 'unchanged', target_claim_id: oldClaim.id, candidate_claim_ids: [oldClaim.id] } }];
     const { api, state } = server(batch); render(<Harness api={api} />); await open(user);
     expect(attest()).toBeDisabled(); expect(approve()).toBeDisabled();
-    state.currentProfile = { ...profile, version: 2, current_revision: { ...profile.current_revision, revision_no: 2, claims: [{ ...oldClaim, revision: { ...oldClaim.revision, payload: { ...oldClaim.revision.payload, role: 'Changed saved role' } } }] } };
+    state.currentProfile = { ...profile, version: 2, current_revision: { ...profile.current_revision, revision_no: 2, claims: [{ ...oldClaim, revision: { ...oldClaim.revision, payload: { ...oldPayload, role: 'Changed saved role' } } }] } };
     state.batch = { ...batch, entries: [{ ...batch.entries[0]!, comparison: { status: 'conflict', target_claim_id: oldClaim.id, candidate_claim_ids: [oldClaim.id] } }] };
     await user.click(screen.getByRole('button', { name: 'Load current profile for comparison' })); await user.click(await screen.findByRole('button', { name: 'Use latest profile and retain review' }));
     expect(attest()).toBeDisabled(); await edit(user); expect(screen.getByLabelText('Existing profile entry')).toHaveValue('replace');
@@ -395,7 +502,7 @@ describe('reviewed conflict resolution and durable completion', () => {
 
   it('completes an all-unchanged import and releases other editors without requiring a new profile revision', async () => {
     const user = userEvent.setup(); const batch = staged();
-    batch.entries = [{ ...batch.entries[0]!, payload: { ...oldClaim.revision.payload }, comparison: { status: 'unchanged', target_claim_id: oldClaim.id, candidate_claim_ids: [oldClaim.id] } }];
+    batch.entries = [{ ...batch.entries[0]!, payload: { ...oldPayload }, comparison: { status: 'unchanged', target_claim_id: oldClaim.id, candidate_claim_ids: [oldClaim.id] } }];
     const { api, state } = server(batch); render(<Harness api={api} />); await open(user); await user.click(attest()); await user.click(approve());
     expect(screen.getByRole('button', { name: 'Other profile editor' })).toBeDisabled();
     state.batch = { ...state.batch, state: 'succeeded' };
