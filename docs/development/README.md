@@ -970,6 +970,16 @@ or attaching source evidence warns before acceptance that it converts the target
 text and discards structured verb, metric and period fields, even when keeping the current
 description. Unchanged and skipped decisions do not perform that conversion.
 
+Imported experience/project entries show one proposal per source line, including headings.
+The mapper may recognize a same-meaning verb at the same or lower ownership rank, but a
+fully parsed proposal is eligible for structured approval only when its complete rendering
+passes that same strict source-quotation rule. Synonym changes and reformatted metrics or
+dates are flagged `unquoted_rendering`; approval retains the original line as free text
+needing attention rather than presenting a reworded sentence as grounded. Other unplaced
+parts remain visible and also select literal approval. The profile stays unchanged until
+the approved import command runs. Reimports match all saved line claims, preserve their
+unchanged status and supporting evidence, and do not duplicate them in the review preview.
+
 ## Development gates
 
 Backend gates require a disposable PostgreSQL 18 database, distinct migration/runtime roles and tracked migrations. Never use a personal or production database. `.github/backend_gate.py` creates an isolated CI namespace, PostgreSQL test database `bonafides_test` and scoped credentials, then runs the following gates; it also needs a locally built `bonafides:local` image for its one-shot preparation helper:

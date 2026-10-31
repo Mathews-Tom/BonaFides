@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import pytest
 
-from bonafides.claim_mapping import _VERB_PHRASES, map_line
+from bonafides.claim_mapping import _PARTICIPLES, _VERB_PHRASES, map_line
 from bonafides.claims import OWNERSHIP_VERBS, grounded
 
 
@@ -17,7 +17,7 @@ from bonafides.claims import OWNERSHIP_VERBS, grounded
             "Reduced checkout latency by 35% across 4 regions",
         ),
         (
-            "• Spearheaded vendor consolidation, saving $1.2M annually",
+            "• Led vendor consolidation, saving $1.2M per year",
             "Led vendor consolidation, saving $1.2M per year",
         ),
         (
@@ -28,7 +28,7 @@ from bonafides.claims import OWNERSHIP_VERBS, grounded
             "Led migration of 40 services to Kubernetes for the payments team (2021-2022)",
             "Led migration of 40 services to Kubernetes for the payments team (2021–2022)",
         ),
-        ("Grew revenue by 3x in 2020.", "Increased revenue by 3x (2020)"),
+        ("Increased revenue by 3x (2020).", "Increased revenue by 3x (2020)"),
         ("Contributed to the open-source scheduler", "Contributed to the open-source scheduler"),
         (
             "Improved test coverage by 25% through contract tests",
@@ -43,6 +43,25 @@ def test_representable_lines_map_to_grounded_claims(line: str, rendering: str) -
     assert mapping.rendering == rendering
     assert mapping.claim is not None and grounded(mapping.claim, line)
     assert map_line(line) == mapping
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        "Spearheaded vendor consolidation, saving $1.2M annually",
+        "Grew revenue by 3x in 2020.",
+        "Cut cloud spend by 30%",
+        "Reduced latency by 30 percent",
+        "Led migration for checkout in 2020",
+    ],
+)
+def test_reworded_proposals_need_attention_instead_of_claiming_grounding(line: str) -> None:
+    mapping = map_line(line)
+    assert mapping.claim is not None
+    assert mapping.rendering is not None
+    assert not mapping.representable
+    assert not grounded(mapping.claim, line)
+    assert [(part.text, part.reason) for part in mapping.unparsed] == [(line, "unquoted_rendering")]
 
 
 @pytest.mark.parametrize(
@@ -103,14 +122,30 @@ def test_a_verb_with_another_meaning_stays_unknown(phrase: str) -> None:
 
 
 @pytest.mark.parametrize("phrase", sorted(_VERB_PHRASES))
-def test_a_vocabulary_verb_maps_to_itself_and_every_phrase_grounds_its_line(phrase: str) -> None:
+def test_vocabulary_verbs_keep_their_meaning_without_grounding_synonyms(phrase: str) -> None:
     line = f"{phrase.capitalize()} the quarterly vendor review by 20%"
     mapping = map_line(line)
     assert mapping.claim is not None, phrase
     if phrase in OWNERSHIP_VERBS:
         assert mapping.claim.verb == phrase
-    assert grounded(mapping.claim, line), phrase
+    if grounded(mapping.claim, line):
+        assert not any(part.reason == "unquoted_rendering" for part in mapping.unparsed)
+    else:
+        assert not mapping.representable, phrase
     assert grounded(mapping.claim, mapping.rendering or ""), phrase
+
+
+@pytest.mark.parametrize("participle", sorted(_PARTICIPLES))
+def test_every_participle_obeys_literal_grounding(participle: str) -> None:
+    line = f"Built a dashboard, {participle} review speed by 20%"
+    mapping = map_line(line)
+    assert mapping.claim is not None
+    assert mapping.representable == (participle in {"reducing", "increasing", "improving"})
+    assert grounded(mapping.claim, line) == mapping.representable
+    if not mapping.representable:
+        assert [(part.text, part.reason) for part in mapping.unparsed] == [
+            (line, "unquoted_rendering")
+        ]
 
 
 def test_oversaw_and_orchestrated_map_at_or_below_their_meaning() -> None:
@@ -139,4 +174,4 @@ def test_a_scope_split_by_the_metric_is_flagged_not_joined() -> None:
         ("for checkout", "unplaced_scope")
     ]
     assert not mapping.representable
-    assert grounded(mapping.claim, line)
+    assert not grounded(mapping.claim, line)

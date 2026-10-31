@@ -2,8 +2,8 @@
 """Deterministic mapping of one English résumé line to a claim schema v1 proposal.
 
 The mapper never guesses: a part it cannot place is returned as an unparsed part with a reason,
-and a line without a recognized ownership verb or subject yields no claim. Every literal part of
-a proposal is a verbatim slice of the line, so the line itself grounds the proposal.
+and a line without a recognized ownership verb or subject yields no claim. A complete proposal
+is accepted only when the source quotes its rendered sentence under the strict grounding rule.
 """
 
 from __future__ import annotations
@@ -23,6 +23,7 @@ from bonafides.claims import (
     MetricUnit,
     OwnershipVerb,
     StructuredClaim,
+    grounded,
     render_claim,
 )
 
@@ -33,6 +34,7 @@ UnparsedReason = Literal[
     "multiple_statements",
     "invalid_value",
     "unplaced_scope",
+    "unquoted_rendering",
 ]
 
 # Declared normalization: case-insensitive whole-word prefixes, longest phrase first.
@@ -351,6 +353,10 @@ def map_line(line: str) -> ClaimMapping:
     except ValidationError:
         unparsed.append(UnparsedPart(text=statement, reason="invalid_value"))
         return ClaimMapping(claim=None, rendering=None, unparsed=unparsed)
+    # Recognizing synonyms or metric notation does not make a reworded sentence evidence.
+    # Keep the proposal inspectable, but approval falls back to the original literal line.
+    if not unparsed and not grounded(claim, line):
+        unparsed.append(UnparsedPart(text=statement_text(line), reason="unquoted_rendering"))
     return ClaimMapping(claim=claim, rendering=render_claim(claim), unparsed=unparsed)
 
 
