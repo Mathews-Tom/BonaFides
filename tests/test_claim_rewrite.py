@@ -74,7 +74,12 @@ def test_free_text_claims_are_rewritten_in_place_and_restore_brings_back_the_tex
                 "payload": {
                     "text": ". ".join(excerpt for _, excerpt in statements),
                     "source": "Synthetic review",
-                }
+                },
+                "provenance": {
+                    "source_type": "owner_statement",
+                    "privacy_class": "private",
+                    "employer_owned": False,
+                },
             },
         )
         evidence_id = _json(evidence)["evidence"][0]["revision"]["id"]

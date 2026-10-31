@@ -1325,7 +1325,14 @@ def test_contradicted_structured_claim_cannot_escape_review_and_render(
     current = catalog.client.get("/api/v1/profile").json()
     evidence = catalog.client.post(
         "/api/v1/evidence",
-        json={"payload": {"text": excerpt, "source": "Synthetic review"}},
+        json={
+            "payload": {"text": excerpt, "source": "Synthetic review"},
+            "provenance": {
+                "source_type": "owner_statement",
+                "privacy_class": "private",
+                "employer_owned": False,
+            },
+        },
         headers=catalog.headers(current["version"]),
     )
     assert evidence.status_code == 200, evidence.text

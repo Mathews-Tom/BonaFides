@@ -105,8 +105,10 @@ def test_nonempty_document_evidence_and_blob_survive_byte_and_relational_validat
             {"owner": catalog.owner_id, "id": evidence_id, "revision": revision_id},
         )
         conn.execute(
-            text("""INSERT INTO bonafides.evidence_revisions(owner_id,id,evidence_id,revision_no,payload,blob_id,content_sha256)
-            VALUES(:owner,:id,:evidence,1,CAST(:payload AS jsonb),:blob,:sha)"""),
+            text("""INSERT INTO bonafides.evidence_revisions(owner_id,id,evidence_id,revision_no,payload,blob_id,content_sha256,
+            source_type,origin,privacy_class,employer_owned)
+            VALUES(:owner,:id,:evidence,1,CAST(:payload AS jsonb),:blob,:sha,
+            'work_sample','owner_entry','confidential',true)"""),
             {
                 "owner": catalog.owner_id,
                 "id": revision_id,

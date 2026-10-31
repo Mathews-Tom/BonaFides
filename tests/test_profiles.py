@@ -82,7 +82,17 @@ def _attest(
         "POST",
         "/evidence",
         version,
-        {"payload": {"text": "Maintained Linux services", "source": "Synthetic owner attestation"}},
+        {
+            "payload": {
+                "text": "Maintained Linux services",
+                "source": "Synthetic owner attestation",
+            },
+            "provenance": {
+                "source_type": "owner_statement",
+                "privacy_class": "private",
+                "employer_owned": False,
+            },
+        },
     )
     assert response.status_code == 200, response.text
     return _json(response)
@@ -293,7 +303,14 @@ def test_profile_wide_conflict_and_idempotent_replay(profile_owner: IdentityCont
         boot = _bootstrap(profile_owner, client)
         assert boot.status_code == 201
         csrf = str(_json(boot)["csrf_token"])
-        payload: dict[str, object] = {"payload": {"text": "Synthetic fact", "source": "Owner"}}
+        payload: dict[str, object] = {
+            "payload": {"text": "Synthetic fact", "source": "Owner"},
+            "provenance": {
+                "source_type": "owner_statement",
+                "privacy_class": "private",
+                "employer_owned": False,
+            },
+        }
         key = "profile-evidence-idempotency-001"
         first = _mutate(client, profile_owner, csrf, "POST", "/evidence", 1, payload, key)
         assert first.status_code == 200
@@ -518,7 +535,14 @@ def test_evidence_isolation_archive_and_exact_revision_attribution(
             "PUT",
             f"/evidence/{evidence['id']}",
             initial["version"],
-            {"payload": {"text": "Revised owner assertion", "source": "New synthetic source"}},
+            {
+                "payload": {"text": "Revised owner assertion", "source": "New synthetic source"},
+                "provenance": {
+                    "source_type": "owner_statement",
+                    "privacy_class": "private",
+                    "employer_owned": False,
+                },
+            },
         )
         assert edit.status_code == 200
         pinned = _json(edit)["current_revision"]["claims"][0]["revision"]["evidence_links"][0]
@@ -539,7 +563,14 @@ def test_evidence_isolation_archive_and_exact_revision_attribution(
             "PUT",
             f"/evidence/{evidence['id']}",
             _json(edit)["version"],
-            {"payload": {"text": "Delayed", "source": "Owner"}},
+            {
+                "payload": {"text": "Delayed", "source": "Owner"},
+                "provenance": {
+                    "source_type": "owner_statement",
+                    "privacy_class": "private",
+                    "employer_owned": False,
+                },
+            },
         )
         assert late.status_code == 412
         fresh = _mutate(
@@ -549,7 +580,14 @@ def test_evidence_isolation_archive_and_exact_revision_attribution(
             "PUT",
             f"/evidence/{evidence['id']}",
             _json(deleted)["version"],
-            {"payload": {"text": "Delayed", "source": "Owner"}},
+            {
+                "payload": {"text": "Delayed", "source": "Owner"},
+                "provenance": {
+                    "source_type": "owner_statement",
+                    "privacy_class": "private",
+                    "employer_owned": False,
+                },
+            },
         )
         assert fresh.status_code == 409
         attach_archived = _mutate(
@@ -714,7 +752,12 @@ def test_unattached_evidence_history_restore_and_post_delete_replay(
         boot = _bootstrap(profile_owner, client)
         csrf = str(_json(boot)["csrf_token"])
         body: dict[str, object] = {
-            "payload": {"text": "Independent synthetic evidence", "source": "Owner"}
+            "payload": {"text": "Independent synthetic evidence", "source": "Owner"},
+            "provenance": {
+                "source_type": "owner_statement",
+                "privacy_class": "private",
+                "employer_owned": False,
+            },
         }
         key = "standalone-evidence-replay-001"
         created = _mutate(client, profile_owner, csrf, "POST", "/evidence", 1, body, key)
@@ -732,7 +775,14 @@ def test_unattached_evidence_history_restore_and_post_delete_replay(
             "PUT",
             f"/evidence/{evidence['id']}",
             initial["version"],
-            {"payload": {"text": "Later revision", "source": "Owner"}},
+            {
+                "payload": {"text": "Later revision", "source": "Owner"},
+                "provenance": {
+                    "source_type": "owner_statement",
+                    "privacy_class": "private",
+                    "employer_owned": False,
+                },
+            },
         )
         assert changed.status_code == 200
         deleted = _mutate(

@@ -186,7 +186,14 @@ def test_coverage_projection_requires_quoted_rendering_for_structured_claims(
     current = catalog.client.get("/api/v1/profile").json()
     evidence = catalog.client.post(
         "/api/v1/evidence",
-        json={"payload": {"text": evidence_text, "source": "Synthetic review"}},
+        json={
+            "payload": {"text": evidence_text, "source": "Synthetic review"},
+            "provenance": {
+                "source_type": "owner_statement",
+                "privacy_class": "private",
+                "employer_owned": False,
+            },
+        },
         headers=catalog.headers(current["version"]),
     )
     assert evidence.status_code == 200, evidence.text

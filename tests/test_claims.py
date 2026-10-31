@@ -405,7 +405,14 @@ def test_structured_claim_is_saved_without_a_sentence_and_rendered_on_read(
             "POST",
             "/evidence",
             1,
-            {"payload": {"text": "Reduced batch runtime by 30%", "source": "Synthetic review"}},
+            {
+                "payload": {"text": "Reduced batch runtime by 30%", "source": "Synthetic review"},
+                "provenance": {
+                    "source_type": "owner_statement",
+                    "privacy_class": "private",
+                    "employer_owned": False,
+                },
+            },
         )
         evidence_id = _json(evidence)["evidence"][0]["revision"]["id"]
         saved = _mutate(
@@ -447,7 +454,14 @@ def test_base_resume_prints_the_profile_rendering_only_when_the_sentence_is_quot
             "POST",
             "/evidence",
             1,
-            {"payload": {"text": "Reduced batch runtime by 30%", "source": "Synthetic review"}},
+            {
+                "payload": {"text": "Reduced batch runtime by 30%", "source": "Synthetic review"},
+                "provenance": {
+                    "source_type": "owner_statement",
+                    "privacy_class": "private",
+                    "employer_owned": False,
+                },
+            },
         )
         evidence_id = _json(evidence)["evidence"][0]["revision"]["id"]
         body = _structured_body(evidence_id)
