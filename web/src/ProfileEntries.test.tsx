@@ -582,13 +582,21 @@ describe('focused profile sections', () => {
     });
   });
 
+  it('shows source type, origin and privacy class on every saved source', async () => {
+    const user = userEvent.setup();
+    const owned = { ...source, revision: { ...source.revision, provenance: { source_type: 'document' as const, origin: 'resume_import' as const, privacy_class: 'confidential' as const, employer_owned: true } } };
+    render(<ProfileEntries api={new Api()} profile={{ ...profile, evidence: [owned] }} disabled={false} onProfile={vi.fn()} onDirtyChange={vi.fn()} onBusyChange={vi.fn()} />);
+    await user.click(screen.getByRole('button', { name: 'Sources' }));
+    expect(screen.getByText('Source type: Document · Origin: Résumé import · Privacy: Confidential · Employer-owned · Content never sent to a model')).toBeVisible();
+  });
+
   it('edits source content with source type only, without changing claim pins', async () => {
     const user = userEvent.setup(); const api = new Api(); const onProfile = vi.fn();
     const saved = { ...profile, version: 2 };
     const request = vi.spyOn(api, 'request').mockResolvedValue(saved);
     render(<ProfileEntries api={api} profile={profile} disabled={false} onProfile={onProfile} onDirtyChange={vi.fn()} onBusyChange={vi.fn()} />);
     await user.click(screen.getByRole('button', { name: 'Sources' }));
-    expect(within(screen.getByRole('region', { name: 'Sources and owner attestations' })).getByText(/Current privacy: Private/)).toBeVisible();
+    expect(within(screen.getByRole('region', { name: 'Sources and owner attestations' })).getByText(/Privacy: Private/)).toBeVisible();
     await user.click(screen.getByRole('button', { name: 'Edit source 1' }));
     expect(screen.getByLabelText('Source type')).toHaveValue('owner_statement');
     expect(screen.queryByLabelText('Privacy class')).not.toBeInTheDocument();
