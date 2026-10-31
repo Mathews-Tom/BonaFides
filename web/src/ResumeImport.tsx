@@ -23,7 +23,8 @@ function ClaimProposals({ entry, draft }: { entry: ImportEntry; draft: ReviewDra
   if (proposals.length === 0 || draft.kind !== entry.kind) return null;
   const literal = draft.action !== 'add' || draft.payload.text !== entry.payload.text;
   return <section className="import-claim-proposals" aria-label="Proposed structured claims"><h4>Proposed structured claims</h4>
-    <p className="hint">{literal ? 'This entry is saved as one free-text statement that needs attention: the statement was edited or replaces a saved entry.'
+    <p className="hint">{draft.action === 'unchanged' ? 'These lines match saved claims. Nothing new is saved; the existing claims and evidence are retained.'
+      : literal ? 'This entry is saved as one free-text statement that needs attention: the statement was edited or replaces a saved entry.'
       : 'Approving saves one claim per line. Fully parsed lines become structured claims; lines with unparsed parts stay free text that needs attention.'}</p>
     <ol>{proposals.map(proposal => <li key={proposal.source_id}>
       <p>{proposal.rendering ?? `No structured claim proposed for “${proposal.quote}”.`}</p>
@@ -61,7 +62,7 @@ function initialDraft(entry: ImportEntry, profile: Profile): ReviewDraft {
   const action = entry.comparison.status === 'unchanged' ? 'unchanged' : entry.comparison.status === 'conflict' ? 'replace' : 'add';
   const draft: ReviewDraft = { action, kind: entry.kind, identity_field: entry.identity_field, claim_id: entry.comparison.target_claim_id ?? '',
     payload: entry.kind === 'identity' ? { text: entry.payload.text } : { ...entry.payload }, reviewed: false, editing: false, identityConfirmed: false, choices: {},
-    lines: entry.comparison.status === 'unchanged' && entry.comparison.candidate_claim_ids.length > 1 ? { claimIds: entry.comparison.candidate_claim_ids, payload: { ...entry.payload } } : null };
+    lines: entry.comparison.status === 'unchanged' && (entry.claim_proposals?.length ?? 0) > 0 && entry.comparison.candidate_claim_ids.length > 0 ? { claimIds: entry.comparison.candidate_claim_ids, payload: { ...entry.payload } } : null };
   const target = action === 'replace' ? replacement(profile, draft) : undefined;
   if (target) {
     for (const field of fields) {
@@ -749,7 +750,8 @@ export function ResumeImport({ api, profile, disabled, onProfile, onDirtyChange,
               if (group) group.push(entry); else previewGroups.set(key, [entry]);
             }
             const retained = mode === 'merge' ? current.current_revision.claims.filter(claim => !claim.archived && claim.kind === section.value
-              && !entries.some(entry => { const draft = drafts[entry.entry_id]; return draft && draft.action !== 'skip' && (draft.action === 'replace' || draft.action === 'unchanged') && draft.claim_id === claim.id; })) : [];
+              && !entries.some(entry => { const draft = drafts[entry.entry_id]; return draft && (draft.action === 'replace' && draft.claim_id === claim.id
+                || draft.action === 'unchanged' && (draft.claim_id === claim.id || draft.lines?.claimIds.includes(claim.id))); })) : [];
             const retainedIdentity = section.value === 'identity' ? (['display_name', 'headline', 'description'] as const).filter(key => current.current_revision.snapshot[key]
               && !entries.some(entry => drafts[entry.entry_id]?.kind === 'identity' && drafts[entry.entry_id]?.identity_field === key && drafts[entry.entry_id]?.action !== 'skip')) : [];
             if (!sectionEntries.length && !retained.length && !retainedIdentity.length) return null;

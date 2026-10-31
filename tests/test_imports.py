@@ -539,6 +539,115 @@ def test_repeated_sources_can_share_only_an_unchanged_target(importing: ImportCo
 
 
 @pytest.mark.postgres
+@pytest.mark.parametrize("replacement_index", [None, 0, 1])
+@pytest.mark.parametrize("mode", ["merge", "replace_all"])
+def test_split_entry_targets_can_overlap_only_when_both_decisions_are_unchanged(
+    importing: ImportContext, replacement_index: int | None, mode: str
+) -> None:
+    entry = "Platform Engineer | Fictional Freight | 2021 – 2023\n- Reduced batch runtime by 30%\n"
+    first = importing.staged("Experience\n" + entry)
+    assert importing.approve(first).status_code == 202
+    importing.run()
+    original = importing.profile()
+    before = _counts(importing)
+    repeated = importing.staged("Experience\n" + entry + "\n" + entry)
+    assert len(repeated["entries"]) == 2
+    targets = repeated["entries"][0]["comparison"]["candidate_claim_ids"]
+    assert len(targets) == 2
+    assert repeated["entries"][1]["comparison"]["candidate_claim_ids"] == targets
+    review = _unchanged_review(repeated, mode)
+    if replacement_index is not None:
+        _decisions(review)[replacement_index].update(action="replace", claim_id=targets[1])
+    response = importing.approve(repeated, review)
+    if replacement_index is not None:
+        assert response.status_code == 422, response.text
+        assert response.json()["code"] == "import_target_invalid"
+        assert importing.batch(repeated["id"])["state"] == "waiting_for_approval"
+        assert importing.profile() == original
+        assert _counts(importing) == before
+    else:
+        assert response.status_code == 202, response.text
+        importing.run()
+        assert importing.batch(repeated["id"])["state"] == "succeeded"
+        current = importing.profile()
+        assert current["current_revision"]["claims"] == original["current_revision"]["claims"]
+        assert current["evidence"] == original["evidence"]
+        if mode == "merge":
+            assert current == original
+            assert _counts(importing) == before
+
+
+@pytest.mark.postgres
+def test_replace_all_overlapping_unchanged_split_sets_keep_every_target_and_its_evidence(
+    importing: ImportContext,
+) -> None:
+    heading = "Platform Engineer | Fictional Freight | 2021 – 2023\n"
+    first_entry = heading + "- Reduced batch runtime by 30%\n"
+    second_entry = heading + "- Reduced deployment time by 20%\n"
+    for entry in (first_entry, second_entry):
+        batch = importing.staged("Experience\n" + entry)
+        assert importing.approve(batch).status_code == 202
+        importing.run()
+    original = importing.profile()
+    claims = original["current_revision"]["claims"]
+    assert len(claims) == 4
+    assert len(original["evidence"]) == 2
+    repeated = importing.staged("Experience\n" + first_entry + "\n" + second_entry)
+    assert len(repeated["entries"]) == 2
+    first_targets, second_targets = [
+        entry["comparison"]["candidate_claim_ids"] for entry in repeated["entries"]
+    ]
+    assert first_targets == [claims[0]["id"], claims[1]["id"]]
+    assert second_targets == [claims[0]["id"], claims[3]["id"]]
+    accepted = importing.approve(repeated, _unchanged_review(repeated, "replace_all"))
+    assert accepted.status_code == 202, accepted.text
+    importing.run()
+    assert importing.batch(repeated["id"])["state"] == "succeeded"
+    current = importing.profile()
+    assert current["current_revision"]["claims"] == [claims[0], claims[1], claims[3]]
+    assert current["evidence"] == original["evidence"]
+
+
+@pytest.mark.postgres
+@pytest.mark.parametrize(
+    ("statement", "needs_attention"),
+    [("Cut batch runtime by 30%", True), ("Reduced batch runtime by 30%", False)],
+)
+def test_import_approval_and_document_preserve_exact_source_when_rendering_is_unquoted(
+    importing: ImportContext, statement: str, needs_attention: bool
+) -> None:
+    batch = importing.staged(f"Experience\n{statement}\n")
+    proposal = batch["entries"][0]["claim_proposals"][0]
+    assert proposal["rendering"] == "Reduced batch runtime by 30%"
+    if needs_attention:
+        assert proposal["unparsed"] == [{"text": statement, "reason": "unquoted_rendering"}]
+    else:
+        assert proposal["unparsed"] == []
+    accepted = importing.approve(batch)
+    assert accepted.status_code == 202, accepted.text
+    importing.run()
+    assert importing.batch(batch["id"])["state"] == "succeeded"
+    profile = importing.profile()
+    claim = profile["current_revision"]["claims"][0]
+    assert len(profile["current_revision"]["claims"]) == 1
+    assert claim["rendering"] == statement
+    assert claim["needs_attention"] is needs_attention
+    payload = claim["revision"]["payload"]
+    if needs_attention:
+        assert payload["text"] == statement
+        assert "claim" not in payload
+    else:
+        assert "claim" in payload
+        assert "text" not in payload
+    assert claim["revision"]["evidence_links"][0]["excerpt"] == statement
+    with importing.identity.admin.transaction() as conn:
+        prepared = prepare_synthetic(
+            conn, importing.owner_id, UUID(profile["current_revision"]["id"])
+        )
+    assert [block.text for block in prepared.body.sections[0].blocks] == [statement]
+
+
+@pytest.mark.postgres
 @pytest.mark.parametrize("source", ["Skills\nSQL\n", "Mira Example\nSkills\nSQL\n"])
 def test_forged_unchanged_payload_is_rejected(importing: ImportContext, source: str) -> None:
     first = importing.staged(source)

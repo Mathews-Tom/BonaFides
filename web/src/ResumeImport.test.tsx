@@ -234,15 +234,31 @@ describe('structured résumé review', () => {
     await user.click(attest()); await user.click(approve());
     expect(state.submissions[0]?.body.decisions[0]).toMatchObject({ action: 'unchanged', claim_id: oldClaim.id, payload: oldClaim.revision.payload });
   });
-  it('retains an entry an earlier approval saved as one claim per line', async () => {
+  it.each([1, 2])('retains an entry an earlier approval saved as %i claims without duplicate retained previews', async count => {
     const user = userEvent.setup(); const batch = staged();
-    const lines = ['claim-line-1', 'claim-line-2'].map(id => ({ ...oldClaim, id, revision: { ...oldClaim.revision, id: `${id}-revision` } }));
-    const saved = { ...profile, current_revision: { ...profile.current_revision, claims: lines } };
-    batch.entries = [{ ...batch.entries[0]!, comparison: { status: 'unchanged', target_claim_id: 'claim-line-1', candidate_claim_ids: ['claim-line-1', 'claim-line-2'] } }];
+    const proposals = Array.from({ length: count }, (_, index) => ({
+      source_id: `source-line-${index + 1}`, quote: `- Built fictional system ${index + 1}.`,
+      claim: { schema_version: 1 as const, verb: 'built' as const, subject: `fictional system ${index + 1}` },
+      rendering: `Built fictional system ${index + 1}.`, unparsed: [],
+    }));
+    const lines: ClaimRecord[] = proposals.map((proposal, index) => ({ ...oldClaim, id: `claim-line-${index + 1}`, rendering: proposal.rendering,
+      revision: { ...oldClaim.revision, id: `claim-line-${index + 1}-revision`, payload: { claim: proposal.claim } } }));
+    const saved = { ...profile, current_revision: { ...profile.current_revision, claims: [...lines, oldClaim] } };
+    batch.entries = [{ ...batch.entries[0]!, payload: { text: proposals.map(proposal => proposal.quote).join('\n') }, claim_proposals: proposals,
+      comparison: { status: 'unchanged', target_claim_id: lines[0]!.id, candidate_claim_ids: lines.map(line => line.id) } }];
     const { api, state } = server(batch); render(<ResumeImport api={api} profile={saved} disabled={false} onProfile={() => undefined} />); await open(user);
+    const preview = within(screen.getByRole('region', { name: 'Assembled profile preview' }));
+    const proposed = within(preview.getByRole('region', { name: 'Proposed structured claims' }));
+    expect(proposed.getByText('These lines match saved claims. Nothing new is saved; the existing claims and evidence are retained.')).toBeVisible();
+    expect(proposed.queryByText(/saved as one free-text statement|Approving saves one claim per line/)).not.toBeInTheDocument();
+    expect(preview.getAllByRole('article')).toHaveLength(1);
+    expect(preview.getAllByText('Current entry retained')).toHaveLength(1);
+    expect(preview.getByText(oldPayload.text, { selector: 'dd' })).toBeVisible();
+    for (const proposal of proposals) expect(preview.getAllByText(proposal.rendering)).toHaveLength(1);
     expect(screen.queryByText('The saved value changed. Compare this entry with the latest profile.')).not.toBeInTheDocument();
+    expect(screen.queryByText(/Accepting this replacement or source attachment converts/)).not.toBeInTheDocument();
     expect(screen.getByText(/1 unchanged · 0 excluded · 0 need attention/)).toBeVisible();
-    expect(approve()).toHaveAccessibleName('Complete import without profile changes');
+    expect(attest()).toBeEnabled(); expect(approve()).toHaveAccessibleName('Complete import without profile changes');
     await user.click(attest()); await user.click(approve());
     expect(state.submissions[0]?.body.decisions[0]).toMatchObject({ action: 'unchanged', claim_id: 'claim-line-1', payload: batch.entries[0]!.payload });
   });

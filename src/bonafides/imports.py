@@ -686,7 +686,7 @@ def _validate_review(
     owner_id: UUID,
     batch: RowMapping,
     review: ImportReview,
-) -> dict[UUID, RowMapping]:
+) -> tuple[dict[UUID, RowMapping], set[UUID]]:
     entries = project_entries(
         batch["parsed_text"],
         batch["source_sha256"],
@@ -751,10 +751,7 @@ def _validate_review(
             if decision.claim_id is not None:
                 raise Problem(422, "import_target_invalid")
             continue
-        if decision.claim_id is None or (
-            decision.claim_id in replacements
-            and (decision.action != "unchanged" or decision.claim_id not in unchanged_targets)
-        ):
+        if decision.claim_id is None:
             raise Problem(422, "import_target_invalid")
         targets = [decision.claim_id]
         if decision.action == "unchanged":
@@ -774,9 +771,11 @@ def _validate_review(
                 targets = split
             if targets[:1] != [decision.claim_id]:
                 raise Problem(422, "import_unchanged_invalid")
-            if decision.claim_id in unchanged_targets:
-                continue
         for target in targets:
+            if target in replacements:
+                if decision.action == "unchanged" and target in unchanged_targets:
+                    continue
+                raise Problem(422, "import_target_invalid")
             replacements[target] = _locked_target(
                 conn, owner_id, target, decision.kind, current_ids
             )
@@ -805,9 +804,7 @@ def _validate_review(
         {
             "owner": owner_id,
             "replace_all": review.mode == "replace_all",
-            "unchanged": [
-                item.claim_id for item in accepted if item.action == "unchanged" and item.claim_id
-            ],
+            "unchanged": list(unchanged_targets),
         },
     ).scalar_one()
     # An unedited entry approved as one claim per line adds one claim per line.
@@ -827,7 +824,7 @@ def _validate_review(
         raise Problem(422, "claim_limit")
     if evidence_count + sum(item.action != "unchanged" for item in accepted) > 200:
         raise Problem(422, "evidence_limit")
-    return replacements
+    return replacements, unchanged_targets
 
 
 def stage_parsed(
@@ -1025,7 +1022,7 @@ def merge_reviewed(conn: Connection, task: Claim) -> dict[str, object]:
     if int(profile["version"]) != int(batch["profile_version"]):
         raise Problem(412, "profile_version_conflict")
     review = ImportReview.model_validate(batch["review"])
-    replacements = _validate_review(conn, task.owner_id, batch, review)
+    replacements, unchanged_targets = _validate_review(conn, task.owner_id, batch, review)
     projected = project_entries(
         batch["parsed_text"],
         batch["source_sha256"],
@@ -1067,11 +1064,7 @@ def merge_reviewed(conn: Connection, task: Claim) -> dict[str, object]:
             AND r.id=e.current_revision_id AND r.payload->>'identity_field' IN ('display_name','headline'))"""),
             {
                 "owner": task.owner_id,
-                "unchanged": [
-                    item.claim_id
-                    for item in review.decisions
-                    if item.action == "unchanged" and item.claim_id
-                ],
+                "unchanged": list(unchanged_targets),
             },
         )
     for decision in review.decisions:
