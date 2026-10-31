@@ -1,9 +1,14 @@
 # SPDX-License-Identifier: MIT OR Apache-2.0
 name: BonaFides development gates and runtime proof
+# Fast tier: every pull request that is opened, reopened or receives new commits, or that gets
+# the `full-ci` label. Full tier: push to main, manual dispatch, or a pull request labelled
+# `full-ci`. Description edits run only `contribution.yaml`, so they never record skipped gate
+# rows over current results.
 on:
   push:
+    branches: [main]
   pull_request:
-    types: [opened, synchronize, reopened, edited]
+    types: [opened, synchronize, reopened, labeled]
   workflow_dispatch:
     inputs:
       release_compliance:
@@ -13,21 +18,45 @@ on:
 permissions:
   contents: read
 concurrency:
-  group: bonafides-${{ github.workflow }}-${{ github.ref }}
+  # Labels other than `full-ci` get their own group so they never cancel a gate run; every other
+  # event cancels the stale run for the same ref.
+  group: bonafides-${{ github.workflow }}-${{ github.ref }}${{ (github.event.action == 'labeled' && github.event.label.name != 'full-ci') && format('-metadata-{0}', github.run_id) || '' }}
   cancel-in-progress: true
 jobs:
-  contribution:
-    if: github.event_name == 'pull_request'
+  fast:
+    name: fast (amd64)
+    if: >-
+      github.event_name == 'pull_request' &&
+      (github.event.action != 'labeled' || github.event.label.name == 'full-ci')
     runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    env:
+      DOCKER_DEFAULT_PLATFORM: linux/amd64
+      BONAFIDES_IMAGE: bonafides:local
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           fetch-depth: 0
           persist-credentials: false
-          ref: ${{ github.event.pull_request.head.sha }}
-      - name: Verify explicit submission authorization and real author DCO trailers
-        run: python3 .github/check_contribution.py
+      - uses: ./.github/actions/toolchain
+      - name: Frozen host frontend install and frontend gates
+        run: |
+          test "$(command -v node)" = "$BONAFIDES_NODE_BIN"
+          test "$(command -v pnpm)" = "$BONAFIDES_PNPM_BIN"
+          pnpm --dir web install --frozen-lockfile
+          pnpm --dir web exec tsc --noEmit
+          pnpm --dir web lint
+          pnpm --dir web test
+          pnpm --dir web build
+      - name: Build application image for the sealed parser and database relay
+        run: docker build --pull --target app --tag bonafides:local .
+      - name: Ruff format strict mypy pytest with actual least privilege PostgreSQL
+        run: uv run --frozen python .github/backend_gate.py
   gates:
+    if: >-
+      github.event_name != 'pull_request' ||
+      (contains(github.event.pull_request.labels.*.name, 'full-ci') &&
+      (github.event.action != 'labeled' || github.event.label.name == 'full-ci'))
     strategy:
       fail-fast: false
       matrix:
@@ -48,37 +77,7 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
-      - name: Install official uv binary from immutable multi-platform image
-        run: |
-          uv_bin="$RUNNER_TEMP/bonafides-uv/bin"
-          mkdir -p "$uv_bin"
-          container=$(docker create ghcr.io/astral-sh/uv:0.13.0@sha256:cdc6093146eb3ff6a40107b38f008b789e050e77ad87865e381d9917da55a168 /uv --version)
-          trap 'docker rm "$container" >/dev/null' EXIT
-          docker cp "$container:/uv" "$uv_bin/uv"
-          chmod 0755 "$uv_bin/uv"
-          test "$("$uv_bin/uv" --version | cut -d ' ' -f 2)" = '0.13.0'
-          echo "$uv_bin" >> "$GITHUB_PATH"
-      - name: Install exact Python and frozen development dependencies
-        run: |
-          test "$(uv --version | cut -d ' ' -f 2)" = '0.13.0'
-          uv python install 3.12.15
-          uv sync --frozen --python 3.12.15 --only-group build --no-build
-          uv sync --frozen --python 3.12.15 --group build --no-build-isolation
-          uv run --frozen playwright install --with-deps chromium
-      - name: Set up exact host Node for frontend gates and installed inventory
-        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
-        with:
-          node-version: '22.23.4'
-      - name: Install exact host pnpm without runner-global assumptions
-        run: |
-          pnpm_root="$RUNNER_TEMP/bonafides-pnpm"
-          npm install --global --prefix "$pnpm_root" --registry https://registry.npmjs.org --ignore-scripts pnpm@10.33.3
-          export PATH="$pnpm_root/bin:$PATH"
-          test "$(node --version)" = 'v22.23.4'
-          test "$(pnpm --version)" = '10.33.3'
-          echo "$pnpm_root/bin" >> "$GITHUB_PATH"
-          echo "BONAFIDES_NODE_BIN=$(command -v node)" >> "$GITHUB_ENV"
-          echo "BONAFIDES_PNPM_BIN=$(command -v pnpm)" >> "$GITHUB_ENV"
+      - uses: ./.github/actions/toolchain
       - name: Frozen host frontend install and all frontend gates
         run: |
           test "$(command -v node)" = "$BONAFIDES_NODE_BIN"
