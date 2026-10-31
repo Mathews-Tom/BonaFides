@@ -1,0 +1,23 @@
+# SPDX-License-Identifier: MIT OR Apache-2.0
+name: BonaFides contribution authorization
+# Runs on every pull request event, including description edits and labels, separately from the
+# gate workflow so metadata events never record skipped gate results.
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, edited, labeled]
+permissions:
+  contents: read
+concurrency:
+  group: bonafides-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  contribution:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+          ref: ${{ github.event.pull_request.head.sha }}
+      - name: Verify explicit submission authorization and real author DCO trailers
+        run: python3 .github/check_contribution.py
