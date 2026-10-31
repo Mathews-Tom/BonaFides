@@ -288,7 +288,7 @@ def test_generation_preview_explains_withheld_evidence_beside_the_exact_projecti
         }
     ]
     assert "withheld_evidence" not in preview["model_projection"]
-    assert SECRET not in canonical_json(preview)
+    assert WITHHELD_MARKER not in canonical_json(preview)
 
 
 @pytest.mark.postgres
