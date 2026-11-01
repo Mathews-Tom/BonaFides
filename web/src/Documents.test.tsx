@@ -18,7 +18,8 @@ const saved: DocumentRecord = {
 const application: ApplicationSummary = { id: 'application-1', version: 7, attempt_no: 1, posting_id: 'posting-1', opportunity_id: 'opportunity-1', title: 'Engineer', company: 'Fictional North', current_stage: 'preparing', archived_at: null, created_at: '2026-10-25T12:00:00Z', updated_at: '2026-10-25T12:00:00Z', next_action: null };
 const tailored: DocumentRecord = { ...saved, id: 'tailored-resume', scope: 'tailored', application_id: application.id };
 const route = { status: 'unqualified' as const, reason: 'generate_documents qualification has not been authorized', identity: { model: 'unqualified-local' } };
-const pair: ApplicationDocuments = { application_id: application.id, version: 7, items: [tailored], generation_route: route, requirements_revision_id: 'requirements-1' };
+const noGenerations = { valid_first: 0, valid_after_correction: 0, invalid_after_correction: 0, failed_before_check: 0, rate_percent: null };
+const pair: ApplicationDocuments = { application_id: application.id, version: 7, items: [tailored], generation_route: route, requirements_revision_id: 'requirements-1', claim_json_rates: { generate_documents: noGenerations, regenerate_section: noGenerations } };
 const context: GenerationContext = { application_id: application.id, application_version: 7, profile_revision_id: 'profile-rev-3', profile_version: 3, requirements_revision_id: 'requirements-1', template_version: 'bonafides-evidence-v1', tone: 'professional', language: 'en', context_sha256: '1'.repeat(64), model_projection: { facts: [{ text: 'Maintained Linux service checks.' }], requirements: [{ text: 'Linux' }] }, frame: { display_name: 'Mira Vale', contact: { email: 'mira@example.test' } }, generation_route: route, withheld_evidence: [] };
 const workflow: Workflow = {
   id: 'compose-1', version: 1, state: 'pending', kind: 'document_generate', mode: 'deterministic_base', attempt: 0, max_attempts: 3, last_error_code: null, result: null,
@@ -538,7 +539,8 @@ const sectionProposal: SectionProposal = {
   target_document_version: tailored.version, target_content_sha256: tailored.current_revision.content_sha256,
   section_key: 'experience', original_section: tailored.current_revision.body.sections[0]!,
   proposed_section: { ...tailored.current_revision.body.sections[0]!, blocks: [{ ...tailored.current_revision.body.sections[0]!.blocks[0]!, block_key: 'proposal-1-block-0', text: 'Led an unsupported global team.' }] },
-  validation_issues: [{ path: '/sections/0/blocks/0', code: 'unestablished_factual_text' }],
+  validation_issues: [{ path: '/sections/0/blocks/0', code: 'statement_not_in_claim_evidence', statement: 'Led an unsupported global team.' }],
+  facts: tailored.current_revision.provenance_snapshot.facts ?? [],
   model_run: { id: 'section-run-1', stage: 'regenerate_section' }, created_at: '2026-10-25T14:00:00Z', applicable: true, historical: false,
 };
 const completedSectionWorkflow: Workflow = {
@@ -576,6 +578,24 @@ async function inspectSection(user: UserEvent) {
 }
 
 describe('saved tailored section proposals', () => {
+  it('shows the valid claim JSON rate of this route for both document stages', async () => {
+    const user = userEvent.setup();
+    const rates = { generate_documents: { valid_first: 2, valid_after_correction: 1, invalid_after_correction: 1, failed_before_check: 1, rate_percent: 75 }, regenerate_section: noGenerations };
+    const { api } = fixture(saved, async path => {
+      if (path === '/applications') return { items: [application], next_cursor: null, query_elapsed_ms: 1, as_of: application.updated_at };
+      if (path === '/applications/application-1/documents') return { ...pair, claim_json_rates: rates };
+      throw new ApiError(404, 'not_found');
+    });
+    render(<Documents api={api} profile={profile} />); await ready();
+    await user.click(screen.getByRole('button', { name: 'Tracked application documents' }));
+    await user.click(screen.getByRole('button', { name: 'Reload tracked applications' }));
+    await user.selectOptions(await screen.findByLabelText('Tracked application'), application.id);
+    const panel = await screen.findByRole('region', { name: 'Valid claim JSON rate for this route' });
+    expect(within(panel).getByText('Pair generation: 75% valid.')).toBeVisible();
+    expect(within(panel).getByText(/2 valid on the first response, 1 valid after one correction, 1 invalid after correction; 1 ended before/)).toBeVisible();
+    expect(within(panel).getByText('Section regeneration: no checked generations yet.')).toBeVisible();
+  });
+
   it('exposes no model rewrite surface or model requests for a base document, including its dirty editor', async () => {
     const user = userEvent.setup(); const { api, request } = fixture();
     render(<Documents api={api} profile={profile} />); const input = await ready();
@@ -641,6 +661,97 @@ describe('saved tailored section proposals', () => {
     expect(screen.getByLabelText('Block text: b-1')).toHaveValue('Keep my local wording.');
   });
 
+  it.each([
+    { mode: 'section_regeneration', state: 'succeeded', rates: { ...noGenerations, valid_after_correction: 1, rate_percent: 100 }, label: 'Section regeneration: 100% valid.' },
+    { mode: 'section_regeneration', state: 'permanent_failure', rates: { ...noGenerations, invalid_after_correction: 1, rate_percent: 0 }, label: 'Section regeneration: 0% valid.' },
+    { mode: 'section_regeneration', state: 'permanent_failure', rates: { ...noGenerations, failed_before_check: 1 }, label: 'Section regeneration: no checked generations yet.' },
+    { mode: 'tailored_ai', state: 'permanent_failure', rates: { ...noGenerations, invalid_after_correction: 1, rate_percent: 0 }, label: 'Pair generation: 0% valid.' },
+  ] as const)('refreshes route counters after $mode $state without replacing saved wording ($label)', async ({ mode, state, rates, label }) => {
+    const user = userEvent.setup(); let finished = false; let reads = 0;
+    const pending: Workflow = { ...sectionWorkflow, mode };
+    const completed: Workflow = { ...pending, version: 2, state, last_error_code: state === 'permanent_failure' ? 'model_output_invalid_after_correction' : null, result: state === 'succeeded' ? completedSectionWorkflow.result : null };
+    const { api } = fixture(saved, async (path, method) => {
+      if (path === '/applications') return { items: [application], next_cursor: null };
+      if (path === '/applications/application-1/documents') {
+        reads++;
+        return { ...pair, items: finished ? [{ ...tailored, current_revision: { ...tailored.current_revision, body: { ...tailored.current_revision.body, title: 'Concurrent saved change' } } }] : pair.items,
+          claim_json_rates: { ...pair.claim_json_rates, [mode === 'section_regeneration' ? 'regenerate_section' : 'generate_documents']: finished ? rates : noGenerations } };
+      }
+      if (path.includes('/regeneration-context?')) return sectionPreview(path);
+      if (path.startsWith('/applications/application-1/generation-context?')) return { ...context, generation_route: { ...route, status: 'qualified' } };
+      if ((path === '/documents/tailored-resume/regeneration-proposals' || path === '/applications/application-1/generation') && method === 'POST') return pending;
+      if (path === '/workflows/section-task-1') { finished = true; return completed; }
+      if (path === '/documents/tailored-resume/regeneration-proposals/proposal-1') return sectionProposal;
+      throw new ApiError(404, 'not_found');
+    });
+    render(<Documents api={api} profile={profile} />); await openTailored(user);
+    if (mode === 'section_regeneration') {
+      await inspectSection(user);
+      await user.click(screen.getByRole('checkbox', { name: /I reviewed this exact selected-section projection/ }));
+    } else {
+      await user.click(screen.getByRole('button', { name: 'Preview reviewed generation context' }));
+      await user.click(await screen.findByRole('checkbox', { name: /I reviewed this exact projection/ }));
+    }
+    vi.useFakeTimers();
+    try {
+      await act(async () => { fireEvent.click(screen.getByRole('button', { name: mode === 'section_regeneration' ? 'Request section proposal' : 'Generate résumé and cover letter pair' })); });
+      await act(async () => { await vi.advanceTimersByTimeAsync(1000); });
+      const panel = screen.getByRole('region', { name: 'Valid claim JSON rate for this route' });
+      expect(within(panel).getByText(label)).toBeVisible();
+      expect(within(panel).getByText(new RegExp(`${rates.valid_after_correction} valid after one correction, ${rates.invalid_after_correction} invalid after correction; ${rates.failed_before_check} ended before`))).toBeVisible();
+      expect(reads).toBe(2);
+      expect(screen.getByLabelText('Block text: b-1')).toHaveValue('Maintained Linux service checks.');
+      expect(screen.queryByDisplayValue('Concurrent saved change')).not.toBeInTheDocument();
+      expect(screen.getByRole('heading', { name: `Document task: ${state.replaceAll('_', ' ')}` })).toBeInTheDocument();
+      if (state === 'succeeded') expect(screen.getByRole('region', { name: 'Section proposal comparison' })).toBeInTheDocument();
+    } finally { vi.useRealTimers(); }
+  });
+
+  it('shows the stored section proposal when the ancillary rate refresh fails', async () => {
+    const user = userEvent.setup(); let finished = false; let reads = 0;
+    const { api } = fixture(saved, async (path, method) => {
+      if (path === '/applications') return { items: [application], next_cursor: null };
+      if (path === '/applications/application-1/documents') {
+        reads++;
+        if (finished) throw new ApiError(503, 'unavailable');
+        return pair;
+      }
+      if (path.includes('/regeneration-context?')) return sectionPreview(path);
+      if (path === '/documents/tailored-resume/regeneration-proposals' && method === 'POST') return sectionWorkflow;
+      if (path === '/workflows/section-task-1') { finished = true; return completedSectionWorkflow; }
+      if (path === '/documents/tailored-resume/regeneration-proposals/proposal-1') return sectionProposal;
+      throw new ApiError(404, 'not_found');
+    });
+    render(<Documents api={api} profile={profile} />); await openTailored(user);
+    await inspectSection(user);
+    await user.click(screen.getByRole('checkbox', { name: /I reviewed this exact selected-section projection/ }));
+    vi.useFakeTimers();
+    try {
+      await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Request section proposal' })); });
+      await act(async () => { await vi.advanceTimersByTimeAsync(1000); });
+      expect(reads).toBe(2);
+      expect(screen.getByRole('region', { name: 'Section proposal comparison' })).toBeVisible();
+      expect(screen.getByRole('heading', { name: 'Document task: succeeded' })).toBeInTheDocument();
+      expect(screen.queryByText(/Task status\/result could not be loaded/)).not.toBeInTheDocument();
+      expect(screen.getByLabelText('Block text: b-1')).toHaveValue('Maintained Linux service checks.');
+    } finally { vi.useRealTimers(); }
+  });
+
+  it('shows a section-specific safe reason when a section task fails after its corrective retry', async () => {
+    const user = userEvent.setup();
+    const failed: Workflow = { ...sectionWorkflow, version: 2, state: 'permanent_failure', last_error_code: 'model_output_invalid_after_correction' };
+    const { api } = proposalFixture(async (path, method) => {
+      if (path.includes('/regeneration-context?')) return sectionPreview(path);
+      if (path === '/documents/tailored-resume/regeneration-proposals' && method === 'POST') return sectionWorkflow;
+      if (path === '/workflows/section-task-1') return failed;
+      throw new ApiError(404, 'not_found');
+    });
+    render(<Documents api={api} profile={profile} />); await openTailored(user); await inspectSection(user);
+    await user.click(screen.getByRole('checkbox', { name: /I reviewed this exact selected-section projection/ }));
+    await user.click(screen.getByRole('button', { name: 'Request section proposal' }));
+    expect(await screen.findByText(/required section shape, even after one corrective retry\. No proposal was created and the document is unchanged\. Failure code: model_output_invalid_after_correction\./, {}, { timeout: 4000 })).toBeInTheDocument();
+  });
+
   it('stores task output without mutating words, then explicitly applies just the compared section as a blocked editable draft', async () => {
     const user = userEvent.setup();
     const applied: DocumentRecord = { ...tailored, version: 5, reviewed: false, unsupported_claims: ['/sections/0/blocks/0'], current_revision: { ...tailored.current_revision, id: 'applied-section-revision', revision_no: 3, origin: 'manual', content_sha256: '3'.repeat(64), body: { ...tailored.current_revision.body, sections: [sectionProposal.proposed_section, tailored.current_revision.body.sections[1]!] }, validation_issues: sectionProposal.validation_issues } };
@@ -662,6 +773,10 @@ describe('saved tailored section proposals', () => {
       expect(screen.getByLabelText('Block text: b-1')).toHaveValue('Maintained Linux service checks.');
       expect(within(screen.getByRole('article', { name: 'Proposed section' })).getByText('Led an unsupported global team.')).toBeInTheDocument();
       expect(screen.getByText('Proposed draft has review/export blockers.')).toBeVisible();
+      const blocker = screen.getByText(/^It is not contained in its claim's own evidence\./).closest('li')!;
+      expect(within(blocker).getByText('Led an unsupported global team.', { selector: 'q' })).toBeVisible();
+      expect(within(screen.getByRole('article', { name: 'Proposed section' })).getByText('Linked claim: “Maintained Linux service checks.”')).toBeVisible();
+      expect(screen.getByText(/Applying retains these issues/)).toBeVisible();
       expect(request.mock.calls.filter(call => call[1] === 'POST')).toHaveLength(1);
       expect(request.mock.calls.some(call => call[0] === '/documents/tailored-resume')).toBe(false);
       expect(screen.getByRole('button', { name: 'Apply proposal as new draft revision' })).toBeDisabled();

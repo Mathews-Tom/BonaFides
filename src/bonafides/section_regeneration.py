@@ -3,11 +3,12 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import Annotated, Literal, cast
 from uuid import UUID, uuid5
 
 from fastapi import APIRouter, Depends, Query, Request, Response
-from pydantic import Field, ValidationError
+from pydantic import Field, ValidationError, model_validator
 from sqlalchemy import Connection, text
 from sqlalchemy.engine import RowMapping
 
@@ -40,10 +41,18 @@ class ApplyRequest(documents.StrictModel):
 
 
 class Candidate(documents.StrictModel):
-    schema_version: Literal["1"]
+    """The pair-generation statement shape for one section's replacement blocks."""
+
+    schema_version: Literal["2"]
     stage: Literal["regenerate_section"]
-    blocks: list[local_model.SectionBlock] = Field(min_length=1, max_length=30)
+    blocks: list[generation.CandidateStatement] = Field(min_length=1, max_length=30)
     warnings: list[Annotated[str, Field(min_length=1, max_length=500)]] = Field(max_length=20)
+
+    @model_validator(mode="after")
+    def unique_keys(self) -> Candidate:
+        if len({block.block_key for block in self.blocks}) != len(self.blocks):
+            raise ValueError("duplicate_section_block_key")
+        return self
 
 
 def _target(conn: Connection, owner: UUID, document: UUID) -> RowMapping:
@@ -218,20 +227,41 @@ def _replacement(
     )
 
 
-def validate_candidate(output: dict[str, object], frozen: dict[str, object]) -> Candidate:
-    try:
-        candidate = Candidate.model_validate_json(canonical_json(output), strict=True)
-        facts = cast(list[dict[str, object]], frozen["facts"])
-        claims = {str(item["claim_revision_id"]) for item in facts}
-        evidence = {str(item["evidence_revision_id"]) for item in facts}
-        for block in candidate.blocks:
-            if {str(item) for item in block.claim_revision_ids} - claims or {
-                str(item) for item in block.evidence_revision_ids
-            } - evidence:
-                raise Problem(422, "reference_outside_pinned_context")
+def _candidate_section(
+    candidate: Candidate, frozen: dict[str, object], provenance: dict[str, object], task_id: UUID
+) -> documents.DocumentSection:
+    original = documents.DocumentSection.model_validate_json(
+        canonical_json(frozen["original_section"]), strict=True
+    )
+    identifier = uuid5(task_id, "section-proposal")
+    return documents.DocumentSection(
+        key=original.key,
+        heading=original.heading,
+        blocks=[
+            generation.candidate_block(statement, provenance).model_copy(
+                update={"block_key": f"proposal-{identifier}-{index}"}
+            )
+            for index, statement in enumerate(candidate.blocks)
+        ],
+    )
+
+
+def candidate_validator(conn: Connection, task: Claim) -> Callable[[dict[str, object]], Candidate]:
+    """Freeze the target body and check the complete replacement before counting validity."""
+    row = _target(conn, task.owner_id, UUID(str(task.input["document_id"])))
+    body = documents.parse_body(row["body"])
+    provenance = cast(dict[str, object], row["provenance_snapshot"])
+
+    def validate(output: dict[str, object]) -> Candidate:
+        candidate = generation.parse_candidate(output, Candidate)
+        try:
+            proposed = _candidate_section(candidate, task.input, provenance, task.id)
+            _replacement(body, proposed.key, proposed)
+        except ValidationError as exc:
+            raise generation._mismatch(exc) from exc
         return candidate
-    except ValidationError as exc:
-        raise Problem(422, "invalid_model_output") from exc
+
+    return validate
 
 
 def publish_proposal(
@@ -248,30 +278,14 @@ def publish_proposal(
     original = documents.DocumentSection.model_validate_json(
         canonical_json(frozen["original_section"]), strict=True
     )
-    proposed = documents.DocumentSection(
-        key=original.key,
-        heading=original.heading,
-        blocks=[
-            documents.DocumentBlock(
-                block_key=f"proposal-{identifier}-{index}",
-                **block.model_dump(),
-            )
-            for index, block in enumerate(candidate.blocks)
-        ],
-    )
     row = _target(conn, task.owner_id, UUID(str(frozen["document_id"])))
+    provenance = cast(dict[str, object], row["provenance_snapshot"])
     try:
+        proposed = _candidate_section(candidate, frozen, provenance, task.id)
         body = _replacement(documents.parse_body(row["body"]), original.key, proposed)
     except ValidationError as exc:
         raise Problem(422, "invalid_model_output") from exc
-    validation = generation.validation_issues(
-        conn,
-        task.owner_id,
-        body,
-        cast(dict[str, object], row["provenance_snapshot"]),
-        "base" if row["scope"] == "base" else str(row["kind"]),
-        UUID(str(row["profile_revision_id"])),
-    )
+    validation = generation.validation_issues(body, provenance, str(row["kind"]))
     model_run: dict[str, object] = {
         "id": str(run),
         "route": frozen["route_identity"],
@@ -362,6 +376,13 @@ def proposal_view(conn: Connection, owner: UUID, row: RowMapping) -> dict[str, o
         "original_section": row["original_section"],
         "proposed_section": row["proposed_section"],
         "validation_issues": row["validation_issues"],
+        # The target revision's pinned facts, which publication required to equal the
+        # proposal's own, so each proposed statement shows its claim.
+        "facts": conn.execute(
+            text("""SELECT provenance_snapshot->'facts' FROM bonafides.document_revisions
+            WHERE owner_id=:owner AND id=:id"""),
+            {"owner": owner, "id": row["target_revision_id"]},
+        ).scalar_one(),
         "model_run": row["model_run"],
         "created_at": row["created_at"].isoformat(),
         "applicable": applicable,

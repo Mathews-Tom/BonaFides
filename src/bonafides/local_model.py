@@ -49,7 +49,7 @@ PROMPT_VERSIONS = {
     "extract_posting": "ol-extract-posting-v1",
     "match_requirements": "ol-match-requirements-v1",
     "generate_documents": "ol-generate-documents-v2",
-    "regenerate_section": "ol-regenerate-section-v1",
+    "regenerate_section": "ol-regenerate-section-v2",
 }
 _SYSTEM = (
     "You transform BonaFides task data into the supplied JSON response shape. "
@@ -59,6 +59,24 @@ _SYSTEM = (
     "Missing facts remain missing. A citation is not proof of a new assertion. "
     "Never invent dates, metrics, employers, credentials, technologies or permissions. "
     "Do not infer protected traits or work authorization. Return one JSON object only."
+)
+# The statement rules every claim-structured stage shares with the deterministic checker.
+_STATEMENT_RULES = (
+    "A factual block cites exactly one supplied claim id in claim_id; choose which claims to "
+    "use, their order, emphasis and phrasing, but its text must be wording contained in that "
+    "claim's own evidence, never the posting or another claim. Letter factual sentences are "
+    "factual blocks too. Any other block is connective with claim_id null and must be exactly "
+    "one of these phrases, where {title} and {organization} are the posting's: "
+    "Dear Hiring team,; Dear {organization} hiring team,; Sincerely,; Kind regards,; "
+    "Thank you for your consideration.; Thank you for considering my application.; "
+    "I am applying for the {title} role at {organization}.; "
+    "I am writing to apply for the {title} position at {organization}.; "
+    "I would welcome the opportunity to discuss this role.; "
+    "I would welcome a discussion of the role.; "
+    "I would welcome the opportunity to discuss the {title} role at {organization}.; "
+    "The following examples from my record are relevant to this role. "
+    "Never invent metrics, dates, qualifications, scope or work authorization. Do not put "
+    "applicant identity/contact or a signature in prose. "
 )
 _SUFFIXES = {
     "extract_posting": (
@@ -81,34 +99,14 @@ _SUFFIXES = {
         "Create exactly one resume and one cover_letter, with globally unique b-N block keys. "
         "Use fixed headings Experience, Education, Skills, Projects, Certifications, Languages, "
         "Profile evidence, Application, Letter, Interest or Summary. Every statement is a block. "
-        "A factual block cites exactly one supplied claim id in claim_id; choose which claims to "
-        "use, their order, emphasis and phrasing, but its text must be wording contained in that "
-        "claim's own evidence, never the posting or another claim. Letter factual sentences are "
-        "factual blocks too. Any other block is connective with claim_id null and must be exactly "
-        "one of these phrases, where {title} and {organization} are the posting's: "
-        "Dear Hiring team,; Dear {organization} hiring team,; Sincerely,; Kind regards,; "
-        "Thank you for your consideration.; Thank you for considering my application.; "
-        "I am applying for the {title} role at {organization}.; "
-        "I am writing to apply for the {title} position at {organization}.; "
-        "I would welcome the opportunity to discuss this role.; "
-        "I would welcome a discussion of the role.; "
-        "I would welcome the opportunity to discuss the {title} role at {organization}.; "
-        "The following examples from my record are relevant to this role. "
-        "Never invent metrics, dates, qualifications, scope or work authorization. Do not put "
-        "applicant identity/contact or a signature in prose. Use gaps for missing requirement "
-        "evidence, never fabricate it. Return typed JSON only."
+        + _STATEMENT_RULES
+        + "Use gaps for missing requirement evidence, never fabricate it. Return typed JSON only."
     ),
     "regenerate_section": (
-        "Rewrite only target.blocks in the requested tone. Preserve accepted professional "
-        "claim text verbatim; non-exact paraphrases remain unestablished. Use only supplied "
-        "claim/evidence revision IDs. Never infer experience from the posting or invent "
-        "metrics, dates, qualifications or permissions. Do not output headings, titles, "
-        "keys, identity/contact, other sections, markup or tools. Safe nonfactual language "
-        "is limited to the exact greeting/intent phrases in the document-generation policy: "
-        "Dear Hiring team,; Thank you for your consideration.; "
-        "Thank you for considering my application.; Sincerely,; "
-        "I would welcome the opportunity to discuss this role.; "
-        "I would welcome a discussion of the role. Return typed JSON only."
+        "Rewrite only target.blocks in the requested tone, as blocks with unique b-N keys. "
+        "Do not output headings, titles, other sections, markup or tools. "
+        + _STATEMENT_RULES
+        + "Return typed JSON only."
     ),
 }
 
@@ -186,32 +184,20 @@ _SCHEMAS = {
 }
 
 # A schema mismatch gets one corrective request with a code-only summary of the errors.
-_CORRECTIONS = {
-    "generate_documents": (
-        "Your previous response did not match the required JSON shape. Errors (location: "
-        "reason): {summary}. Return one corrected JSON object for the same task data."
-    ),
-}
-SCHEMA_VERSIONS = {"generate_documents": "2"}
+_CORRECTION = (
+    "Your previous response did not match the required JSON shape. Errors (location: "
+    "reason): {summary}. Return one corrected JSON object for the same task data."
+)
+_CORRECTIONS = {"generate_documents": _CORRECTION, "regenerate_section": _CORRECTION}
+SCHEMA_VERSIONS = {"generate_documents": "2", "regenerate_section": "2"}
 
-# The provider receives one bounded branch, not executable document markup.
-_DOCUMENT_BLOCK = _object(
+# The provider returns typed statements, not executable document markup.
+_STATEMENT = _object(
     {
         "block_key": {"type": "string", "pattern": "^b-[0-9]{1,3}$"},
+        "kind": {"type": "string", "enum": ["factual", "connective"]},
         "text": _string(2000),
-        "claim_kind": {"type": "string", "enum": ["factual", "intent", "greeting"]},
-        "claim_revision_ids": {
-            "type": "array",
-            "maxItems": 16,
-            "uniqueItems": True,
-            "items": {"type": "string", "format": "uuid"},
-        },
-        "evidence_revision_ids": {
-            "type": "array",
-            "maxItems": 16,
-            "uniqueItems": True,
-            "items": {"type": "string", "format": "uuid"},
-        },
+        "claim_id": {"type": ["string", "null"], "format": "uuid"},
     }
 )
 _SCHEMAS["generate_documents"] = _object(
@@ -236,23 +222,7 @@ _SCHEMAS["generate_documents"] = _object(
                                     "type": "array",
                                     "minItems": 1,
                                     "maxItems": 30,
-                                    "items": _object(
-                                        {
-                                            "block_key": {
-                                                "type": "string",
-                                                "pattern": "^b-[0-9]{1,3}$",
-                                            },
-                                            "kind": {
-                                                "type": "string",
-                                                "enum": ["factual", "connective"],
-                                            },
-                                            "text": _string(2000),
-                                            "claim_id": {
-                                                "type": ["string", "null"],
-                                                "format": "uuid",
-                                            },
-                                        }
-                                    ),
+                                    "items": _STATEMENT,
                                 },
                             }
                         ),
@@ -275,20 +245,9 @@ _SCHEMAS["generate_documents"] = _object(
 )
 _SCHEMAS["regenerate_section"] = _object(
     {
-        "schema_version": {"const": "1"},
+        "schema_version": {"const": "2"},
         "stage": {"const": "regenerate_section"},
-        "blocks": {
-            "type": "array",
-            "minItems": 1,
-            "maxItems": 30,
-            "items": _object(
-                {
-                    key: value
-                    for key, value in cast(dict[str, object], _DOCUMENT_BLOCK["properties"]).items()
-                    if key != "block_key"
-                }
-            ),
-        },
+        "blocks": {"type": "array", "minItems": 1, "maxItems": 30, "items": _STATEMENT},
         "warnings": {"type": "array", "maxItems": 20, "items": _string(500)},
     }
 )

@@ -10,7 +10,7 @@ import time
 from html.parser import HTMLParser
 from pathlib import Path
 from typing import Any
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
 from pydantic import ValidationError
@@ -21,6 +21,7 @@ from test_sources import SourceContext
 from test_sources import catalog as catalog
 from test_suitability import _profile
 
+from bonafides import documents
 from bonafides.documents import (
     DocumentBlock,
     DocumentBody,
@@ -31,7 +32,6 @@ from bonafides.documents import (
     body_digest,
     parse_body,
     prepare_render,
-    unsupported_paths,
 )
 from bonafides.problems import Problem
 from bonafides.render_service import (
@@ -42,6 +42,7 @@ from bonafides.render_service import (
     isolation_canary,
     render_html,
 )
+from bonafides.statement_check import check_statements
 from bonafides.storage import BlobStore, atomic_file, directory, read_file
 
 
@@ -122,12 +123,112 @@ def test_duplicate_block_keys_and_references_are_rejected() -> None:
         )
 
 
+def _base_issues(body: DocumentBody, fact: Fact) -> list[tuple[str, str]]:
+    """The claim-evidence checker on a base résumé pinned to one saved fact."""
+    pinned: dict[str, object] = {
+        "claim_revision_id": str(fact.claim_id),
+        "evidence_revision_id": str(fact.evidence_id),
+        "claim_text": fact.claim_text,
+        "evidence_text": fact.evidence_text,
+    }
+    return [
+        (issue["path"], issue["code"]) for issue in check_statements(body, [pinned], {}, "base")
+    ]
+
+
 def test_citation_does_not_support_invented_kubernetes_metric() -> None:
     body, fact = example()
-    assert unsupported_paths(body, (fact,)) == []
+    assert _base_issues(body, fact) == []
     wire = body.model_dump(mode="json")
     wire["sections"][0]["blocks"][0]["text"] = "Led Kubernetes migration improving uptime by 99%."
-    assert unsupported_paths(parse_body(wire), (fact,)) == ["/sections/0/blocks/0"]
+    assert _base_issues(parse_body(wire), fact) == [
+        ("/sections/0/blocks/0", "statement_not_in_claim_evidence")
+    ]
+
+
+@pytest.mark.postgres
+@pytest.mark.parametrize("publication", ["synthetic_stored_revision", "benchmark"])
+def test_stored_base_checker_blocks_literal_claim_substrings(
+    catalog: SourceContext, publication: str
+) -> None:
+    """Checker regression with a synthetic excerpt, not an owner rebuild admission guarantee."""
+    profile = catalog.client.get("/api/v1/profile").json()
+    evidence = catalog.client.post(
+        "/api/v1/evidence",
+        json={
+            "payload": {"text": "Tuned PostgreSQL queries", "source": "Synthetic owner notes"},
+            "provenance": {
+                "source_type": "owner_statement",
+                "privacy_class": "private",
+                "employer_owned": False,
+            },
+        },
+        headers=catalog.headers(profile["version"]),
+    )
+    assert evidence.status_code == 200, evidence.text
+    profile = evidence.json()
+    claim = catalog.client.post(
+        "/api/v1/claims",
+        json={
+            "kind": "skill",
+            "payload": {"text": "SQL"},
+            "evidence_links": [
+                {
+                    "evidence_revision_id": profile["evidence"][0]["revision"]["id"],
+                    "support_kind": "user_asserted",
+                    "excerpt": "SQL",
+                }
+            ],
+        },
+        headers=catalog.headers(profile["version"]),
+    )
+    assert claim.status_code == 200, claim.text
+    profile = claim.json()
+
+    if publication == "benchmark":
+        with catalog.runtime.transaction() as conn:
+            prepared = documents.prepare_synthetic(
+                conn, catalog.owner_id, UUID(profile["current_revision"]["id"])
+            )
+            with pytest.raises(Problem) as refused:
+                documents.publish_document(conn, catalog.owner_id, uuid4(), prepared)
+            assert refused.value.status == 409
+            assert refused.value.code == "unsupported_claims"
+            assert refused.value.detail == (
+                "Unsupported statements: SQL (statement_not_in_claim_evidence)"
+            )
+            assert (
+                conn.execute(
+                    text("SELECT count(*) FROM bonafides.document_drafts WHERE owner_id=:owner"),
+                    {"owner": catalog.owner_id},
+                ).scalar_one()
+                == 0
+            )
+        return
+
+    document = _base(catalog, profile)
+    revision = document["current_revision"]
+    assert [block["text"] for block in revision["body"]["sections"][0]["blocks"]] == ["SQL"]
+    assert revision["validation_issues"] == [
+        {
+            "path": "/sections/0/blocks/0",
+            "code": "statement_not_in_claim_evidence",
+            "statement": "SQL",
+        }
+    ]
+    assert document["unsupported_claims"] and not document["reviewed"]
+    review = _review(catalog, document)
+    assert review.status_code == 409 and review.json()["code"] == "unsupported_claims"
+    render = catalog.client.post(
+        f"/api/v1/documents/{document['id']}/renders",
+        json={
+            "revision_id": revision["id"],
+            "content_sha256": revision["content_sha256"],
+            "format": "pdf",
+        },
+        headers=catalog.headers(document["version"]),
+    )
+    assert render.status_code == 409 and render.json()["code"] == "unsupported_claims"
 
 
 def test_facts_cannot_be_hidden_in_document_title_or_section_heading() -> None:
@@ -135,7 +236,10 @@ def test_facts_cannot_be_hidden_in_document_title_or_section_heading() -> None:
     wire = body.model_dump(mode="json")
     wire["title"] = "Certified Kubernetes architect"
     wire["sections"][0]["heading"] = "Ten years of management experience"
-    assert unsupported_paths(parse_body(wire), (fact,)) == ["/title", "/sections/0/heading"]
+    assert _base_issues(parse_body(wire), fact) == [
+        ("/title", "unestablished_heading"),
+        ("/sections/0/heading", "unestablished_heading"),
+    ]
 
 
 @pytest.mark.parametrize("kind", ["intent", "greeting"])
@@ -143,7 +247,26 @@ def test_relabeling_facts_as_nonfactual_cannot_bypass_gate(kind: str) -> None:
     body, fact = example()
     wire = body.model_dump(mode="json")
     wire["sections"][0]["blocks"][0]["claim_kind"] = kind
-    assert unsupported_paths(parse_body(wire), (fact,))
+    assert _base_issues(parse_body(wire), fact) == [
+        ("/sections/0/blocks/0", "connective_not_declared")
+    ]
+
+
+def test_base_resume_has_no_connective_text() -> None:
+    body, fact = example()
+    wire = body.model_dump(mode="json")
+    wire["sections"][0]["blocks"].append(
+        {
+            "block_key": "greeting",
+            "text": "Sincerely,",
+            "claim_kind": "greeting",
+            "claim_revision_ids": [],
+            "evidence_revision_ids": [],
+        }
+    )
+    assert _base_issues(parse_body(wire), fact) == [
+        ("/sections/0/blocks/1", "connective_not_declared")
+    ]
 
 
 def test_foreign_missing_and_extra_evidence_are_unsupported() -> None:
@@ -151,7 +274,9 @@ def test_foreign_missing_and_extra_evidence_are_unsupported() -> None:
     for ids in ([], [str(uuid4())], [str(fact.evidence_id), str(uuid4())]):
         wire = body.model_dump(mode="json")
         wire["sections"][0]["blocks"][0]["evidence_revision_ids"] = ids
-        assert unsupported_paths(parse_body(wire), (fact,))
+        assert _base_issues(parse_body(wire), fact) == [
+            ("/sections/0/blocks/0", "evidence_not_linked_to_claim")
+        ]
 
 
 def test_http_review_payload_requires_exact_hash_and_uuid() -> None:

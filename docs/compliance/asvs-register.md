@@ -56,7 +56,7 @@ Rows point to symbols communicated by the implementation owners, including:
 
 - Identity/configuration: `src/bonafides/auth.py` (`check_password`, `hash_password`, `verify_password`, `require_owner`, `init_bootstrap`, `recover_password`, `build_router`); `src/bonafides/config.py` (`Settings.from_env`, `read_secret`); `tests/test_identity.py` and `tests/test_config.py`.
 - Cryptography: `src/bonafides/crypto.py` (`Keyring`, `EnvelopeContext`, `encrypt`, `decrypt`).
-- Documents: `src/bonafides/documents.py` (`DocumentBody`, `unsupported_paths`, `prepare_render`); `src/bonafides/storage.py` (`BlobStore`, `atomic_file`, `directory`); `src/bonafides/render_service.py` (`deny_url_fetcher`, `render_html`, `render_pdf`, `RenderClient`, `_supervise`, `isolation_canary`); `tests/test_documents.py`.
+- Documents: `src/bonafides/documents.py` (`DocumentBody`, `prepare_render`); `src/bonafides/statement_check.py` (`check_statements`); `src/bonafides/storage.py` (`BlobStore`, `atomic_file`, `directory`); `src/bonafides/render_service.py` (`deny_url_fetcher`, `render_html`, `render_pdf`, `RenderClient`, `_supervise`, `isolation_canary`); `tests/test_documents.py`.
 - Persistence/workflows: `src/bonafides/commands.py::require_if_match`; `src/bonafides/workflows.py` (`claim`, `heartbeat`, `assert_fence`, `publish`, `reap`, `cancel`); `migrations/sql/001_initial.up.sql::assert_workflow_fence`; `tests/test_database.py` and `tests/test_workflows.py`.
 - Integrated deployment, containment and recovery: `deploy`, `Dockerfile` and `tools/runtime_proof.py`; actual browser and target TLS observations must be recorded separately.
 

@@ -97,10 +97,19 @@ def _queue_section(context: SourceContext, preview: dict[str, Any]) -> Claim:
 
 
 def _output(preview: dict[str, Any]) -> dict[str, Any]:
+    """The target section restated in the claim-structured statement shape."""
     return {
-        "schema_version": "1",
+        "schema_version": "2",
         "stage": "regenerate_section",
-        "blocks": copy.deepcopy(preview["model_projection"]["target"]["blocks"]),
+        "blocks": [
+            {
+                "block_key": f"b-{index}",
+                "kind": "factual" if block["claim_kind"] == "factual" else "connective",
+                "text": block["text"],
+                "claim_id": block["claim_revision_ids"][0] if block["claim_revision_ids"] else None,
+            }
+            for index, block in enumerate(preview["model_projection"]["target"]["blocks"], 1)
+        ],
         "warnings": [],
     }
 
@@ -382,16 +391,16 @@ def test_unsupported_candidate_remains_visible_and_common_review_pdf_guards_bloc
 @pytest.mark.parametrize(
     "failure",
     [
-        "foreign_claim",
-        "foreign_evidence",
+        "legacy_reference_lists",
         "extra_heading",
         "extra_key",
         "wrong_stage",
         "empty",
-        "duplicate_reference",
+        "duplicate_key",
+        "connective_cites_claim",
     ],
 )
-def test_malformed_or_unpinned_candidate_quarantines_only_regeneration_stage(
+def test_malformed_candidate_after_one_correction_quarantines_only_regeneration_stage(
     catalog: SourceContext, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, failure: str
 ) -> None:
     _, _, records = _setup(catalog, monkeypatch, tmp_path)
@@ -399,24 +408,27 @@ def test_malformed_or_unpinned_candidate_quarantines_only_regeneration_stage(
     preview = _section_preview(catalog, document)
     task = _queue_section(catalog, preview)
     candidate = _output(preview)
-    if failure == "foreign_claim":
-        candidate["blocks"][0]["claim_revision_ids"] = [str(uuid4())]
-    elif failure == "foreign_evidence":
-        candidate["blocks"][0]["evidence_revision_ids"] = [str(uuid4())]
+    block = candidate["blocks"][0]
+    if failure == "legacy_reference_lists":
+        block["claim_revision_ids"] = [block.pop("claim_id")]
     elif failure == "extra_heading":
         candidate["heading"] = "Invented heading"
     elif failure == "extra_key":
-        candidate["blocks"][0]["block_key"] = "model-controlled"
+        block["block_key"] = "model-controlled"
     elif failure == "wrong_stage":
         candidate["stage"] = "generate_documents"
     elif failure == "empty":
         candidate["blocks"] = []
+    elif failure == "duplicate_key":
+        candidate["blocks"].append(copy.deepcopy(block))
     else:
-        candidate["blocks"][0]["claim_revision_ids"] *= 2
+        block["kind"] = "connective"
     model = FixtureModel(candidate)
-    with pytest.raises(Problem):
+    with pytest.raises(Problem) as failed:
         suitability.execute_model(catalog.runtime, catalog.identity.settings, task, Event(), model)
-    assert model.calls == 1 and _document(catalog, document["id"]) == document
+    assert failed.value.code == "model_output_invalid_after_correction"
+    assert model.calls == 2 and len(model.corrections) == 1
+    assert _document(catalog, document["id"]) == document
     with catalog.runtime.transaction() as conn:
         assert (
             conn.execute(
@@ -922,12 +934,16 @@ def test_same_owner_new_profile_facts_cannot_escape_original_parent_pin(
     assert new_claim not in canonical_json(preview["model_projection"])
     task = _queue_section(catalog, preview)
     output = _output(preview)
-    output["blocks"][0]["claim_revision_ids"] = [new_claim]
-    with pytest.raises(Problem) as refused:
-        suitability.execute_model(
-            catalog.runtime, catalog.identity.settings, task, Event(), FixtureModel(output)
-        )
-    assert refused.value.code == "reference_outside_pinned_context"
+    output["blocks"][0]["claim_id"] = new_claim
+    suitability.execute_model(
+        catalog.runtime, catalog.identity.settings, task, Event(), FixtureModel(output)
+    )
+    proposal = catalog.client.get(
+        f"/api/v1/documents/{records[0]['id']}/regeneration-proposals/"
+        f"{catalog.workflow(task.id)['result']['proposal_id']}"
+    ).json()
+    # A claim outside the original parent's pin is a visible blocker, never a new source.
+    assert [issue["code"] for issue in proposal["validation_issues"]] == ["claim_not_in_profile"]
     assert (
         _document(catalog, records[0]["id"])["current_revision"] == records[0]["current_revision"]
     )
