@@ -8,6 +8,9 @@ posting and other claims' evidence are never consulted. A statement that reprodu
 exactly the cited claim's pinned printable text (its claim text followed by that claim
 revision's own reviewed structured-field lines) is checked by its claim text alone; any
 other wording, including altered, added or reordered field lines, is checked as a whole.
+A contained statement must also not strengthen its claim: the inflation rules compare it with
+the claim's pinned text and name each stronger verb, longer tenure, larger or unit-changed
+metric and wider scope. Review cannot waive any of these blockers.
 Non-factual text must be one of the declared connective templates, whose only variable
 slots are the posting title and organization; a base résumé has no connective text.
 Anything else is treated as an unsupported factual statement.
@@ -20,11 +23,12 @@ from collections.abc import Mapping, Sequence
 from typing import TYPE_CHECKING, Literal
 
 from bonafides.claims import contains_statement
+from bonafides.inflation import CODES, inflation_kinds
 
 if TYPE_CHECKING:
     from bonafides.documents import DocumentBody
 
-CHECKER_VERSION = "claim-evidence-v1"
+CHECKER_VERSION = "claim-evidence-v2"
 CATEGORIES = {
     "experience": "Experience",
     "education": "Education",
@@ -94,27 +98,28 @@ def connectives(frame: Mapping[str, object]) -> dict[str, ConnectiveKind]:
     return rendered
 
 
-def _factual_issue(
+def _factual_issues(
     claim_ids: Sequence[str],
     evidence_ids: Sequence[str],
     text: str,
     facts: Sequence[Mapping[str, object]],
-) -> str | None:
+) -> list[str]:
     if not claim_ids:
-        return "uncited_factual_statement"
+        return ["uncited_factual_statement"]
     if len(claim_ids) != 1:
-        return "statement_cites_multiple_claims"
+        return ["statement_cites_multiple_claims"]
     own = [fact for fact in facts if str(fact["claim_revision_id"]) == claim_ids[0]]
     if not own:
-        return "claim_not_in_profile"
+        return ["claim_not_in_profile"]
     if set(evidence_ids) != {str(fact["evidence_revision_id"]) for fact in own}:
-        return "evidence_not_linked_to_claim"
+        return ["evidence_not_linked_to_claim"]
     # The pinned printable text appends only the claim revision's own reviewed fields.
     printable = {fact.get("printable_text") for fact in own}
-    statement = str(own[0]["claim_text"]) if text in printable else text
+    claim_text = str(own[0]["claim_text"])
+    statement = claim_text if text in printable else text
     if not any(contains_statement(statement, str(fact["evidence_text"])) for fact in own):
-        return "statement_not_in_claim_evidence"
-    return None
+        return ["statement_not_in_claim_evidence"]
+    return [CODES[kind] for kind in inflation_kinds(statement, claim_text)]
 
 
 def check_statements(
@@ -141,13 +146,13 @@ def check_statements(
                 ):
                     codes.append("connective_not_declared")
             else:
-                code = _factual_issue(
-                    [str(item) for item in block.claim_revision_ids],
-                    [str(item) for item in block.evidence_revision_ids],
-                    block.text,
-                    facts,
+                codes.extend(
+                    _factual_issues(
+                        [str(item) for item in block.claim_revision_ids],
+                        [str(item) for item in block.evidence_revision_ids],
+                        block.text,
+                        facts,
+                    )
                 )
-                if code is not None:
-                    codes.append(code)
             found.extend({"path": path, "code": code, "statement": block.text} for code in codes)
     return found

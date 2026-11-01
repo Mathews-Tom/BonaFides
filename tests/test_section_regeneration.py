@@ -175,7 +175,7 @@ def test_claim_checked_proposal_reports_same_blocker_as_applied_revision(
         item for item in _pair_documents(catalog, application)["items"] if item["kind"] == "resume"
     )
     assert document["current_revision"]["provenance_snapshot"]["checker_version"] == (
-        "claim-evidence-v1"
+        "claim-evidence-v2"
     )
     _route(monkeypatch, tmp_path)
     _, proposal = _proposal(catalog, document, unsupported=True)
@@ -192,7 +192,7 @@ def test_claim_checked_proposal_reports_same_blocker_as_applied_revision(
     assert applied.status_code == 200, applied.text
     revision = applied.json()["current_revision"]
     assert revision["validation_issues"] == blockers
-    assert revision["provenance_snapshot"]["checker_version"] == "claim-evidence-v1"
+    assert revision["provenance_snapshot"]["checker_version"] == "claim-evidence-v2"
 
 
 @pytest.mark.postgres

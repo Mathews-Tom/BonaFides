@@ -121,7 +121,7 @@ def test_valid_stub_section_links_every_statement_and_applied_revision_exports(
     assert applied.status_code == 200, applied.text
     revision = applied.json()["current_revision"]
     assert revision["validation_issues"] == []
-    assert revision["provenance_snapshot"]["checker_version"] == "claim-evidence-v1"
+    assert revision["provenance_snapshot"]["checker_version"] == "claim-evidence-v2"
     updated = _document(catalog, resume["id"])
     assert _review(catalog, updated).status_code == 200
     assert _render(catalog, _document(catalog, resume["id"])).status_code == 202
@@ -473,7 +473,7 @@ def test_owner_base_resume_with_structured_fields_passes_the_claim_checker(
 ) -> None:
     document = _base(catalog, _profile_with_fields(catalog))
     revision = document["current_revision"]
-    assert revision["provenance_snapshot"]["checker_version"] == "claim-evidence-v1"
+    assert revision["provenance_snapshot"]["checker_version"] == "claim-evidence-v2"
     texts = [
         block["text"] for section in revision["body"]["sections"] for block in section["blocks"]
     ]
