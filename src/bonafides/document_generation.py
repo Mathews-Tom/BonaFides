@@ -295,10 +295,9 @@ def claim_json_rates(
             SELECT m.task_kind,m.status,m.metadata,
             row_number() OVER (PARTITION BY m.workflow_run_id ORDER BY m.created_at DESC,m.id DESC) AS latest,
             bool_or(coalesce(m.metadata->>'corrective_retry','')='true') OVER (PARTITION BY m.workflow_run_id) AS corrected
-            FROM bonafides.model_runs m JOIN bonafides.workflow_runs w
-            ON w.owner_id=m.owner_id AND w.id=m.workflow_run_id
+            FROM bonafides.model_runs m
             WHERE m.owner_id=:owner AND m.task_kind IN ('generate_documents','regenerate_section')
-            AND w.input->'route_identity'=CAST(:identity AS jsonb))
+            AND m.parameters->'route_identity'=CAST(:identity AS jsonb))
         SELECT task_kind,
         count(*) FILTER (WHERE valid AND NOT corrected) AS valid_first,
         count(*) FILTER (WHERE valid AND corrected) AS valid_after_correction,

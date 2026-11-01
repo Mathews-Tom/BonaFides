@@ -10,7 +10,7 @@ import time
 from html.parser import HTMLParser
 from pathlib import Path
 from typing import Any
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
 from pydantic import ValidationError
@@ -21,6 +21,7 @@ from test_sources import SourceContext
 from test_sources import catalog as catalog
 from test_suitability import _profile
 
+from bonafides import documents
 from bonafides.documents import (
     DocumentBlock,
     DocumentBody,
@@ -143,6 +144,90 @@ def test_citation_does_not_support_invented_kubernetes_metric() -> None:
     assert _base_issues(parse_body(wire), fact) == [
         ("/sections/0/blocks/0", "statement_not_in_claim_evidence")
     ]
+
+
+@pytest.mark.postgres
+@pytest.mark.parametrize("publication", ["compose_base", "benchmark"])
+def test_literal_claim_substring_does_not_support_base_statement(
+    catalog: SourceContext, publication: str
+) -> None:
+    profile = catalog.client.get("/api/v1/profile").json()
+    evidence = catalog.client.post(
+        "/api/v1/evidence",
+        json={
+            "payload": {"text": "Tuned PostgreSQL queries", "source": "Synthetic owner notes"},
+            "provenance": {
+                "source_type": "owner_statement",
+                "privacy_class": "private",
+                "employer_owned": False,
+            },
+        },
+        headers=catalog.headers(profile["version"]),
+    )
+    assert evidence.status_code == 200, evidence.text
+    profile = evidence.json()
+    claim = catalog.client.post(
+        "/api/v1/claims",
+        json={
+            "kind": "skill",
+            "payload": {"text": "SQL"},
+            "evidence_links": [
+                {
+                    "evidence_revision_id": profile["evidence"][0]["revision"]["id"],
+                    "support_kind": "user_asserted",
+                    "excerpt": "SQL",
+                }
+            ],
+        },
+        headers=catalog.headers(profile["version"]),
+    )
+    assert claim.status_code == 200, claim.text
+    profile = claim.json()
+
+    if publication == "benchmark":
+        with catalog.runtime.transaction() as conn:
+            prepared = documents.prepare_synthetic(
+                conn, catalog.owner_id, UUID(profile["current_revision"]["id"])
+            )
+            with pytest.raises(Problem) as refused:
+                documents.publish_document(conn, catalog.owner_id, uuid4(), prepared)
+            assert refused.value.status == 409
+            assert refused.value.code == "unsupported_claims"
+            assert refused.value.detail == (
+                "Unsupported statements: SQL (statement_not_in_claim_evidence)"
+            )
+            assert (
+                conn.execute(
+                    text("SELECT count(*) FROM bonafides.document_drafts WHERE owner_id=:owner"),
+                    {"owner": catalog.owner_id},
+                ).scalar_one()
+                == 0
+            )
+        return
+
+    document = _base(catalog, profile)
+    revision = document["current_revision"]
+    assert [block["text"] for block in revision["body"]["sections"][0]["blocks"]] == ["SQL"]
+    assert revision["validation_issues"] == [
+        {
+            "path": "/sections/0/blocks/0",
+            "code": "statement_not_in_claim_evidence",
+            "statement": "SQL",
+        }
+    ]
+    assert document["unsupported_claims"] and not document["reviewed"]
+    review = _review(catalog, document)
+    assert review.status_code == 409 and review.json()["code"] == "unsupported_claims"
+    render = catalog.client.post(
+        f"/api/v1/documents/{document['id']}/renders",
+        json={
+            "revision_id": revision["id"],
+            "content_sha256": revision["content_sha256"],
+            "format": "pdf",
+        },
+        headers=catalog.headers(document["version"]),
+    )
+    assert render.status_code == 409 and render.json()["code"] == "unsupported_claims"
 
 
 def test_facts_cannot_be_hidden_in_document_title_or_section_heading() -> None:

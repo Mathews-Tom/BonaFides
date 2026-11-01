@@ -1371,6 +1371,10 @@ def _execute_reserved_model(
             with db.transaction() as conn:
                 active_route = _route(conn, task.owner_id, settings, stage)
                 _check_workflow_context(conn, task, settings)
+                if stage == "regenerate_section":
+                    from bonafides.section_regeneration import candidate_validator
+
+                    validate_section = candidate_validator(conn, task)
             if active_route.identity() != task.input.get("route_identity"):
                 raise Problem(409, "stale_model_route")
             if interrupted.is_set():
@@ -1391,10 +1395,8 @@ def _execute_reserved_model(
                 run_id = runs[-1]
                 output_valid = True
             elif stage == "regenerate_section":
-                from bonafides.section_regeneration import validate_candidate
-
                 section_candidate, result = _checked_call(
-                    db, settings, task, interrupted, client, active_route, runs, validate_candidate
+                    db, settings, task, interrupted, client, active_route, runs, validate_section
                 )
                 run_id = runs[-1]
                 output_valid = True

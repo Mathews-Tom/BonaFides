@@ -248,8 +248,16 @@ def publish_document(
         }
         for fact in facts
     ]
-    if facts != prepared.facts or check_statements(prepared.body, pinned, {}, "base"):
+    if facts != prepared.facts:
         raise Problem(409, "unsupported_claims")
+    issues = check_statements(prepared.body, pinned, {}, "base")
+    if issues:
+        raise Problem(
+            409,
+            "unsupported_claims",
+            "Unsupported statements: "
+            + "; ".join(f"{issue['statement']} ({issue['code']})" for issue in issues),
+        )
     revision_id = uuid5(workflow_id, "document-revision")
     existing = conn.execute(
         text(

@@ -13,6 +13,7 @@ from threading import Event
 from typing import Any, cast
 
 import pytest
+from sqlalchemy import text
 from test_checked_generation import (
     WRITES,
     _archive_evidence,
@@ -23,13 +24,14 @@ from test_checked_generation import (
     _run,
     _stub,
 )
-from test_document_generation import _base, _document, _pair_documents, _review
+from test_document_generation import _base, _document, _pair_documents, _review, _save
 from test_identity import identity as identity
 from test_section_regeneration import _apply, _queue_section, _section_preview
 from test_sources import SourceContext
 from test_sources import catalog as catalog
 from test_suitability import _after_model_send
 
+from tools import stub_model
 from tools.stub_model import ABSENT_CLAIM_ID, StubModel
 
 STUB_STAGES = ("generate_documents", "regenerate_section")
@@ -185,6 +187,91 @@ def test_malformed_once_section_is_corrected_once_on_the_same_projection(
 
 
 @pytest.mark.postgres
+@pytest.mark.parametrize("limit", ["blocks", "characters"])
+@pytest.mark.parametrize("corrected", [True, False])
+def test_spliced_document_limits_receive_one_correction_and_count_the_checked_result(
+    catalog: SourceContext,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    limit: str,
+    corrected: bool,
+) -> None:
+    with _resume(catalog, monkeypatch, tmp_path) as (stub, application, resume):
+        body = json.loads(json.dumps(resume["current_revision"]["body"]))
+        prototype = body["sections"][0]["blocks"][0]
+        count, size = (110, 1) if limit == "blocks" else (50, 1900)
+        body["sections"].append(
+            {
+                "key": "retained",
+                "heading": "Retained",
+                "blocks": [
+                    {**prototype, "block_key": f"retained-{index}", "text": "x" * size}
+                    for index in range(count)
+                ],
+            }
+        )
+        saved = _save(catalog, resume, body)
+        assert saved.status_code == 200, saved.text
+        resume = _document(catalog, resume["id"])
+        original = stub_model._section
+        calls = 0
+
+        def oversized(projection: dict[str, object]) -> dict[str, Any]:
+            nonlocal calls
+            calls += 1
+            output = original(projection)
+            if calls == 1 or not corrected:
+                output["blocks"] = [
+                    {**output["blocks"][0], "block_key": f"b-{index}", "text": "x" * 2000}
+                    for index in range(30)
+                ]
+            return output
+
+        monkeypatch.setattr(stub_model, "_section", oversized)
+        workflow = _regenerate(catalog, resume)
+    assert calls == 2
+    assert len(stub.requests) == 3
+    assert "document_too_large" in stub.requests[-1]["messages"][2]["content"]
+    if corrected:
+        _proposal(catalog, resume, workflow)
+        expected = _counts(corrected=1, rate=100)
+    else:
+        assert workflow["last_error_code"] == "model_output_invalid_after_correction"
+        assert _proposal_count(catalog, resume) == 0
+        expected = _counts(invalid=1, rate=0)
+    assert _rates(catalog, application)["regenerate_section"] == expected
+
+
+@pytest.mark.postgres
+def test_route_rates_survive_terminal_task_input_retention(
+    catalog: SourceContext, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from bonafides.task_retention import _RETAINED_INPUT
+
+    with _resume(catalog, monkeypatch, tmp_path) as (stub, application, resume):
+        stub.scenario = "malformed-once"
+        _proposal(catalog, resume, _regenerate(catalog, resume))
+    before = _rates(catalog, application)
+    assert before["generate_documents"] == _counts(valid_first=1, rate=100)
+    assert before["regenerate_section"] == _counts(corrected=1, rate=100)
+    with catalog.identity.admin.transaction() as conn:
+        conn.execute(
+            text(f"""UPDATE bonafides.workflow_runs w SET input={_RETAINED_INPUT}
+            WHERE w.owner_id=:owner AND w.state IN ('succeeded','cancelled','permanent_failure')"""),
+            {"owner": catalog.owner_id},
+        )
+        assert (
+            conn.execute(
+                text("""SELECT count(*) FROM bonafides.workflow_runs
+            WHERE owner_id=:owner AND input ? 'route_identity'"""),
+                {"owner": catalog.owner_id},
+            ).scalar_one()
+            == 0
+        )
+    assert _rates(catalog, application) == before
+
+
+@pytest.mark.postgres
 @pytest.mark.parametrize(
     ("scenario", "calls", "code", "counts"),
     [
@@ -213,6 +300,26 @@ def test_failed_section_task_creates_no_proposal_and_keeps_the_document(
         "generate_documents": _counts(valid_first=1, rate=100),
         "regenerate_section": counts,
     }
+
+
+@pytest.mark.postgres
+@pytest.mark.parametrize("write", ["claim_edit", "evidence_edit"])
+def test_already_stale_target_rechecks_sources_when_apply_version_still_matches(
+    catalog: SourceContext, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, write: str
+) -> None:
+    with _resume(catalog, monkeypatch, tmp_path) as (_, _, resume):
+        _profile_with_fields(catalog)
+        resume = _document(catalog, resume["id"])
+        assert resume["stale"]
+        proposal = _proposal(catalog, resume, _regenerate(catalog, resume))
+    assert WRITES[write](catalog).status_code == 200
+    refused = _apply(catalog, _document(catalog, resume["id"]), proposal)
+    assert refused.status_code == 409, refused.text
+    assert refused.json()["code"] == {
+        "claim_edit": "profile_fact_withdrawn",
+        "evidence_edit": "profile_evidence_unavailable",
+    }[write]
+    assert _document(catalog, resume["id"])["current_revision"] == resume["current_revision"]
 
 
 @pytest.mark.postgres

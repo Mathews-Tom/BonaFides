@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import Annotated, Literal, cast
 from uuid import UUID, uuid5
 
@@ -226,9 +227,41 @@ def _replacement(
     )
 
 
-def validate_candidate(output: dict[str, object]) -> Candidate:
-    """Schema-validate a section; claim references are checked per statement, not here."""
-    return generation.parse_candidate(output, Candidate)
+def _candidate_section(
+    candidate: Candidate, frozen: dict[str, object], provenance: dict[str, object], task_id: UUID
+) -> documents.DocumentSection:
+    original = documents.DocumentSection.model_validate_json(
+        canonical_json(frozen["original_section"]), strict=True
+    )
+    identifier = uuid5(task_id, "section-proposal")
+    return documents.DocumentSection(
+        key=original.key,
+        heading=original.heading,
+        blocks=[
+            generation.candidate_block(statement, provenance).model_copy(
+                update={"block_key": f"proposal-{identifier}-{index}"}
+            )
+            for index, statement in enumerate(candidate.blocks)
+        ],
+    )
+
+
+def candidate_validator(conn: Connection, task: Claim) -> Callable[[dict[str, object]], Candidate]:
+    """Freeze the target body and check the complete replacement before counting validity."""
+    row = _target(conn, task.owner_id, UUID(str(task.input["document_id"])))
+    body = documents.parse_body(row["body"])
+    provenance = cast(dict[str, object], row["provenance_snapshot"])
+
+    def validate(output: dict[str, object]) -> Candidate:
+        candidate = generation.parse_candidate(output, Candidate)
+        try:
+            proposed = _candidate_section(candidate, task.input, provenance, task.id)
+            _replacement(body, proposed.key, proposed)
+        except ValidationError as exc:
+            raise generation._mismatch(exc) from exc
+        return candidate
+
+    return validate
 
 
 def publish_proposal(
@@ -248,16 +281,7 @@ def publish_proposal(
     row = _target(conn, task.owner_id, UUID(str(frozen["document_id"])))
     provenance = cast(dict[str, object], row["provenance_snapshot"])
     try:
-        proposed = documents.DocumentSection(
-            key=original.key,
-            heading=original.heading,
-            blocks=[
-                generation.candidate_block(statement, provenance).model_copy(
-                    update={"block_key": f"proposal-{identifier}-{index}"}
-                )
-                for index, statement in enumerate(candidate.blocks)
-            ],
-        )
+        proposed = _candidate_section(candidate, frozen, provenance, task.id)
         body = _replacement(documents.parse_body(row["body"]), original.key, proposed)
     except ValidationError as exc:
         raise Problem(422, "invalid_model_output") from exc
