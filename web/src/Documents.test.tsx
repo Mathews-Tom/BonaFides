@@ -339,6 +339,30 @@ describe('review, export and generation boundaries', () => {
     expect(screen.getByRole('button', { name: 'Render reviewed PDF' })).toBeDisabled();
   });
 
+  it('names the kind of strengthening for each statement that strengthens its claim', async () => {
+    const kinds = [
+      ['statement_stronger_verb', 'Led the Linux service checks.', 'Stronger verb: it claims more ownership than its claim states.'],
+      ['statement_longer_tenure', 'Maintained Linux service checks 2018–2024.', "Longer tenure: it states a period longer than, or outside, its claim's period."],
+      ['statement_larger_metric', 'Maintained Linux service checks for 40 hosts.', 'Larger metric: it states a larger figure or a different unit, magnitude or rate than its claim.'],
+      ['statement_wider_scope', 'Maintained Linux service checks company-wide.', 'Wider scope: it states a wider scope than its claim.'],
+    ] as const;
+    const first = saved.current_revision.body.sections[0]!.blocks[0]!;
+    const body = { ...saved.current_revision.body, sections: [{ ...saved.current_revision.body.sections[0]!, blocks: kinds.map(([, text], index) => ({ ...first, block_key: `b-${index + 1}`, text })) }] };
+    const issues = kinds.map(([code, statement], index) => ({ path: `/sections/0/blocks/${index}`, code, statement }));
+    const blocked = { ...saved, unsupported_claims: issues.map(issue => issue.path), current_revision: { ...saved.current_revision, body, validation_issues: issues } };
+    const { api } = fixture(blocked, async () => { throw new ApiError(404, 'not_found'); });
+    render(<Documents api={api} profile={profile} />); await ready();
+    const items = within(screen.getByText('Export blocked: unresolved factual or source issues.').closest('div')!).getAllByRole('listitem');
+    expect(items).toHaveLength(kinds.length);
+    kinds.forEach(([code, statement, reason], index) => {
+      expect(items[index]).toHaveTextContent(reason);
+      expect(items[index]).toHaveTextContent(`Statement: ${statement}`);
+      expect(items[index]).toHaveTextContent(code);
+    });
+    expect(screen.getByRole('button', { name: 'Accept this exact revision' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Render reviewed PDF' })).toBeDisabled();
+  });
+
   it('keeps unsupported manual text editable but blocks review/export even if a server review flag is true', async () => {
     const user = userEvent.setup(); const blocked = { ...saved, reviewed: true, unsupported_claims: ['/sections/0/blocks/0'], current_revision: { ...saved.current_revision, validation_issues: [{ path: '/sections/0/blocks/0', code: 'unestablished_factual_text' }] } };
     const { api, request } = fixture(blocked, async (path, method, body) => {

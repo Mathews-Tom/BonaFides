@@ -46,6 +46,10 @@ export function issueAnchor(path: string, body: DocumentBody, displayed: Documen
 export const ISSUE_REASONS: Record<string, string> = {
   claim_not_in_profile: 'It cites a claim that is not in your profile.',
   statement_not_in_claim_evidence: "It is not contained in its claim's own evidence.",
+  statement_stronger_verb: 'Stronger verb: it claims more ownership than its claim states.',
+  statement_longer_tenure: 'Longer tenure: it states a period longer than, or outside, its claim\'s period.',
+  statement_larger_metric: "Larger metric: it states a larger figure or a different unit, magnitude or rate than its claim.",
+  statement_wider_scope: 'Wider scope: it states a wider scope than its claim.',
   uncited_factual_statement: 'It states a fact without citing a claim.',
   statement_cites_multiple_claims: 'It cites more than one claim.',
   evidence_not_linked_to_claim: "Its evidence is not its claim's own evidence.",
