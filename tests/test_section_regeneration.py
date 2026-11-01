@@ -29,7 +29,7 @@ from test_document_generation import (
 from test_identity import identity as identity
 from test_sources import SourceContext
 from test_sources import catalog as catalog
-from test_suitability import FixtureModel, _profile, _requirement, _route, _write
+from test_suitability import FixtureModel, _after_model_send, _profile, _requirement, _route, _write
 
 from bonafides import document_generation as generation
 from bonafides import documents, local_model, section_regeneration, suitability
@@ -496,7 +496,9 @@ def test_late_output_is_fenced_by_target_and_original_context_changes(
                         {"owner": catalog.owner_id},
                     )
 
-    model = FixtureModel(_output(preview), during=intervene)
+    if race == "profile":
+        _after_model_send(monkeypatch, intervene)
+    model = FixtureModel(_output(preview), during=None if race == "profile" else intervene)
     with pytest.raises((Problem, DBAPIError)):
         suitability.execute_model(catalog.runtime, catalog.identity.settings, task, Event(), model)
     assert model.calls == 1

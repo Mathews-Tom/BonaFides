@@ -9,37 +9,69 @@ evidence text; this projection applies to transmitted model context only.
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Mapping, Sequence
+import hashlib
+from collections.abc import Iterable, Iterator, Mapping, Sequence
+from contextlib import contextmanager
 from typing import Literal, cast
 from uuid import UUID
 
 from sqlalchemy import Connection, text
+from sqlalchemy.exc import SQLAlchemyError
 
+from bonafides.db import Database
 from bonafides.problems import Problem
 
 WithheldReason = Literal["confidential", "employer_owned"]
 
 
-def lock_transmitted_evidence(conn: Connection, owner: UUID, context: Mapping[str, object]) -> None:
-    """Hold only transmitted evidence records until the model exchange returns.
+# Two-int advisory keys are disjoint from the bigint keys used by maintenance,
+# migration and provider coordinators. Keep this namespace exclusive to evidence.
+_EVIDENCE_LOCK_NAMESPACE = 741903230
 
-    The caller keeps this transaction open while checking the workflow on a separate
-    connection: its owner/workflow locks must not block heartbeats or provider admission.
-    Withheld items contain no evidence text and need no send lock.
+
+def _owner_lock_key(owner: UUID) -> dict[str, int]:
+    return {
+        "namespace": _EVIDENCE_LOCK_NAMESPACE,
+        "owner": int.from_bytes(hashlib.sha256(owner.bytes).digest()[:4], "big", signed=True),
+    }
+
+
+def lock_evidence_write(conn: Connection, owner: UUID) -> None:
+    """First statement of every evidence-writing transaction; never wait on sends."""
+    acquired = conn.execute(
+        text("SELECT pg_try_advisory_xact_lock(:namespace, :owner)"),
+        _owner_lock_key(owner),
+    ).scalar_one()
+    if not acquired:
+        raise Problem(409, "evidence_in_model_use")
+
+
+@contextmanager
+def model_send_lock(db: Database, owner: UUID) -> Iterator[None]:
+    """Share one owner send lock without retaining a transaction or row locks.
+
+    Acquire before final context validation and release after the bounded HTTP
+    exchange. Validation uses a separate transaction so heartbeats, cancellation
+    and provider admission retain their existing independent fences.
     """
-    evidence = cast(list[dict[str, object]], context.get("evidence", []))
-    identifiers = sorted({UUID(str(item["id"])) for item in evidence if "text" in item}, key=str)
-    if not identifiers:
-        return
-    rows = conn.execute(
-        text("""SELECT r.id FROM bonafides.evidence_revisions r
-        JOIN bonafides.evidence_records e ON e.owner_id=r.owner_id AND e.id=r.evidence_id
-        WHERE r.owner_id=:owner AND r.id=ANY(CAST(:ids AS uuid[]))
-        ORDER BY e.id,r.id FOR SHARE OF e"""),
-        {"owner": owner, "ids": identifiers},
-    ).all()
-    if len(rows) != len(identifiers):
-        raise Problem(409, "profile_evidence_unavailable")
+    parameters = _owner_lock_key(owner)
+    with db.engine.connect() as conn:
+        acquired = False
+        try:
+            conn.execute(text("SELECT pg_advisory_lock_shared(:namespace, :owner)"), parameters)
+            acquired = True
+            conn.commit()
+            yield
+        finally:
+            if acquired:
+                try:
+                    conn.execute(
+                        text("SELECT pg_advisory_unlock_shared(:namespace, :owner)"), parameters
+                    )
+                    conn.commit()
+                except SQLAlchemyError:
+                    # A session lock must never escape back into the pool.
+                    conn.invalidate()
 
 
 def withheld_evidence(

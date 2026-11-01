@@ -3,8 +3,9 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from threading import Event
@@ -20,8 +21,9 @@ from test_local_model import qualified_route, route_data, route_file
 from test_sources import MANUAL, SourceContext
 from test_sources import catalog as catalog
 
-from bonafides import local_model, suitability
+from bonafides import local_model, model_context, suitability
 from bonafides.commands import canonical_json
+from bonafides.db import Database
 from bonafides.local_model import LocalRoute, ModelFailure, ModelResult
 from bonafides.problems import Problem
 from bonafides.worker import Worker
@@ -334,6 +336,19 @@ class FixtureModel:
         return ModelResult(
             self.output, {"usage_status": "unknown", "input_tokens": None, "output_tokens": None}
         )
+
+
+def _after_model_send(monkeypatch: pytest.MonkeyPatch, after: Callable[[], None]) -> None:
+    """Race a legal evidence write after HTTP unlocks but before publication."""
+    shared_lock = model_context.model_send_lock
+
+    @contextmanager
+    def sending(db: Database, owner: UUID) -> Iterator[None]:
+        with shared_lock(db, owner):
+            yield
+        after()
+
+    monkeypatch.setattr(model_context, "model_send_lock", sending)
 
 
 @pytest.mark.postgres
@@ -872,7 +887,12 @@ def test_publication_fences_after_provider_returns(
                         )
                     )
 
-    model = FixtureModel(_matching([_coverage(1, profile, "Linux")]), during=invalidate)
+    if mode == "profile":
+        _after_model_send(monkeypatch, invalidate)
+    model = FixtureModel(
+        _matching([_coverage(1, profile, "Linux")]),
+        during=None if mode == "profile" else invalidate,
+    )
     try:
         with pytest.raises((DBAPIError, Problem)):
             suitability.execute_model(

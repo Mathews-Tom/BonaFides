@@ -12,7 +12,6 @@ from fastapi import APIRouter, Depends, Header, Response
 from pydantic import Field, HttpUrl, ValidationInfo, field_validator
 from sqlalchemy import Connection, text
 from sqlalchemy.engine import RowMapping
-from sqlalchemy.exc import OperationalError
 
 from bonafides.auth import Owner, StrictModel, require_owner
 from bonafides.claims import (
@@ -33,6 +32,7 @@ from bonafides.evidence_provenance import (
     InitialEvidenceProvenance,
     provenance,
 )
+from bonafides.model_context import lock_evidence_write
 from bonafides.problems import Problem
 from bonafides.profiles import ProfileSnapshot, _save, canonical, content_hash
 
@@ -322,24 +322,14 @@ def _active_record(
     conn: Connection, owner_id: UUID, entity_id: UUID, kind: Literal["claim", "evidence"]
 ) -> RowMapping:
     table = "professional_claims" if kind == "claim" else "evidence_records"
-    # Evidence sends hold FOR SHARE before checking profile context. Never wait
-    # for them while retaining the profile/owner locks acquired by command().
-    lock_clause = "FOR UPDATE NOWAIT" if kind == "evidence" else "FOR UPDATE"
-    try:
-        row = (
-            conn.execute(
-                text(
-                    f"SELECT * FROM bonafides.{table} WHERE owner_id=:owner AND id=:id {lock_clause}"
-                ),
-                {"owner": owner_id, "id": entity_id},
-            )
-            .mappings()
-            .one_or_none()
+    row = (
+        conn.execute(
+            text(f"SELECT * FROM bonafides.{table} WHERE owner_id=:owner AND id=:id FOR UPDATE"),
+            {"owner": owner_id, "id": entity_id},
         )
-    except OperationalError as exc:
-        if kind == "evidence" and getattr(exc.orig, "sqlstate", None) == "55P03":
-            raise Problem(409, "evidence_in_model_use") from exc
-        raise
+        .mappings()
+        .one_or_none()
+    )
     if row is None:
         raise Problem(404, f"{kind}_not_found")
     if row["archived_at"] is not None:
@@ -416,7 +406,7 @@ def write_evidence(
 def append_classification(
     conn: Connection, owner_id: UUID, entity_id: UUID, body: EvidenceClassification
 ) -> None:
-    # Callers hold the record/profile write lock, so sequence allocation is serialized.
+    # Callers hold the owner evidence advisory lock and record/profile write locks.
     conn.execute(
         text("""INSERT INTO bonafides.evidence_classification_changes
         (owner_id,evidence_id,sequence,privacy_class,employer_owned)
@@ -685,6 +675,7 @@ def build_entry_router(db: Database) -> APIRouter:
         effect: Callable[[Connection], dict[str, object]],
     ) -> dict[str, object]:
         with db.transaction() as conn:
+            lock_evidence_write(conn, owner_id)
             profile_id = conn.execute(
                 text("SELECT id FROM bonafides.profiles WHERE owner_id=:owner"), {"owner": owner_id}
             ).scalar_one()

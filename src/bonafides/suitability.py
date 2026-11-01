@@ -11,6 +11,7 @@ import hashlib
 import re
 import unicodedata
 from collections.abc import Sequence
+from contextlib import nullcontext
 from dataclasses import dataclass
 from decimal import Decimal
 from threading import Event
@@ -1231,7 +1232,7 @@ def _execute_reserved_model(
     interrupted: Event,
     client: ModelClient | None = None,
 ) -> None:
-    """A durable reservation survives cancellation; record locks fence evidence egress."""
+    """A durable reservation survives cancellation; an owner lock fences evidence egress."""
     stage = str(task.input["stage"])
     with db.transaction() as conn:
         route = _route(conn, task.owner_id, settings, stage)
@@ -1250,14 +1251,16 @@ def _execute_reserved_model(
         if run_id is None and interrupted.wait(0.25):
             raise local_model.ModelFailure("model_interrupted", retryable=False)
     try:
-        from bonafides.model_context import lock_transmitted_evidence
-
         context = cast(dict[str, object], task.input["context"])
-        # Retain only evidence locks across HTTP. Context checks also lock owner,
-        # profile and workflow rows; commit those on a separate connection so
-        # heartbeat/cancellation and lifecycle.started() keep their existing fences.
-        with db.transaction() as sending:
-            lock_transmitted_evidence(sending, task.owner_id, context)
+        # The dedicated session retains only the shared advisory lock across HTTP.
+        # Commit validation's owner/profile/workflow locks separately so heartbeats,
+        # cancellation and lifecycle.started() retain their existing fences.
+        sending = (
+            nullcontext()
+            if stage == "extract_posting"
+            else model_context.model_send_lock(db, task.owner_id)
+        )
+        with sending:
             with db.transaction() as conn:
                 active_route = _route(conn, task.owner_id, settings, stage)
                 _check_workflow_context(conn, task, settings)

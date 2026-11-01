@@ -32,6 +32,7 @@ from bonafides.import_parser import (
     ImportParserClient,
     ParsedImport,
 )
+from bonafides.model_context import lock_evidence_write
 from bonafides.problems import Problem
 from bonafides.profile_entries import ClaimKind, ClaimPayload, StructuredClaimPayload, _snapshot
 from bonafides.profiles import MAX_HEADLINE_LENGTH, _save, content_hash
@@ -1196,6 +1197,7 @@ def execute_import(db: Database, settings: Settings, task: Claim, interrupted: E
         raise ImportFailure("import_interrupted")
     if batch["review"] is not None:
         with db.transaction() as conn:
+            lock_evidence_write(conn, task.owner_id)
             # Match owner commands before taking the workflow/profile locks.
             lock_installation(conn)
             conn.execute(
@@ -1378,6 +1380,7 @@ def build_router(db: Database, settings: Settings) -> APIRouter:
         idempotency_key: Annotated[str | None, Header()] = None,
     ) -> JSONResponse:
         with db.transaction() as conn:
+            lock_evidence_write(conn, owner.id)
             profile_id = conn.execute(
                 text("SELECT id FROM bonafides.profiles WHERE owner_id=:owner"), {"owner": owner.id}
             ).scalar_one()

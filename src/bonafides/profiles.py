@@ -17,6 +17,7 @@ from bonafides.commands import append_outbox, command
 from bonafides.config import Settings
 from bonafides.db import Database
 from bonafides.document_frame import ProfileContact
+from bonafides.model_context import lock_evidence_write
 from bonafides.problems import Problem
 
 MAX_HEADLINE_LENGTH = 300
@@ -345,6 +346,7 @@ def build_router(db: Database, settings: Settings) -> APIRouter:
         idempotency_key: Annotated[str | None, Header()] = None,
     ) -> dict[str, object]:
         with db.transaction() as conn:
+            lock_evidence_write(conn, owner.id)
             profile_id = conn.execute(
                 text("SELECT id FROM bonafides.profiles WHERE owner_id=:owner"), {"owner": owner.id}
             ).scalar_one()
@@ -397,6 +399,7 @@ def build_router(db: Database, settings: Settings) -> APIRouter:
         if settings.mode != "benchmark":
             raise Problem(404, "not_found")
         with db.transaction() as conn:
+            lock_evidence_write(conn, owner.id)
             profile_id = conn.execute(
                 text("SELECT id FROM bonafides.profiles WHERE owner_id=:owner"), {"owner": owner.id}
             ).scalar_one()

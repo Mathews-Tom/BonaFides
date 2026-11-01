@@ -9,12 +9,14 @@ from __future__ import annotations
 
 import copy
 import json
+from collections.abc import Iterator
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import contextmanager
 from dataclasses import replace
 from pathlib import Path
 from threading import Event
 from typing import Any, cast
-from uuid import UUID
+from uuid import UUID, uuid4
 
 import pytest
 from sqlalchemy import Connection, text
@@ -27,6 +29,8 @@ from test_document_generation import (
     _review,
 )
 from test_identity import identity as identity
+from test_imports import ImportContext, _parsed
+from test_imports import _review as _import_review
 from test_installation_control import renderer_spool as renderer_spool
 from test_local_model import fixture_server, qualified_route, response_body, route_data
 from test_section_regeneration import _queue_section, _section_preview
@@ -44,10 +48,13 @@ from test_suitability import (
 )
 from test_tracking import _application
 
-from bonafides import local_model, model_context, suitability
+from bonafides import imports, local_model, model_context, profile_entries, suitability
 from bonafides.commands import canonical_json
+from bonafides.db import Database
+from bonafides.import_parser import ImportParserClient, ParsedImport
+from bonafides.problems import Problem
 from bonafides.worker import Worker
-from bonafides.workflows import assert_fence, heartbeat
+from bonafides.workflows import assert_fence, claim, heartbeat
 
 CLAIM = "Kept the synthetic payroll batch inside its nightly window"
 WITHHELD_MARKER = "SECRET-EMPLOYER-ROADMAP-7Q"
@@ -357,7 +364,7 @@ def test_requirement_matching_sends_the_claim_without_withheld_evidence_content(
     ("privacy_class", "employer_owned"), [("confidential", False), ("private", True)]
 )
 @pytest.mark.parametrize("after_reservation", [False, True])
-def test_reclassification_after_queue_refuses_before_transmission(
+def test_committed_reclassification_before_shared_acquisition_refuses_without_endpoint_bytes(
     catalog: SourceContext,
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -396,14 +403,18 @@ def test_reclassification_after_queue_refuses_before_transmission(
             task = _queue_pair(catalog, preview)
         assert WITHHELD_MARKER in canonical_json(task.input["context"])
         if after_reservation:
-            lock_evidence = model_context.lock_transmitted_evidence
+            send_lock = model_context.model_send_lock
 
-            def classify_before_final_check(conn: Connection, owner: UUID, context: Any) -> None:
+            @contextmanager
+            def classify_before_shared_acquisition(db: Database, owner: UUID) -> Iterator[None]:
+                # The API response proves the classification transaction committed before
+                # the final shared-lock acquisition and its fresh-context validation.
                 _reclassify(catalog, profile, evidence_id, privacy_class, employer_owned)
-                lock_evidence(conn, owner, context)
+                with send_lock(db, owner):
+                    yield
 
             monkeypatch.setattr(
-                model_context, "lock_transmitted_evidence", classify_before_final_check
+                model_context, "model_send_lock", classify_before_shared_acquisition
             )
         else:
             _reclassify(catalog, profile, evidence_id, privacy_class, employer_owned)
@@ -516,12 +527,93 @@ def test_transmit_point_refuses_withheld_evidence_that_carries_content(tmp_path:
         assert requests == []
 
 
+def _unlinked_evidence(context: SourceContext, label: str) -> tuple[dict[str, Any], dict[str, Any]]:
+    current = context.client.get("/api/v1/profile").json()
+    response = context.client.post(
+        "/api/v1/evidence",
+        json={
+            "payload": {"text": label, "source": "Synthetic owner-lock fixture"},
+            "provenance": {
+                "source_type": "work_sample",
+                "privacy_class": "private",
+                "employer_owned": False,
+            },
+        },
+        headers=context.headers(current["version"]),
+    )
+    assert response.status_code == 200, response.text
+    profile = cast(dict[str, Any], response.json())
+    record = next(
+        item for item in profile["evidence"] if item["id"] == profile["changed_evidence_id"]
+    )
+    return profile, record
+
+
+def _archive_for_restore(context: SourceContext) -> tuple[dict[str, Any], str]:
+    historical, record = _unlinked_evidence(context, "Archived before the model context was pinned")
+    response = context.client.delete(
+        f"/api/v1/evidence/{record['id']}", headers=context.headers(historical["version"])
+    )
+    assert response.status_code == 200, response.text
+    assert record["id"] not in {item["id"] for item in response.json()["evidence"]}
+    return cast(dict[str, Any], response.json()), str(historical["current_revision"]["id"])
+
+
+def _staged_owner_lock_import(
+    context: SourceContext, monkeypatch: pytest.MonkeyPatch
+) -> tuple[ImportContext, dict[str, Any]]:
+    # Reuse the parser transport and review/worker fixtures without bootstrapping a
+    # second singleton owner or requiring an external parser process.
+    def parse(
+        self: ImportParserClient, data: bytes, media_type: str, interrupted: Event | None = None
+    ) -> ParsedImport:
+        del self
+        assert media_type == "text/plain"
+        assert interrupted is not None and not interrupted.is_set()
+        return _parsed(data.decode("utf-8"))
+
+    monkeypatch.setattr(ImportParserClient, "parse", parse)
+    importing = ImportContext(
+        context.identity, context.client, context.csrf, context.owner_id, context.runtime
+    )
+    return importing, importing.staged("Skills\nOwner serialization fixture skill\n")
+
+
+def _evidence_write_state(context: SourceContext) -> dict[str, list[Any]]:
+    """Include immutable history and classification, not just the hydrated projection."""
+    with context.runtime.transaction() as conn:
+        return {
+            table: list(
+                conn.execute(
+                    text(
+                        f"SELECT to_jsonb(record) FROM bonafides.{table} AS record "
+                        "WHERE owner_id=:owner ORDER BY to_jsonb(record)::text"
+                    ),
+                    {"owner": context.owner_id},
+                ).scalars()
+            )
+            for table in (
+                "profiles",
+                "profile_revisions",
+                "profile_revision_claims",
+                "profile_revision_evidence",
+                "professional_claims",
+                "claim_revisions",
+                "claim_evidence_links",
+                "evidence_records",
+                "evidence_revisions",
+                "evidence_classification_changes",
+                "import_batches",
+            )
+        }
+
+
 @pytest.mark.postgres
 @pytest.mark.parametrize(
     "stage", ["generate_documents", "regenerate_section", "match_requirements"]
 )
 @pytest.mark.parametrize("phase", ["metadata", "inference", "postflight"])
-def test_inflight_send_refuses_reclassification_only_for_transmitted_records(
+def test_inflight_owner_send_refuses_classify_edit_archive_restore_and_import_merge(
     catalog: SourceContext,
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -531,12 +623,15 @@ def test_inflight_send_refuses_reclassification_only_for_transmitted_records(
     _profile(catalog)
     application = _application(catalog, description_text=SOURCE)
     view = _write(catalog, {"id": application["posting_id"]}, [_requirement(1, "Linux required.")])
-    profile, evidence_id, _ = _withheld_source(catalog, "private", False)
+    _, evidence_id, _ = _withheld_source(catalog, "private", False)
+    _, record = _unlinked_evidence(catalog, "Evidence not cited by any document claim")
+    profile, restore_revision = _archive_for_restore(catalog)
+    importing, batch = _staged_owner_lock_import(catalog, monkeypatch)
     entered, released = Event(), Event()
 
     def block() -> None:
         entered.set()
-        assert released.wait(20), "test must release the fixture endpoint"
+        assert released.wait(60), "test must release the fixture endpoint"
 
     response = response_body(
         message={
@@ -551,7 +646,7 @@ def test_inflight_send_refuses_reclassification_only_for_transmitted_records(
         on_postflight=block if phase == "postflight" else None,
     ) as (endpoint, requests):
         data = route_data(endpoint)
-        data["deadline_seconds"] = 30
+        data["deadline_seconds"] = 90
         route = qualified_route(tmp_path, data)
         monkeypatch.setattr(local_model, "load_route", lambda _path: route)
         preview = _preview(catalog, profile, application)
@@ -574,84 +669,342 @@ def test_inflight_send_refuses_reclassification_only_for_transmitted_records(
         else:
             task = _queue_pair(catalog, preview)
         assert WITHHELD_MARKER in canonical_json(task.input["context"])
-        record = next(item for item in profile["evidence"] if item["revision"]["id"] == evidence_id)
+        if stage != "match_requirements":
+            assert record["revision"]["id"] not in canonical_json(task.input["context"])
+        before = _evidence_write_state(catalog)
+        current = catalog.client.get("/api/v1/profile").json()
+        writes = (
+            (
+                "classify",
+                "PUT",
+                f"/api/v1/evidence/{record['id']}/classification",
+                {"privacy_class": "private", "employer_owned": True},
+            ),
+            (
+                "edit",
+                "PUT",
+                f"/api/v1/evidence/{record['id']}",
+                {
+                    "payload": {
+                        **record["revision"]["payload"],
+                        "text": "Edited unlinked evidence after the owner send",
+                    },
+                    "provenance": {"source_type": "work_sample"},
+                },
+            ),
+            ("archive", "DELETE", f"/api/v1/evidence/{record['id']}", None),
+            ("restore", "POST", "/api/v1/profile/restore", {"revision_id": restore_revision}),
+            ("import merge", "POST", f"/api/v1/imports/{batch['id']}/merge", _import_review(batch)),
+        )
         worker = Worker(catalog.runtime, replace(catalog.identity.settings, mode="production"))
-        with ThreadPoolExecutor(max_workers=1) as executor:
-            future = executor.submit(worker._execute, task, Event())
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            sending = executor.submit(worker._execute, task, Event())
             try:
                 assert entered.wait(10), "worker must reach the blocking fixture endpoint"
-                # A retained workflow row lock would break both lease renewal and
-                # provider admission (which already ran before the chat request).
+                # The owner send lock must not retain workflow/owner/profile row locks.
                 with catalog.runtime.transaction() as conn:
+                    conn.execute(text("SET LOCAL statement_timeout='3s'"))
                     assert heartbeat(conn, task)
                     assert_fence(conn, task)
-                current = catalog.client.get("/api/v1/profile").json()
-                rejected = catalog.client.put(
-                    f"/api/v1/evidence/{record['id']}/classification",
-                    json={"privacy_class": "private", "employer_owned": True},
-                    headers=catalog.headers(current["version"]),
-                )
-                assert rejected.status_code == 409, rejected.text
-                assert rejected.json()["code"] == "evidence_in_model_use"
-                # Edits and archives acquire the same record lock after the
-                # profile lock; they must refuse, not wait or deadlock the send.
-                path = f"/api/v1/evidence/{record['id']}"
-                for method, body in (
-                    (
-                        "PUT",
-                        {
-                            "payload": record["revision"]["payload"],
-                            "provenance": {"source_type": "work_sample"},
-                        },
-                    ),
-                    ("DELETE", None),
-                ):
-                    blocked = catalog.client.request(
+                for name, method, path, body in writes:
+                    rejected = executor.submit(
+                        catalog.client.request,
                         method,
                         path,
                         json=body,
                         headers=catalog.headers(current["version"]),
-                    )
-                    assert blocked.status_code == 409, blocked.text
-                    assert blocked.json()["code"] == "evidence_in_model_use"
+                    ).result(timeout=5)
+                    assert rejected.status_code == 409, (name, rejected.text)
+                    assert rejected.json()["code"] == "evidence_in_model_use", name
+                    assert _evidence_write_state(catalog) == before, name
                 assert catalog.client.get("/api/v1/profile").json() == current
-                with catalog.runtime.transaction() as conn:
-                    stored = conn.execute(
-                        text("""SELECT e.employer_owned,
-                        (SELECT count(*) FROM bonafides.evidence_classification_changes c
-                        WHERE c.owner_id=e.owner_id AND c.evidence_id=e.id) AS history
-                        FROM bonafides.evidence_records e WHERE e.owner_id=:owner AND e.id=:id"""),
-                        {"owner": catalog.owner_id, "id": UUID(record["id"])},
-                    ).one()
-                    assert not stored.employer_owned and stored.history == 1
-                # This newly created record is outside the frozen context, even for
-                # matching (which includes all evidence in its pinned profile).
-                extra = catalog.client.post(
-                    "/api/v1/evidence",
-                    json={
-                        "payload": {"text": "Unrelated synthetic note", "source": "Review"},
-                        "provenance": {
-                            "source_type": "work_sample",
-                            "privacy_class": "private",
-                            "employer_owned": False,
-                        },
-                    },
-                    headers=catalog.headers(current["version"]),
-                )
-                assert extra.status_code == 200, extra.text
-                unrelated = extra.json()["changed_evidence_id"]
-                extra_record = next(
-                    item for item in extra.json()["evidence"] if item["id"] == unrelated
-                )
-                assert extra_record["revision"]["id"] not in canonical_json(task.input["context"])
-                _reclassify(catalog, extra.json(), extra_record["revision"]["id"], "private", True)
-                assert not future.done()
+                assert not sending.done()
             finally:
                 released.set()
-            future.result(timeout=10)
+            sending.result(timeout=10)
         assert len(requests) == 1
         assert WITHHELD_MARKER.encode() in requests[0]
         assert catalog.workflow(task.id)["last_error_code"] == "invalid_model_output"
-        # Failure also releases send locks; the original classification can now commit.
-        current = catalog.client.get("/api/v1/profile").json()
-        _reclassify(catalog, current, evidence_id, "private", True)
+        # Even a failed model call releases the owner lock. Each previously refused
+        # command must now perform its real write, not merely pass a primitive probe.
+        for name, method, path, body in writes:
+            current = catalog.client.get("/api/v1/profile").json()
+            accepted = catalog.client.request(
+                method, path, json=body, headers=catalog.headers(current["version"])
+            )
+            assert accepted.status_code == (202 if name == "import merge" else 200), (
+                name,
+                accepted.text,
+            )
+            if name == "classify":
+                classified = next(
+                    item for item in accepted.json()["evidence"] if item["id"] == record["id"]
+                )
+                assert classified["revision"]["provenance"]["employer_owned"] is True
+            elif name == "edit":
+                edited = next(
+                    item for item in accepted.json()["evidence"] if item["id"] == record["id"]
+                )
+                assert edited["revision"]["id"] != record["revision"]["id"]
+            elif name == "archive":
+                assert record["id"] not in {item["id"] for item in accepted.json()["evidence"]}
+            elif name == "restore":
+                restored = next(
+                    item for item in accepted.json()["evidence"] if item["id"] == record["id"]
+                )
+                assert restored["revision"]["id"] == record["revision"]["id"]
+        merged = importing.run()
+        assert catalog.workflow(merged.id)["state"] == "succeeded"
+        assert importing.batch(batch["id"])["state"] == "succeeded"
+        assert evidence_id in canonical_json(catalog.client.get("/api/v1/profile").json())
+
+
+def _matching_fixture_response() -> bytes:
+    return response_body(
+        message={
+            "role": "assistant",
+            "content": json.dumps(
+                {
+                    "schema_version": "1",
+                    "stage": "match_requirements",
+                    "assessments": [],
+                    "summary": "Synthetic owner-lock transport fixture.",
+                    "warnings": [],
+                }
+            ),
+        }
+    )
+
+
+def _send_with_owner_lock(
+    context: SourceContext, owner: UUID, route: local_model.LocalRoute
+) -> None:
+    with model_context.model_send_lock(context.runtime, owner):
+        local_model.OllamaClient(route).call(
+            "match_requirements",
+            {"requirements": [], "claims": [], "evidence": []},
+            local_model.PROMPT_VERSIONS["match_requirements"],
+        )
+
+
+@pytest.mark.postgres
+def test_two_same_owner_shared_sends_both_reach_http_before_either_releases(
+    catalog: SourceContext, tmp_path: Path
+) -> None:
+    entered = [Event(), Event()]
+    released = Event()
+
+    def block(index: int) -> None:
+        entered[index].set()
+        assert released.wait(30), "test must release both fixture endpoints"
+
+    # Provider admission deliberately remains singleton. Exercise the shared-lock
+    # contract around real HTTP without changing or bypassing production admission.
+    with (
+        fixture_server(_matching_fixture_response(), on_inference=lambda: block(0)) as first,
+        fixture_server(_matching_fixture_response(), on_inference=lambda: block(1)) as second,
+    ):
+        routes = []
+        for endpoint, _ in (first, second):
+            data = route_data(endpoint)
+            data["deadline_seconds"] = 60
+            routes.append(qualified_route(tmp_path, data))
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            sends = [
+                executor.submit(_send_with_owner_lock, catalog, catalog.owner_id, route)
+                for route in routes
+            ]
+            try:
+                assert entered[0].wait(10), "first same-owner send must reach HTTP"
+                assert entered[1].wait(10), "shared owner lock must admit the second send"
+                assert len(first[1]) == len(second[1]) == 1
+                assert all(not sending.done() for sending in sends)
+            finally:
+                released.set()
+            for sending in sends:
+                sending.result(timeout=10)
+
+
+@pytest.mark.postgres
+def test_other_owner_evidence_writes_are_unaffected_by_an_active_shared_send(
+    catalog: SourceContext, tmp_path: Path
+) -> None:
+    _profile(catalog)
+    profile, record = _unlinked_evidence(catalog, "Evidence belonging to the writing owner")
+    entered, released = Event(), Event()
+
+    def block() -> None:
+        entered.set()
+        assert released.wait(30), "test must release the other owner's fixture endpoint"
+
+    # The installation fixture bootstraps one persisted owner. A different owner's
+    # send uses its own UUID namespace without needing a second bootstrap identity.
+    sending_owner = uuid4()
+    with fixture_server(_matching_fixture_response(), on_inference=block) as (endpoint, requests):
+        data = route_data(endpoint)
+        data["deadline_seconds"] = 60
+        route = qualified_route(tmp_path, data)
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            sending = executor.submit(_send_with_owner_lock, catalog, sending_owner, route)
+            try:
+                assert entered.wait(10), "other owner's send must be in flight"
+                accepted = executor.submit(
+                    catalog.client.put,
+                    f"/api/v1/evidence/{record['id']}/classification",
+                    json={"privacy_class": "private", "employer_owned": True},
+                    headers=catalog.headers(profile["version"]),
+                ).result(timeout=5)
+                assert accepted.status_code == 200, accepted.text
+                classified = next(
+                    item for item in accepted.json()["evidence"] if item["id"] == record["id"]
+                )
+                assert classified["revision"]["provenance"]["employer_owned"] is True
+                assert not sending.done()
+            finally:
+                released.set()
+            sending.result(timeout=10)
+        assert len(requests) == 1
+
+
+@pytest.mark.postgres
+def test_approved_import_worker_refuses_during_owner_send_and_merges_after_release(
+    catalog: SourceContext, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _profile(catalog)
+    importing, batch = _staged_owner_lock_import(catalog, monkeypatch)
+    approved = importing.approve(batch)
+    assert approved.status_code == 202, approved.text
+    with catalog.runtime.transaction() as conn:
+        task = claim(conn, uuid4())
+    assert task is not None and str(task.id) == approved.json()["workflow_id"]
+    before = _evidence_write_state(catalog)
+    entered, released = Event(), Event()
+
+    def block() -> None:
+        entered.set()
+        assert released.wait(30), "test must release the fixture endpoint"
+
+    with fixture_server(_matching_fixture_response(), on_inference=block) as (endpoint, requests):
+        data = route_data(endpoint)
+        data["deadline_seconds"] = 60
+        route = qualified_route(tmp_path, data)
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            sending = executor.submit(_send_with_owner_lock, catalog, catalog.owner_id, route)
+            try:
+                assert entered.wait(10), "owner send must reach HTTP before the merge worker"
+                with pytest.raises(Problem) as refused:
+                    executor.submit(
+                        imports.execute_import,
+                        catalog.runtime,
+                        catalog.identity.settings,
+                        task,
+                        Event(),
+                    ).result(timeout=5)
+                assert refused.value.status == 409
+                assert refused.value.code == "evidence_in_model_use"
+                assert _evidence_write_state(catalog) == before
+                assert not sending.done()
+            finally:
+                released.set()
+            sending.result(timeout=10)
+        assert len(requests) == 1
+    # The failed writing transaction did not consume the claim or its reviewed input.
+    imports.execute_import(catalog.runtime, catalog.identity.settings, task, Event())
+    assert catalog.workflow(task.id)["state"] == "succeeded"
+    assert importing.batch(batch["id"])["state"] == "succeeded"
+
+
+@pytest.mark.postgres
+@pytest.mark.parametrize("first_lock", ["send", "restore"])
+def test_restore_racing_owner_send_is_bounded_and_never_deadlocks(
+    catalog: SourceContext,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    first_lock: str,
+) -> None:
+    _profile(catalog)
+    application = _application(catalog, description_text=SOURCE)
+    _write(catalog, {"id": application["posting_id"]}, [_requirement(1, "Linux required.")])
+    _withheld_source(catalog, "private", False)
+    profile, restore_revision = _archive_for_restore(catalog)
+    entered, released = Event(), Event()
+    writer_locked, release_writer, send_acquiring = Event(), Event(), Event()
+
+    def block() -> None:
+        entered.set()
+        assert released.wait(30), "test must release the fixture endpoint"
+
+    metadata: list[str] = []
+    with fixture_server(
+        response_body(),
+        on_inference=block,
+        metadata_paths=metadata,
+    ) as (endpoint, requests):
+        data = route_data(endpoint)
+        data["deadline_seconds"] = 60
+        route = qualified_route(tmp_path, data)
+        monkeypatch.setattr(local_model, "load_route", lambda _path: route)
+        task = _queue_pair(catalog, _preview(catalog, profile, application))
+        worker = Worker(catalog.runtime, replace(catalog.identity.settings, mode="production"))
+        before = _evidence_write_state(catalog)
+        if first_lock == "restore":
+            write_lock = model_context.lock_evidence_write
+            shared_lock = model_context.model_send_lock
+
+            def pause_restore(conn: Connection, owner: UUID) -> None:
+                write_lock(conn, owner)
+                writer_locked.set()
+                assert release_writer.wait(20), "test must let the restore transaction commit"
+
+            @contextmanager
+            def announce_shared_acquisition(db: Database, owner: UUID) -> Iterator[None]:
+                send_acquiring.set()
+                with shared_lock(db, owner):
+                    yield
+
+            monkeypatch.setattr(profile_entries, "lock_evidence_write", pause_restore)
+            monkeypatch.setattr(model_context, "model_send_lock", announce_shared_acquisition)
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            try:
+                if first_lock == "send":
+                    sending = executor.submit(worker._execute, task, Event())
+                    assert entered.wait(10), "send must hold its shared lock at HTTP"
+                restoring = executor.submit(
+                    catalog.client.post,
+                    "/api/v1/profile/restore",
+                    json={"revision_id": restore_revision},
+                    headers=catalog.headers(profile["version"]),
+                )
+                if first_lock == "restore":
+                    assert writer_locked.wait(10), "restore must hold the exclusive owner lock"
+                    sending = executor.submit(worker._execute, task, Event())
+                    assert send_acquiring.wait(10), "send must reach shared-lock acquisition"
+                    assert requests == [] and metadata == []
+                    release_writer.set()
+                restored = restoring.result(timeout=5)
+                if first_lock == "send":
+                    assert restored.status_code == 409, restored.text
+                    assert restored.json()["code"] == "evidence_in_model_use"
+                    assert _evidence_write_state(catalog) == before
+                else:
+                    assert restored.status_code == 200, restored.text
+                    assert (
+                        restored.json()["current_revision"]["snapshot"]["evidence_revision_ids"]
+                        != profile["current_revision"]["snapshot"]["evidence_revision_ids"]
+                    )
+            finally:
+                release_writer.set()
+                released.set()
+            sending.result(timeout=10)
+        if first_lock == "restore":
+            assert catalog.workflow(task.id)["last_error_code"] == "stale_document_context"
+            assert requests == [] and metadata == []
+        else:
+            assert len(requests) == 1
+            current = catalog.client.get("/api/v1/profile").json()
+            restored = catalog.client.post(
+                "/api/v1/profile/restore",
+                json={"revision_id": restore_revision},
+                headers=catalog.headers(current["version"]),
+            )
+            assert restored.status_code == 200, restored.text
