@@ -745,9 +745,13 @@ def test_inflight_owner_send_refuses_classify_edit_archive_restore_and_import_me
             finally:
                 released.set()
             sending.result(timeout=10)
-        assert len(requests) == 1
-        assert WITHHELD_MARKER.encode() in requests[0]
-        assert catalog.workflow(task.id)["last_error_code"] == "invalid_model_output"
+        # A generated pair's schema mismatch gets one corrective call on the same projection.
+        corrective = stage == "generate_documents"
+        assert len(requests) == (2 if corrective else 1)
+        assert all(WITHHELD_MARKER.encode() in request for request in requests)
+        assert catalog.workflow(task.id)["last_error_code"] == (
+            "model_output_invalid_after_correction" if corrective else "invalid_model_output"
+        )
         # Even a failed model call releases the owner lock. Each previously refused
         # command must now perform its real write, not merely pass a primitive probe.
         for name, method, path, body in writes:
@@ -1103,7 +1107,8 @@ def test_restore_racing_owner_send_is_bounded_and_never_deadlocks(
             assert catalog.workflow(task.id)["last_error_code"] == "stale_document_context"
             assert requests == [] and metadata == []
         else:
-            assert len(requests) == 1
+            # The fixture's non-pair answer is corrected once under the same send lock.
+            assert len(requests) == 2
             current = catalog.client.get("/api/v1/profile").json()
             restored = catalog.client.post(
                 "/api/v1/profile/restore",

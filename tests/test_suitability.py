@@ -3,10 +3,10 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterator, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from threading import Event
 from typing import Any, cast
@@ -317,6 +317,8 @@ class FixtureModel:
     during: Callable[[], None] | None = None
     failure: ModelFailure | None = None
     calls: int = 0
+    corrected_output: dict[str, object] | None = None
+    corrections: list[list[str]] = field(default_factory=list)
 
     def call(
         self,
@@ -324,17 +326,23 @@ class FixtureModel:
         context: dict[str, object],
         prompt_version: str,
         interrupted: Event | None = None,
+        correction: Sequence[str] | None = None,
     ) -> ModelResult:
         assert stage in local_model.PROMPT_VERSIONS
         assert prompt_version == local_model.PROMPT_VERSIONS[stage]
         assert interrupted is not None and not interrupted.is_set()
         self.calls += 1
+        if correction is not None:
+            self.corrections.append(list(correction))
         if self.during is not None:
             self.during()
         if self.failure is not None:
             raise self.failure
+        output = self.output
+        if correction is not None and self.corrected_output is not None:
+            output = self.corrected_output
         return ModelResult(
-            self.output, {"usage_status": "unknown", "input_tokens": None, "output_tokens": None}
+            output, {"usage_status": "unknown", "input_tokens": None, "output_tokens": None}
         )
 
 

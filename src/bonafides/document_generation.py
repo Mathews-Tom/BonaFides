@@ -18,26 +18,25 @@ from pydantic import Field, ValidationError, field_validator, model_validator
 from sqlalchemy import Connection, text
 from sqlalchemy.engine import RowMapping
 
-from bonafides import document_defaults, documents, local_model, model_context, suitability
+from bonafides import (
+    document_defaults,
+    documents,
+    local_model,
+    model_context,
+    statement_check,
+    suitability,
+)
 from bonafides.auth import Owner, require_owner
 from bonafides.commands import append_outbox, canonical_json, command, lock_installation
 from bonafides.config import Settings
 from bonafides.db import Database
 from bonafides.document_frame import TEMPLATE_PAPER, TEMPLATES, PrintableFrame, template_digest
 from bonafides.problems import Problem
+from bonafides.statement_check import CATEGORIES
 from bonafides.workflows import Claim, assert_fence, enqueue, get_workflow
 
 PROTOCOL = 2
 POLICY = "ol-documents-exact-facts-v1"
-CATEGORIES = {
-    "experience": "Experience",
-    "education": "Education",
-    "skill": "Skills",
-    "project": "Projects",
-    "certification": "Certifications",
-    "language": "Languages",
-    "other": "Profile evidence",
-}
 SAFE_LANGUAGE = {
     "greeting": frozenset(
         {
@@ -59,6 +58,12 @@ LIMITS = {
     "human_review": "Review every factual block against its sources. Owner assertions are not independently verified. Review cannot waive unsupported content.",
     "privacy": "Dedicated identity/contact data, private tracking data and the content of confidential or employer-owned evidence are excluded from inference. Professional free text may still contain personal data.",
 }
+
+
+CHECKED_LIMIT = (
+    "Each factual statement must cite one claim and be contained in that claim's own evidence; "
+    "connective text must be a declared phrase. Containment is literal, not a semantic proof."
+)
 
 
 def sha(value: object) -> str:
@@ -440,31 +445,12 @@ def check_context(conn: Connection, task: Claim, settings: Settings) -> None:
 def issues(
     body: documents.DocumentBody, facts: list[dict[str, object]], kind: str
 ) -> list[dict[str, str]]:
-    found: list[dict[str, str]] = []
-    if body.title != (
-        "Cover letter" if kind == "cover_letter" else "Base résumé" if kind == "base" else "Résumé"
-    ):
-        found.append({"path": "/title", "code": "unestablished_heading"})
+    found = statement_check.title_issues(body, kind)
     for si, section in enumerate(body.sections):
-        if section.heading not in {
-            *CATEGORIES.values(),
-            "Application",
-            "Letter",
-            "Interest",
-            "Summary",
-        }:
-            found.append({"path": f"/sections/{si}/heading", "code": "unestablished_heading"})
+        found.extend(statement_check.heading_issues(si, section.heading))
         for bi, block in enumerate(section.blocks):
             path = f"/sections/{si}/blocks/{bi}"
-            if any(
-                (ord(char) < 32 and char not in "\n\t") or 127 <= ord(char) <= 159
-                for char in block.text
-            ):
-                found.append({"path": path, "code": "disallowed_control"})
-            if re.search(
-                r"\[(?:add|insert|todo|tbd|fill|replace)\b[^\]]*\]", block.text, re.IGNORECASE
-            ):
-                found.append({"path": path, "code": "unresolved_omission_marker"})
+            found.extend(statement_check.text_issues(path, block.text))
             if block.claim_kind != "factual":
                 if (
                     block.text not in SAFE_LANGUAGE[block.claim_kind]
@@ -491,6 +477,32 @@ def issues(
             ):
                 found.append({"path": path, "code": "unestablished_professional_assertion"})
     return found
+
+
+def validation_issues(
+    conn: Connection,
+    owner: UUID,
+    body: documents.DocumentBody,
+    provenance: dict[str, object],
+    kind: str,
+    profile_revision_id: UUID,
+) -> list[dict[str, str]]:
+    """The checker a revision was generated under; claim-structured pairs never fall back."""
+    if provenance.get("checker_version") == statement_check.CHECKER_VERSION:
+        return statement_check.check_statements(
+            body,
+            cast(list[dict[str, object]], provenance["facts"]),
+            cast(dict[str, object], provenance["frame"]),
+            kind,
+        )
+    if provenance.get("schema_version") == PROTOCOL:
+        return issues(body, cast(list[dict[str, object]], provenance["facts"]), kind)
+    return [
+        {"path": path, "code": "unestablished_professional_assertion"}
+        for path in documents.unsupported_paths(
+            body, documents._facts(conn, owner, profile_revision_id)
+        )
+    ]
 
 
 def compose_base(plan: dict[str, object]) -> documents.DocumentBody:
@@ -527,24 +539,22 @@ def compose_base(plan: dict[str, object]) -> documents.DocumentBody:
     )
 
 
-class CandidateBlock(documents.DocumentBlock):
+class CandidateStatement(documents.StrictModel):
     block_key: Annotated[str, Field(pattern=r"^b-[0-9]{1,3}$")]
+    kind: Literal["factual", "connective"]
     text: Annotated[str, Field(min_length=1, max_length=2000)]
+    claim_id: Annotated[UUID, Field(strict=False)] | None
 
     @model_validator(mode="after")
-    def factual_reference(self) -> CandidateBlock:
-        if self.claim_kind == "factual" and not self.claim_revision_ids:
-            raise ValueError("factual_reference_required")
-        if len(set(self.claim_revision_ids)) != len(self.claim_revision_ids) or len(
-            set(self.evidence_revision_ids)
-        ) != len(self.evidence_revision_ids):
-            raise ValueError("duplicate_document_reference")
+    def connective_cites_nothing(self) -> CandidateStatement:
+        if self.kind == "connective" and self.claim_id is not None:
+            raise ValueError("connective_cites_claim")
         return self
 
 
 class CandidateSection(documents.StrictModel):
     heading: str = Field(min_length=1, max_length=100)
-    blocks: list[CandidateBlock] = Field(min_length=1, max_length=30)
+    blocks: list[CandidateStatement] = Field(min_length=1, max_length=30)
 
 
 class CandidateDocument(documents.StrictModel):
@@ -558,7 +568,7 @@ class Gap(documents.StrictModel):
 
 
 class CandidatePair(documents.StrictModel):
-    schema_version: Literal["1"]
+    schema_version: Literal["2"]
     stage: Literal["generate_documents"]
     documents: list[CandidateDocument] = Field(min_length=2, max_length=2)
     gaps: list[Gap] = Field(max_length=30)
@@ -579,48 +589,92 @@ class CandidatePair(documents.StrictModel):
         return self
 
 
+class OutputMismatch(Problem):
+    """Model output that does not match the pair schema; the summary carries no owner data."""
+
+    def __init__(self, summary: list[str]) -> None:
+        super().__init__(422, "invalid_model_output")
+        self.summary = summary[:12]
+
+
+def _mismatch(exc: ValidationError) -> OutputMismatch:
+    summary: list[str] = []
+    for error in exc.errors():
+        location = ".".join(
+            str(part) if isinstance(part, int) or re.fullmatch(r"[a-z_]{1,40}", part) else "?"
+            for part in error["loc"]
+        )
+        reason = error["type"]
+        found = re.fullmatch(r"Value error, ([a-z_]{1,60})", str(error.get("msg", "")))
+        if reason == "value_error" and found:
+            reason = found.group(1)
+        summary.append(f"{location or 'output'}: {reason}")
+    return OutputMismatch(summary)
+
+
 def validate_pair(output: dict[str, object], plan: dict[str, object]) -> CandidatePair:
+    """Schema-validate a pair; claim references are checked per statement, not here."""
     try:
-        pair = CandidatePair.model_validate_json(canonical_json(output), strict=True)
-        permitted_claims = {
-            str(item["claim_revision_id"]) for item in cast(list[dict[str, object]], plan["facts"])
-        }
-        permitted_evidence = {
-            str(item["evidence_revision_id"])
-            for item in cast(list[dict[str, object]], plan["facts"])
-        }
-        requirements = {
-            str(item["requirement_key"])
-            for item in cast(
-                list[dict[str, object]], cast(dict[str, object], plan["context"])["requirements"]
-            )
-        }
+        encoded = canonical_json(output)
+    except Problem as exc:
+        if exc.code != "noncanonical_request":
+            raise
+        raise OutputMismatch(["output: noncanonical_json"]) from exc
+    try:
+        pair = CandidatePair.model_validate_json(encoded, strict=True)
+        # Apply aggregate AST limits before either half is persisted.
         for item in pair.documents:
-            # Apply aggregate AST limits before either half is persisted.
-            _candidate_body(item)
-            for section in item.sections:
-                for block in section.blocks:
-                    if {str(value) for value in block.claim_revision_ids} - permitted_claims or {
-                        str(value) for value in block.evidence_revision_ids
-                    } - permitted_evidence:
-                        raise Problem(422, "reference_outside_pinned_context")
-        if any(gap.requirement_key not in requirements for gap in pair.gaps):
-            raise Problem(422, "foreign_document_gap")
-        if len({gap.requirement_key for gap in pair.gaps}) != len(pair.gaps):
-            raise Problem(422, "duplicate_document_gap")
-        return pair
+            _candidate_body(item, plan)
     except ValidationError as exc:
-        raise Problem(422, "invalid_model_output") from exc
+        raise _mismatch(exc) from exc
+    requirements = {
+        str(item["requirement_key"])
+        for item in cast(
+            list[dict[str, object]], cast(dict[str, object], plan["context"])["requirements"]
+        )
+    }
+    if any(gap.requirement_key not in requirements for gap in pair.gaps):
+        raise OutputMismatch(["gaps: foreign_document_gap"])
+    if len({gap.requirement_key for gap in pair.gaps}) != len(pair.gaps):
+        raise OutputMismatch(["gaps: duplicate_document_gap"])
+    return pair
 
 
-def _candidate_body(item: CandidateDocument) -> documents.DocumentBody:
+def _candidate_block(
+    statement: CandidateStatement, plan: dict[str, object]
+) -> documents.DocumentBlock:
+    if statement.kind == "connective":
+        declared = statement_check.connectives(cast(dict[str, object], plan["frame"]))
+        # An undeclared connective stays visibly non-factual and is blocked by the checker.
+        return documents.DocumentBlock(
+            block_key=statement.block_key,
+            text=statement.text,
+            claim_kind=declared.get(statement.text, "intent"),
+            claim_revision_ids=[],
+            evidence_revision_ids=[],
+        )
+    claim = statement.claim_id
+    return documents.DocumentBlock(
+        block_key=statement.block_key,
+        text=statement.text,
+        claim_kind="factual",
+        claim_revision_ids=[] if claim is None else [claim],
+        evidence_revision_ids=[
+            UUID(str(fact["evidence_revision_id"]))
+            for fact in cast(list[dict[str, object]], plan["facts"])
+            if claim is not None and str(fact["claim_revision_id"]) == str(claim)
+        ],
+    )
+
+
+def _candidate_body(item: CandidateDocument, plan: dict[str, object]) -> documents.DocumentBody:
     return documents.DocumentBody(
         title="Résumé" if item.kind == "resume" else "Cover letter",
         sections=[
             documents.DocumentSection(
                 key=f"section-{index}",
                 heading=section.heading,
-                blocks=[block for block in section.blocks],
+                blocks=[_candidate_block(block, plan) for block in section.blocks],
             )
             for index, section in enumerate(item.sections)
         ],
@@ -678,15 +732,8 @@ def append_revision(
     provenance = cast(dict[str, object], source["provenance_snapshot"])
     template = str(source["template_version"])
     kind = "base" if source["scope"] == "base" else str(source["kind"])
-    validation = (
-        issues(body, cast(list[dict[str, object]], provenance["facts"]), kind)
-        if provenance.get("schema_version") == PROTOCOL
-        else [
-            {"path": path, "code": "unestablished_professional_assertion"}
-            for path in documents.unsupported_paths(
-                body, documents._facts(conn, owner, UUID(str(source["profile_revision_id"])))
-            )
-        ]
+    validation = validation_issues(
+        conn, owner, body, provenance, kind, UUID(str(source["profile_revision_id"]))
     )
     number = conn.execute(
         text(
@@ -815,6 +862,11 @@ def publish_pair(
     plan = task.input
     provenance = _provenance(plan, task.id, run, metadata)
     provenance["gaps"] = [gap.model_dump(mode="json") for gap in pair.gaps]
+    provenance["checker_version"] = statement_check.CHECKER_VERSION
+    provenance["review_limits"] = {**LIMITS, "automatic_check": CHECKED_LIMIT}
+    provenance["connective_policy"] = {
+        key: list(value) for key, value in statement_check.CONNECTIVES.items()
+    }
     provenance["warnings"] = pair.warnings
     targets = {str(item["kind"]): item for item in cast(list[dict[str, object]], plan["targets"])}
     result: list[dict[str, object]] = []
@@ -847,7 +899,7 @@ def publish_pair(
             conn,
             task.owner_id,
             draft,
-            _candidate_body(item),
+            _candidate_body(item, plan),
             source,
             "generated",
             "Owner-requested local-model candidate pair",
@@ -875,19 +927,13 @@ def revision_view(
     provenance = cast(dict[str, object], row["provenance_snapshot"])
     if revision_digest(body, row["template_version"], provenance) != row["content_sha256"]:
         raise Problem(409, "document_integrity_failed")
-    validation = (
-        issues(
-            body,
-            cast(list[dict[str, object]], provenance["facts"]),
-            "base" if row["scope"] == "base" else row["kind"],
-        )
-        if provenance.get("schema_version") == PROTOCOL
-        else [
-            {"path": path, "code": "unestablished_professional_assertion"}
-            for path in documents.unsupported_paths(
-                body, documents._facts(conn, owner, row["profile_revision_id"])
-            )
-        ]
+    validation = validation_issues(
+        conn,
+        owner,
+        body,
+        provenance,
+        "base" if row["scope"] == "base" else row["kind"],
+        row["profile_revision_id"],
     )
     return {
         "id": str(row["id"]),

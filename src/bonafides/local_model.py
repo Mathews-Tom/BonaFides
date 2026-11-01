@@ -20,6 +20,7 @@ import re
 import socket
 import ssl
 import time
+from collections.abc import Sequence
 from contextlib import suppress
 from dataclasses import dataclass, field
 from io import BufferedReader
@@ -47,7 +48,7 @@ PROJECTION_VERSION = "ol-professional-wire-v4"
 PROMPT_VERSIONS = {
     "extract_posting": "ol-extract-posting-v1",
     "match_requirements": "ol-match-requirements-v1",
-    "generate_documents": "ol-generate-documents-v1",
+    "generate_documents": "ol-generate-documents-v2",
     "regenerate_section": "ol-regenerate-section-v1",
 }
 _SYSTEM = (
@@ -79,16 +80,23 @@ _SUFFIXES = {
     "generate_documents": (
         "Create exactly one resume and one cover_letter, with globally unique b-N block keys. "
         "Use fixed headings Experience, Education, Skills, Projects, Certifications, Languages, "
-        "Profile evidence, Application, Letter, Interest or Summary. Copy accepted professional claim text verbatim; "
-        "non-exact paraphrases will remain unestablished. Structured claim fields may be copied "
-        "verbatim after claim text in supplied field order, one value per line. Never invent "
-        "metrics, dates, qualifications, scope or work authorization. Cite permitted claim and "
-        "evidence identifiers. Do not put applicant identity/contact or a signature in prose. "
-        "Only these exact nonfactual phrases are reviewed safe language: Dear Hiring team,; "
-        "Thank you for your consideration.; Thank you for considering my application.; Sincerely,; "
-        "I would welcome the opportunity to discuss this role.; I would welcome a discussion of the role. "
-        "A factual statement hidden as intent or greeting remains unsupported. "
-        "Use gaps for missing requirement evidence, never fabricate it. Return typed JSON only."
+        "Profile evidence, Application, Letter, Interest or Summary. Every statement is a block. "
+        "A factual block cites exactly one supplied claim id in claim_id; choose which claims to "
+        "use, their order, emphasis and phrasing, but its text must be wording contained in that "
+        "claim's own evidence, never the posting or another claim. Letter factual sentences are "
+        "factual blocks too. Any other block is connective with claim_id null and must be exactly "
+        "one of these phrases, where {title} and {organization} are the posting's: "
+        "Dear Hiring team,; Dear {organization} hiring team,; Sincerely,; Kind regards,; "
+        "Thank you for your consideration.; Thank you for considering my application.; "
+        "I am applying for the {title} role at {organization}.; "
+        "I am writing to apply for the {title} position at {organization}.; "
+        "I would welcome the opportunity to discuss this role.; "
+        "I would welcome a discussion of the role.; "
+        "I would welcome the opportunity to discuss the {title} role at {organization}.; "
+        "The following examples from my record are relevant to this role. "
+        "Never invent metrics, dates, qualifications, scope or work authorization. Do not put "
+        "applicant identity/contact or a signature in prose. Use gaps for missing requirement "
+        "evidence, never fabricate it. Return typed JSON only."
     ),
     "regenerate_section": (
         "Rewrite only target.blocks in the requested tone. Preserve accepted professional "
@@ -177,6 +185,15 @@ _SCHEMAS = {
     ),
 }
 
+# A schema mismatch gets one corrective request with a code-only summary of the errors.
+_CORRECTIONS = {
+    "generate_documents": (
+        "Your previous response did not match the required JSON shape. Errors (location: "
+        "reason): {summary}. Return one corrected JSON object for the same task data."
+    ),
+}
+SCHEMA_VERSIONS = {"generate_documents": "2"}
+
 # The provider receives one bounded branch, not executable document markup.
 _DOCUMENT_BLOCK = _object(
     {
@@ -199,7 +216,7 @@ _DOCUMENT_BLOCK = _object(
 )
 _SCHEMAS["generate_documents"] = _object(
     {
-        "schema_version": {"const": "1"},
+        "schema_version": {"const": "2"},
         "stage": {"const": "generate_documents"},
         "documents": {
             "type": "array",
@@ -219,7 +236,23 @@ _SCHEMAS["generate_documents"] = _object(
                                     "type": "array",
                                     "minItems": 1,
                                     "maxItems": 30,
-                                    "items": _DOCUMENT_BLOCK,
+                                    "items": _object(
+                                        {
+                                            "block_key": {
+                                                "type": "string",
+                                                "pattern": "^b-[0-9]{1,3}$",
+                                            },
+                                            "kind": {
+                                                "type": "string",
+                                                "enum": ["factual", "connective"],
+                                            },
+                                            "text": _string(2000),
+                                            "claim_id": {
+                                                "type": ["string", "null"],
+                                                "format": "uuid",
+                                            },
+                                        }
+                                    ),
                                 },
                             }
                         ),
@@ -656,6 +689,7 @@ def load_route(path: Path | None) -> LocalRoute | None:
                         "system": _SYSTEM,
                         "suffix": _SUFFIXES[stage],
                         "schema": _SCHEMAS[stage],
+                        "correction": _CORRECTIONS.get(stage),
                     }
                     for stage, version in PROMPT_VERSIONS.items()
                 },
@@ -914,12 +948,20 @@ class OllamaClient:
         context: dict[str, object],
         prompt_version: str,
         interrupted: Event | None = None,
+        correction: Sequence[str] | None = None,
     ) -> ModelResult:
         route = self.route
         if not route.qualified_for(stage):
             raise ModelFailure("model_route_unavailable")
         if prompt_version != PROMPT_VERSIONS[stage]:
             raise ModelFailure("model_prompt_mismatch")
+        messages = [{"role": "system", "content": _SYSTEM + " " + _SUFFIXES[stage]}]
+        if correction is not None and (
+            stage not in _CORRECTIONS
+            or not 1 <= len(correction) <= 12
+            or not all(re.fullmatch(r"[A-Za-z0-9_.?: ]{1,120}", item) for item in correction)
+        ):
+            raise ModelFailure("model_context_invalid")
         roots = (
             {"source_text", "source_sha256"}
             if stage == "extract_posting"
@@ -1009,8 +1051,20 @@ class OllamaClient:
                     "stream": False,
                     "keep_alive": 0,
                     "messages": [
-                        {"role": "system", "content": _SYSTEM + " " + _SUFFIXES[stage]},
+                        *messages,
                         {"role": "user", "content": _json(context).decode()},
+                        *(
+                            []
+                            if correction is None
+                            else [
+                                {
+                                    "role": "user",
+                                    "content": _CORRECTIONS[stage].format(
+                                        summary="; ".join(correction)
+                                    ),
+                                }
+                            ]
+                        ),
                     ],
                     "format": schema,
                     "options": {
@@ -1189,11 +1243,23 @@ class OllamaClient:
             content = message.get("content")
             if not isinstance(content, str) or not content:
                 raise ModelFailure("model_refused")
-            output = _decode(content)
+            try:
+                output = _decode(content)
+            except ModelFailure as exc:
+                # Unparseable content of a correctable stage is a schema mismatch.
+                if stage in _CORRECTIONS:
+                    raise ModelFailure("model_output_schema_mismatch") from exc
+                raise
             if output.get("refusal") is not None:
                 raise ModelFailure("model_refused")
-            if output.get("schema_version") != "1" or output.get("stage") != stage:
-                raise ModelFailure("model_envelope_invalid")
+            if output.get("schema_version") != SCHEMA_VERSIONS.get(stage, "1") or (
+                output.get("stage") != stage
+            ):
+                raise ModelFailure(
+                    "model_output_schema_mismatch"
+                    if stage in _CORRECTIONS
+                    else "model_envelope_invalid"
+                )
             input_usage = _usage(envelope.get("prompt_eval_count"))
             output_usage = _usage(envelope.get("eval_count"))
             if (input_usage is not None and input_usage > input_bound) or (
