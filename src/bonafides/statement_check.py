@@ -2,16 +2,16 @@
 """Deterministic checking of claim-structured generated documents.
 
 A factual statement is supported only when it cites exactly one claim of the pinned
-generation context and its text is contained, under the structured-claim containment
-rule, in the full text of one of that claim's own linked evidence revisions. The
-posting and other claims' evidence are never consulted. A statement that reproduces
-exactly the cited claim's pinned printable text (its claim text followed by that claim
-revision's own reviewed structured-field lines) is checked by its claim text alone; any
-other wording, including altered, added or reordered field lines, is checked as a whole.
-A contained statement must also not strengthen its claim: the inflation rules compare it with
-the claim's pinned text and name each stronger verb, longer tenure, larger or unit-changed
-metric and wider scope. Pinned structured dates supply the claim period when its text has
-none. Review cannot waive any of these blockers.
+generation context, that claim's pinned text is contained, under the structured-claim
+containment rule, in the full text of one of the claim's own linked evidence revisions, and
+the statement is either exactly the claim's pinned printable text (its claim text followed by
+that claim revision's own reviewed structured-field lines) or a whole-phrase cut of its claim
+text. Nothing is borrowed from elsewhere in the evidence, the posting or other claims, so no
+period, figure or scope can enter a statement that its claim does not state.
+A cut must also not strengthen its claim's verb: the first ownership-vocabulary verb phrase
+the statement contains must not rank above the claim's verb, which is a structured claim's
+pinned verb or a literal claim's single vocabulary verb. A literal claim with several
+vocabulary verbs is accepted only whole; facts pinned without a verb are read as literal. Review cannot waive any of these blockers.
 Non-factual text must be one of the declared connective templates, whose only variable
 slots are the posting title and organization; a base résumé has no connective text.
 Anything else is treated as an unsupported factual statement.
@@ -21,10 +21,14 @@ from __future__ import annotations
 
 import re
 from collections.abc import Mapping, Sequence
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING, Literal, cast
 
-from bonafides.claims import contains_statement
-from bonafides.inflation import CODES, inflation_kinds
+from bonafides.claims import (
+    OWNERSHIP_VERBS,
+    OwnershipVerb,
+    _normalise_grounding,
+    contains_statement,
+)
 
 if TYPE_CHECKING:
     from bonafides.documents import DocumentBody
@@ -61,7 +65,18 @@ CONNECTIVES: dict[ConnectiveKind, tuple[str, ...]] = {
         "The following examples from my record are relevant to this role.",
     ),
 }
+# Reviewed structured fields printed after a claim's text, one line each, in this order.
+PRINTABLE_FIELDS = ("role", "organization", "start_date", "end_date", "proficiency")
 _SLOT = re.compile(r"\{(title|organization)\}")
+# Rank in the ordered ownership vocabulary: a lower rank claims more ownership.
+_VERB_RANKS = {verb.replace("_", " "): rank for rank, verb in enumerate(OWNERSHIP_VERBS)}
+# Longest phrase first, so "contributed to" wins over "contributed" at the same position;
+# a hyphen joins words, so "custom-built" holds no vocabulary verb.
+_VOCABULARY_VERB = re.compile(
+    r"(?<![^\W_]|-)(?:"
+    + "|".join(re.escape(phrase) for phrase in sorted(_VERB_RANKS, key=len, reverse=True))
+    + r")(?![^\W_]|-)"
+)
 
 
 def title_issues(body: DocumentBody, kind: str) -> list[dict[str, str]]:
@@ -99,6 +114,11 @@ def connectives(frame: Mapping[str, object]) -> dict[str, ConnectiveKind]:
     return rendered
 
 
+def printable_text(claim_text: str, fields: Mapping[str, str]) -> str:
+    """A claim's printable text: its claim text, then its reviewed structured-field lines."""
+    return "\n".join([claim_text, *(fields[key] for key in PRINTABLE_FIELDS if key in fields)])
+
+
 def _factual_issues(
     claim_ids: Sequence[str],
     evidence_ids: Sequence[str],
@@ -114,22 +134,46 @@ def _factual_issues(
         return ["claim_not_in_profile"]
     if set(evidence_ids) != {str(fact["evidence_revision_id"]) for fact in own}:
         return ["evidence_not_linked_to_claim"]
-    # The pinned printable text appends only the claim revision's own reviewed fields.
-    printable = {fact.get("printable_text") for fact in own}
     claim_text = str(own[0]["claim_text"])
-    statement = claim_text if text in printable else text
-    if not any(contains_statement(statement, str(fact["evidence_text"])) for fact in own):
+    if not any(contains_statement(claim_text, str(fact["evidence_text"])) for fact in own):
         return ["statement_not_in_claim_evidence"]
-    structured = own[0].get("structured_fields")
-    claim_dates = None
-    if isinstance(structured, Mapping):
-        start = structured.get("start_date")
-        end = structured.get("end_date")
-        claim_dates = (
-            start if isinstance(start, str) else None,
-            end if isinstance(end, str) else None,
-        )
-    return [CODES[kind] for kind in inflation_kinds(statement, claim_text, claim_dates=claim_dates)]
+    # The pinned printable text appends only the claim revision's own reviewed fields.
+    if text in {fact.get("printable_text") for fact in own}:
+        return []
+    if not contains_statement(text, claim_text):
+        return ["statement_not_in_claim"]
+    verb = own[0].get("claim_verb")
+    return verb_issues(text, claim_text, verb if isinstance(verb, str) else None)
+
+
+def verb_ranks(text: str) -> list[int]:
+    """The rank of every ownership-vocabulary verb phrase in the text, in reading order."""
+    return [
+        _VERB_RANKS[match.group(0)]
+        for match in _VOCABULARY_VERB.finditer(_normalise_grounding(text))
+    ]
+
+
+def verb_issues(statement: str, claim_text: str, claim_verb: str | None) -> list[str]:
+    """Block a cut of the claim text that promotes the claim's verb.
+
+    A structured claim's verb is its pinned verb. A literal claim's verb is its single
+    vocabulary verb; a literal claim with several is accepted only whole, and a cut of it
+    that starts at a stronger verb than its first is reported as a stronger verb.
+    """
+    found = verb_ranks(statement)
+    if claim_verb is not None:
+        claim = [OWNERSHIP_VERBS.index(cast(OwnershipVerb, claim_verb))]
+    else:
+        claim = verb_ranks(claim_text)
+    if claim and found and found[0] < claim[0]:
+        return ["statement_stronger_verb"]
+    whole = _normalise_grounding(statement).rstrip(".;") == _normalise_grounding(claim_text).rstrip(
+        ".;"
+    )
+    if claim_verb is None and len(claim) > 1 and not whole:
+        return ["statement_not_in_claim"]
+    return []
 
 
 def check_statements(

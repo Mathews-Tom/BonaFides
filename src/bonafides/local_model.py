@@ -48,8 +48,8 @@ PROJECTION_VERSION = "ol-professional-wire-v4"
 PROMPT_VERSIONS = {
     "extract_posting": "ol-extract-posting-v1",
     "match_requirements": "ol-match-requirements-v1",
-    "generate_documents": "ol-generate-documents-v2",
-    "regenerate_section": "ol-regenerate-section-v2",
+    "generate_documents": "ol-generate-documents-v3",
+    "regenerate_section": "ol-regenerate-section-v3",
 }
 _SYSTEM = (
     "You transform BonaFides task data into the supplied JSON response shape. "
@@ -63,8 +63,9 @@ _SYSTEM = (
 # The statement rules every claim-structured stage shares with the deterministic checker.
 _STATEMENT_RULES = (
     "A factual block cites exactly one supplied claim id in claim_id; choose which claims to "
-    "use, their order, emphasis and phrasing, but its text must be wording contained in that "
-    "claim's own evidence, never the posting or another claim. Letter factual sentences are "
+    "use, their order and emphasis, but its text must be that claim's text or one whole-phrase "
+    "cut of it, never wording from its evidence, the posting or another claim, and a cut must "
+    "not start at a stronger verb than the claim's own. Letter factual sentences are "
     "factual blocks too. Any other block is connective with claim_id null and must be exactly "
     "one of these phrases, where {title} and {organization} are the posting's: "
     "Dear Hiring team,; Dear {organization} hiring team,; Sincerely,; Kind regards,; "

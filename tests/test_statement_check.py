@@ -7,9 +7,15 @@ from uuid import UUID, uuid4
 
 import pytest
 
-from bonafides.claims import contains_statement
+from bonafides.claims import OWNERSHIP_VERBS, contains_statement
 from bonafides.documents import DocumentBlock, DocumentBody, DocumentSection
-from bonafides.statement_check import CONNECTIVES, check_statements, connectives
+from bonafides.statement_check import (
+    CONNECTIVES,
+    check_statements,
+    connectives,
+    verb_issues,
+    verb_ranks,
+)
 
 CLAIM = UUID("00000000-0000-4000-8000-000000000001")
 OTHER_CLAIM = UUID("00000000-0000-4000-8000-000000000002")
@@ -67,9 +73,35 @@ def test_check_statements_contained_in_own_evidence_returns_no_issue() -> None:
     assert _check(block) == []
 
 
-def test_check_statements_contained_only_in_withheld_evidence_is_supported() -> None:
+def test_check_statements_claim_contained_only_in_withheld_evidence_is_supported() -> None:
+    facts = [
+        {**FACTS[0], "evidence_text": "In 2024 I ran PostgreSQL backups."},
+        FACTS[1],
+    ]
+    block = _factual("maintained PostgreSQL clusters", [CLAIM], [EVIDENCE, SECOND_EVIDENCE])
+    body = DocumentBody(
+        title="Cover letter",
+        sections=[DocumentSection(key="section-0", heading="Letter", blocks=[block])],
+    )
+    assert check_statements(body, facts, FRAME, "cover_letter") == []
+
+
+def test_check_statements_evidence_wording_outside_the_claim_is_not_in_claim() -> None:
+    # Contained in the claim's own withheld evidence, but not part of the claim's text.
     block = _factual("across three regions", [CLAIM], [EVIDENCE, SECOND_EVIDENCE])
-    assert _check(block) == []
+    assert _codes(block) == ["statement_not_in_claim"]
+
+
+def test_check_statements_claim_text_outside_its_evidence_is_blocked() -> None:
+    facts = [{**fact, "claim_text": "Maintained Oracle clusters"} for fact in FACTS[:2]]
+    block = _factual("Maintained Oracle clusters", [CLAIM], [EVIDENCE, SECOND_EVIDENCE])
+    body = DocumentBody(
+        title="Cover letter",
+        sections=[DocumentSection(key="section-0", heading="Letter", blocks=[block])],
+    )
+    assert [issue["code"] for issue in check_statements(body, facts, FRAME, "cover_letter")] == [
+        "statement_not_in_claim_evidence"
+    ]
 
 
 def test_check_statements_claim_absent_from_context_names_the_statement() -> None:
@@ -83,15 +115,15 @@ def test_check_statements_claim_absent_from_context_names_the_statement() -> Non
     ]
 
 
-def test_check_statements_text_outside_claim_evidence_is_blocked() -> None:
+def test_check_statements_text_outside_its_claim_is_blocked() -> None:
     block = _factual("maintained Oracle clusters", [CLAIM], [EVIDENCE, SECOND_EVIDENCE])
-    assert _codes(block) == ["statement_not_in_claim_evidence"]
+    assert _codes(block) == ["statement_not_in_claim"]
 
 
 def test_check_statements_other_claims_evidence_is_never_consulted() -> None:
     # The wording exists in another claim's evidence, not in the cited claim's own.
     block = _factual("ran Kubernetes upgrades", [CLAIM], [EVIDENCE, SECOND_EVIDENCE])
-    assert _codes(block) == ["statement_not_in_claim_evidence"]
+    assert _codes(block) == ["statement_not_in_claim"]
 
 
 def test_check_statements_uncited_factual_statement_is_blocked() -> None:
@@ -184,7 +216,7 @@ def test_check_statements_title_heading_and_markers_name_their_text() -> None:
         ("unestablished_heading", "Letter of intent"),
         ("unestablished_heading", "Achievements"),
         ("unresolved_omission_marker", "maintained PostgreSQL clusters [add metric]"),
-        ("statement_not_in_claim_evidence", "maintained PostgreSQL clusters [add metric]"),
+        ("statement_not_in_claim", "maintained PostgreSQL clusters [add metric]"),
     ]
 
 
@@ -273,16 +305,14 @@ def test_check_statements_model_output_reproducing_printable_text_returns_no_iss
     ],
     ids=["altered", "altered_date", "added", "other_claim_field", "reordered", "dropped"],
 )
-def test_check_statements_altered_printable_text_is_statement_not_in_claim_evidence(
+def test_check_statements_altered_printable_text_is_statement_not_in_claim(
     text: str,
 ) -> None:
-    assert _base_codes(text, ROLE_CLAIM, ROLE_EVIDENCE) == ["statement_not_in_claim_evidence"]
+    assert _base_codes(text, ROLE_CLAIM, ROLE_EVIDENCE) == ["statement_not_in_claim"]
 
 
-def test_check_statements_other_claims_printable_text_is_statement_not_in_claim_evidence() -> None:
-    assert _base_codes("Python\nAdvanced", ROLE_CLAIM, ROLE_EVIDENCE) == [
-        "statement_not_in_claim_evidence"
-    ]
+def test_check_statements_other_claims_printable_text_is_statement_not_in_claim() -> None:
+    assert _base_codes("Python\nAdvanced", ROLE_CLAIM, ROLE_EVIDENCE) == ["statement_not_in_claim"]
 
 
 def test_check_statements_printable_text_of_ungrounded_claim_is_not_supported() -> None:
@@ -326,26 +356,22 @@ def test_check_statements_base_resume_declares_no_connectives() -> None:
     ]
 
 
-@pytest.mark.parametrize(
-    ("statement", "expected"),
-    [
-        ("Maintained Linux batch runbooks during 2015–2024", ["statement_longer_tenure"]),
-        ("Maintained Linux batch runbooks during 2020–2022", []),
-    ],
+LEAD_CLAIM = UUID("00000000-0000-4000-8000-000000000005")
+LEAD_EVIDENCE = UUID("00000000-0000-4000-8000-000000000015")
+LEAD_TEXT = "Assisted the team that led the billing migration (2021–2022), reducing cost by 20%"
+LEAD_EVIDENCE_TEXT = (
+    f"{LEAD_TEXT}. The programme ran 2019–2023, reducing cost by 45%, and was adopted company-wide."
 )
-def test_check_statements_uses_pinned_dates_when_claim_text_has_no_period(
-    statement: str, expected: list[str]
-) -> None:
+
+
+def _lead_codes(statement: str, claim_verb: str | None) -> list[str]:
     facts = [
         {
-            **FIELD_FACTS[0],
-            "structured_fields": {"start_date": "2019-03", "end_date": "2023-06"},
-            # Both proposed statements occur in the linked evidence: only the
-            # pinned claim period determines whether either inflates tenure.
-            "evidence_text": (
-                "Maintained Linux batch runbooks during 2015–2024. "
-                "Maintained Linux batch runbooks during 2020–2022."
-            ),
+            "claim_revision_id": str(LEAD_CLAIM),
+            "evidence_revision_id": str(LEAD_EVIDENCE),
+            "claim_text": LEAD_TEXT,
+            "evidence_text": LEAD_EVIDENCE_TEXT,
+            "claim_verb": claim_verb,
         }
     ]
     body = DocumentBody(
@@ -354,8 +380,98 @@ def test_check_statements_uses_pinned_dates_when_claim_text_has_no_period(
             DocumentSection(
                 key="experience",
                 heading="Experience",
-                blocks=[_factual(statement, [ROLE_CLAIM], [ROLE_EVIDENCE])],
+                blocks=[_factual(statement, [LEAD_CLAIM], [LEAD_EVIDENCE])],
             )
         ],
     )
-    assert [issue["code"] for issue in check_statements(body, facts, FRAME, "resume")] == expected
+    return [issue["code"] for issue in check_statements(body, facts, FRAME, "resume")]
+
+
+@pytest.mark.parametrize("claim_verb", ["assisted", None], ids=["structured", "literal"])
+@pytest.mark.parametrize(
+    "statement",
+    [
+        "led the billing migration (2021–2022), reducing cost by 20%",
+        "Led the billing migration",
+        "the team that led the billing migration",
+    ],
+)
+def test_check_statements_cut_promoting_the_claim_verb_is_stronger_verb(
+    statement: str, claim_verb: str | None
+) -> None:
+    assert _lead_codes(statement, claim_verb) == ["statement_stronger_verb"]
+
+
+@pytest.mark.parametrize("claim_verb", ["assisted", None], ids=["structured", "literal"])
+@pytest.mark.parametrize(
+    "statement",
+    [
+        "The programme ran 2019–2023",
+        "reducing cost by 45%",
+        "was adopted company-wide",
+    ],
+    ids=["longer_period", "larger_figure", "wider_scope"],
+)
+def test_check_statements_evidence_fragment_outside_the_claim_is_not_in_claim(
+    statement: str, claim_verb: str | None
+) -> None:
+    assert contains_statement(statement, LEAD_EVIDENCE_TEXT)
+    assert _lead_codes(statement, claim_verb) == ["statement_not_in_claim"]
+
+
+@pytest.mark.parametrize("claim_verb", ["assisted", None], ids=["structured", "literal"])
+@pytest.mark.parametrize("statement", [LEAD_TEXT, f"{LEAD_TEXT}.", LEAD_TEXT.upper()])
+def test_check_statements_whole_claim_text_passes(statement: str, claim_verb: str | None) -> None:
+    assert _lead_codes(statement, claim_verb) == []
+
+
+@pytest.mark.parametrize(
+    "statement",
+    [
+        "Assisted the team",
+        "Assisted the team that led the billing migration",
+        "the billing migration (2021–2022), reducing cost by 20%",
+    ],
+)
+def test_check_statements_structured_cut_keeping_or_weakening_its_verb_passes(
+    statement: str,
+) -> None:
+    assert _lead_codes(statement, "assisted") == []
+
+
+@pytest.mark.parametrize(
+    "statement",
+    ["Assisted the team", "the billing migration (2021–2022), reducing cost by 20%"],
+)
+def test_check_statements_literal_claim_with_several_verbs_is_accepted_only_whole(
+    statement: str,
+) -> None:
+    assert _lead_codes(statement, None) == ["statement_not_in_claim"]
+
+
+@pytest.mark.parametrize(
+    ("claim_text", "statement"),
+    [
+        (
+            "Maintained Linux batch runbooks for the payments team",
+            "Maintained Linux batch runbooks",
+        ),
+        ("Maintained Linux batch runbooks for the payments team", "Linux batch runbooks"),
+        ("Contributed to the custom-built scheduler", "the custom-built scheduler"),
+        ("Was responsible for the billing platform", "the billing platform"),
+    ],
+)
+def test_verb_issues_literal_cut_keeping_or_dropping_its_single_verb_passes(
+    claim_text: str, statement: str
+) -> None:
+    assert verb_issues(statement, claim_text, None) == []
+
+
+def test_verb_ranks_reads_longest_vocabulary_phrase_and_ignores_hyphenated_words() -> None:
+    assert verb_ranks("Contributed to the custom-built scheduler") == [
+        OWNERSHIP_VERBS.index("contributed_to")
+    ]
+    assert verb_ranks("Was responsible for billing") == [
+        OWNERSHIP_VERBS.index("was_responsible_for")
+    ]
+    assert verb_ranks("the scheduler") == []

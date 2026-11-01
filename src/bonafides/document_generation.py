@@ -150,10 +150,10 @@ def _fact_data(conn: Connection, owner: UUID, revision: UUID) -> list[dict[str, 
         payload = cast(dict[str, object], claim["payload"])
         structured = {
             key: value
-            for key in ("role", "organization", "start_date", "end_date", "proficiency")
+            for key in statement_check.PRINTABLE_FIELDS
             if isinstance((value := payload.get(key)), str) and value
         }
-        printable = "\n".join([fact.claim_text, *[str(value) for value in structured.values()]])
+        printable = statement_check.printable_text(fact.claim_text, structured)
         if len(printable) > 4000:
             raise Problem(409, "document_context_too_large")
         accepted.append(
@@ -166,6 +166,7 @@ def _fact_data(conn: Connection, owner: UUID, revision: UUID) -> list[dict[str, 
                 "claim_sha256": fact.claim_sha256,
                 "evidence_sha256": fact.evidence_sha256,
                 "status": fact.status,
+                "claim_verb": fact.claim_verb,
                 "category": claim["kind"],
                 "structured_fields": structured,
                 "printable_text": printable,
