@@ -201,3 +201,126 @@ def test_contains_statement_uses_structured_containment_boundaries(
     statement: str, excerpt: str, contained: bool
 ) -> None:
     assert contains_statement(statement, excerpt) is contained
+
+
+ROLE_CLAIM = UUID("00000000-0000-4000-8000-000000000003")
+ROLE_EVIDENCE = UUID("00000000-0000-4000-8000-000000000014")
+SKILL_CLAIM = UUID("00000000-0000-4000-8000-000000000004")
+SKILL_EVIDENCE = UUID("00000000-0000-4000-8000-000000000015")
+# The pinned printable text is the claim text plus that claim revision's own fields.
+ROLE_PRINTABLE = (
+    "Maintained Linux batch runbooks\nOperations Analyst\nJuniper Relay\n2022-02\n2025-05"
+)
+FIELD_FACTS: list[dict[str, object]] = [
+    {
+        "claim_revision_id": str(ROLE_CLAIM),
+        "evidence_revision_id": str(ROLE_EVIDENCE),
+        "claim_text": "Maintained Linux batch runbooks",
+        "evidence_text": (
+            "Operations Analyst, Juniper Relay (02/2022 to 05/2025)\n"
+            "Maintained Linux batch runbooks."
+        ),
+        "printable_text": ROLE_PRINTABLE,
+    },
+    {
+        "claim_revision_id": str(SKILL_CLAIM),
+        "evidence_revision_id": str(SKILL_EVIDENCE),
+        "claim_text": "Python",
+        "evidence_text": "Skills: Python, Bash",
+        "printable_text": "Python\nAdvanced",
+    },
+]
+
+
+def _base_codes(text: str, claim: UUID, evidence: UUID, kind: str = "base") -> list[str]:
+    body = DocumentBody(
+        title="Base résumé" if kind == "base" else "Résumé",
+        sections=[
+            DocumentSection(
+                key="experience",
+                heading="Experience",
+                blocks=[_factual(text, [claim], [evidence])],
+            )
+        ],
+    )
+    return [issue["code"] for issue in check_statements(body, FIELD_FACTS, FRAME, kind)]
+
+
+def test_check_statements_literal_claim_text_returns_no_issue() -> None:
+    assert _base_codes("Maintained Linux batch runbooks", ROLE_CLAIM, ROLE_EVIDENCE) == []
+
+
+def test_check_statements_exact_pinned_printable_text_with_fields_returns_no_issue() -> None:
+    # The structured lines are not literal evidence wording; only the claim text is checked.
+    assert not contains_statement(ROLE_PRINTABLE, str(FIELD_FACTS[0]["evidence_text"]))
+    assert _base_codes(ROLE_PRINTABLE, ROLE_CLAIM, ROLE_EVIDENCE) == []
+    assert _base_codes("Python\nAdvanced", SKILL_CLAIM, SKILL_EVIDENCE) == []
+
+
+def test_check_statements_model_output_reproducing_printable_text_returns_no_issue() -> None:
+    assert _base_codes(ROLE_PRINTABLE, ROLE_CLAIM, ROLE_EVIDENCE, "resume") == []
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        ROLE_PRINTABLE.replace("Operations Analyst", "Operations Director"),
+        ROLE_PRINTABLE.replace("2025-05", "2026-05"),
+        ROLE_PRINTABLE + "\nPython",
+        ROLE_PRINTABLE + "\nAdvanced",
+        "Maintained Linux batch runbooks\nJuniper Relay\nOperations Analyst\n2022-02\n2025-05",
+        ROLE_PRINTABLE.rsplit("\n", 1)[0],
+    ],
+    ids=["altered", "altered_date", "added", "other_claim_field", "reordered", "dropped"],
+)
+def test_check_statements_altered_printable_text_is_statement_not_in_claim_evidence(
+    text: str,
+) -> None:
+    assert _base_codes(text, ROLE_CLAIM, ROLE_EVIDENCE) == ["statement_not_in_claim_evidence"]
+
+
+def test_check_statements_other_claims_printable_text_is_statement_not_in_claim_evidence() -> None:
+    assert _base_codes("Python\nAdvanced", ROLE_CLAIM, ROLE_EVIDENCE) == [
+        "statement_not_in_claim_evidence"
+    ]
+
+
+def test_check_statements_printable_text_of_ungrounded_claim_is_not_supported() -> None:
+    facts = [{**FIELD_FACTS[0], "evidence_text": "Operations Analyst, Juniper Relay"}]
+    body = DocumentBody(
+        title="Base résumé",
+        sections=[
+            DocumentSection(
+                key="experience",
+                heading="Experience",
+                blocks=[_factual(ROLE_PRINTABLE, [ROLE_CLAIM], [ROLE_EVIDENCE])],
+            )
+        ],
+    )
+    assert [issue["code"] for issue in check_statements(body, facts, FRAME, "base")] == [
+        "statement_not_in_claim_evidence"
+    ]
+
+
+def test_check_statements_base_resume_declares_no_connectives() -> None:
+    body = DocumentBody(
+        title="Base résumé",
+        sections=[
+            DocumentSection(
+                key="experience",
+                heading="Experience",
+                blocks=[
+                    DocumentBlock(
+                        block_key="b-1",
+                        text="Sincerely,",
+                        claim_kind="greeting",
+                        claim_revision_ids=[],
+                        evidence_revision_ids=[],
+                    )
+                ],
+            )
+        ],
+    )
+    assert [issue["code"] for issue in check_statements(body, FIELD_FACTS, FRAME, "base")] == [
+        "connective_not_declared"
+    ]

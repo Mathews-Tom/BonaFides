@@ -31,7 +31,6 @@ from bonafides.documents import (
     body_digest,
     parse_body,
     prepare_render,
-    unsupported_paths,
 )
 from bonafides.problems import Problem
 from bonafides.render_service import (
@@ -42,6 +41,7 @@ from bonafides.render_service import (
     isolation_canary,
     render_html,
 )
+from bonafides.statement_check import check_statements
 from bonafides.storage import BlobStore, atomic_file, directory, read_file
 
 
@@ -122,12 +122,27 @@ def test_duplicate_block_keys_and_references_are_rejected() -> None:
         )
 
 
+def _base_issues(body: DocumentBody, fact: Fact) -> list[tuple[str, str]]:
+    """The claim-evidence checker on a base résumé pinned to one saved fact."""
+    pinned: dict[str, object] = {
+        "claim_revision_id": str(fact.claim_id),
+        "evidence_revision_id": str(fact.evidence_id),
+        "claim_text": fact.claim_text,
+        "evidence_text": fact.evidence_text,
+    }
+    return [
+        (issue["path"], issue["code"]) for issue in check_statements(body, [pinned], {}, "base")
+    ]
+
+
 def test_citation_does_not_support_invented_kubernetes_metric() -> None:
     body, fact = example()
-    assert unsupported_paths(body, (fact,)) == []
+    assert _base_issues(body, fact) == []
     wire = body.model_dump(mode="json")
     wire["sections"][0]["blocks"][0]["text"] = "Led Kubernetes migration improving uptime by 99%."
-    assert unsupported_paths(parse_body(wire), (fact,)) == ["/sections/0/blocks/0"]
+    assert _base_issues(parse_body(wire), fact) == [
+        ("/sections/0/blocks/0", "statement_not_in_claim_evidence")
+    ]
 
 
 def test_facts_cannot_be_hidden_in_document_title_or_section_heading() -> None:
@@ -135,7 +150,10 @@ def test_facts_cannot_be_hidden_in_document_title_or_section_heading() -> None:
     wire = body.model_dump(mode="json")
     wire["title"] = "Certified Kubernetes architect"
     wire["sections"][0]["heading"] = "Ten years of management experience"
-    assert unsupported_paths(parse_body(wire), (fact,)) == ["/title", "/sections/0/heading"]
+    assert _base_issues(parse_body(wire), fact) == [
+        ("/title", "unestablished_heading"),
+        ("/sections/0/heading", "unestablished_heading"),
+    ]
 
 
 @pytest.mark.parametrize("kind", ["intent", "greeting"])
@@ -143,7 +161,26 @@ def test_relabeling_facts_as_nonfactual_cannot_bypass_gate(kind: str) -> None:
     body, fact = example()
     wire = body.model_dump(mode="json")
     wire["sections"][0]["blocks"][0]["claim_kind"] = kind
-    assert unsupported_paths(parse_body(wire), (fact,))
+    assert _base_issues(parse_body(wire), fact) == [
+        ("/sections/0/blocks/0", "connective_not_declared")
+    ]
+
+
+def test_base_resume_has_no_connective_text() -> None:
+    body, fact = example()
+    wire = body.model_dump(mode="json")
+    wire["sections"][0]["blocks"].append(
+        {
+            "block_key": "greeting",
+            "text": "Sincerely,",
+            "claim_kind": "greeting",
+            "claim_revision_ids": [],
+            "evidence_revision_ids": [],
+        }
+    )
+    assert _base_issues(parse_body(wire), fact) == [
+        ("/sections/0/blocks/1", "connective_not_declared")
+    ]
 
 
 def test_foreign_missing_and_extra_evidence_are_unsupported() -> None:
@@ -151,7 +188,9 @@ def test_foreign_missing_and_extra_evidence_are_unsupported() -> None:
     for ids in ([], [str(uuid4())], [str(fact.evidence_id), str(uuid4())]):
         wire = body.model_dump(mode="json")
         wire["sections"][0]["blocks"][0]["evidence_revision_ids"] = ids
-        assert unsupported_paths(parse_body(wire), (fact,))
+        assert _base_issues(parse_body(wire), fact) == [
+            ("/sections/0/blocks/0", "evidence_not_linked_to_claim")
+        ]
 
 
 def test_http_review_payload_requires_exact_hash_and_uuid() -> None:

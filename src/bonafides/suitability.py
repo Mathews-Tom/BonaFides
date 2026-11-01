@@ -10,12 +10,12 @@ from __future__ import annotations
 import hashlib
 import re
 import unicodedata
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from contextlib import nullcontext
 from dataclasses import dataclass
 from decimal import Decimal
 from threading import Event
-from typing import TYPE_CHECKING, Annotated, Literal, Protocol, cast
+from typing import Annotated, Literal, Protocol, cast
 from uuid import UUID, uuid4
 
 from fastapi import APIRouter, Depends, Header
@@ -36,8 +36,8 @@ from bonafides.maintenance import ProviderExecution
 from bonafides.problems import Problem
 from bonafides.workflows import Claim, assert_fence, enqueue, publish
 
-if TYPE_CHECKING:
-    from bonafides.document_generation import CandidatePair
+# Stages whose claim-structured output gets one corrective call on a schema mismatch.
+CHECKED_STAGES = frozenset({"generate_documents", "regenerate_section"})
 
 POLICY_VERSION = "ol-suitability-policy-v2"
 TEMPLATE_VERSION = "ol-suitability-review-v1"
@@ -1240,7 +1240,7 @@ def _reserve_call(
     return run_id
 
 
-def _generate_pair(
+def _checked_call[T](
     db: Database,
     settings: Settings,
     task: Claim,
@@ -1248,15 +1248,18 @@ def _generate_pair(
     client: ModelClient | None,
     route: local_model.LocalRoute,
     runs: list[UUID],
-) -> tuple[CandidatePair, local_model.ModelResult]:
+    validate: Callable[[dict[str, object]], T],
+) -> tuple[T, local_model.ModelResult]:
     """Send the pinned projection; on a schema mismatch send it once more with the errors.
 
-    Runs inside the caller's owner send lock, so evidence writers stay refused across both
-    calls. The corrective call reuses the frozen projection and only adds a code-only error
-    summary; a second mismatch fails the task with no further model call.
+    Shared by every claim-structured stage. Runs inside the caller's owner send lock, so
+    evidence writers stay refused across both calls. The corrective call reuses the frozen
+    projection and only adds a code-only error summary; a second mismatch fails the task
+    with no further model call.
     """
-    from bonafides.document_generation import OutputMismatch, validate_pair
+    from bonafides.document_generation import OutputMismatch
 
+    stage = str(task.input["stage"])
     context = cast(dict[str, object], task.input["context"])
     correction: list[str] | None = None
     while True:
@@ -1264,7 +1267,7 @@ def _generate_pair(
             result = (
                 client or local_model.OllamaClient(route, ProviderExecution(db, task, runs[-1]))
             ).call(
-                "generate_documents",
+                stage,
                 context,
                 str(task.input["prompt_version"]),
                 interrupted,
@@ -1272,10 +1275,10 @@ def _generate_pair(
             )
             if interrupted.is_set():
                 raise local_model.ModelFailure("model_interrupted", retryable=False)
-            pair = validate_pair(result.output, task.input)
+            checked = validate(result.output)
             if correction is None:
-                return pair, result
-            return pair, local_model.ModelResult(
+                return checked, result
+            return checked, local_model.ModelResult(
                 result.output, {**result.metadata, "corrected_model_run_id": str(runs[0])}
             )
         except OutputMismatch as exc:
@@ -1370,8 +1373,24 @@ def _execute_reserved_model(
             if interrupted.is_set():
                 raise local_model.ModelFailure("model_interrupted", retryable=False)
             if stage == "generate_documents":
-                pair, result = _generate_pair(
-                    db, settings, task, interrupted, client, active_route, runs
+                from bonafides.document_generation import validate_pair
+
+                pair, result = _checked_call(
+                    db,
+                    settings,
+                    task,
+                    interrupted,
+                    client,
+                    active_route,
+                    runs,
+                    lambda output: validate_pair(output, task.input),
+                )
+                run_id = runs[-1]
+            elif stage == "regenerate_section":
+                from bonafides.section_regeneration import validate_candidate
+
+                section_candidate, result = _checked_call(
+                    db, settings, task, interrupted, client, active_route, runs, validate_candidate
                 )
                 run_id = runs[-1]
             else:
@@ -1396,9 +1415,6 @@ def _execute_reserved_model(
             elif stage == "generate_documents":
                 proposal = pair.model_dump(mode="json")
             elif stage == "regenerate_section":
-                from bonafides.section_regeneration import validate_candidate
-
-                section_candidate = validate_candidate(result.output, task.input)
                 proposal = section_candidate.model_dump(mode="json")
             else:
                 matching = MatchingOutput.model_validate_json(canonical_json(result.output))
@@ -1410,7 +1426,7 @@ def _execute_reserved_model(
                 raise Problem(422, "invalid_model_output") from exc
             raise
         with db.transaction() as conn:
-            if stage in {"generate_documents", "regenerate_section"}:
+            if stage in CHECKED_STAGES:
                 from bonafides.document_generation import lock_workspace
 
                 lock_workspace(conn, task.owner_id)

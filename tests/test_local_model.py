@@ -16,7 +16,7 @@ from datetime import UTC, datetime, timedelta
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from threading import Event, Thread
-from typing import cast
+from typing import Any, cast
 
 import pytest
 from cryptography import x509
@@ -954,9 +954,20 @@ def test_section_stage_sends_exact_minimized_projection_and_section_only_schema(
 
     context = _section_context()
     output = {
-        "schema_version": "1",
+        "schema_version": "2",
         "stage": "regenerate_section",
-        "blocks": cast(dict[str, object], context["target"])["blocks"],
+        "blocks": [
+            {
+                "block_key": f"b-{index}",
+                "kind": "factual",
+                "text": block["text"],
+                "claim_id": block["claim_revision_ids"][0],
+            }
+            for index, block in enumerate(
+                cast(list[dict[str, Any]], cast(dict[str, object], context["target"])["blocks"]),
+                start=1,
+            )
+        ],
         "warnings": [],
     }
     with fixture_server(
@@ -973,10 +984,10 @@ def test_section_stage_sends_exact_minimized_projection_and_section_only_schema(
         schema = payload["format"]
         assert set(schema["properties"]) == {"schema_version", "stage", "blocks", "warnings"}
         assert set(schema["properties"]["blocks"]["items"]["properties"]) == {
+            "block_key",
+            "kind",
             "text",
-            "claim_kind",
-            "claim_revision_ids",
-            "evidence_revision_ids",
+            "claim_id",
         }
         assert schema["properties"]["blocks"]["maxItems"] == 30
         assert schema["properties"]["blocks"]["items"]["additionalProperties"] is False

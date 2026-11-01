@@ -19,6 +19,7 @@ from bonafides.config import Settings
 from bonafides.db import Database
 from bonafides.document_frame import PrintableFrame, template_digest
 from bonafides.problems import Problem
+from bonafides.statement_check import CHECKER_VERSION, check_statements
 from bonafides.storage import BlobStore, StoredBlob
 
 TEMPLATE_VERSION: Final = "bonafides-base-v1"
@@ -199,32 +200,6 @@ def _facts(conn: Connection, owner_id: UUID, profile_revision_id: UUID) -> tuple
     return tuple(facts)
 
 
-def unsupported_paths(body: DocumentBody, facts: tuple[Fact, ...]) -> list[str]:
-    """Assembly permits exact saved facts only, not semantic inference from a citation."""
-    unsupported: list[str] = []
-    if body.title != "Base résumé":
-        unsupported.append("/title")
-    for section_index, section in enumerate(body.sections):
-        if section.heading != "Profile evidence":
-            unsupported.append(f"/sections/{section_index}/heading")
-        for block_index, block in enumerate(section.blocks):
-            matches = [
-                fact
-                for fact in facts
-                if fact.claim_id in block.claim_revision_ids
-                and fact.evidence_id in block.evidence_revision_ids
-                and fact.claim_text == block.text
-            ]
-            if (
-                block.claim_kind != "factual"
-                or len(block.claim_revision_ids) != 1
-                or not matches
-                or {fact.evidence_id for fact in matches} != set(block.evidence_revision_ids)
-            ):
-                unsupported.append(f"/sections/{section_index}/blocks/{block_index}")
-    return unsupported
-
-
 def prepare_synthetic(
     conn: Connection, owner_id: UUID, profile_revision_id: UUID
 ) -> PreparedDocument:
@@ -260,7 +235,20 @@ def publish_document(
     conn: Connection, owner_id: UUID, workflow_id: UUID, prepared: PreparedDocument
 ) -> dict[str, object]:
     facts = _facts(conn, owner_id, prepared.profile_revision_id)
-    if facts != prepared.facts or unsupported_paths(prepared.body, facts):
+    pinned: list[dict[str, object]] = [
+        {
+            "claim_revision_id": str(fact.claim_id),
+            "evidence_revision_id": str(fact.evidence_id),
+            "claim_text": fact.claim_text,
+            "evidence_text": fact.evidence_text,
+            "source": fact.source,
+            "claim_sha256": fact.claim_sha256,
+            "evidence_sha256": fact.evidence_sha256,
+            "status": fact.status,
+        }
+        for fact in facts
+    ]
+    if facts != prepared.facts or check_statements(prepared.body, pinned, {}, "base"):
         raise Problem(409, "unsupported_claims")
     revision_id = uuid5(workflow_id, "document-revision")
     existing = conn.execute(
@@ -302,19 +290,8 @@ def publish_document(
         "profile_revision_id": str(prepared.profile_revision_id),
         "model_run": None,
         "template_version": TEMPLATE_VERSION,
-        "facts": [
-            {
-                "claim_revision_id": str(fact.claim_id),
-                "evidence_revision_id": str(fact.evidence_id),
-                "claim_text": fact.claim_text,
-                "evidence_text": fact.evidence_text,
-                "source": fact.source,
-                "claim_sha256": fact.claim_sha256,
-                "evidence_sha256": fact.evidence_sha256,
-                "status": fact.status,
-            }
-            for fact in facts
-        ],
+        "checker_version": CHECKER_VERSION,
+        "facts": pinned,
     }
     conn.execute(
         text("""INSERT INTO bonafides.document_revisions(owner_id,id,document_draft_id,revision_no,profile_revision_id,scope,body,posting_snapshot,provenance_snapshot,template_version,content_sha256,origin,reason)

@@ -4,19 +4,25 @@
 A factual statement is supported only when it cites exactly one claim of the pinned
 generation context and its text is contained, under the structured-claim containment
 rule, in the full text of one of that claim's own linked evidence revisions. The
-posting and other claims' evidence are never consulted. Non-factual text must be one
-of the declared connective templates, whose only variable slots are the posting title
-and organization. Anything else is treated as an unsupported factual statement.
+posting and other claims' evidence are never consulted. A statement that reproduces
+exactly the cited claim's pinned printable text (its claim text followed by that claim
+revision's own reviewed structured-field lines) is checked by its claim text alone; any
+other wording, including altered, added or reordered field lines, is checked as a whole.
+Non-factual text must be one of the declared connective templates, whose only variable
+slots are the posting title and organization; a base résumé has no connective text.
+Anything else is treated as an unsupported factual statement.
 """
 
 from __future__ import annotations
 
 import re
 from collections.abc import Mapping, Sequence
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
 
 from bonafides.claims import contains_statement
-from bonafides.documents import DocumentBody
+
+if TYPE_CHECKING:
+    from bonafides.documents import DocumentBody
 
 CHECKER_VERSION = "claim-evidence-v1"
 CATEGORIES = {
@@ -103,7 +109,10 @@ def _factual_issue(
         return "claim_not_in_profile"
     if set(evidence_ids) != {str(fact["evidence_revision_id"]) for fact in own}:
         return "evidence_not_linked_to_claim"
-    if not any(contains_statement(text, str(fact["evidence_text"])) for fact in own):
+    # The pinned printable text appends only the claim revision's own reviewed fields.
+    printable = {fact.get("printable_text") for fact in own}
+    statement = str(own[0]["claim_text"]) if text in printable else text
+    if not any(contains_statement(statement, str(fact["evidence_text"])) for fact in own):
         return "statement_not_in_claim_evidence"
     return None
 
@@ -115,7 +124,7 @@ def check_statements(
     kind: str,
 ) -> list[dict[str, str]]:
     """Every blocking issue of a claim-structured document, each naming its statement."""
-    declared = connectives(frame)
+    declared = {} if kind == "base" else connectives(frame)
     found = [{**issue, "statement": body.title} for issue in title_issues(body, kind)]
     for si, section in enumerate(body.sections):
         found.extend(

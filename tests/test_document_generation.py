@@ -1335,17 +1335,24 @@ def test_reviewed_safe_language_is_not_a_professional_assertion_escape() -> None
         title="Cover letter",
         sections=[documents.DocumentSection(key="letter", heading="Interest", blocks=[block])],
     )
-    assert generation.issues(body, [], "cover_letter") == []
+    provenance: dict[str, object] = {"facts": [], "frame": {}}
+    assert generation.validation_issues(body, provenance, "cover_letter") == []
     invented = block.model_copy(
         update={"text": "I would welcome a discussion of the role. I led fifty engineers."}
     )
-    assert generation.issues(
+    assert generation.validation_issues(
         body.model_copy(
             update={"sections": [body.sections[0].model_copy(update={"blocks": [invented]})]}
         ),
-        [],
+        provenance,
         "cover_letter",
-    ) == [{"path": "/sections/0/blocks/0", "code": "unestablished_nonfactual_text"}]
+    ) == [
+        {
+            "path": "/sections/0/blocks/0",
+            "code": "connective_not_declared",
+            "statement": "I would welcome a discussion of the role. I led fifty engineers.",
+        }
+    ]
 
 
 @pytest.mark.postgres

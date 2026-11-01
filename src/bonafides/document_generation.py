@@ -1,8 +1,9 @@
 # SPDX-License-Identifier: MIT OR Apache-2.0
 """Production document composition, frozen contexts and immutable revision lifecycle.
 
-Exact-copy checks intentionally reject unestablished paraphrases; they are not a
-semantic entailment proof. Human review cannot override unsupported wording.
+Every revision is checked by the one claim-evidence checker: literal containment in the
+cited claim's own evidence rejects unestablished paraphrases, but it is not a semantic
+entailment proof. Human review cannot override unsupported wording.
 """
 
 from __future__ import annotations
@@ -37,33 +38,15 @@ from bonafides.workflows import Claim, assert_fence, enqueue, get_workflow
 
 PROTOCOL = 2
 POLICY = "ol-documents-exact-facts-v1"
-SAFE_LANGUAGE = {
-    "greeting": frozenset(
-        {
-            "Dear Hiring team,",
-            "Thank you for your consideration.",
-            "Thank you for considering my application.",
-            "Sincerely,",
-        }
-    ),
-    "intent": frozenset(
-        {
-            "I would welcome the opportunity to discuss this role.",
-            "I would welcome a discussion of the role.",
-        }
-    ),
-}
 LIMITS = {
-    "automatic_check": "Exact accepted wording and explicit safe language only; non-exact paraphrases are unestablished, not automatically proved false.",
+    "automatic_check": (
+        "Each factual statement must cite one claim and be contained in that claim's own "
+        "evidence; connective text must be a declared phrase. Containment is literal, not a "
+        "semantic proof."
+    ),
     "human_review": "Review every factual block against its sources. Owner assertions are not independently verified. Review cannot waive unsupported content.",
     "privacy": "Dedicated identity/contact data, private tracking data and the content of confidential or employer-owned evidence are excluded from inference. Professional free text may still contain personal data.",
 }
-
-
-CHECKED_LIMIT = (
-    "Each factual statement must cite one claim and be contained in that claim's own evidence; "
-    "connective text must be a declared phrase. Containment is literal, not a semantic proof."
-)
 
 
 def sha(value: object) -> str:
@@ -442,67 +425,18 @@ def check_context(conn: Connection, task: Claim, settings: Settings) -> None:
         raise Problem(409, "stale_document_context")
 
 
-def issues(
-    body: documents.DocumentBody, facts: list[dict[str, object]], kind: str
-) -> list[dict[str, str]]:
-    found = statement_check.title_issues(body, kind)
-    for si, section in enumerate(body.sections):
-        found.extend(statement_check.heading_issues(si, section.heading))
-        for bi, block in enumerate(section.blocks):
-            path = f"/sections/{si}/blocks/{bi}"
-            found.extend(statement_check.text_issues(path, block.text))
-            if block.claim_kind != "factual":
-                if (
-                    block.text not in SAFE_LANGUAGE[block.claim_kind]
-                    or block.claim_revision_ids
-                    or block.evidence_revision_ids
-                    or kind == "base"
-                ):
-                    found.append({"path": path, "code": "unestablished_nonfactual_text"})
-                continue
-            matches = [
-                fact
-                for fact in facts
-                if str(fact["claim_revision_id"])
-                in {str(item) for item in block.claim_revision_ids}
-                and str(fact["evidence_revision_id"])
-                in {str(item) for item in block.evidence_revision_ids}
-                and block.text in (fact["claim_text"], fact.get("printable_text"))
-            ]
-            if (
-                len(block.claim_revision_ids) != 1
-                or not matches
-                or {str(fact["evidence_revision_id"]) for fact in matches}
-                != {str(item) for item in block.evidence_revision_ids}
-            ):
-                found.append({"path": path, "code": "unestablished_professional_assertion"})
-    return found
-
-
 def validation_issues(
-    conn: Connection,
-    owner: UUID,
-    body: documents.DocumentBody,
-    provenance: dict[str, object],
-    kind: str,
-    profile_revision_id: UUID,
+    body: documents.DocumentBody, provenance: dict[str, object], kind: str
 ) -> list[dict[str, str]]:
-    """The checker a revision was generated under; claim-structured pairs never fall back."""
-    if provenance.get("checker_version") == statement_check.CHECKER_VERSION:
-        return statement_check.check_statements(
-            body,
-            cast(list[dict[str, object]], provenance["facts"]),
-            cast(dict[str, object], provenance["frame"]),
-            kind,
-        )
-    if provenance.get("schema_version") == PROTOCOL:
-        return issues(body, cast(list[dict[str, object]], provenance["facts"]), kind)
-    return [
-        {"path": path, "code": "unestablished_professional_assertion"}
-        for path in documents.unsupported_paths(
-            body, documents._facts(conn, owner, profile_revision_id)
-        )
-    ]
+    """Check every revision, including ones stored before checker stamping, against its pins."""
+    frame = provenance.get("frame")
+    return statement_check.check_statements(
+        body,
+        cast(list[dict[str, object]], provenance["facts"]),
+        # Revisions composed before printable frames existed have no posting slots.
+        cast(dict[str, object], frame) if isinstance(frame, dict) else {},
+        kind,
+    )
 
 
 def compose_base(plan: dict[str, object]) -> documents.DocumentBody:
@@ -590,7 +524,7 @@ class CandidatePair(documents.StrictModel):
 
 
 class OutputMismatch(Problem):
-    """Model output that does not match the pair schema; the summary carries no owner data."""
+    """Model output that does not match its schema; the summary carries no owner data."""
 
     def __init__(self, summary: list[str]) -> None:
         super().__init__(422, "invalid_model_output")
@@ -612,8 +546,8 @@ def _mismatch(exc: ValidationError) -> OutputMismatch:
     return OutputMismatch(summary)
 
 
-def validate_pair(output: dict[str, object], plan: dict[str, object]) -> CandidatePair:
-    """Schema-validate a pair; claim references are checked per statement, not here."""
+def parse_candidate[T: documents.StrictModel](output: dict[str, object], schema: type[T]) -> T:
+    """Strictly decode one claim-structured model response or raise a correctable mismatch."""
     try:
         encoded = canonical_json(output)
     except Problem as exc:
@@ -621,7 +555,15 @@ def validate_pair(output: dict[str, object], plan: dict[str, object]) -> Candida
             raise
         raise OutputMismatch(["output: noncanonical_json"]) from exc
     try:
-        pair = CandidatePair.model_validate_json(encoded, strict=True)
+        return schema.model_validate_json(encoded, strict=True)
+    except ValidationError as exc:
+        raise _mismatch(exc) from exc
+
+
+def validate_pair(output: dict[str, object], plan: dict[str, object]) -> CandidatePair:
+    """Schema-validate a pair; claim references are checked per statement, not here."""
+    pair = parse_candidate(output, CandidatePair)
+    try:
         # Apply aggregate AST limits before either half is persisted.
         for item in pair.documents:
             _candidate_body(item, plan)
@@ -640,9 +582,10 @@ def validate_pair(output: dict[str, object], plan: dict[str, object]) -> Candida
     return pair
 
 
-def _candidate_block(
+def candidate_block(
     statement: CandidateStatement, plan: dict[str, object]
 ) -> documents.DocumentBlock:
+    """One stored block; ``plan`` supplies the pinned ``facts`` and printable ``frame``."""
     if statement.kind == "connective":
         declared = statement_check.connectives(cast(dict[str, object], plan["frame"]))
         # An undeclared connective stays visibly non-factual and is blocked by the checker.
@@ -674,7 +617,7 @@ def _candidate_body(item: CandidateDocument, plan: dict[str, object]) -> documen
             documents.DocumentSection(
                 key=f"section-{index}",
                 heading=section.heading,
-                blocks=[_candidate_block(block, plan) for block in section.blocks],
+                blocks=[candidate_block(block, plan) for block in section.blocks],
             )
             for index, section in enumerate(item.sections)
         ],
@@ -699,7 +642,10 @@ def _provenance(
         "frame": plan["frame"],
         "policy_version": POLICY,
         "review_limits": LIMITS,
-        "safe_language_policy": {key: sorted(value) for key, value in SAFE_LANGUAGE.items()},
+        "checker_version": statement_check.CHECKER_VERSION,
+        "connective_policy": {
+            key: list(value) for key, value in statement_check.CONNECTIVES.items()
+        },
         "context_sha256": plan.get("context_sha256"),
         "requirements_revision_id": plan.get("requirements_revision_id"),
         "posting_content_sha256": plan.get("posting_content_sha256"),
@@ -732,9 +678,7 @@ def append_revision(
     provenance = cast(dict[str, object], source["provenance_snapshot"])
     template = str(source["template_version"])
     kind = "base" if source["scope"] == "base" else str(source["kind"])
-    validation = validation_issues(
-        conn, owner, body, provenance, kind, UUID(str(source["profile_revision_id"]))
-    )
+    validation = validation_issues(body, provenance, kind)
     number = conn.execute(
         text(
             "SELECT coalesce(max(revision_no),0)+1 FROM bonafides.document_revisions WHERE owner_id=:owner AND document_draft_id=:id"
@@ -862,11 +806,6 @@ def publish_pair(
     plan = task.input
     provenance = _provenance(plan, task.id, run, metadata)
     provenance["gaps"] = [gap.model_dump(mode="json") for gap in pair.gaps]
-    provenance["checker_version"] = statement_check.CHECKER_VERSION
-    provenance["review_limits"] = {**LIMITS, "automatic_check": CHECKED_LIMIT}
-    provenance["connective_policy"] = {
-        key: list(value) for key, value in statement_check.CONNECTIVES.items()
-    }
     provenance["warnings"] = pair.warnings
     targets = {str(item["kind"]): item for item in cast(list[dict[str, object]], plan["targets"])}
     result: list[dict[str, object]] = []
@@ -928,12 +867,7 @@ def revision_view(
     if revision_digest(body, row["template_version"], provenance) != row["content_sha256"]:
         raise Problem(409, "document_integrity_failed")
     validation = validation_issues(
-        conn,
-        owner,
-        body,
-        provenance,
-        "base" if row["scope"] == "base" else row["kind"],
-        row["profile_revision_id"],
+        body, provenance, "base" if row["scope"] == "base" else row["kind"]
     )
     return {
         "id": str(row["id"]),

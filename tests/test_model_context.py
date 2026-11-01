@@ -745,8 +745,8 @@ def test_inflight_owner_send_refuses_classify_edit_archive_restore_and_import_me
             finally:
                 released.set()
             sending.result(timeout=10)
-        # A generated pair's schema mismatch gets one corrective call on the same projection.
-        corrective = stage == "generate_documents"
+        # A claim-structured schema mismatch gets one corrective call on the same projection.
+        corrective = stage in {"generate_documents", "regenerate_section"}
         assert len(requests) == (2 if corrective else 1)
         assert all(WITHHELD_MARKER.encode() in request for request in requests)
         assert catalog.workflow(task.id)["last_error_code"] == (
