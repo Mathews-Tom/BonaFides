@@ -136,7 +136,7 @@ def test_valid_stub_section_links_every_statement_and_applied_revision_exports(
     ("scenario", "code"),
     [
         ("absent-claim", "claim_not_in_profile"),
-        ("posting-only-skill", "statement_not_in_claim_evidence"),
+        ("posting-only-skill", "statement_not_in_claim"),
     ],
 )
 def test_fabricated_section_statement_blocks_proposal_and_applied_revision(

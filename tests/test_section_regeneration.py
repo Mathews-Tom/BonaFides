@@ -183,7 +183,7 @@ def test_claim_checked_proposal_reports_same_blocker_as_applied_revision(
     assert blockers == [
         {
             "path": "/sections/0/blocks/0",
-            "code": "statement_not_in_claim_evidence",
+            "code": "statement_not_in_claim",
             "statement": "Led 9999 engineers and invented an unsupported credential.",
         }
     ]

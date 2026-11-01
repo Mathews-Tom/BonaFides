@@ -189,7 +189,7 @@ def test_valid_stub_pair_links_every_factual_sentence_and_exports(
     ("scenario", "code"),
     [
         ("absent-claim", "claim_not_in_profile"),
-        ("posting-only-skill", "statement_not_in_claim_evidence"),
+        ("posting-only-skill", "statement_not_in_claim"),
     ],
 )
 def test_fabricated_stub_statement_blocks_export_even_after_review(

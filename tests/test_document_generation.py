@@ -604,7 +604,7 @@ def test_invalid_pair_publishes_neither_document_and_blocks_route(
 @pytest.mark.parametrize(
     ("failure", "code"),
     [
-        ("metric", "statement_not_in_claim_evidence"),
+        ("metric", "statement_not_in_claim"),
         ("heading", "unestablished_heading"),
         ("intent", "connective_not_declared"),
         ("absent_claim", "claim_not_in_profile"),
