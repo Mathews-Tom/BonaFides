@@ -873,3 +873,263 @@
 {"claim": {"schema_version": 1, "subject": "the team that led the billing migration", "verb": "assisted"}, "evidence": "Assisted the team that led the billing migration.", "kind": null, "statement": "Assisted the team that led the billing migration"}
 {"claim": {"schema_version": 1, "subject": "the team that led the billing migration", "verb": "assisted"}, "evidence": "Assisted the team that led the billing migration.", "kind": null, "statement": "Assisted the team"}
 {"claim": {"schema_version": 1, "subject": "the team that led the billing migration", "verb": "assisted"}, "evidence": "Assisted the team that led the billing migration.", "kind": null, "statement": "the billing migration"}
+{"claim": "Reduced checkout latency by 35% across 4 regions", "evidence": "Reduced checkout latency by 35% across 4 regions", "kind": null, "statement": "checkout latency"}
+{"claim": "Led migration of 40 services to Kubernetes for the payments team (2021-2022)", "evidence": "Led migration of 40 services to Kubernetes for the payments team (2021-2022)", "kind": null, "statement": "migration of 40 services"}
+{"claim": "Built an internal reporting dashboard, reducing manual reconciliation by 6 hours per week", "evidence": "Built an internal reporting dashboard, reducing manual reconciliation by 6 hours per week", "kind": null, "statement": "an internal reporting dashboard"}
+{"claim": "Spearheaded vendor consolidation, saving $1.2M annually", "evidence": "Spearheaded vendor consolidation, saving $1.2M annually", "kind": null, "statement": "vendor consolidation"}
+{"claim": "Designed the event schema for the synthetic order pipeline", "evidence": "Designed the event schema for the synthetic order pipeline", "kind": null, "statement": "the event schema"}
+{"claim": "Mentored 5 junior engineers on code review practices", "evidence": "Mentored 5 junior engineers on code review practices", "kind": null, "statement": "5 junior engineers"}
+{"claim": "Improved test coverage by 25% through contract tests", "evidence": "Improved test coverage by 25% through contract tests", "kind": null, "statement": "test coverage"}
+{"claim": "Increased weekly active users by 12,000", "evidence": "Increased weekly active users by 12,000", "kind": null, "statement": "weekly active users"}
+{"claim": "Owned the on-call rotation for the billing platform", "evidence": "Owned the on-call rotation for the billing platform", "kind": null, "statement": "the on-call rotation"}
+{"claim": "Managed a team of 8 support analysts across two time zones", "evidence": "Managed a team of 8 support analysts across two time zones", "kind": null, "statement": "a team of 8 support analysts"}
+{"claim": "Wrote the onboarding guide for new platform engineers", "evidence": "Wrote the onboarding guide for new platform engineers", "kind": null, "statement": "the onboarding guide"}
+{"claim": "Automated nightly data exports, cutting processing time by 3 hours per day", "evidence": "Automated nightly data exports, cutting processing time by 3 hours per day", "kind": null, "statement": "nightly data exports"}
+{"claim": "Grew newsletter subscribers by 40% in 2022", "evidence": "Grew newsletter subscribers by 40% in 2022", "kind": null, "statement": "newsletter subscribers"}
+{"claim": "Analyzed churn drivers for the subscription product", "evidence": "Analyzed churn drivers for the subscription product", "kind": null, "statement": "churn drivers"}
+{"claim": "Coordinated quarterly release planning with product and design", "evidence": "Coordinated quarterly release planning with product and design", "kind": null, "statement": "quarterly release planning"}
+{"claim": "Supported the finance team during the annual audit", "evidence": "Supported the finance team during the annual audit", "kind": null, "statement": "the finance team"}
+{"claim": "Implemented role-based access control for the admin console", "evidence": "Implemented role-based access control for the admin console", "kind": null, "statement": "role-based access control"}
+{"claim": "Optimized warehouse picking routes, reducing travel time by 18%", "evidence": "Optimized warehouse picking routes, reducing travel time by 18%", "kind": null, "statement": "warehouse picking routes"}
+{"claim": "Launched a referral program, increasing sign-ups by 22%", "evidence": "Launched a referral program, increasing sign-ups by 22%", "kind": null, "statement": "a referral program"}
+{"claim": "Negotiated a three-year hosting contract, saving $240K per year", "evidence": "Negotiated a three-year hosting contract, saving $240K per year", "kind": null, "statement": "a three-year hosting contract"}
+{"claim": "Developed a forecasting model for regional demand", "evidence": "Developed a forecasting model for regional demand", "kind": null, "statement": "a forecasting model"}
+{"claim": "Streamlined the expense approval workflow, reducing turnaround by 2 days", "evidence": "Streamlined the expense approval workflow, reducing turnaround by 2 days", "kind": null, "statement": "the expense approval workflow"}
+{"claim": "Introduced trunk-based development for the mobile team", "evidence": "Introduced trunk-based development for the mobile team", "kind": null, "statement": "trunk-based development"}
+{"claim": "Migrated the legacy CRM to a cloud platform (2020)", "evidence": "Migrated the legacy CRM to a cloud platform (2020)", "kind": null, "statement": "the legacy CRM"}
+{"claim": "Directed a cross-functional team of 12 through the platform rebuild", "evidence": "Directed a cross-functional team of 12 through the platform rebuild", "kind": null, "statement": "a cross-functional team of 12"}
+{"claim": "Reduced cloud spend by $380K per year through rightsizing", "evidence": "Reduced cloud spend by $380K per year through rightsizing", "kind": null, "statement": "cloud spend"}
+{"claim": "Created a design system used across 6 product teams", "evidence": "Created a design system used across 6 product teams", "kind": null, "statement": "a design system used"}
+{"claim": "Authored the incident response runbook for the storage tier", "evidence": "Authored the incident response runbook for the storage tier", "kind": null, "statement": "the incident response runbook"}
+{"claim": "Scaled the ingestion pipeline by 5x without new hardware", "evidence": "Scaled the ingestion pipeline by 5x without new hardware", "kind": null, "statement": "the ingestion pipeline"}
+{"claim": "Facilitated weekly retrospectives for the infrastructure squad", "evidence": "Facilitated weekly retrospectives for the infrastructure squad", "kind": null, "statement": "weekly retrospectives"}
+{"claim": "Investigated recurring payment failures for the merchant API", "evidence": "Investigated recurring payment failures for the merchant API", "kind": null, "statement": "recurring payment failures"}
+{"claim": "Cut deployment time by 70% with a parallel build pipeline", "evidence": "Cut deployment time by 70% with a parallel build pipeline", "kind": null, "statement": "deployment time"}
+{"claim": "Architected the multi-tenant storage layer for the analytics product", "evidence": "Architected the multi-tenant storage layer for the analytics product", "kind": null, "statement": "the multi-tenant storage layer"}
+{"claim": "Shipped offline mode for the field inspection app", "evidence": "Shipped offline mode for the field inspection app", "kind": null, "statement": "offline mode"}
+{"claim": "Established a weekly security review for the platform group", "evidence": "Established a weekly security review for the platform group", "kind": null, "statement": "a weekly security review"}
+{"claim": "Trained 30 store managers on the new inventory system", "evidence": "Trained 30 store managers on the new inventory system", "kind": null, "statement": "30 store managers"}
+{"claim": "Boosted email open rates by 9 points", "evidence": "Boosted email open rates by 9 points", "kind": null, "statement": "email open rates"}
+{"claim": "Lowered infrastructure costs by 22% across the data platform", "evidence": "Lowered infrastructure costs by 22% across the data platform", "kind": null, "statement": "infrastructure costs"}
+{"claim": "Configured single sign-on for 14 internal applications", "evidence": "Configured single sign-on for 14 internal applications", "kind": null, "statement": "single sign-on"}
+{"claim": "Evaluated three observability vendors for the platform team", "evidence": "Evaluated three observability vendors for the platform team", "kind": null, "statement": "three observability vendors"}
+{"claim": "Organized the annual internal hackathon for 200 engineers", "evidence": "Organized the annual internal hackathon for 200 engineers", "kind": null, "statement": "the annual internal hackathon"}
+{"claim": "Raised the customer satisfaction score by 11 points", "evidence": "Raised the customer satisfaction score by 11 points", "kind": null, "statement": "the customer satisfaction score"}
+{"claim": "Maintained the release tooling for the desktop client", "evidence": "Maintained the release tooling for the desktop client", "kind": null, "statement": "the release tooling"}
+{"claim": "Oversaw the rollout of a new point-of-sale system across 45 stores", "evidence": "Oversaw the rollout of a new point-of-sale system across 45 stores", "kind": null, "statement": "the rollout of a new point-of-sale system"}
+{"claim": "Deployed a canary release process for the API gateway", "evidence": "Deployed a canary release process for the API gateway", "kind": null, "statement": "a canary release process"}
+{"claim": "Partnered with legal to define the data retention policy", "evidence": "Partnered with legal to define the data retention policy", "kind": null, "statement": "with legal"}
+{"claim": "Decreased average handle time by 90 seconds", "evidence": "Decreased average handle time by 90 seconds", "kind": null, "statement": "average handle time"}
+{"claim": "Engineered a deduplication service for customer records", "evidence": "Engineered a deduplication service for customer records", "kind": null, "statement": "a deduplication service"}
+{"claim": "Accelerated month-end close by 3 days", "evidence": "Accelerated month-end close by 3 days", "kind": null, "statement": "month-end close"}
+{"claim": "Audited access permissions for the finance systems", "evidence": "Audited access permissions for the finance systems", "kind": null, "statement": "access permissions"}
+{"claim": "Prototyped a voice interface for the scheduling assistant", "evidence": "Prototyped a voice interface for the scheduling assistant", "kind": null, "statement": "a voice interface"}
+{"claim": "Expanded the partner network by 35% in 2023", "evidence": "Expanded the partner network by 35% in 2023", "kind": null, "statement": "the partner network"}
+{"claim": "Documented the public API for third-party developers", "evidence": "Documented the public API for third-party developers", "kind": null, "statement": "the public API"}
+{"claim": "Integrated the payment provider with the mobile checkout", "evidence": "Integrated the payment provider with the mobile checkout", "kind": null, "statement": "the payment provider"}
+{"claim": "Shortened onboarding time for new hires by 40%", "evidence": "Shortened onboarding time for new hires by 40%", "kind": null, "statement": "onboarding time"}
+{"claim": "Established the data governance council for the analytics group", "evidence": "Established the data governance council for the analytics group", "kind": null, "statement": "the data governance council"}
+{"claim": "Improved page load time by 1.8 seconds on the product catalog", "evidence": "Improved page load time by 1.8 seconds on the product catalog", "kind": null, "statement": "page load time"}
+{"claim": "Developed a training curriculum for the customer success team", "evidence": "Developed a training curriculum for the customer success team", "kind": null, "statement": "a training curriculum"}
+{"claim": "Achieved 99.95% uptime for the core API (2022)", "evidence": "Achieved 99.95% uptime for the core API (2022)", "kind": null, "statement": "99.95% uptime"}
+{"claim": "Reduced patient wait times by 25% at the outpatient clinic", "evidence": "Reduced patient wait times by 25% at the outpatient clinic", "kind": null, "statement": "patient wait times"}
+{"claim": "Coordinated vaccine clinic logistics for 3 community sites", "evidence": "Coordinated vaccine clinic logistics for 3 community sites", "kind": null, "statement": "vaccine clinic logistics"}
+{"claim": "Streamlined intake paperwork, cutting registration time by 10 minutes", "evidence": "Streamlined intake paperwork, cutting registration time by 10 minutes", "kind": null, "statement": "intake paperwork"}
+{"claim": "Implemented an electronic health record module for lab results", "evidence": "Implemented an electronic health record module for lab results", "kind": null, "statement": "an electronic health record module"}
+{"claim": "Trained 60 nursing staff on the new charting system", "evidence": "Trained 60 nursing staff on the new charting system", "kind": null, "statement": "60 nursing staff"}
+{"claim": "Analyzed readmission trends for the cardiology unit", "evidence": "Analyzed readmission trends for the cardiology unit", "kind": null, "statement": "readmission trends"}
+{"claim": "Supported the compliance team during the accreditation review", "evidence": "Supported the compliance team during the accreditation review", "kind": null, "statement": "the compliance team"}
+{"claim": "Designed a lesson plan series for introductory statistics", "evidence": "Designed a lesson plan series for introductory statistics", "kind": null, "statement": "a lesson plan series"}
+{"claim": "Increased course completion rates by 15%", "evidence": "Increased course completion rates by 15%", "kind": null, "statement": "course completion rates"}
+{"claim": "Mentored 4 student teachers through their practicum", "evidence": "Mentored 4 student teachers through their practicum", "kind": null, "statement": "4 student teachers"}
+{"claim": "Organized a district science fair for 400 students", "evidence": "Organized a district science fair for 400 students", "kind": null, "statement": "a district science fair"}
+{"claim": "Developed an online assessment bank for algebra courses", "evidence": "Developed an online assessment bank for algebra courses", "kind": null, "statement": "an online assessment bank"}
+{"claim": "Wrote grant proposals securing $150K in program funding", "evidence": "Wrote grant proposals securing $150K in program funding", "kind": null, "statement": "grant proposals securing $150K"}
+{"claim": "Led a curriculum review committee for the mathematics department", "evidence": "Led a curriculum review committee for the mathematics department", "kind": null, "statement": "a curriculum review committee"}
+{"claim": "Coordinated parent-teacher conferences for 600 families", "evidence": "Coordinated parent-teacher conferences for 600 families", "kind": null, "statement": "parent-teacher conferences"}
+{"claim": "Reduced fuel costs by 12% through route optimization", "evidence": "Reduced fuel costs by 12% through route optimization", "kind": null, "statement": "fuel costs"}
+{"claim": "Implemented a barcode scanning system across 3 warehouses", "evidence": "Implemented a barcode scanning system across 3 warehouses", "kind": null, "statement": "a barcode scanning system"}
+{"claim": "Improved on-time delivery by 8 points", "evidence": "Improved on-time delivery by 8 points", "kind": null, "statement": "on-time delivery"}
+{"claim": "Negotiated freight rates with 10 regional carriers", "evidence": "Negotiated freight rates with 10 regional carriers", "kind": null, "statement": "freight rates"}
+{"claim": "Cut inventory shrinkage by 30%", "evidence": "Cut inventory shrinkage by 30%", "kind": null, "statement": "inventory shrinkage"}
+{"claim": "Designed a cross-docking process for seasonal inventory", "evidence": "Designed a cross-docking process for seasonal inventory", "kind": null, "statement": "a cross-docking process"}
+{"claim": "Increased order throughput by 20% during peak season", "evidence": "Increased order throughput by 20% during peak season", "kind": null, "statement": "order throughput"}
+{"claim": "Analyzed carrier performance data for the logistics team", "evidence": "Analyzed carrier performance data for the logistics team", "kind": null, "statement": "carrier performance data"}
+{"claim": "Grew the regional sales pipeline by 60%", "evidence": "Grew the regional sales pipeline by 60%", "kind": null, "statement": "the regional sales pipeline"}
+{"claim": "Managed 35 key accounts across the healthcare vertical", "evidence": "Managed 35 key accounts across the healthcare vertical", "kind": null, "statement": "35 key accounts"}
+{"claim": "Built a partner channel generating $800K in annual revenue", "evidence": "Built a partner channel generating $800K in annual revenue", "kind": null, "statement": "a partner channel generating $800K"}
+{"claim": "Negotiated renewal terms with the top 20 customers", "evidence": "Negotiated renewal terms with the top 20 customers", "kind": null, "statement": "renewal terms"}
+{"claim": "Expanded into 3 new territories for the mid-market segment", "evidence": "Expanded into 3 new territories for the mid-market segment", "kind": null, "statement": "into 3 new territories"}
+{"claim": "Trained 12 new account executives on the sales playbook", "evidence": "Trained 12 new account executives on the sales playbook", "kind": null, "statement": "12 new account executives"}
+{"claim": "Led a pricing review for the professional services catalog", "evidence": "Led a pricing review for the professional services catalog", "kind": null, "statement": "a pricing review"}
+{"claim": "Increased average deal size by 14%", "evidence": "Increased average deal size by 14%", "kind": null, "statement": "average deal size"}
+{"claim": "Launched a paid search campaign, increasing qualified leads by 45%", "evidence": "Launched a paid search campaign, increasing qualified leads by 45%", "kind": null, "statement": "a paid search campaign"}
+{"claim": "Managed social media channels for the consumer brand", "evidence": "Managed social media channels for the consumer brand", "kind": null, "statement": "social media channels"}
+{"claim": "Wrote product copy for 120 catalog pages", "evidence": "Wrote product copy for 120 catalog pages", "kind": null, "statement": "product copy"}
+{"claim": "Produced a monthly webinar series for small business customers", "evidence": "Produced a monthly webinar series for small business customers", "kind": null, "statement": "a monthly webinar series"}
+{"claim": "Grew organic traffic by 70% through content strategy", "evidence": "Grew organic traffic by 70% through content strategy", "kind": null, "statement": "organic traffic"}
+{"claim": "Coordinated the rebrand across web, print and packaging", "evidence": "Coordinated the rebrand across web, print and packaging", "kind": null, "statement": "the rebrand"}
+{"claim": "Reduced cost per acquisition by 28%", "evidence": "Reduced cost per acquisition by 28%", "kind": null, "statement": "cost per acquisition"}
+{"claim": "Analyzed campaign attribution for the growth team", "evidence": "Analyzed campaign attribution for the growth team", "kind": null, "statement": "campaign attribution"}
+{"claim": "Designed email nurture journeys for trial users", "evidence": "Designed email nurture journeys for trial users", "kind": null, "statement": "email nurture journeys"}
+{"claim": "Directed the annual customer conference for 1,500 attendees", "evidence": "Directed the annual customer conference for 1,500 attendees", "kind": null, "statement": "the annual customer conference"}
+{"claim": "Reduced month-end reporting time by 4 days", "evidence": "Reduced month-end reporting time by 4 days", "kind": null, "statement": "month-end reporting time"}
+{"claim": "Prepared quarterly financial statements for the board", "evidence": "Prepared quarterly financial statements for the board", "kind": null, "statement": "quarterly financial statements"}
+{"claim": "Implemented a new accounts payable system for the finance team", "evidence": "Implemented a new accounts payable system for the finance team", "kind": null, "statement": "a new accounts payable system"}
+{"claim": "Audited expense reports for policy compliance", "evidence": "Audited expense reports for policy compliance", "kind": null, "statement": "expense reports"}
+{"claim": "Managed a $12M capital budget for facility upgrades", "evidence": "Managed a $12M capital budget for facility upgrades", "kind": null, "statement": "a $12M capital budget"}
+{"claim": "Built a cash flow forecasting model for the treasury team", "evidence": "Built a cash flow forecasting model for the treasury team", "kind": null, "statement": "a cash flow forecasting model"}
+{"claim": "Streamlined the invoicing process, reducing errors by 35%", "evidence": "Streamlined the invoicing process, reducing errors by 35%", "kind": null, "statement": "the invoicing process"}
+{"claim": "Led the transition to rolling forecasts (2019-2020)", "evidence": "Led the transition to rolling forecasts (2019-2020)", "kind": null, "statement": "the transition"}
+{"claim": "Coordinated the external audit with 2 accounting firms", "evidence": "Coordinated the external audit with 2 accounting firms", "kind": null, "statement": "the external audit"}
+{"claim": "Designed a structured interview program for engineering roles", "evidence": "Designed a structured interview program for engineering roles", "kind": null, "statement": "a structured interview program"}
+{"claim": "Launched an employee mentorship program for 80 participants", "evidence": "Launched an employee mentorship program for 80 participants", "kind": null, "statement": "an employee mentorship program"}
+{"claim": "Managed benefits enrollment for 900 employees", "evidence": "Managed benefits enrollment for 900 employees", "kind": null, "statement": "benefits enrollment"}
+{"claim": "Improved employee retention by 10 points", "evidence": "Improved employee retention by 10 points", "kind": null, "statement": "employee retention"}
+{"claim": "Facilitated leadership training for 50 first-time managers", "evidence": "Facilitated leadership training for 50 first-time managers", "kind": null, "statement": "leadership training"}
+{"claim": "Wrote the remote work policy for the company", "evidence": "Wrote the remote work policy for the company", "kind": null, "statement": "the remote work policy"}
+{"claim": "Analyzed compensation benchmarks for the sales organization", "evidence": "Analyzed compensation benchmarks for the sales organization", "kind": null, "statement": "compensation benchmarks"}
+{"claim": "Designed the mobile onboarding flow for the banking app", "evidence": "Designed the mobile onboarding flow for the banking app", "kind": null, "statement": "the mobile onboarding flow"}
+{"claim": "Conducted 40 user interviews for the checkout redesign", "evidence": "Conducted 40 user interviews for the checkout redesign", "kind": null, "statement": "40 user interviews"}
+{"claim": "Increased task completion rates by 23% in usability tests", "evidence": "Increased task completion rates by 23% in usability tests", "kind": null, "statement": "task completion rates"}
+{"claim": "Created the accessibility guidelines for the product team", "evidence": "Created the accessibility guidelines for the product team", "kind": null, "statement": "the accessibility guidelines"}
+{"claim": "Prototyped the navigation redesign for the help center", "evidence": "Prototyped the navigation redesign for the help center", "kind": null, "statement": "the navigation redesign"}
+{"claim": "Reduced support contacts by 17% after the settings redesign", "evidence": "Reduced support contacts by 17% after the settings redesign", "kind": null, "statement": "support contacts"}
+{"claim": "Built a component library in collaboration with engineering", "evidence": "Built a component library in collaboration with engineering", "kind": null, "statement": "a component library"}
+{"claim": "Facilitated design critiques for 3 product squads", "evidence": "Facilitated design critiques for 3 product squads", "kind": null, "statement": "design critiques"}
+{"claim": "Documented interaction patterns for the design system", "evidence": "Documented interaction patterns for the design system", "kind": null, "statement": "interaction patterns"}
+{"claim": "Built a churn prediction model for the subscription business", "evidence": "Built a churn prediction model for the subscription business", "kind": null, "statement": "a churn prediction model"}
+{"claim": "Reduced report generation time from 2 hours to 5 minutes", "evidence": "Reduced report generation time from 2 hours to 5 minutes", "kind": null, "statement": "report generation time"}
+{"claim": "Designed the data warehouse schema for the retail analytics product", "evidence": "Designed the data warehouse schema for the retail analytics product", "kind": null, "statement": "the data warehouse schema"}
+{"claim": "Automated weekly KPI reporting for the executive team", "evidence": "Automated weekly KPI reporting for the executive team", "kind": null, "statement": "weekly KPI reporting"}
+{"claim": "Analyzed A/B test results for 30 product experiments", "evidence": "Analyzed A/B test results for 30 product experiments", "kind": null, "statement": "A/B test results"}
+{"claim": "Developed a recommendation engine, increasing basket size by 6%", "evidence": "Developed a recommendation engine, increasing basket size by 6%", "kind": null, "statement": "a recommendation engine"}
+{"claim": "Migrated 200 dashboards to the new BI platform", "evidence": "Migrated 200 dashboards to the new BI platform", "kind": null, "statement": "200 dashboards"}
+{"claim": "Improved data pipeline reliability by 40%", "evidence": "Improved data pipeline reliability by 40%", "kind": null, "statement": "data pipeline reliability"}
+{"claim": "Established data quality checks for the customer data platform", "evidence": "Established data quality checks for the customer data platform", "kind": null, "statement": "data quality checks"}
+{"claim": "Created a self-serve analytics portal for 300 internal users", "evidence": "Created a self-serve analytics portal for 300 internal users", "kind": null, "statement": "a self-serve analytics portal"}
+{"claim": "Upgraded the database cluster to the latest major version", "evidence": "Upgraded the database cluster to the latest major version", "kind": null, "statement": "the database cluster"}
+{"claim": "Reduced mean time to recovery by 45%", "evidence": "Reduced mean time to recovery by 45%", "kind": null, "statement": "mean time"}
+{"claim": "Implemented infrastructure as code for 60 cloud accounts", "evidence": "Implemented infrastructure as code for 60 cloud accounts", "kind": null, "statement": "infrastructure as code"}
+{"claim": "Maintained 99.9% availability for the authentication service", "evidence": "Maintained 99.9% availability for the authentication service", "kind": null, "statement": "99.9% availability"}
+{"claim": "Built a centralized logging platform for 150 services", "evidence": "Built a centralized logging platform for 150 services", "kind": null, "statement": "a centralized logging platform"}
+{"claim": "Automated certificate renewal across the edge network", "evidence": "Automated certificate renewal across the edge network", "kind": null, "statement": "certificate renewal"}
+{"claim": "Migrated CI pipelines to ephemeral runners, cutting queue time by 50%", "evidence": "Migrated CI pipelines to ephemeral runners, cutting queue time by 50%", "kind": null, "statement": "CI pipelines"}
+{"claim": "Hardened container images for the production cluster", "evidence": "Hardened container images for the production cluster", "kind": null, "statement": "container images"}
+{"claim": "Led the incident review process for the infrastructure group", "evidence": "Led the incident review process for the infrastructure group", "kind": null, "statement": "the incident review process"}
+{"claim": "Reduced false positive alerts by 60%", "evidence": "Reduced false positive alerts by 60%", "kind": null, "statement": "false positive alerts"}
+{"claim": "Deployed a secrets management service for 40 teams", "evidence": "Deployed a secrets management service for 40 teams", "kind": null, "statement": "a secrets management service"}
+{"claim": "Implemented multi-factor authentication for all staff accounts", "evidence": "Implemented multi-factor authentication for all staff accounts", "kind": null, "statement": "multi-factor authentication"}
+{"claim": "Audited firewall rules for the corporate network", "evidence": "Audited firewall rules for the corporate network", "kind": null, "statement": "firewall rules"}
+{"claim": "Responded to 25 security incidents in 2022", "evidence": "Responded to 25 security incidents in 2022", "kind": null, "statement": "to 25 security incidents"}
+{"claim": "Designed a vulnerability management program for the engineering org", "evidence": "Designed a vulnerability management program for the engineering org", "kind": null, "statement": "a vulnerability management program"}
+{"claim": "Reduced critical vulnerabilities by 80% across production services", "evidence": "Reduced critical vulnerabilities by 80% across production services", "kind": null, "statement": "critical vulnerabilities"}
+{"claim": "Trained 500 employees on phishing awareness", "evidence": "Trained 500 employees on phishing awareness", "kind": null, "statement": "500 employees"}
+{"claim": "Led the SOC 2 readiness effort for the platform", "evidence": "Led the SOC 2 readiness effort for the platform", "kind": null, "statement": "the SOC 2 readiness effort"}
+{"claim": "Established a bug bounty program for the public API", "evidence": "Established a bug bounty program for the public API", "kind": null, "statement": "a bug bounty program"}
+{"claim": "Evaluated endpoint protection vendors for the IT team", "evidence": "Evaluated endpoint protection vendors for the IT team", "kind": null, "statement": "endpoint protection vendors"}
+{"claim": "Built a native iOS app for appointment booking", "evidence": "Built a native iOS app for appointment booking", "kind": null, "statement": "a native iOS app"}
+{"claim": "Improved app startup time by 40%", "evidence": "Improved app startup time by 40%", "kind": null, "statement": "app startup time"}
+{"claim": "Reduced crash rate by 60% across Android releases", "evidence": "Reduced crash rate by 60% across Android releases", "kind": null, "statement": "crash rate"}
+{"claim": "Implemented push notifications for order updates", "evidence": "Implemented push notifications for order updates", "kind": null, "statement": "push notifications"}
+{"claim": "Shipped a redesigned onboarding flow, increasing activation by 12%", "evidence": "Shipped a redesigned onboarding flow, increasing activation by 12%", "kind": null, "statement": "a redesigned onboarding flow"}
+{"claim": "Maintained the React Native codebase for the consumer app", "evidence": "Maintained the React Native codebase for the consumer app", "kind": null, "statement": "the React Native codebase"}
+{"claim": "Integrated in-app purchases for the premium tier", "evidence": "Integrated in-app purchases for the premium tier", "kind": null, "statement": "in-app purchases"}
+{"claim": "Wrote end-to-end tests for the checkout flow", "evidence": "Wrote end-to-end tests for the checkout flow", "kind": null, "statement": "end-to-end tests"}
+{"claim": "Led the mobile platform team through a framework upgrade", "evidence": "Led the mobile platform team through a framework upgrade", "kind": null, "statement": "the mobile platform team"}
+{"claim": "Refactored the networking layer for the iOS client", "evidence": "Refactored the networking layer for the iOS client", "kind": null, "statement": "the networking layer"}
+{"claim": "Managed the product roadmap for the payments platform", "evidence": "Managed the product roadmap for the payments platform", "kind": null, "statement": "the product roadmap"}
+{"claim": "Launched a self-service billing portal, reducing support tickets by 30%", "evidence": "Launched a self-service billing portal, reducing support tickets by 30%", "kind": null, "statement": "a self-service billing portal"}
+{"claim": "Increased trial-to-paid conversion by 4 points", "evidence": "Increased trial-to-paid conversion by 4 points", "kind": null, "statement": "trial-to-paid conversion"}
+{"claim": "Conducted competitive analysis for the scheduling product", "evidence": "Conducted competitive analysis for the scheduling product", "kind": null, "statement": "competitive analysis"}
+{"claim": "Led discovery interviews with 25 enterprise customers", "evidence": "Led discovery interviews with 25 enterprise customers", "kind": null, "statement": "discovery interviews"}
+{"claim": "Delivered the API marketplace launch on schedule", "evidence": "Delivered the API marketplace launch on schedule", "kind": null, "statement": "the API marketplace launch"}
+{"claim": "Coordinated beta programs with 15 pilot customers", "evidence": "Coordinated beta programs with 15 pilot customers", "kind": null, "statement": "beta programs"}
+{"claim": "Wrote product requirement documents for the analytics suite", "evidence": "Wrote product requirement documents for the analytics suite", "kind": null, "statement": "product requirement documents"}
+{"claim": "Improved first contact resolution by 12 points", "evidence": "Improved first contact resolution by 12 points", "kind": null, "statement": "first contact resolution"}
+{"claim": "Built a knowledge base with 200 support articles", "evidence": "Built a knowledge base with 200 support articles", "kind": null, "statement": "a knowledge base"}
+{"claim": "Reduced average response time by 3 hours", "evidence": "Reduced average response time by 3 hours", "kind": null, "statement": "average response time"}
+{"claim": "Trained new support agents on the ticketing workflow", "evidence": "Trained new support agents on the ticketing workflow", "kind": null, "statement": "new support agents"}
+{"claim": "Organized a customer advisory board for the healthcare segment", "evidence": "Organized a customer advisory board for the healthcare segment", "kind": null, "statement": "a customer advisory board"}
+{"claim": "Increased renewal rates by 9%", "evidence": "Increased renewal rates by 9%", "kind": null, "statement": "renewal rates"}
+{"claim": "Supported the migration of 500 customers to the new platform", "evidence": "Supported the migration of 500 customers to the new platform", "kind": null, "statement": "the migration of 500 customers"}
+{"claim": "Built a fraud detection rule engine for card payments", "evidence": "Built a fraud detection rule engine for card payments", "kind": null, "statement": "a fraud detection rule engine"}
+{"claim": "Implemented real-time transaction monitoring for the lending product", "evidence": "Implemented real-time transaction monitoring for the lending product", "kind": null, "statement": "real-time transaction monitoring"}
+{"claim": "Designed a reconciliation service for ledger entries", "evidence": "Designed a reconciliation service for ledger entries", "kind": null, "statement": "a reconciliation service"}
+{"claim": "Optimized batch settlement jobs, cutting runtime by 2 hours", "evidence": "Optimized batch settlement jobs, cutting runtime by 2 hours", "kind": null, "statement": "batch settlement jobs"}
+{"claim": "Led the PCI compliance program for the payments team", "evidence": "Led the PCI compliance program for the payments team", "kind": null, "statement": "the PCI compliance program"}
+{"claim": "Developed pricing models for the consumer loan portfolio", "evidence": "Developed pricing models for the consumer loan portfolio", "kind": null, "statement": "pricing models"}
+{"claim": "Analyzed credit risk for the small business segment", "evidence": "Analyzed credit risk for the small business segment", "kind": null, "statement": "credit risk"}
+{"claim": "Grew assets under management by $40M", "evidence": "Grew assets under management by $40M", "kind": null, "statement": "assets under management"}
+{"claim": "Researched battery degradation for the energy storage project", "evidence": "Researched battery degradation for the energy storage project", "kind": null, "statement": "battery degradation"}
+{"claim": "Published 3 papers on distributed consensus", "evidence": "Published 3 papers on distributed consensus", "kind": null, "statement": "3 papers"}
+{"claim": "Built a simulation framework for traffic flow analysis", "evidence": "Built a simulation framework for traffic flow analysis", "kind": null, "statement": "a simulation framework"}
+{"claim": "Led a team of 6 researchers on the sensor calibration study", "evidence": "Led a team of 6 researchers on the sensor calibration study", "kind": null, "statement": "a team of 6 researchers"}
+{"claim": "Developed signal processing algorithms for wearable devices", "evidence": "Developed signal processing algorithms for wearable devices", "kind": null, "statement": "signal processing algorithms"}
+{"claim": "Reduced simulation runtime by 10x through parallelization", "evidence": "Reduced simulation runtime by 10x through parallelization", "kind": null, "statement": "simulation runtime"}
+{"claim": "Analyzed survey data from 2,000 respondents", "evidence": "Analyzed survey data from 2,000 respondents", "kind": null, "statement": "survey data"}
+{"claim": "Coordinated 15 subcontractors on the office fit-out", "evidence": "Coordinated 15 subcontractors on the office fit-out", "kind": null, "statement": "15 subcontractors"}
+{"claim": "Reduced safety incidents by 50% across job sites", "evidence": "Reduced safety incidents by 50% across job sites", "kind": null, "statement": "safety incidents"}
+{"claim": "Implemented a digital permitting workflow for the city", "evidence": "Implemented a digital permitting workflow for the city", "kind": null, "statement": "a digital permitting workflow"}
+{"claim": "Improved permit processing time by 30%", "evidence": "Improved permit processing time by 30%", "kind": null, "statement": "permit processing time"}
+{"claim": "Inspected 200 properties for code compliance", "evidence": "Inspected 200 properties for code compliance", "kind": null, "statement": "200 properties"}
+{"claim": "Partnered with 10 nonprofits on community outreach", "evidence": "Partnered with 10 nonprofits on community outreach", "kind": null, "statement": "with 10 nonprofits"}
+{"claim": "Managed 120 volunteers across 4 event sites", "evidence": "Managed 120 volunteers across 4 event sites", "kind": null, "statement": "120 volunteers"}
+{"claim": "Wrote the annual impact report for donors", "evidence": "Wrote the annual impact report for donors", "kind": null, "statement": "the annual impact report"}
+{"claim": "Coordinated disaster relief logistics for 2 counties", "evidence": "Coordinated disaster relief logistics for 2 counties", "kind": null, "statement": "disaster relief logistics"}
+{"claim": "Grew monthly recurring donations by 30%", "evidence": "Grew monthly recurring donations by 30%", "kind": null, "statement": "monthly recurring donations"}
+{"claim": "Supported 40 families through housing applications", "evidence": "Supported 40 families through housing applications", "kind": null, "statement": "40 families"}
+{"claim": "Collaborated with city agencies to expand shelter capacity", "evidence": "Collaborated with city agencies to expand shelter capacity", "kind": null, "statement": "with city agencies"}
+{"claim": "Led a 12-person team through a full rewrite of the billing platform", "evidence": "Led a 12-person team through a full rewrite of the billing platform.", "kind": null, "statement": "a 12-person team"}
+{"claim": "Achieved a 20% reduction in support ticket volume", "evidence": "Achieved a 20% reduction in support ticket volume.", "kind": null, "statement": "a 20% reduction"}
+{"claim": "Delivered a 15% improvement in page load time", "evidence": "Delivered a 15% improvement in page load time.", "kind": null, "statement": "a 15% improvement"}
+{"claim": "Saved $250K annually by consolidating cloud vendors", "evidence": "Saved $250K annually by consolidating cloud vendors.", "kind": null, "statement": "$250K annually"}
+{"claim": "Reduced onboarding time from 14 days to 5 days", "evidence": "Reduced onboarding time from 14 days to 5 days.", "kind": null, "statement": "onboarding time"}
+{"claim": "Improved test coverage from 45% to 80%", "evidence": "Improved test coverage from 45% to 80%.", "kind": null, "statement": "test coverage"}
+{"claim": "Increased monthly active users from 20K to 55K", "evidence": "Increased monthly active users from 20K to 55K.", "kind": null, "statement": "monthly active users"}
+{"claim": "Automated invoice reconciliation, resulting in 30% fewer errors", "evidence": "Automated invoice reconciliation, resulting in 30% fewer errors.", "kind": null, "statement": "invoice reconciliation"}
+{"claim": "Wrote technical documentation for the payments API", "evidence": "Wrote technical documentation for the payments API.", "kind": null, "statement": "technical documentation"}
+{"claim": "Collaborated with product and design to launch a mobile app", "evidence": "Collaborated with product and design to launch a mobile app.", "kind": null, "statement": "with product and design"}
+{"claim": "Partnered with sales to define pricing for the new tier", "evidence": "Partnered with sales to define pricing for the new tier.", "kind": null, "statement": "with sales"}
+{"claim": "Analyzed churn data to identify at-risk customers", "evidence": "Analyzed churn data to identify at-risk customers.", "kind": null, "statement": "churn data"}
+{"claim": "Conducted user interviews with 40 customers", "evidence": "Conducted user interviews with 40 customers.", "kind": null, "statement": "user interviews"}
+{"claim": "Coordinated release planning across 5 teams", "evidence": "Coordinated release planning across 5 teams.", "kind": null, "statement": "release planning"}
+{"claim": "Responsible for the on-call rotation for core services", "evidence": "Responsible for the on-call rotation for core services.", "kind": null, "statement": "the on-call rotation"}
+{"claim": "Oversaw vendor relationships for logistics partners", "evidence": "Oversaw vendor relationships for logistics partners.", "kind": null, "statement": "vendor relationships"}
+{"claim": "Streamlined the hiring process, cutting time-to-hire by 25%", "evidence": "Streamlined the hiring process, cutting time-to-hire by 25%.", "kind": null, "statement": "the hiring process"}
+{"claim": "Optimized SQL queries, reducing report runtime by 60%", "evidence": "Optimized SQL queries, reducing report runtime by 60%.", "kind": null, "statement": "SQL queries"}
+{"claim": "Introduced code review guidelines adopted by 4 teams", "evidence": "Introduced code review guidelines adopted by 4 teams.", "kind": null, "statement": "code review guidelines adopted"}
+{"claim": "Maintained CI pipelines for 20 repositories", "evidence": "Maintained CI pipelines for 20 repositories.", "kind": null, "statement": "CI pipelines"}
+{"claim": "Trained 50 support agents on the new ticketing system", "evidence": "Trained 50 support agents on the new ticketing system.", "kind": null, "statement": "50 support agents"}
+{"claim": "Presented quarterly results to the leadership team", "evidence": "Presented quarterly results to the leadership team.", "kind": null, "statement": "quarterly results"}
+{"claim": "Scaled the data platform to process 5TB per day", "evidence": "Scaled the data platform to process 5TB per day.", "kind": null, "statement": "the data platform"}
+{"claim": "Increased email open rates by 18%", "evidence": "Increased email open rates by 18%.", "kind": null, "statement": "email open rates"}
+{"claim": "Decreased infrastructure costs by $120K per year", "evidence": "Decreased infrastructure costs by $120K per year.", "kind": null, "statement": "infrastructure costs"}
+{"claim": "Grew the newsletter audience to 30,000 subscribers", "evidence": "Grew the newsletter audience to 30,000 subscribers.", "kind": null, "statement": "the newsletter audience"}
+{"claim": "Lowered the defect escape rate by 22%", "evidence": "Lowered the defect escape rate by 22%.", "kind": null, "statement": "the defect escape rate"}
+{"claim": "Shortened the release cycle from 6 weeks to 2 weeks", "evidence": "Shortened the release cycle from 6 weeks to 2 weeks.", "kind": null, "statement": "the release cycle"}
+{"claim": "Built a data pipeline in Python and Airflow", "evidence": "Built a data pipeline in Python and Airflow.", "kind": null, "statement": "a data pipeline"}
+{"claim": "Developed REST APIs for the inventory service", "evidence": "Developed REST APIs for the inventory service.", "kind": null, "statement": "REST APIs"}
+{"claim": "Designed a database schema for multi-tenant reporting", "evidence": "Designed a database schema for multi-tenant reporting.", "kind": null, "statement": "a database schema"}
+{"claim": "Implemented single sign-on for internal tools", "evidence": "Implemented single sign-on for internal tools.", "kind": null, "statement": "single sign-on"}
+{"claim": "Reviewed pull requests for the platform team", "evidence": "Reviewed pull requests for the platform team.", "kind": null, "statement": "pull requests"}
+{"claim": "Facilitated sprint retrospectives for two squads", "evidence": "Facilitated sprint retrospectives for two squads.", "kind": null, "statement": "sprint retrospectives"}
+{"claim": "Organized a company-wide hackathon with 120 participants", "evidence": "Organized a company-wide hackathon with 120 participants.", "kind": null, "statement": "a company-wide hackathon"}
+{"claim": {"metric": {"change": "decrease", "unit": "percent", "value": "35"}, "period": {"end": "2022", "separator": "en_dash", "start": "2021", "style": "parenthetical"}, "schema_version": 1, "scope": "across 4 regions", "subject": "checkout latency", "verb": "reduced"}, "evidence": "Reduced checkout latency by 35% across 4 regions (2021–2022).", "kind": null, "statement": "checkout latency by 35% across 4 regions (2021–2022)"}
+{"claim": {"metric": {"change": "decrease", "unit": "percent", "value": "35"}, "period": {"end": "2022", "separator": "en_dash", "start": "2021", "style": "parenthetical"}, "schema_version": 1, "scope": "across 4 regions", "subject": "checkout latency", "verb": "reduced"}, "evidence": "Reduced checkout latency by 35% across 4 regions (2021–2022).", "kind": null, "statement": "checkout latency"}
+{"claim": {"schema_version": 1, "subject": "a $2M annual marketing budget", "verb": "managed"}, "evidence": "Managed a $2M annual marketing budget.", "kind": null, "statement": "a $2M annual marketing budget"}
+{"claim": {"period": {"end": "2021-06", "separator": "en_dash", "start": "2020-03", "style": "parenthetical"}, "schema_version": 1, "subject": "the open-source scheduler", "verb": "contributed_to"}, "evidence": "Contributed to the open-source scheduler (Mar 2020–Jun 2021).", "kind": null, "statement": "the open-source scheduler (Mar 2020–Jun 2021)"}
+{"claim": {"period": {"end": "2021-06", "separator": "en_dash", "start": "2020-03", "style": "parenthetical"}, "schema_version": 1, "subject": "the open-source scheduler", "verb": "contributed_to"}, "evidence": "Contributed to the open-source scheduler (Mar 2020–Jun 2021).", "kind": null, "statement": "the open-source scheduler"}
+{"claim": {"schema_version": 1, "subject": "5 junior engineers on code review practices", "verb": "mentored"}, "evidence": "Mentored 5 junior engineers on code review practices.", "kind": null, "statement": "5 junior engineers on code review practices"}
+{"claim": {"schema_version": 1, "subject": "5 junior engineers on code review practices", "verb": "mentored"}, "evidence": "Mentored 5 junior engineers on code review practices.", "kind": null, "statement": "5 junior engineers"}
+{"claim": {"schema_version": 1, "subject": "the finance team during the annual audit", "verb": "supported"}, "evidence": "Supported the finance team during the annual audit.", "kind": null, "statement": "the finance team during the annual audit"}
+{"claim": {"schema_version": 1, "subject": "the finance team during the annual audit", "verb": "supported"}, "evidence": "Supported the finance team during the annual audit.", "kind": null, "statement": "the finance team"}
+{"claim": {"schema_version": 1, "subject": "the data center decommissioning", "verb": "assisted_with"}, "evidence": "Assisted with the data center decommissioning.", "kind": null, "statement": "the data center decommissioning"}
+{"claim": {"schema_version": 1, "subject": "the team that led the billing migration", "verb": "assisted"}, "evidence": "Assisted the team that led the billing migration.", "kind": null, "statement": "the team that led the billing migration"}
+{"claim": "Wrote automated tests for the API", "evidence": "Wrote automated tests for the API.", "kind": null, "statement": "Wrote automated tests for the API"}
+{"claim": "Wrote automated tests for the API", "evidence": "Wrote automated tests for the API.", "kind": null, "statement": "Wrote automated tests"}
+{"claim": "Wrote automated tests for the API", "evidence": "Wrote automated tests for the API.", "kind": null, "statement": "automated tests for the API"}
+{"claim": "Custom-built dashboards for finance", "evidence": "Custom-built dashboards for finance.", "kind": null, "statement": "Custom-built dashboards for finance"}
+{"claim": "Custom-built dashboards for finance", "evidence": "Custom-built dashboards for finance.", "kind": null, "statement": "Custom-built dashboards"}
+{"claim": "Reduced checkout latency by 35% across 4 regions", "evidence": "Reduced checkout latency by 35% across 4 regions.", "kind": null, "statement": "  REDUCED\tcheckout   latency  "}
+{"claim": "Reduced checkout latency by 35% across 4 regions", "evidence": "Reduced checkout latency by 35% across 4 regions.", "kind": null, "statement": "CHECKOUT\tlatency"}

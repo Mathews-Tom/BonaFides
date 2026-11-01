@@ -10,8 +10,9 @@ from pathlib import Path
 import pytest
 
 from bonafides.claim_coverage import main as claims_main
-from bonafides.claims import _normalise_grounding, contains_statement
+from bonafides.claims import OWNERSHIP_VERBS, _normalise_grounding, contains_statement
 from bonafides.inflation_report import (
+    EXPECTED_CODES,
     INFLATION_KINDS,
     MAX_FILE_BYTES,
     MAX_LINE_BYTES,
@@ -21,6 +22,10 @@ from bonafides.inflation_report import (
 
 ROOT = Path(__file__).parent
 SETS = ROOT / "fixtures" / "inflation"
+INTENTIONAL_FALSE_BLOCKS = [
+    (875, ["statement_cut_inside_claim"]),
+    (1131, ["statement_cut_inside_claim"]),
+]
 
 
 def _same(statement: str, claim_text: str) -> bool:
@@ -41,19 +46,60 @@ def test_committed_sets_are_contained_in_their_evidence() -> None:
         assert contains_statement(wording, case.evidence), case
 
 
-def test_committed_honest_set_is_claim_cuts_with_at_most_half_identical() -> None:
+def test_committed_honest_set_preserves_cut_shapes_with_at_most_half_identical() -> None:
     honest = load(SETS / "honest.jsonl", honest=True)
-    cuts = [case for case in honest if not _same(case.statement, case.claim_text)]
-    assert len(cuts) >= 100
-    assert len(cuts) * 2 >= len(honest)
+    assert len(honest) == 1135
+    identical = [case for case in honest if _same(case.statement, case.claim_text)]
     printable = [case for case in honest if case.fields]
-    assert printable
+    prefixes = [
+        case
+        for case in honest
+        if case not in identical
+        and case not in printable
+        and _normalise_grounding(case.claim_text).startswith(_normalise_grounding(case.statement))
+    ]
+    assert len(identical) == 314
+    assert len(identical) * 2 <= len(honest)
+    assert len(printable) == 6
+    assert len(prefixes) == 269
+    blocked_lines = {line for line, _ in INTENTIONAL_FALSE_BLOCKS}
+    postverb = [
+        case
+        for case in honest
+        if case not in identical
+        and case not in printable
+        and case not in prefixes
+        and case.line not in blocked_lines
+    ]
+    assert len(postverb) == 544
+    vocabulary = {verb.replace("_", " ") for verb in OWNERSHIP_VERBS}
+    full_remainders = 0
+    for case in postverb:
+        before, separator, after = _normalise_grounding(case.claim_text).partition(
+            _normalise_grounding(case.statement)
+        )
+        assert separator and before.strip() in vocabulary, case
+        full_remainders += not after
+    assert full_remainders == 297
+    assert len(postverb) - full_remainders == 247
+    assert [(case.line, case.statement) for case in honest if case.line in blocked_lines] == [
+        (875, "the billing migration"),
+        (1131, "automated tests for the API"),
+    ]
     for case in honest:
         assert case in printable or contains_statement(case.statement, case.claim_text), case
 
 
 def test_committed_inflated_set_cuts_the_claim_only_to_promote_its_verb() -> None:
-    for case in load(SETS / "inflated.jsonl", honest=False):
+    inflated = load(SETS / "inflated.jsonl", honest=False)
+    assert {kind: sum(case.kind == kind for case in inflated) for kind in INFLATION_KINDS} == {
+        "stronger_verb": 15,
+        "longer_tenure": 16,
+        "larger_metric": 74,
+        "wider_scope": 18,
+    }
+    assert EXPECTED_CODES["stronger_verb"] == "statement_cut_inside_claim"
+    for case in inflated:
         in_claim = contains_statement(case.statement, case.claim_text)
         assert in_claim == (case.kind == "stronger_verb"), case
 
@@ -63,6 +109,7 @@ def test_inflation_report_committed_sets_within_limit_and_every_kind_blocked() -
         load(SETS / "honest.jsonl", honest=True), load(SETS / "inflated.jsonl", honest=False)
     )
     assert result.false_block_rate <= 0.05
+    assert result.false_blocks == INTENTIONAL_FALSE_BLOCKS
     assert result.misattributed == []
     assert all(hits == total for hits, total in result.inflated.values())
 
@@ -70,10 +117,85 @@ def test_inflation_report_committed_sets_within_limit_and_every_kind_blocked() -
 def test_claims_cli_inflation_report_prints_rates(capsys: pytest.CaptureFixture[str]) -> None:
     assert claims_main(["inflation-report", str(SETS)]) == 0
     output = capsys.readouterr().out.splitlines()
-    assert output[0].startswith("Honest: ") and "false-block" in output[0]
+    assert output[0] == "Honest: 2 of 1135 blocked (false-block 0.2%)"
+    assert output[1:3] == [
+        "honest line 875: statement_cut_inside_claim",
+        "honest line 1131: statement_cut_inside_claim",
+    ]
     for kind in INFLATION_KINDS:
         assert any(line.startswith(f"Inflated {kind}: ") for line in output)
     assert output[-1] == "False-block rate within the 5% limit"
+
+
+@pytest.mark.parametrize(
+    ("claim", "evidence", "statement", "expected"),
+    [
+        (
+            "Designed and implemented a platform for merchants",
+            "Designed and implemented a platform for merchants.",
+            "Designed and implemented a platform",
+            [],
+        ),
+        (
+            "Reduced checkout latency by 35% across 4 regions",
+            "Reduced checkout latency by 35% across 4 regions.",
+            "  CHECKOUT\tlatency  ",
+            [],
+        ),
+        (
+            {"schema_version": 1, "verb": "contributed_to", "subject": "the open-source scheduler"},
+            "Contributed to the open-source scheduler.",
+            "the open-source scheduler",
+            [],
+        ),
+        (
+            "Assisted the team that led the billing migration",
+            "Assisted the team that led the billing migration.",
+            "the billing migration",
+            ["statement_cut_inside_claim"],
+        ),
+        (
+            "Wrote automated tests for the API",
+            "Wrote automated tests for the API.",
+            "automated tests for the API",
+            ["statement_cut_inside_claim"],
+        ),
+        (
+            "Built custom-built dashboards for finance",
+            "Built custom-built dashboards for finance.",
+            "Built custom",
+            ["statement_cut_inside_claim"],
+        ),
+        (
+            "Custom-built dashboards for finance",
+            "Custom-built dashboards for finance.",
+            "dashboards for finance",
+            ["statement_cut_inside_claim"],
+        ),
+    ],
+    ids=[
+        "multi-verb-prefix",
+        "normalized-postverb-prefix",
+        "structured-pinned-verb-phrase",
+        "mid-claim-subject",
+        "vocabulary-remainder-guard",
+        "cut-inside-hyphen",
+        "hyphen-joined-word-is-not-leading-verb",
+    ],
+)
+def test_inflation_report_claim_cut_shapes(
+    tmp_path: Path,
+    claim: str | dict[str, object],
+    evidence: str,
+    statement: str,
+    expected: list[str],
+) -> None:
+    _write_sets(
+        tmp_path,
+        [{"claim": claim, "evidence": evidence, "statement": statement, "kind": None}],
+    )
+    result = report(load(tmp_path / "honest.jsonl", honest=True), [])
+    assert result.false_blocks == ([(1, expected)] if expected else [])
 
 
 def test_inflation_report_printable_text_case_passes_and_altered_fields_block(
