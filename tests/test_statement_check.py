@@ -7,14 +7,18 @@ from uuid import UUID, uuid4
 
 import pytest
 
-from bonafides.claims import OWNERSHIP_VERBS, contains_statement
+from bonafides.claims import (
+    OWNERSHIP_VERBS,
+    OwnershipVerb,
+    StructuredClaim,
+    contains_statement,
+    render_claim,
+)
 from bonafides.documents import DocumentBlock, DocumentBody, DocumentSection
 from bonafides.statement_check import (
     CONNECTIVES,
     check_statements,
     connectives,
-    verb_issues,
-    verb_ranks,
 )
 
 CLAIM = UUID("00000000-0000-4000-8000-000000000001")
@@ -393,13 +397,11 @@ def _lead_codes(statement: str, claim_verb: str | None) -> list[str]:
     [
         "led the billing migration (2021–2022), reducing cost by 20%",
         "Led the billing migration",
-        "the team that led the billing migration",
+        "the billing migration",
     ],
 )
-def test_check_statements_cut_promoting_the_claim_verb_is_stronger_verb(
-    statement: str, claim_verb: str | None
-) -> None:
-    assert _lead_codes(statement, claim_verb) == ["statement_stronger_verb"]
+def test_check_statements_mid_claim_cut_is_blocked(statement: str, claim_verb: str | None) -> None:
+    assert _lead_codes(statement, claim_verb) == ["statement_cut_inside_claim"]
 
 
 @pytest.mark.parametrize("claim_verb", ["assisted", None], ids=["structured", "literal"])
@@ -425,53 +427,170 @@ def test_check_statements_whole_claim_text_passes(statement: str, claim_verb: st
     assert _lead_codes(statement, claim_verb) == []
 
 
+@pytest.mark.parametrize("claim_verb", ["assisted", None], ids=["structured", "literal"])
 @pytest.mark.parametrize(
     "statement",
     [
         "Assisted the team",
         "Assisted the team that led the billing migration",
-        "the billing migration (2021–2022), reducing cost by 20%",
+        "the team that led the billing migration",
     ],
 )
-def test_check_statements_structured_cut_keeping_or_weakening_its_verb_passes(
-    statement: str,
+def test_check_statements_prefix_passes_even_with_later_verbs(
+    statement: str, claim_verb: str | None
 ) -> None:
-    assert _lead_codes(statement, "assisted") == []
+    assert _lead_codes(statement, claim_verb) == []
+
+
+def _claim_codes(claim_text: str, statement: str, claim_verb: str | None = None) -> list[str]:
+    facts = [
+        {
+            "claim_revision_id": str(CLAIM),
+            "evidence_revision_id": str(EVIDENCE),
+            "claim_text": claim_text,
+            "evidence_text": claim_text,
+            "claim_verb": claim_verb,
+        }
+    ]
+    body = DocumentBody(
+        title="Résumé",
+        sections=[
+            DocumentSection(
+                key="experience",
+                heading="Experience",
+                blocks=[_factual(statement, [CLAIM], [EVIDENCE])],
+            )
+        ],
+    )
+    return [issue["code"] for issue in check_statements(body, facts, FRAME, "resume")]
 
 
 @pytest.mark.parametrize(
-    "statement",
-    ["Assisted the team", "the billing migration (2021–2022), reducing cost by 20%"],
+    ("claim_text", "statement", "claim_verb"),
+    [
+        ("Co-led the billing migration with the platform team", "Led the billing migration", None),
+        ("Was part of the team that led the billing migration", "Led the billing migration", None),
+        (
+            "Assisted the engineers who rewrote the billing engine",
+            "Rewrote the billing engine",
+            "assisted",
+        ),
+        (
+            "Designed and implemented a self-service onboarding flow",
+            "implemented a self-service onboarding flow",
+            None,
+        ),
+        (
+            "Designed & implemented a self-service onboarding flow",
+            "implemented a self-service onboarding flow",
+            "designed",
+        ),
+        (
+            "Designed and implemented a self-service onboarding flow",
+            "and implemented a self-service onboarding flow",
+            None,
+        ),
+        (
+            "Designed & implemented a self-service onboarding flow",
+            "& implemented a self-service onboarding flow",
+            "designed",
+        ),
+        # Space before the comma keeps this statement contained at its left boundary.
+        (
+            "Designed , implemented a self-service onboarding flow",
+            ", implemented a self-service onboarding flow",
+            None,
+        ),
+        (
+            "Assisted implemented a self-service onboarding flow",
+            "implemented a self-service onboarding flow",
+            "assisted",
+        ),
+        ("Maintained custom-built schedulers", "Maintained custom", None),
+        ("Maintained custom–built schedulers", "Maintained custom", "maintained"),
+        ("Co-led the billing migration", "Co", None),
+        ("Custom-built the billing engine", "the billing engine", None),
+        ("Was responsible for the billing platform", "responsible for the billing platform", None),
+        ("Assisted with the data warehouse migration", "with the data warehouse", "maintained"),
+        # Strict remainder rule: "automated" is vocabulary even in this adjectival use.
+        ("Wrote automated tests for the API", "automated tests for the API", None),
+    ],
 )
-def test_check_statements_literal_claim_with_several_verbs_is_accepted_only_whole(
-    statement: str,
+def test_check_statements_rejects_non_prefix_or_ambiguous_post_verb_cuts(
+    claim_text: str, statement: str, claim_verb: str | None
 ) -> None:
-    assert _lead_codes(statement, None) == ["statement_not_in_claim"]
+    assert contains_statement(statement, claim_text)
+    assert _claim_codes(claim_text, statement, claim_verb) == ["statement_cut_inside_claim"]
+
+
+@pytest.mark.parametrize(
+    ("claim_text", "statement", "claim_verb"),
+    [
+        (
+            "Assisted with the data warehouse migration",
+            "Assisted with the data warehouse migration",
+            "assisted",
+        ),
+        (
+            "Assisted with the data warehouse migration",
+            "Assisted with the data warehouse",
+            "assisted",
+        ),
+        ("Assisted with the data warehouse migration", "with the data warehouse", "assisted"),
+        ("Assisted with the data warehouse migration", "the data warehouse", "assisted_with"),
+        ("Wrote automated tests for the API", "Wrote automated tests", None),
+        ("Wrote regression tests for the API", "regression tests for the API", None),
+        ("Wrote regression tests for the API", "regression tests", "wrote"),
+        (
+            "Designed and implemented a self-service onboarding flow",
+            "Designed and implemented",
+            None,
+        ),
+        (
+            "Designed and implemented a self-service onboarding flow",
+            "Designed and implemented a self-service onboarding flow",
+            None,
+        ),
+        ("Maintained Linux batch runbooks for the payments team", "Linux batch runbooks", None),
+        ("Contributed to the custom-built scheduler", "the custom-built scheduler", None),
+        ("Was responsible for the billing platform", "the billing platform", None),
+        ("Assisted custom-built scheduler work", "custom-built scheduler", "assisted"),
+        ("Built the “Ｂilling” self–service platform", 'built the "billing" self-service', "built"),
+        ("SQL skills for analysts", "SQL skills", None),
+        # A mismatched pinned verb disables only the post-verb path, not prefixes.
+        (
+            "Assisted with the data warehouse migration",
+            "Assisted with the data warehouse",
+            "maintained",
+        ),
+    ],
+)
+def test_check_statements_accepts_claim_and_unambiguous_prefixes(
+    claim_text: str, statement: str, claim_verb: str | None
+) -> None:
+    assert _claim_codes(claim_text, statement, claim_verb) == []
 
 
 @pytest.mark.parametrize(
     ("claim_text", "statement"),
     [
-        (
-            "Maintained Linux batch runbooks for the payments team",
-            "Maintained Linux batch runbooks",
-        ),
-        ("Maintained Linux batch runbooks for the payments team", "Linux batch runbooks"),
-        ("Contributed to the custom-built scheduler", "the custom-built scheduler"),
-        ("Was responsible for the billing platform", "the billing platform"),
+        ("Built a 20% reduction", "Built a 20"),
+        ("Built a $20M service", "Built a $20"),
+        ("Built a 20.5M service", "Built a 20"),
+        ("Built a 20,500-user service", "Built a 20"),
     ],
 )
-def test_verb_issues_literal_cut_keeping_or_dropping_its_single_verb_passes(
+def test_check_statements_prefix_keeps_numeric_phrase_boundaries(
     claim_text: str, statement: str
 ) -> None:
-    assert verb_issues(statement, claim_text, None) == []
+    assert _claim_codes(claim_text, statement) == ["statement_not_in_claim"]
 
 
-def test_verb_ranks_reads_longest_vocabulary_phrase_and_ignores_hyphenated_words() -> None:
-    assert verb_ranks("Contributed to the custom-built scheduler") == [
-        OWNERSHIP_VERBS.index("contributed_to")
-    ]
-    assert verb_ranks("Was responsible for billing") == [
-        OWNERSHIP_VERBS.index("was_responsible_for")
-    ]
-    assert verb_ranks("the scheduler") == []
+@pytest.mark.parametrize("claim_verb", OWNERSHIP_VERBS)
+@pytest.mark.parametrize("structured", [False, True], ids=["literal", "structured"])
+def test_check_statements_exact_claim_text_passes_for_every_rendered_verb(
+    claim_verb: OwnershipVerb, structured: bool
+) -> None:
+    claim = StructuredClaim(schema_version=1, verb=claim_verb, subject="the billing migration")
+    text = render_claim(claim)
+    assert _claim_codes(text, text, claim_verb if structured else None) == []

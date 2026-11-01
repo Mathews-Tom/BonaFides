@@ -947,6 +947,25 @@ def _section_context() -> dict[str, object]:
     }
 
 
+@pytest.mark.parametrize("stage", ["generate_documents", "regenerate_section"])
+def test_document_prompts_pin_prefix_cut_shape(stage: str) -> None:
+    from bonafides import local_model
+
+    assert PROMPT_VERSIONS[stage] == f"ol-{stage.replace('_', '-')}-v4"
+    prompt = local_model._SUFFIXES[stage]
+    assert "claim's exact printable text" in prompt
+    assert "whole-phrase prefix of its claim text" in prompt
+    assert "after removing only its leading ownership-verb phrase" in prompt
+    assert "renderer's actual pinned verb wording" in prompt
+    assert "longest matching leading ownership-vocabulary phrase" in prompt
+    assert "entire remainder" in prompt
+    assert "must not start with another ownership-vocabulary verb" in prompt
+    assert "including after an initial and, &, or comma" in prompt
+    assert "never a verb inside a hyphen-joined word" in prompt
+    assert "Never cut into a hyphen-joined word or take a middle or suffix fragment" in prompt
+    assert "stronger verb" not in prompt
+
+
 def test_section_stage_sends_exact_minimized_projection_and_section_only_schema(
     tmp_path: Path,
 ) -> None:
@@ -981,6 +1000,7 @@ def test_section_stage_sends_exact_minimized_projection_and_section_only_schema(
         payload = json.loads(requests[0])
         assert json.loads(payload["messages"][1]["content"]) == context
         assert "tools" not in payload and payload["stream"] is False
+        assert local_model._STATEMENT_RULES in payload["messages"][0]["content"]
         schema = payload["format"]
         assert set(schema["properties"]) == {"schema_version", "stage", "blocks", "warnings"}
         assert set(schema["properties"]["blocks"]["items"]["properties"]) == {

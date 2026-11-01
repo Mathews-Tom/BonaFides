@@ -5,13 +5,13 @@ A factual statement is supported only when it cites exactly one claim of the pin
 generation context, that claim's pinned text is contained, under the structured-claim
 containment rule, in the full text of one of the claim's own linked evidence revisions, and
 the statement is either exactly the claim's pinned printable text (its claim text followed by
-that claim revision's own reviewed structured-field lines) or a whole-phrase cut of its claim
-text. Nothing is borrowed from elsewhere in the evidence, the posting or other claims, so no
-period, figure or scope can enter a statement that its claim does not state.
-A cut must also not strengthen its claim's verb: the first ownership-vocabulary verb phrase
-the statement contains must not rank above the claim's verb, which is a structured claim's
-pinned verb or a literal claim's single vocabulary verb. A literal claim with several
-vocabulary verbs is accepted only whole; facts pinned without a verb are read as literal. Review cannot waive any of these blockers.
+that claim revision's own reviewed structured-field lines), a whole-phrase prefix of its claim
+text, or a whole-phrase prefix after the claim's leading verb. Nothing is borrowed from
+elsewhere in the evidence, the posting or other claims. A prefix cannot end inside a
+hyphenated word. The leading verb is the structured claim's pinned rendered verb, or a
+literal claim's leading ownership-vocabulary phrase. Dropping it is unavailable if the
+remainder starts with another vocabulary verb, optionally after "and", "&" or a comma.
+Review cannot waive any of these blockers.
 Non-factual text must be one of the declared connective templates, whose only variable
 slots are the posting title and organization; a base résumé has no connective text.
 Anything else is treated as an unsupported factual statement.
@@ -20,20 +20,16 @@ Anything else is treated as an unsupported factual statement.
 from __future__ import annotations
 
 import re
+import unicodedata
 from collections.abc import Mapping, Sequence
-from typing import TYPE_CHECKING, Literal, cast
+from typing import TYPE_CHECKING, Literal
 
-from bonafides.claims import (
-    OWNERSHIP_VERBS,
-    OwnershipVerb,
-    _normalise_grounding,
-    contains_statement,
-)
+from bonafides.claims import _EN_VERBS, _normalise_grounding, contains_statement
 
 if TYPE_CHECKING:
     from bonafides.documents import DocumentBody
 
-CHECKER_VERSION = "claim-evidence-v2"
+CHECKER_VERSION = "claim-evidence-v3"
 CATEGORIES = {
     "experience": "Experience",
     "education": "Education",
@@ -68,15 +64,19 @@ CONNECTIVES: dict[ConnectiveKind, tuple[str, ...]] = {
 # Reviewed structured fields printed after a claim's text, one line each, in this order.
 PRINTABLE_FIELDS = ("role", "organization", "start_date", "end_date", "proficiency")
 _SLOT = re.compile(r"\{(title|organization)\}")
-# Rank in the ordered ownership vocabulary: a lower rank claims more ownership.
-_VERB_RANKS = {verb.replace("_", " "): rank for rank, verb in enumerate(OWNERSHIP_VERBS)}
-# Longest phrase first, so "contributed to" wins over "contributed" at the same position;
-# a hyphen joins words, so "custom-built" holds no vocabulary verb.
+# Use the renderer's wording, not a second rendering of the vocabulary keys.
+_VERB_WORDING: dict[str, str] = {
+    key: _normalise_grounding(wording) for key, wording in _EN_VERBS.items()
+}
+# Longest phrase first; hyphen-joined words do not hold a vocabulary verb.
 _VOCABULARY_VERB = re.compile(
-    r"(?<![^\W_]|-)(?:"
-    + "|".join(re.escape(phrase) for phrase in sorted(_VERB_RANKS, key=len, reverse=True))
+    r"(?:"
+    + "|".join(
+        re.escape(phrase) for phrase in sorted(_VERB_WORDING.values(), key=len, reverse=True)
+    )
     + r")(?![^\W_]|-)"
 )
+_CONJUNCTION = re.compile(r"^(?:and\b|&|,)\s*")
 
 
 def title_issues(body: DocumentBody, kind: str) -> list[dict[str, str]]:
@@ -143,37 +143,44 @@ def _factual_issues(
     if not contains_statement(text, claim_text):
         return ["statement_not_in_claim"]
     verb = own[0].get("claim_verb")
-    return verb_issues(text, claim_text, verb if isinstance(verb, str) else None)
+    if _claim_prefix(text, claim_text, verb if isinstance(verb, str) else None):
+        return []
+    return ["statement_cut_inside_claim"]
 
 
-def verb_ranks(text: str) -> list[int]:
-    """The rank of every ownership-vocabulary verb phrase in the text, in reading order."""
-    return [
-        _VERB_RANKS[match.group(0)]
-        for match in _VOCABULARY_VERB.finditer(_normalise_grounding(text))
-    ]
-
-
-def verb_issues(statement: str, claim_text: str, claim_verb: str | None) -> list[str]:
-    """Block a cut of the claim text that promotes the claim's verb.
-
-    A structured claim's verb is its pinned verb. A literal claim's verb is its single
-    vocabulary verb; a literal claim with several is accepted only whole, and a cut of it
-    that starts at a stronger verb than its first is reported as a stronger verb.
-    """
-    found = verb_ranks(statement)
-    if claim_verb is not None:
-        claim = [OWNERSHIP_VERBS.index(cast(OwnershipVerb, claim_verb))]
-    else:
-        claim = verb_ranks(claim_text)
-    if claim and found and found[0] < claim[0]:
-        return ["statement_stronger_verb"]
-    whole = _normalise_grounding(statement).rstrip(".;") == _normalise_grounding(claim_text).rstrip(
-        ".;"
+def _whole_prefix(statement: str, text: str) -> bool:
+    """An already normalised prefix, with containment's boundaries plus no hyphen cut."""
+    currencies = re.escape("".join({char for char in text if unicodedata.category(char) == "Sc"}))
+    currency_boundary = rf"|[{currencies}]" if currencies else ""
+    return (
+        re.match(
+            rf"{re.escape(statement)}(?![^\W_]|-|(?<=\d)[%×]|[.,]\d{currency_boundary})",
+            text,
+        )
+        is not None
     )
-    if claim_verb is None and len(claim) > 1 and not whole:
-        return ["statement_not_in_claim"]
-    return []
+
+
+def _claim_prefix(statement: str, claim_text: str, claim_verb: str | None) -> bool:
+    """Accept only the claim's prefix or an unambiguous prefix after its leading verb."""
+    statement = _normalise_grounding(statement).rstrip(".;")
+    claim_text = _normalise_grounding(claim_text)
+    if _whole_prefix(statement, claim_text):
+        return True
+    if claim_verb is None:
+        leading = _VOCABULARY_VERB.match(claim_text)
+        if leading is None:
+            return False
+        end = leading.end()
+    else:
+        wording = _VERB_WORDING.get(claim_verb)
+        if wording is None or not _whole_prefix(wording, claim_text):
+            return False
+        end = len(wording)
+    remainder = claim_text[end:].lstrip()
+    if _VOCABULARY_VERB.match(_CONJUNCTION.sub("", remainder, count=1)):
+        return False
+    return _whole_prefix(statement, remainder)
 
 
 def check_statements(

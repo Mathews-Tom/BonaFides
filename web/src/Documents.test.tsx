@@ -341,8 +341,8 @@ describe('review, export and generation boundaries', () => {
 
   it('names the reason for each statement that strengthens its claim', async () => {
     const kinds = [
-      ['statement_stronger_verb', 'Led the Linux service checks.', 'Stronger verb than its claim: it claims more ownership than its claim states.'],
-      ['statement_not_in_claim', 'Maintained Linux service checks 2018–2024.', "Not part of its claim: it is not its claim's text or a whole-phrase cut of it (a claim with several ownership verbs is accepted only whole)."],
+      ['statement_cut_inside_claim', 'Led the Linux service checks.', 'Cuts into the middle of its claim'],
+      ['statement_not_in_claim', 'Maintained Linux service checks 2018–2024.', "Not part of its claim: its wording is not contained in its claim's text."],
       ['statement_not_in_claim_evidence', 'Maintained Linux service checks.', "Its claim's text is not contained in the claim's own evidence."],
     ] as const;
     const first = saved.current_revision.body.sections[0]!.blocks[0]!;

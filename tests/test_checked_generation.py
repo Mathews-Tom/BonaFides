@@ -33,7 +33,6 @@ from test_suitability import _after_model_send
 
 from bonafides import local_model, model_context, suitability
 from bonafides.claims import contains_statement
-from bonafides.statement_check import verb_issues
 from bonafides.worker import Worker
 from bonafides.workflows import Claim
 from tools import stub_model
@@ -137,7 +136,7 @@ def test_inflated_stub_cuts_its_claim_at_a_later_stronger_verb(
     assert block["claim_id"] == "claim-1"
     assert block["text"] == expected
     assert contains_statement(block["text"], claim_text)
-    assert verb_issues(block["text"], claim_text, None) == ["statement_stronger_verb"]
+    assert not claim_text.casefold().startswith(block["text"].casefold())
 
 
 @pytest.mark.parametrize(
@@ -146,6 +145,8 @@ def test_inflated_stub_cuts_its_claim_at_a_later_stronger_verb(
         "Led the team that managed the migration",
         "Managed the rollout",
         "Migration project for the payments team",
+        "Assisted the custom-built dashboard team",
+        "Helped the team that custom-built the dashboard",
     ],
 )
 def test_inflated_stub_refuses_claims_without_a_later_stronger_verb(claim_text: str) -> None:
@@ -170,7 +171,7 @@ def test_valid_stub_pair_links_every_factual_sentence_and_exports(
     assert {item["kind"] for item in items} == {"resume", "cover_letter"}
     for document in items:
         provenance = document["current_revision"]["provenance_snapshot"]
-        assert provenance["checker_version"] == "claim-evidence-v2"
+        assert provenance["checker_version"] == "claim-evidence-v3"
         pinned = {fact["claim_revision_id"] for fact in provenance["facts"]}
         blocks = _factual_blocks(document)
         assert blocks and all(

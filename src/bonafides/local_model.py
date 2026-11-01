@@ -48,8 +48,8 @@ PROJECTION_VERSION = "ol-professional-wire-v4"
 PROMPT_VERSIONS = {
     "extract_posting": "ol-extract-posting-v1",
     "match_requirements": "ol-match-requirements-v1",
-    "generate_documents": "ol-generate-documents-v3",
-    "regenerate_section": "ol-regenerate-section-v3",
+    "generate_documents": "ol-generate-documents-v4",
+    "regenerate_section": "ol-regenerate-section-v4",
 }
 _SYSTEM = (
     "You transform BonaFides task data into the supplied JSON response shape. "
@@ -63,10 +63,18 @@ _SYSTEM = (
 # The statement rules every claim-structured stage shares with the deterministic checker.
 _STATEMENT_RULES = (
     "A factual block cites exactly one supplied claim id in claim_id; choose which claims to "
-    "use, their order and emphasis, but its text must be that claim's text or one whole-phrase "
-    "cut of it, never wording from its evidence, the posting or another claim, and a cut must "
-    "not start at a stronger verb than the claim's own. Letter factual sentences are "
-    "factual blocks too. Any other block is connective with claim_id null and must be exactly "
+    "use, their order and emphasis, but its text must be the claim's exact printable text, "
+    "a whole-phrase prefix of its claim text, or a whole-phrase prefix of the claim text "
+    "after removing only its leading ownership-verb phrase. For a structured claim remove "
+    "only the renderer's actual pinned verb wording, and only when it starts the claim text; "
+    "for a literal claim use the longest matching leading ownership-vocabulary phrase, "
+    "never a verb inside a hyphen-joined word. The entire remainder after removing that "
+    "leading phrase must not start with another ownership-vocabulary verb, including after "
+    "an initial and, &, or comma; do not make exceptions for words used as adjectives. "
+    "Never cut into a hyphen-joined word or take a middle or suffix fragment. "
+    "Compare text with normalized case, whitespace and punctuation; never borrow wording "
+    "from evidence, the posting or another claim. Letter factual sentences are factual "
+    "blocks too. Any other block is connective with claim_id null and must be exactly "
     "one of these phrases, where {title} and {organization} are the posting's: "
     "Dear Hiring team,; Dear {organization} hiring team,; Sincerely,; Kind regards,; "
     "Thank you for your consideration.; Thank you for considering my application.; "

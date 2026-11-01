@@ -46,8 +46,8 @@ export function issueAnchor(path: string, body: DocumentBody, displayed: Documen
 export const ISSUE_REASONS: Record<string, string> = {
   claim_not_in_profile: 'It cites a claim that is not in your profile.',
   statement_not_in_claim_evidence: "Its claim's text is not contained in the claim's own evidence.",
-  statement_not_in_claim: "Not part of its claim: it is not its claim's text or a whole-phrase cut of it (a claim with several ownership verbs is accepted only whole).",
-  statement_stronger_verb: 'Stronger verb than its claim: it claims more ownership than its claim states.',
+  statement_not_in_claim: "Not part of its claim: its wording is not contained in its claim's text.",
+  statement_cut_inside_claim: 'Cuts into the middle of its claim',
   uncited_factual_statement: 'It states a fact without citing a claim.',
   statement_cites_multiple_claims: 'It cites more than one claim.',
   evidence_not_linked_to_claim: "Its evidence is not its claim's own evidence.",

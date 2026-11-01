@@ -2,16 +2,17 @@
 """Strengthening blockers on generated documents: owner edits and a stub-route generation.
 
 Every strengthened statement here is contained in its claim's own evidence. A cut of the
-claim that starts at a stronger verb blocks as a stronger verb; a longer period, larger
-figure or wider scope taken from elsewhere in the evidence is not part of its claim. The
-stub route is fixture-only.
+claim that starts at a stronger verb blocks as a middle cut; a longer period, larger
+figure or wider scope taken from elsewhere in the evidence is not part of its claim.
+Other contained middle/suffix cuts remain blocked even without promoting a verb.
 """
 
 from __future__ import annotations
 
 import copy
+import json
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import pytest
 from test_checked_generation import _factual_blocks, _render, _run, _stub
@@ -28,6 +29,8 @@ from test_sources import SourceContext
 from test_sources import catalog as catalog
 from test_suitability import SOURCE, _profile, _requirement, _write
 from test_tracking import _application
+
+from tools import stub_model
 
 # A structured claim whose subject names a stronger verb than its own pinned verb.
 CLAIM: dict[str, object] = {
@@ -47,17 +50,21 @@ EVIDENCE_TEXT = (
 )
 STRENGTHENED = [
     (
-        "statement_stronger_verb",
+        "statement_cut_inside_claim",
         "Led the Linux runbook migration for the operations team, reducing alert noise by 30%",
     ),
     ("statement_not_in_claim", "The wider programme ran 2019–2023"),
     ("statement_not_in_claim", "alert noise by 45%"),
     ("statement_not_in_claim", "The runbooks were later adopted company-wide"),
 ]
-HONEST = [
-    "Assisted the team that led the Linux runbook migration",
+MIDCLAIM = [
     "the Linux runbook migration for the operations team",
     "reducing alert noise by 30% (2021–2022)",
+]
+HONEST = [
+    "Assisted the team that led the Linux runbook migration",
+    "the team that led the Linux runbook migration",
+    CLAIM_TEXT,
 ]
 
 
@@ -139,7 +146,10 @@ def test_owner_edit_into_each_strengthened_variant_names_statement_and_reason(
     document = _resume(catalog, monkeypatch, tmp_path, "valid")
     assert document["current_revision"]["validation_issues"] == []
     key = _claim_block(document)
-    for code, statement in STRENGTHENED:
+    for code, statement in [
+        *STRENGTHENED,
+        *(("statement_cut_inside_claim", text) for text in MIDCLAIM),
+    ]:
         saved = _save(catalog, document, _edited(document, key, statement))
         assert saved.status_code == 200, saved.text
         document = saved.json()
@@ -158,7 +168,7 @@ def test_owner_edit_into_each_strengthened_variant_names_statement_and_reason(
 
 
 @pytest.mark.postgres
-def test_owner_edit_into_honest_rephrasing_passes_review_and_render(
+def test_owner_edit_into_allowed_claim_prefix_passes_review_and_render(
     catalog: SourceContext, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     document = _resume(catalog, monkeypatch, tmp_path, "valid")
@@ -178,6 +188,45 @@ def test_owner_edit_into_honest_rephrasing_passes_review_and_render(
 
 
 @pytest.mark.postgres
+@pytest.mark.parametrize(
+    ("statement", "blocked"),
+    [(text, False) for text in HONEST] + [(text, True) for text in MIDCLAIM],
+)
+def test_generated_pair_claim_prefixes_and_middle_cuts(
+    catalog: SourceContext,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    statement: str,
+    blocked: bool,
+) -> None:
+    respond = stub_model.respond
+
+    def cut_response(scenario: str, request: dict[str, object]) -> dict[str, object]:
+        envelope = respond(scenario, request)
+        message = cast(dict[str, str], envelope["message"])
+        output = json.loads(message["content"])
+        for document in output["documents"]:
+            for section in document["sections"]:
+                for block in section["blocks"]:
+                    if block["text"] == CLAIM_TEXT:
+                        block["text"] = statement
+        message["content"] = json.dumps(output)
+        return envelope
+
+    monkeypatch.setattr(stub_model, "respond", cut_response)
+    document = _resume(catalog, monkeypatch, tmp_path, "valid")
+    issues = document["current_revision"]["validation_issues"]
+    assert [(issue["code"], issue["statement"]) for issue in issues] == (
+        [("statement_cut_inside_claim", statement)] if blocked else []
+    )
+    assert any(block["text"] == statement for block in _factual_blocks(document))
+    assert _review(catalog, document).status_code == (409 if blocked else 200)
+    assert _render(catalog, _document(catalog, document["id"])).status_code == (
+        409 if blocked else 202
+    )
+
+
+@pytest.mark.postgres
 def test_inflated_stub_generation_blocks_export_even_after_review(
     catalog: SourceContext, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
@@ -188,7 +237,7 @@ def test_inflated_stub_generation_blocks_export_even_after_review(
         "reducing alert noise by 30% (2021–2022)"
     )
     assert [(issue["code"], issue["statement"]) for issue in issues] == [
-        ("statement_stronger_verb", statement)
+        ("statement_cut_inside_claim", statement)
     ]
     assert any(block["text"] == statement for block in _factual_blocks(resume))
     refused = _review(catalog, resume)

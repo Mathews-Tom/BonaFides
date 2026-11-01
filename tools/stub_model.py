@@ -11,17 +11,17 @@ route file, for pair generation and for section regeneration (a projection with 
   connective target blocks.
 - ``absent-claim``: one factual block cites a claim id that is not in the profile.
 - ``posting-only-skill``: one factual block asserts a term found only in the posting.
-- ``inflated``: one factual block is a whole-phrase cut of a claim's own text that starts
-  at a later, stronger ownership verb ("Assisted the team that led X" -> "Led X"), so it is
-  part of its claim and only the verb rule blocks it.
+- ``inflated``: one factual block is a cut into the middle of a claim's own text that
+  starts at a later, stronger ownership verb ("Assisted the team that led X" -> "Led X").
+  It is contained in its claim but blocked by the allowed prefix shape.
 - ``malformed-once``: schema-invalid until the request carries a correction.
 - ``malformed``: always schema-invalid.
 - ``truncated``: a length-limited, incomplete response.
 
-``serve`` uses only the standard library except for ``inflated``, which reads the
-installed application's ownership-verb ranking. ``route`` writes a route file whose
-qualification receipts for both document stages are fixture-only: they attest nothing
-about any real model.
+``serve`` uses the standard library and, for ``inflated``, the application's ordered
+ownership vocabulary to select the fixture cut, not a checker rank rule. ``route``
+writes a route file whose qualification receipts for both document stages are fixture-only:
+they attest nothing about any real model.
 """
 
 from __future__ import annotations
@@ -151,23 +151,24 @@ def _posting_only_term(projection: dict[str, object]) -> str:
 
 def _inflated(projection: dict[str, object]) -> tuple[str, str]:
     """A claim and the cut of its own text that starts at a later, stronger verb."""
-    from bonafides.statement_check import verb_ranks
+    from bonafides.claims import OWNERSHIP_VERBS
 
+    order = {verb.replace("_", " "): index for index, verb in enumerate(OWNERSHIP_VERBS)}
+    vocabulary = re.compile(
+        r"(?<![^\W_]|-)(?:"
+        + "|".join(re.escape(phrase) for phrase in sorted(order, key=len, reverse=True))
+        + r")(?![^\W_]|-)",
+        re.IGNORECASE,
+    )
     for claim in _items(projection, "claims"):
-        text = str(claim["text"])
-        claim_ranks = verb_ranks(text)
-        if not claim_ranks:
+        text = str(claim["text"]).rstrip(".;")
+        verbs = list(vocabulary.finditer(text))
+        if not verbs:
             continue
-        words = text.rstrip(".;").split()
-        for index in range(1, len(words)):
-            cut = " ".join(words[index:])
-            ranks = verb_ranks(cut)
-            # The cut starts at the verb: dropping its first word loses that verb.
-            if (
-                ranks
-                and ranks[0] < claim_ranks[0]
-                and verb_ranks(" ".join(words[index + 1 :])) != ranks
-            ):
+        first = order[verbs[0].group().casefold()]
+        for verb in verbs[1:]:
+            if order[verb.group().casefold()] < first:
+                cut = text[verb.start() :]
                 return str(claim["id"]), cut[0].upper() + cut[1:]
     raise StubFailure("no claim's text holds a later verb stronger than its own")
 

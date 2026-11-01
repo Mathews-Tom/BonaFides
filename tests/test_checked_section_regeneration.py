@@ -24,7 +24,15 @@ from test_checked_generation import (
     _run,
     _stub,
 )
-from test_document_generation import _base, _document, _pair_documents, _review, _save
+from test_document_generation import (
+    _base,
+    _document,
+    _pair_documents,
+    _preview,
+    _queue_pair,
+    _review,
+    _save,
+)
 from test_identity import identity as identity
 from test_section_regeneration import _apply, _queue_section, _section_preview
 from test_sources import SourceContext
@@ -121,7 +129,7 @@ def test_valid_stub_section_links_every_statement_and_applied_revision_exports(
     assert applied.status_code == 200, applied.text
     revision = applied.json()["current_revision"]
     assert revision["validation_issues"] == []
-    assert revision["provenance_snapshot"]["checker_version"] == "claim-evidence-v2"
+    assert revision["provenance_snapshot"]["checker_version"] == "claim-evidence-v3"
     updated = _document(catalog, resume["id"])
     assert _review(catalog, updated).status_code == 200
     assert _render(catalog, _document(catalog, resume["id"])).status_code == 202
@@ -169,6 +177,64 @@ def test_fabricated_section_statement_blocks_proposal_and_applied_revision(
     assert refused.status_code == 409 and refused.json()["code"] == "unsupported_claims"
     rendered = _render(catalog, updated)
     assert rendered.status_code == 409 and rendered.json()["code"] == "unsupported_claims"
+
+
+@pytest.mark.postgres
+@pytest.mark.parametrize(
+    ("statement", "blocked"),
+    [
+        ("Assisted the team that led the Linux runbook migration", False),
+        ("the team that led the Linux runbook migration", False),
+        ("the Linux runbook migration for the operations team", True),
+        ("reducing alert noise by 30% (2021–2022)", True),
+        ("Led the Linux runbook migration for the operations team", True),
+    ],
+)
+def test_section_prefix_cuts_keep_the_same_result_after_apply(
+    catalog: SourceContext,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    statement: str,
+    blocked: bool,
+) -> None:
+    from test_inflation_documents import CLAIM_TEXT
+    from test_inflation_documents import _setup as inflation_setup
+
+    profile, application = inflation_setup(catalog)
+    respond = stub_model.respond
+
+    def cut_response(scenario: str, request: dict[str, object]) -> dict[str, object]:
+        envelope = respond(scenario, request)
+        message = cast(dict[str, str], envelope["message"])
+        output = json.loads(message["content"])
+        block = next(block for block in output["blocks"] if block["text"] == CLAIM_TEXT)
+        block["text"] = statement
+        message["content"] = json.dumps(output)
+        return envelope
+
+    # Section regeneration must keep the original generation's pinned route alive.
+    with _stub(monkeypatch, tmp_path, "valid"):
+        workflow = _run(catalog, _queue_pair(catalog, _preview(catalog, profile, application)))
+        assert workflow["state"] == "succeeded", workflow
+        resume = next(
+            item
+            for item in _pair_documents(catalog, application)["items"]
+            if item["kind"] == "resume"
+        )
+        monkeypatch.setattr(stub_model, "respond", cut_response)
+        proposal = _proposal(catalog, resume, _regenerate(catalog, resume))
+    issues = proposal["validation_issues"]
+    assert [(issue["code"], issue["statement"]) for issue in issues] == (
+        [("statement_cut_inside_claim", statement)] if blocked else []
+    )
+    applied = _apply(catalog, resume, proposal)
+    assert applied.status_code == 200, applied.text
+    assert applied.json()["current_revision"]["validation_issues"] == issues
+    updated = _document(catalog, resume["id"])
+    reviewed = _review(catalog, updated)
+    assert reviewed.status_code == (409 if blocked else 200)
+    rendered = _render(catalog, _document(catalog, resume["id"]))
+    assert rendered.status_code == (409 if blocked else 202)
 
 
 @pytest.mark.postgres
@@ -473,7 +539,7 @@ def test_owner_base_resume_with_structured_fields_passes_the_claim_checker(
 ) -> None:
     document = _base(catalog, _profile_with_fields(catalog))
     revision = document["current_revision"]
-    assert revision["provenance_snapshot"]["checker_version"] == "claim-evidence-v2"
+    assert revision["provenance_snapshot"]["checker_version"] == "claim-evidence-v3"
     texts = [
         block["text"] for section in revision["body"]["sections"] for block in section["blocks"]
     ]
