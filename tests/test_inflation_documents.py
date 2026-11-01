@@ -1,8 +1,10 @@
 # SPDX-License-Identifier: MIT OR Apache-2.0
-"""Inflation blockers on generated documents: owner edits and a stub-route generation.
+"""Strengthening blockers on generated documents: owner edits and a stub-route generation.
 
-Every strengthened statement here is contained in its claim's own evidence, so the blocker
-comes from the inflation rules, never from containment. The stub route is fixture-only.
+Every strengthened statement here is contained in its claim's own evidence. A cut of the
+claim that starts at a stronger verb blocks as a stronger verb; a longer period, larger
+figure or wider scope taken from elsewhere in the evidence is not part of its claim. The
+stub route is fixture-only.
 """
 
 from __future__ import annotations
@@ -27,9 +29,17 @@ from test_sources import catalog as catalog
 from test_suitability import SOURCE, _profile, _requirement, _write
 from test_tracking import _application
 
+# A structured claim whose subject names a stronger verb than its own pinned verb.
+CLAIM: dict[str, object] = {
+    "schema_version": 1,
+    "verb": "assisted",
+    "subject": "the team that led the Linux runbook migration for the operations team",
+    "metric": {"change": "decrease", "measure": "alert noise", "unit": "percent", "value": "30"},
+    "period": {"start": "2021", "end": "2022", "separator": "en_dash", "style": "parenthetical"},
+}
 CLAIM_TEXT = (
-    "Assisted the team that led the Linux runbook migration for the operations team "
-    "(2021–2022), reducing alert noise by 30%"
+    "Assisted the team that led the Linux runbook migration for the operations team, "
+    "reducing alert noise by 30% (2021–2022)"
 )
 EVIDENCE_TEXT = (
     f"{CLAIM_TEXT}. The wider programme ran 2019–2023 and cut alert noise by 45%. "
@@ -38,22 +48,21 @@ EVIDENCE_TEXT = (
 STRENGTHENED = [
     (
         "statement_stronger_verb",
-        "Led the Linux runbook migration for the operations team (2021–2022), "
-        "reducing alert noise by 30%",
+        "Led the Linux runbook migration for the operations team, reducing alert noise by 30%",
     ),
-    ("statement_longer_tenure", "The wider programme ran 2019–2023"),
-    ("statement_larger_metric", "alert noise by 45%"),
-    ("statement_wider_scope", "The runbooks were later adopted company-wide"),
+    ("statement_not_in_claim", "The wider programme ran 2019–2023"),
+    ("statement_not_in_claim", "alert noise by 45%"),
+    ("statement_not_in_claim", "The runbooks were later adopted company-wide"),
 ]
 HONEST = [
     "Assisted the team that led the Linux runbook migration",
-    "the Linux runbook migration for the operations team (2021–2022)",
-    "reducing alert noise by 30%",
+    "the Linux runbook migration for the operations team",
+    "reducing alert noise by 30% (2021–2022)",
 ]
 
 
 def _setup(context: SourceContext) -> tuple[dict[str, Any], dict[str, Any]]:
-    """SYN-CORE plus one literal claim whose evidence holds every strengthened variant."""
+    """SYN-CORE plus one structured claim whose evidence holds every strengthened variant."""
     profile = _profile(context)
     evidence = context.client.post(
         "/api/v1/evidence",
@@ -78,7 +87,7 @@ def _setup(context: SourceContext) -> tuple[dict[str, Any], dict[str, Any]]:
         "/api/v1/claims",
         json={
             "kind": "experience",
-            "payload": {"text": CLAIM_TEXT},
+            "payload": {"claim": CLAIM},
             "evidence_links": [
                 {
                     "evidence_revision_id": revision,
@@ -124,7 +133,7 @@ def _edited(document: dict[str, Any], key: str, text: str) -> dict[str, Any]:
 
 
 @pytest.mark.postgres
-def test_owner_edit_into_each_strengthened_variant_names_statement_and_kind(
+def test_owner_edit_into_each_strengthened_variant_names_statement_and_reason(
     catalog: SourceContext, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     document = _resume(catalog, monkeypatch, tmp_path, "valid")
@@ -175,8 +184,8 @@ def test_inflated_stub_generation_blocks_export_even_after_review(
     resume = _resume(catalog, monkeypatch, tmp_path, "inflated")
     issues = resume["current_revision"]["validation_issues"]
     statement = (
-        "Led the Linux runbook migration for the operations team (2021–2022), "
-        "reducing alert noise by 30%"
+        "Led the Linux runbook migration for the operations team, "
+        "reducing alert noise by 30% (2021–2022)"
     )
     assert [(issue["code"], issue["statement"]) for issue in issues] == [
         ("statement_stronger_verb", statement)
