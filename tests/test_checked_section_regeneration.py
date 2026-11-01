@@ -315,10 +315,13 @@ def test_already_stale_target_rechecks_sources_when_apply_version_still_matches(
     assert WRITES[write](catalog).status_code == 200
     refused = _apply(catalog, _document(catalog, resume["id"]), proposal)
     assert refused.status_code == 409, refused.text
-    assert refused.json()["code"] == {
-        "claim_edit": "profile_fact_withdrawn",
-        "evidence_edit": "profile_evidence_unavailable",
-    }[write]
+    assert (
+        refused.json()["code"]
+        == {
+            "claim_edit": "profile_fact_withdrawn",
+            "evidence_edit": "profile_evidence_unavailable",
+        }[write]
+    )
     assert _document(catalog, resume["id"])["current_revision"] == resume["current_revision"]
 
 
