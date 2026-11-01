@@ -739,3 +739,32 @@ def test_check_statements_unspaced_clause_punctuation_does_not_split_compounds(
     assert _claim_codes(f"Led the migration{separator}cutting costs", "Led the migration") == [
         "statement_cut_inside_claim"
     ]
+
+
+@pytest.mark.parametrize(
+    "ending",
+    [
+        " – 15%",
+        " — 15%",
+        " - 15%",
+        " (15%)",
+        ", 15% overall",
+        ". 15% overall",
+        "; 15% overall",
+        ": 15% overall",
+    ],
+)
+@pytest.mark.parametrize("claim_verb", [None, "cut"], ids=["literal", "structured"])
+@pytest.mark.parametrize("statement", ["Cut costs by 10", "costs by 10"])
+def test_check_statements_every_endpoint_kind_preserves_numeric_ranges(
+    ending: str, claim_verb: str | None, statement: str
+) -> None:
+    claim_text = f"Cut costs by 10{ending}"
+    assert contains_statement(statement, claim_text)
+    assert _claim_codes(claim_text, statement, claim_verb) == ["statement_cut_inside_claim"]
+
+
+@pytest.mark.parametrize("ending", [" – 15%", " (15%)", ", 15% overall", ". 15% overall"])
+def test_check_statements_punctuation_endpoints_preserve_currency_ranges(ending: str) -> None:
+    claim_text = f"Managed $10{ending}"
+    assert _claim_codes(claim_text, "Managed $10", "managed") == ["statement_cut_inside_claim"]

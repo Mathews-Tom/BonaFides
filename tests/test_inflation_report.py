@@ -98,7 +98,7 @@ def test_committed_inflated_set_distinguishes_promotions_and_truncated_phrases()
         "longer_tenure": 16,
         "larger_metric": 74,
         "wider_scope": 18,
-        "truncated_phrase": 26,
+        "truncated_phrase": 42,
     }
     assert EXPECTED_CODES["stronger_verb"] == "statement_cut_inside_claim"
     assert EXPECTED_CODES["truncated_phrase"] == "statement_cut_inside_claim"
@@ -110,7 +110,7 @@ def test_committed_inflated_set_distinguishes_promotions_and_truncated_phrases()
 def test_endpoint_fixture_reclassification_and_new_boundaries() -> None:
     honest = load(SETS / "honest.jsonl", honest=True)
     inflated = load(SETS / "inflated.jsonl", honest=False)
-    assert len(inflated) == 149
+    assert len(inflated) == 165
     assert [(case.claim_text, case.statement) for case in inflated[123:139]] == [
         ("Supported the team's migration", "Supported the team"),
         ("Supported the team's migration", "the team"),
@@ -130,7 +130,21 @@ def test_endpoint_fixture_reclassification_and_new_boundaries() -> None:
         ("Supported migration jointly with finance", "migration"),
     ]
     assert all(case.kind == "truncated_phrase" for case in inflated[123:])
-    assert len(inflated[139:]) == 10
+    assert len(inflated[139:149]) == 10
+    assert [(case.claim_text, case.statement) for case in inflated[149:]] == [
+        (f"Cut costs by 10{ending}", statement)
+        for ending in (
+            " – 15%",
+            " — 15%",
+            " - 15%",
+            " (15%)",
+            ", 15% overall",
+            ". 15% overall",
+            "; 15% overall",
+            ": 15% overall",
+        )
+        for statement in ("Cut costs by 10", "costs by 10")
+    ]
     assert all("one pilot region" not in case.claim_text for case in honest[1135:])
     assert [(case.claim_text, case.statement) for case in honest[1167:]] == [
         ("Built the API" + ending, statement)

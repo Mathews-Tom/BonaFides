@@ -31,7 +31,7 @@ from bonafides.claims import _EN_VERBS, _normalise_grounding, contains_statement
 if TYPE_CHECKING:
     from bonafides.documents import DocumentBody
 
-CHECKER_VERSION = "claim-evidence-v5"
+CHECKER_VERSION = "claim-evidence-v6"
 CATEGORIES = {
     "experience": "Experience",
     "education": "Education",
@@ -81,7 +81,7 @@ _VOCABULARY_VERB = re.compile(
 _CONJUNCTION = re.compile(r"^(?:and\b|&|,)\s*")
 _CUT_END = re.compile(
     r"(?:\s*(?:[,;:(]|\.\s)|\s+-\s|"
-    r"\s+(?P<word>for|by|to|on|with|in|across|from|through|during|at|that)(?![^\W_]|-))"
+    r"\s+(?:for|by|to|on|with|in|across|from|through|during|at|that)(?![^\W_]|-))"
 )
 _FIGURE = re.compile(r"[+-]?\d+(?:[.,]\d+)*(?:[%×])?")
 
@@ -178,13 +178,11 @@ def _permitted_prefix(statement: str, text: str) -> bool:
     boundary = _CUT_END.match(rest)
     if boundary is None:
         return False
-    return not (
-        boundary["word"] is not None and _numeric_range_cut(statement, rest[boundary.end() :])
-    )
+    return not _numeric_range_cut(statement, rest[boundary.end() :])
 
 
 def _numeric_range_cut(statement: str, following: str) -> bool:
-    """A boundary word cannot separate a terminal number/currency figure from another."""
+    """No endpoint can separate a terminal number/currency figure from another."""
     # Currency symbols can be adjacent to a figure or separated from it by whitespace.
     last = "".join(char for char in statement if unicodedata.category(char) != "Sc")
     last = last.rstrip().rsplit(" ", 1)[-1]

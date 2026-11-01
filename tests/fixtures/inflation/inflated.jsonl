@@ -147,3 +147,19 @@
 {"claim": "Reduced latency from 20 to 30 milliseconds", "evidence": "Reduced latency from 20 to 30 milliseconds.", "kind": "truncated_phrase", "statement": "latency from 20"}
 {"claim": "Supported 5 through 10 teams", "evidence": "Supported 5 through 10 teams.", "kind": "truncated_phrase", "statement": "Supported 5"}
 {"claim": "Supported 5 through 10 teams", "evidence": "Supported 5 through 10 teams.", "kind": "truncated_phrase", "statement": "5"}
+{"claim": "Cut costs by 10 – 15%", "evidence": "Cut costs by 10 – 15%.", "kind": "truncated_phrase", "statement": "Cut costs by 10"}
+{"claim": "Cut costs by 10 – 15%", "evidence": "Cut costs by 10 – 15%.", "kind": "truncated_phrase", "statement": "costs by 10"}
+{"claim": "Cut costs by 10 — 15%", "evidence": "Cut costs by 10 — 15%.", "kind": "truncated_phrase", "statement": "Cut costs by 10"}
+{"claim": "Cut costs by 10 — 15%", "evidence": "Cut costs by 10 — 15%.", "kind": "truncated_phrase", "statement": "costs by 10"}
+{"claim": "Cut costs by 10 - 15%", "evidence": "Cut costs by 10 - 15%.", "kind": "truncated_phrase", "statement": "Cut costs by 10"}
+{"claim": "Cut costs by 10 - 15%", "evidence": "Cut costs by 10 - 15%.", "kind": "truncated_phrase", "statement": "costs by 10"}
+{"claim": "Cut costs by 10 (15%)", "evidence": "Cut costs by 10 (15%).", "kind": "truncated_phrase", "statement": "Cut costs by 10"}
+{"claim": "Cut costs by 10 (15%)", "evidence": "Cut costs by 10 (15%).", "kind": "truncated_phrase", "statement": "costs by 10"}
+{"claim": "Cut costs by 10, 15% overall", "evidence": "Cut costs by 10, 15% overall.", "kind": "truncated_phrase", "statement": "Cut costs by 10"}
+{"claim": "Cut costs by 10, 15% overall", "evidence": "Cut costs by 10, 15% overall.", "kind": "truncated_phrase", "statement": "costs by 10"}
+{"claim": "Cut costs by 10. 15% overall", "evidence": "Cut costs by 10. 15% overall.", "kind": "truncated_phrase", "statement": "Cut costs by 10"}
+{"claim": "Cut costs by 10. 15% overall", "evidence": "Cut costs by 10. 15% overall.", "kind": "truncated_phrase", "statement": "costs by 10"}
+{"claim": "Cut costs by 10; 15% overall", "evidence": "Cut costs by 10; 15% overall.", "kind": "truncated_phrase", "statement": "Cut costs by 10"}
+{"claim": "Cut costs by 10; 15% overall", "evidence": "Cut costs by 10; 15% overall.", "kind": "truncated_phrase", "statement": "costs by 10"}
+{"claim": "Cut costs by 10: 15% overall", "evidence": "Cut costs by 10: 15% overall.", "kind": "truncated_phrase", "statement": "Cut costs by 10"}
+{"claim": "Cut costs by 10: 15% overall", "evidence": "Cut costs by 10: 15% overall.", "kind": "truncated_phrase", "statement": "costs by 10"}

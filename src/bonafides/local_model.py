@@ -48,8 +48,8 @@ PROJECTION_VERSION = "ol-professional-wire-v4"
 PROMPT_VERSIONS = {
     "extract_posting": "ol-extract-posting-v1",
     "match_requirements": "ol-match-requirements-v1",
-    "generate_documents": "ol-generate-documents-v6",
-    "regenerate_section": "ol-regenerate-section-v6",
+    "generate_documents": "ol-generate-documents-v7",
+    "regenerate_section": "ol-regenerate-section-v7",
 }
 _SYSTEM = (
     "You transform BonaFides task data into the supplied JSON response shape. "
@@ -76,8 +76,8 @@ _STATEMENT_RULES = (
     "a comma, semicolon, colon or left parenthesis, a full stop followed by whitespace, "
     "or a spaced dash (hyphen, en dash or em dash), or immediately before one of these "
     "whole boundary words (case-insensitive): for, by, to, on, with, in, across, from, "
-    "through, during, at, that. A boundary word is not an endpoint when the prefix ends "
-    "in a number or currency figure and that word is followed by another number. "
+    "through, during, at, that. No endpoint is permitted when the prefix ends in a number "
+    "or currency figure and the endpoint is followed by another number. "
     "Never split a numeric or currency expression. Keep every qualifier that limits "
     "scope, period, share, rate or co-ownership. "
     "It does not permit 'Designed and implemented' before 'a', or cuts inside possessives, "

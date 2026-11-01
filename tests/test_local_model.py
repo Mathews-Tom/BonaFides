@@ -951,7 +951,7 @@ def _section_context() -> dict[str, object]:
 def test_document_prompts_pin_prefix_cut_shape(stage: str) -> None:
     from bonafides import local_model
 
-    assert PROMPT_VERSIONS[stage] == f"ol-{stage.replace('_', '-')}-v6"
+    assert PROMPT_VERSIONS[stage] == f"ol-{stage.replace('_', '-')}-v7"
     prompt = local_model._SUFFIXES[stage]
     assert "claim's exact printable text" in prompt
     assert "whole-phrase prefix of its claim text" in prompt
@@ -973,8 +973,8 @@ def test_document_prompts_pin_prefix_cut_shape(stage: str) -> None:
     )
     assert "Never split a numeric or currency expression" in prompt
     assert (
-        "A boundary word is not an endpoint when the prefix ends in a number or currency "
-        "figure and that word is followed by another number" in prompt
+        "No endpoint is permitted when the prefix ends in a number or currency figure "
+        "and the endpoint is followed by another number" in prompt
     )
     assert "Keep every qualifier that limits scope, period, share, rate or co-ownership" in prompt
     assert "permits dropping qualifiers" not in prompt
