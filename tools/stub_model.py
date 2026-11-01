@@ -18,9 +18,10 @@ route file, for pair generation and for section regeneration (a projection with 
 - ``malformed``: always schema-invalid.
 - ``truncated``: a length-limited, incomplete response.
 
-``serve`` uses only the standard library so it runs as its own process or container.
-``route`` writes a route file whose qualification receipts for both document stages are
-fixture-only: they attest nothing about any real model.
+``serve`` uses only the standard library except for ``inflated``, which reads the
+installed application's inflation ranking. ``route`` writes a route file whose
+qualification receipts for both document stages are fixture-only: they attest nothing
+about any real model.
 """
 
 from __future__ import annotations
@@ -51,7 +52,8 @@ SCENARIOS = (
     "truncated",
 )
 # Leadership and responsibility openings an inflated restatement uses.
-_STRONG_VERB = re.compile(r"\b(led|spearheaded|headed|directed|owned|managed)\b[^.;\n]*", re.I)
+_STRONG_VERB = re.compile(r"\b(led|spearheaded|headed|directed|owned|managed)\b", re.I)
+_PHRASE = re.compile(r"(?:[^.;\n]|(?<=\d)\.(?=\d))+")
 ABSENT_CLAIM_ID = str(uuid5(NAMESPACE_URL, "bonafides-stub-model/absent-claim"))
 FIXTURE_REVIEWER = "fixture-only-stub-route-not-a-qualification"
 
@@ -151,21 +153,28 @@ def _posting_only_term(projection: dict[str, object]) -> str:
 
 
 def _inflated(projection: dict[str, object]) -> tuple[str, str]:
-    """A claim and a strong-verb phrase cut from that claim's own visible evidence."""
+    """A claim and a genuinely stronger phrase cut from its own visible evidence."""
+    from bonafides.inflation import read as read_inflation
+
     visible = {
         str(item["id"]): str(item["text"])
         for item in _items(projection, "evidence")
         if "text" in item
     }
     for claim in _items(projection, "claims"):
-        opening = str(claim["text"]).split(" ", 1)[0].casefold()
+        claim_rank = read_inflation(str(claim["text"])).verb_rank
+        if claim_rank is None:
+            continue
         identifiers = claim["evidence_revision_ids"]
         assert isinstance(identifiers, list)
         # Withheld evidence carries no text to cut a phrase from.
         for source in (visible[str(item)] for item in identifiers if str(item) in visible):
             for match in _STRONG_VERB.finditer(source):
-                if match.group(1).casefold() != opening:
-                    phrase = match.group(0).strip()
+                extracted = _PHRASE.match(source, match.start())
+                assert extracted is not None
+                phrase = extracted.group(0).strip()
+                phrase_rank = read_inflation(phrase).verb_rank
+                if phrase_rank is not None and phrase_rank < claim_rank:
                     return str(claim["id"]), phrase[0].upper() + phrase[1:]
     raise StubFailure("no claim's visible evidence holds a stronger leadership verb")
 

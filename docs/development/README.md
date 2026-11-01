@@ -949,17 +949,19 @@ Ollama's mutable model tag does not provide an immutable per-inference weight id
 
 ### Deterministic stub route for tests and proofs
 
-`tools/stub_model.py` is a development tool outside the shipped image and request path; nothing enables it by default. `serve` (standard library only) answers the existing adapter's four requests and derives a pair, or a regenerated section when the projection has a `target`, from the projection it receives, selected by `--scenario` or a `--control-file` holding the scenario name: `valid`, `absent-claim`, `posting-only-skill`, `inflated`, `malformed-once`, `malformed` and `truncated`. `inflated` appends one factual block restating a claim with a stronger leadership or responsibility verb, cut from that claim's own visible evidence: containment passes, and only the inflation rules block it. Each chat request is logged with its call number and whether it carried a correction. `route` writes a `0600` route file for it whose `generate_documents` and `regenerate_section` receipts are reviewed by `fixture-only-stub-route-not-a-qualification`: it attests nothing about any real model.
+`tools/stub_model.py` is a development tool outside the shipped image and request path; nothing enables it by default. `serve` answers the existing adapter's four requests and derives a pair, or a regenerated section when the projection has a `target`, from the projection it receives, selected by `--scenario` or a `--control-file` holding the scenario name: `valid`, `absent-claim`, `posting-only-skill`, `inflated`, `malformed-once`, `malformed` and `truncated`. All scenarios use only the standard library except `inflated`, which requires the installed BonaFides package to reuse the checker's ownership ranking. `inflated` appends one factual block restating a claim with a strictly stronger leadership or responsibility verb, cut from that claim's own visible evidence: containment passes, and only the inflation rules block it. Extraction preserves decimal figures and considers later verbs even within a rejected phrase. If no visible phrase ranks above its claim, the scenario is unavailable rather than emitting an uninflated block. Each chat request is logged with its call number and whether it carried a correction. `route` writes a `0600` route file for it whose `generate_documents` and `regenerate_section` receipts are reviewed by `fixture-only-stub-route-not-a-qualification`: it attests nothing about any real model.
 
 ```sh
 uv run --frozen python -m tools.stub_model serve --host 127.0.0.1 --port 11434 --scenario valid
 uv run --frozen python -m tools.stub_model route --endpoint http://127.0.0.1:11434 --approved-ip 127.0.0.1 --output .secrets/local_model_route.json
 ```
 
-Backend tests drive the real adapter against the in-process stub (`tests/test_checked_generation.py`, `tests/test_checked_section_regeneration.py`). For a disposable Compose proof, use an explicitly selected disposable project, never another retained installation. Run the following from the repository root after that project's private network exists. The pinned Python image uses the same base as the application Dockerfile; the read-only bind mount supplies `tools/stub_model.py`, which is **not** included in the shipped application image. Binding to `0.0.0.0` inside this container is required for the API container to reach it; no host port is published.
+Backend tests drive the real adapter against the in-process stub (`tests/test_checked_generation.py`, `tests/test_checked_section_regeneration.py`). For a disposable Compose proof, use an explicitly selected disposable project, never another retained installation. Run the following from the repository root after that project's private network exists. Build and use the application's image so `inflated` can import the same installed inflation checker; the read-only bind mount supplies `tools/stub_model.py`, which is **not** included in the shipped application image. This container receives no application secrets or data volumes. Binding to `0.0.0.0` inside this container is required for the API container to reach it; no host port is published. The example starts `valid`; select `--scenario inflated` only with visible evidence containing a phrase ranked strictly above its cited claim.
 
 ```sh
 export COMPOSE_PROJECT_NAME=bonafides-stub-proof
+docker compose build api
+STUB_IMAGE="${BONAFIDES_IMAGE:-bonafides:local}"
 STUB_CONTAINER="${COMPOSE_PROJECT_NAME}-stub-model"
 STUB_NETWORK="${COMPOSE_PROJECT_NAME}_private"
 docker run --detach --name "$STUB_CONTAINER" \
@@ -968,7 +970,7 @@ docker run --detach --name "$STUB_CONTAINER" \
   --user 10001:10001 \
   --mount "type=bind,src=$PWD/tools/stub_model.py,dst=/stub_model.py,readonly" \
   --entrypoint python \
-  python:3.12.15-alpine3.24@sha256:b658b05ce9c4eb97ec6fc19424818a1f31993659c2b505a532f470e83807815d \
+  "$STUB_IMAGE" \
   /stub_model.py serve --host 0.0.0.0 --port 11434 --scenario valid
 STUB_IP=$(docker inspect --format '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' "$STUB_CONTAINER")
 uv run --frozen python -m tools.stub_model route \
@@ -982,7 +984,7 @@ Materialize the route with the preparation/opt-in steps above using this same ex
 docker rm --force "$STUB_CONTAINER"
 ```
 
-The container command was exercised on 2026-11-01 with the pinned image and read-only script mount, using an isolated temporary container on Docker's `bridge` network and a loopback-only published proof port. Actual host `curl --fail` calls to `/api/tags` and `/api/version` returned `bonafides-stub:fixture` and `bonafides-stub-1`; the temporary container was then removed. This checks container startup and HTTP reachability, not the Compose private-network integration or model qualification.
+The earlier standard-library-only container recipe was exercised on 2026-11-01 with the pinned Python base image and read-only script mount, using an isolated temporary container on Docker's `bridge` network and a loopback-only published proof port. Actual host `curl --fail` calls to `/api/tags` and `/api/version` returned `bonafides-stub:fixture` and `bonafides-stub-1`; the temporary container was then removed. That historical check covers startup and HTTP reachability of the earlier recipe, not the application-image command above, its `inflated` dependency, the Compose private-network integration or model qualification.
 
 The route-file materialization boundary was exercised in actual isolated Linux arm64 containers: private UID/mode/byte-preserving copy, source removal revoking the copy while required material remained unchanged, and refusal of world-readable, symlink and oversized route files. The first check-then-open implementation failed its removal probe when host-mount metadata checks preceded an `ENOENT` on open; the descriptor-bound `O_NOFOLLOW`/`fstat` repair passed all eight checks. This is deployment-file proof only, not a real inference or model-quality result.
 
@@ -1112,6 +1114,15 @@ openers, including irregular verbs such as “Built and ran”, remain flagged r
 silently becoming part of the subject.
 
 `uv run --frozen bonafides claims inflation-report <dir>` reads `honest.jsonl` and `inflated.jsonl` from a directory. Each line is one case: `evidence`, `claim` (literal text, or claim schema v1 fields pinned as their rendering), `statement`, and `kind` (`null` for an honest case, otherwise one of the four kinds). Every claim must be contained in its evidence. Each statement runs through the document checker as a factual block citing its claim. The report prints the honest false-block count and rate, then the block rate for each kind, and exits `1` when the false-block rate exceeds 5%. The committed synthetic sets are in `tests/fixtures/inflation/`. Their honest cases are corpus lines and their clause-trimmed prefixes, plus hand-written weaker-verb, sub-period, equal-metric and narrower-scope rephrasings. Every statement in both sets is contained in its evidence, so any block comes from the rules and not from containment.
+
+Inflation reading compares the strongest clause-initial action (including coordinated
+actions and leading `-ly` adverbs), not actions inside relative clauses. Every numeric
+unit accepts K/M/B and thousand/million/billion; comparisons normalize magnitudes and
+retain units and clause-attached rates. Years count as dates only in date contexts,
+and open-ended `since`/`from` periods extend to the present. When claim text has no
+period, pinned start/end dates supply its evidence period. Scope matches qualifying
+phrases such as `company-wide` and `globally`, not entity nouns such as `company` or
+`Global Payments`.
 
 The unchanged 305-bullet synthetic corpus includes its 64-bullet held-out block. The fixed
 general action inventory was committed before this re-measurement; no further tuning follows.

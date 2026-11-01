@@ -32,6 +32,8 @@ from test_sources import catalog as catalog
 from test_suitability import _after_model_send
 
 from bonafides import local_model, model_context, suitability
+from bonafides.claims import contains_statement
+from bonafides.inflation import inflation_kinds
 from bonafides.worker import Worker
 from bonafides.workflows import Claim
 from tools import stub_model
@@ -100,6 +102,77 @@ def _factual_blocks(document: dict[str, Any]) -> list[dict[str, Any]]:
         for block in section["blocks"]
         if block["claim_kind"] == "factual"
     ]
+
+
+@pytest.mark.parametrize(
+    ("claim_text", "evidence_text", "expected"),
+    [
+        (
+            "Assisted the rollout",
+            "Led the rollout, reducing latency by 2.5%. Managed the project.",
+            "Led the rollout, reducing latency by 2.5%",
+        ),
+        (
+            "Managed the rollout",
+            "Managed the rollout with a team that led the migration.",
+            "Led the migration",
+        ),
+        (
+            "Owned the rollout",
+            "Managed the rollout with a team that led the migration.",
+            "Led the migration",
+        ),
+        (
+            "Was responsible for the rollout",
+            "Led the rollout; managed the project.",
+            "Led the rollout",
+        ),
+        (
+            "Assisted the rollout",
+            "LED the rollout\nManaged the project.",
+            "LED the rollout",
+        ),
+    ],
+)
+def test_inflated_stub_selects_a_contained_genuinely_stronger_phrase(
+    claim_text: str, evidence_text: str, expected: str
+) -> None:
+    projection: dict[str, object] = {
+        "posting": {},
+        "claims": [{"id": "claim-1", "text": claim_text, "evidence_revision_ids": ["evidence-1"]}],
+        "evidence": [{"id": "evidence-1", "text": evidence_text}],
+    }
+    response = stub_model.respond(
+        "inflated",
+        {"messages": [{"content": ""}, {"content": json.dumps(projection)}]},
+    )
+    message = cast(dict[str, str], response["message"])
+    output = json.loads(message["content"])
+    block = output["documents"][0]["sections"][0]["blocks"][-1]
+    assert block["claim_id"] == "claim-1"
+    assert block["text"] == expected
+    assert contains_statement(block["text"], evidence_text)
+    assert inflation_kinds(block["text"], claim_text) == ["stronger_verb"]
+
+
+@pytest.mark.parametrize(
+    ("claim_text", "evidence_text"),
+    [
+        ("Led the migration", "Led the migration. Managed the project."),
+        ("Managed the rollout", "Managed the rollout."),
+        ("Managed and led the migration", "Managed and led the migration. Owned the project."),
+        ("Migration project", "Led the migration."),
+    ],
+)
+def test_inflated_stub_refuses_equal_weaker_or_unranked_claim_verbs(
+    claim_text: str, evidence_text: str
+) -> None:
+    projection: dict[str, object] = {
+        "claims": [{"id": "claim-1", "text": claim_text, "evidence_revision_ids": ["evidence-1"]}],
+        "evidence": [{"id": "evidence-1", "text": evidence_text}],
+    }
+    with pytest.raises(stub_model.StubFailure, match="stronger leadership verb"):
+        stub_model._inflated(projection)
 
 
 @pytest.mark.postgres
