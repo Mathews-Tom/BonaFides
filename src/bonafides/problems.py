@@ -23,6 +23,12 @@ def problem_response(
         "code": problem.code,
         "request_id": str(getattr(request.state, "request_id", "")),
     }
+    if problem.code == "evidence_in_model_use":
+        body["title"] = "Owner evidence is in use by a model request"
+        body["detail"] = (
+            "A model request is using this owner's evidence. Wait for the request to finish "
+            "before changing evidence, claim links, or the profile."
+        )
     if problem.detail is not None:
         body["detail"] = problem.detail
     if fields is not None:

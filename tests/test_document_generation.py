@@ -24,7 +24,15 @@ from test_identity import identity as identity
 from test_local_model import fixture_server, qualified_route, response_body, route_data, route_file
 from test_sources import SourceContext
 from test_sources import catalog as catalog
-from test_suitability import SOURCE, FixtureModel, _profile, _requirement, _route, _write
+from test_suitability import (
+    SOURCE,
+    FixtureModel,
+    _after_model_send,
+    _profile,
+    _requirement,
+    _route,
+    _write,
+)
 from test_tracking import _application, _get
 
 from bonafides import document_generation as generation
@@ -686,7 +694,9 @@ def test_pair_late_output_preserves_existing_pair(
             )
             assert changed.status_code == 200
 
-    model = FixtureModel(_candidate(preview), during=intervene)
+    if race == "profile":
+        _after_model_send(monkeypatch, intervene)
+    model = FixtureModel(_candidate(preview), during=None if race == "profile" else intervene)
     with pytest.raises((Problem, DBAPIError)):
         suitability.execute_model(catalog.runtime, catalog.identity.settings, task, Event(), model)
     with catalog.runtime.transaction() as conn:

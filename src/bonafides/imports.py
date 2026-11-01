@@ -32,11 +32,19 @@ from bonafides.import_parser import (
     ImportParserClient,
     ParsedImport,
 )
+from bonafides.model_context import lock_evidence_write
 from bonafides.problems import Problem
 from bonafides.profile_entries import ClaimKind, ClaimPayload, StructuredClaimPayload, _snapshot
 from bonafides.profiles import MAX_HEADLINE_LENGTH, _save, content_hash
 from bonafides.storage import BlobStore
-from bonafides.workflows import Claim, append_attempt_event, assert_fence, enqueue, publish
+from bonafides.workflows import (
+    Claim,
+    append_attempt_event,
+    assert_fence,
+    enqueue,
+    heartbeat,
+    publish,
+)
 
 MAX_BATCHES = 100
 MAX_IMPORT_BYTES = 64 * 1024 * 1024
@@ -1195,17 +1203,35 @@ def execute_import(db: Database, settings: Settings, task: Claim, interrupted: E
     if interrupted.is_set():
         raise ImportFailure("import_interrupted")
     if batch["review"] is not None:
-        with db.transaction() as conn:
-            # Match owner commands before taking the workflow/profile locks.
-            lock_installation(conn)
-            conn.execute(
-                text(
-                    "SELECT owner_id FROM bonafides.owner_settings WHERE owner_id=:owner FOR UPDATE"
-                ),
-                {"owner": task.owner_id},
-            )
-            publish(conn, task, lambda active: merge_reviewed(active, task))
-        return
+        delay = 0.25
+        while True:
+            if interrupted.is_set():
+                raise ImportFailure("import_interrupted")
+            try:
+                with db.transaction() as conn:
+                    lock_evidence_write(conn, task.owner_id)
+                    # Match owner commands before taking the workflow/profile locks.
+                    lock_installation(conn)
+                    conn.execute(
+                        text(
+                            "SELECT owner_id FROM bonafides.owner_settings WHERE owner_id=:owner FOR UPDATE"
+                        ),
+                        {"owner": task.owner_id},
+                    )
+                    publish(conn, task, lambda active: merge_reviewed(active, task))
+                return
+            except Problem as exc:
+                if exc.code != "evidence_in_model_use":
+                    raise
+            # Send contention is not a failed import attempt. Roll back the
+            # writer transaction before renewing/waiting, retaining only this
+            # claim until its existing cancellation, lease and deadline fences.
+            with db.transaction() as conn:
+                if not heartbeat(conn, task):
+                    raise ImportFailure("import_interrupted")
+            if interrupted.wait(delay):
+                raise ImportFailure("import_interrupted")
+            delay = min(delay * 2, 2.0)
     # Three extraction attempts leave one of the fixed four total attempts for merge.
     # Approval never resets attempts, provider counters or the total cap.
     if task.attempt > 3:
@@ -1378,6 +1404,7 @@ def build_router(db: Database, settings: Settings) -> APIRouter:
         idempotency_key: Annotated[str | None, Header()] = None,
     ) -> JSONResponse:
         with db.transaction() as conn:
+            lock_evidence_write(conn, owner.id)
             profile_id = conn.execute(
                 text("SELECT id FROM bonafides.profiles WHERE owner_id=:owner"), {"owner": owner.id}
             ).scalar_one()

@@ -32,6 +32,7 @@ from bonafides.evidence_provenance import (
     InitialEvidenceProvenance,
     provenance,
 )
+from bonafides.model_context import lock_evidence_write
 from bonafides.problems import Problem
 from bonafides.profiles import ProfileSnapshot, _save, canonical, content_hash
 
@@ -405,7 +406,7 @@ def write_evidence(
 def append_classification(
     conn: Connection, owner_id: UUID, entity_id: UUID, body: EvidenceClassification
 ) -> None:
-    # Callers hold the record/profile write lock, so sequence allocation is serialized.
+    # Callers hold the owner evidence advisory lock and record/profile write locks.
     conn.execute(
         text("""INSERT INTO bonafides.evidence_classification_changes
         (owner_id,evidence_id,sequence,privacy_class,employer_owned)
@@ -674,6 +675,7 @@ def build_entry_router(db: Database) -> APIRouter:
         effect: Callable[[Connection], dict[str, object]],
     ) -> dict[str, object]:
         with db.transaction() as conn:
+            lock_evidence_write(conn, owner_id)
             profile_id = conn.execute(
                 text("SELECT id FROM bonafides.profiles WHERE owner_id=:owner"), {"owner": owner_id}
             ).scalar_one()

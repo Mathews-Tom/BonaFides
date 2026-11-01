@@ -18,7 +18,7 @@ from pydantic import Field, ValidationError, field_validator, model_validator
 from sqlalchemy import Connection, text
 from sqlalchemy.engine import RowMapping
 
-from bonafides import document_defaults, documents, local_model, suitability
+from bonafides import document_defaults, documents, local_model, model_context, suitability
 from bonafides.auth import Owner, require_owner
 from bonafides.commands import append_outbox, canonical_json, command, lock_installation
 from bonafides.config import Settings
@@ -57,7 +57,7 @@ SAFE_LANGUAGE = {
 LIMITS = {
     "automatic_check": "Exact accepted wording and explicit safe language only; non-exact paraphrases are unestablished, not automatically proved false.",
     "human_review": "Review every factual block against its sources. Owner assertions are not independently verified. Review cannot waive unsupported content.",
-    "privacy": "Dedicated identity/contact and private tracking data are excluded from inference. Professional free text may still contain personal data.",
+    "privacy": "Dedicated identity/contact data, private tracking data and the content of confidential or employer-owned evidence are excluded from inference. Professional free text may still contain personal data.",
 }
 
 
@@ -151,7 +151,8 @@ def _fact_data(conn: Connection, owner: UUID, revision: UUID) -> list[dict[str, 
             raise Problem(409, "profile_evidence_unavailable")
         found = conn.execute(
             text("""SELECT e.id FROM bonafides.evidence_records e JOIN bonafides.evidence_revisions r
-            ON r.owner_id=e.owner_id AND r.evidence_id=e.id WHERE e.owner_id=:owner AND r.id=:id
+            ON r.owner_id=e.owner_id AND r.evidence_id=e.id
+            WHERE e.owner_id=:owner AND r.id=:id
             AND e.archived_at IS NULL AND e.current_revision_id=r.id FOR SHARE OF e"""),
             {"owner": owner, "id": fact.evidence_id},
         ).first()
@@ -336,21 +337,7 @@ def generation_plan(
     _, requirements = suitability._reviewed_requirements(conn, owner, posting, current["id"])
     profile = _profile(conn, owner, revision)
     facts = _fact_data(conn, owner, revision)
-    claims: dict[str, dict[str, object]] = {}
-    evidence: dict[str, dict[str, object]] = {}
-    for fact in facts:
-        claim_id, evidence_id = str(fact["claim_revision_id"]), str(fact["evidence_revision_id"])
-        claim = claims.setdefault(
-            claim_id,
-            {
-                "id": claim_id,
-                "text": fact["claim_text"],
-                "structured_fields": fact["structured_fields"],
-                "evidence_revision_ids": [],
-            },
-        )
-        cast(list[str], claim["evidence_revision_ids"]).append(evidence_id)
-        evidence[evidence_id] = {"id": evidence_id, "text": fact["evidence_text"]}
+    claims, evidence = model_context.professional_context(conn, owner, facts)
     projection = {
         "posting": {
             "title": posting["title"],
@@ -366,8 +353,8 @@ def generation_plan(
             }
             for item in requirements
         ],
-        "claims": list(claims.values()),
-        "evidence": list(evidence.values()),
+        "claims": claims,
+        "evidence": evidence,
         "tone": tone,
         "language": language,
     }

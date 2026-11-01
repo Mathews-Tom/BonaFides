@@ -11,6 +11,7 @@ import hashlib
 import re
 import unicodedata
 from collections.abc import Sequence
+from contextlib import nullcontext
 from dataclasses import dataclass
 from decimal import Decimal
 from threading import Event
@@ -24,7 +25,7 @@ from sqlalchemy import Connection, text
 from sqlalchemy.engine import RowMapping
 from sqlalchemy.exc import DBAPIError
 
-from bonafides import local_model
+from bonafides import local_model, model_context
 from bonafides.auth import Owner, StrictModel, audit, require_owner
 from bonafides.claims import claim_text as rendered_claim_text
 from bonafides.claims import grounded, structured_claim
@@ -642,6 +643,14 @@ class ProfileProjection:
     claims: dict[UUID, dict[str, object]]
     evidence: dict[UUID, dict[str, object]]
     links: dict[UUID, set[UUID]]
+    withheld: frozenset[UUID]
+
+    def model_evidence(self) -> list[dict[str, object]]:
+        """Evidence items as they enter model context; the checker keeps reading ``evidence``."""
+        return [
+            model_context.evidence_item(str(item["id"]), str(item["text"]), key in self.withheld)
+            for key, item in self.evidence.items()
+        ]
 
 
 def _profile_projection(conn: Connection, owner_id: UUID, revision_id: UUID) -> ProfileProjection:
@@ -716,7 +725,8 @@ def _profile_projection(conn: Connection, owner_id: UUID, revision_id: UUID) -> 
             "evidence_revision_ids": sorted(str(item) for item in permitted),
         }
         links[identifier] = permitted
-    return ProfileProjection(claims, evidence, links)
+    withheld = model_context.withheld_evidence(conn, owner_id, evidence)
+    return ProfileProjection(claims, evidence, links, frozenset(withheld))
 
 
 def _reviewed_requirements(
@@ -1091,7 +1101,7 @@ def _prepare_workflow(
                 "context": {
                     "requirements": [item.model_dump(mode="json") for item in requirements],
                     "claims": list(profile.claims.values()),
-                    "evidence": list(profile.evidence.values()),
+                    "evidence": profile.model_evidence(),
                 },
             }
         )
@@ -1129,9 +1139,10 @@ def _check_workflow_context(
             conn, task.owner_id, UUID(str(task.input["profile_revision_id"]))
         )
         context = cast(dict[str, object], task.input["context"])
-        if context.get("claims") != list(profile.claims.values()) or context.get(
-            "evidence"
-        ) != list(profile.evidence.values()):
+        if (
+            context.get("claims") != list(profile.claims.values())
+            or context.get("evidence") != profile.model_evidence()
+        ):
             raise Problem(409, "stale_profile_evidence")
         return profile
     return None
@@ -1221,7 +1232,7 @@ def _execute_reserved_model(
     interrupted: Event,
     client: ModelClient | None = None,
 ) -> None:
-    """No DB transaction spans network I/O. A durable reservation survives cancellation/crash."""
+    """A durable reservation survives cancellation; an owner lock fences evidence egress."""
     stage = str(task.input["stage"])
     with db.transaction() as conn:
         route = _route(conn, task.owner_id, settings, stage)
@@ -1240,22 +1251,27 @@ def _execute_reserved_model(
         if run_id is None and interrupted.wait(0.25):
             raise local_model.ModelFailure("model_interrupted", retryable=False)
     try:
-        # Re-read private route immediately before transmission, not just API enqueue.
-        with db.transaction() as conn:
-            active_route = _route(conn, task.owner_id, settings, stage)
-            _check_workflow_context(conn, task, settings)
-        if active_route.identity() != task.input.get("route_identity"):
-            raise Problem(409, "stale_model_route")
-        if interrupted.is_set():
-            raise local_model.ModelFailure("model_interrupted", retryable=False)
-        result = (
-            client or local_model.OllamaClient(active_route, ProviderExecution(db, task, run_id))
-        ).call(
-            stage,
-            cast(dict[str, object], task.input["context"]),
-            str(task.input["prompt_version"]),
-            interrupted,
+        context = cast(dict[str, object], task.input["context"])
+        # The dedicated session retains only the shared advisory lock across HTTP.
+        # Commit validation's owner/profile/workflow locks separately so heartbeats,
+        # cancellation and lifecycle.started() retain their existing fences.
+        sending = (
+            nullcontext()
+            if stage == "extract_posting"
+            else model_context.model_send_lock(db, task.owner_id)
         )
+        with sending:
+            with db.transaction() as conn:
+                active_route = _route(conn, task.owner_id, settings, stage)
+                _check_workflow_context(conn, task, settings)
+            if active_route.identity() != task.input.get("route_identity"):
+                raise Problem(409, "stale_model_route")
+            if interrupted.is_set():
+                raise local_model.ModelFailure("model_interrupted", retryable=False)
+            result = (
+                client
+                or local_model.OllamaClient(active_route, ProviderExecution(db, task, run_id))
+            ).call(stage, context, str(task.input["prompt_version"]), interrupted)
         if interrupted.is_set():
             raise local_model.ModelFailure("model_interrupted", retryable=False)
         try:
