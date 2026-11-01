@@ -10,9 +10,11 @@
     "tests/test_identity.py",
     "tests/test_model_context.py",
     "tests/test_portable_import.py",
-    "tests/test_render_safety.py"
+    "tests/test_render_safety.py",
+    "tests/test_statement_check.py"
   ],
   "2": [
+    "tests/test_checked_generation.py",
     "tests/test_config.py",
     "tests/test_credential_rotation.py",
     "tests/test_installation_open.py",

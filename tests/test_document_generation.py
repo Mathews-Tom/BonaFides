@@ -169,16 +169,10 @@ def _candidate(preview: dict[str, Any]) -> dict[str, object]:
     fact = preview["model_projection"]["claims"][0]
 
     def block(key: str) -> dict[str, object]:
-        return {
-            "block_key": key,
-            "text": fact["text"],
-            "claim_kind": "factual",
-            "claim_revision_ids": [fact["id"]],
-            "evidence_revision_ids": fact["evidence_revision_ids"],
-        }
+        return {"block_key": key, "kind": "factual", "text": fact["text"], "claim_id": fact["id"]}
 
     return {
-        "schema_version": "1",
+        "schema_version": "2",
         "stage": "generate_documents",
         "documents": [
             {"kind": "resume", "sections": [{"heading": "Skills", "blocks": [block("b-1")]}]},
@@ -544,7 +538,7 @@ def test_context_exact_projection_route_gate_and_atomic_pair_provenance(
         "missing_half",
         "duplicate_kind",
         "duplicate_key",
-        "foreign_claim",
+        "connective_cites_claim",
         "foreign_gap",
         "truncated",
     ],
@@ -563,8 +557,8 @@ def test_invalid_pair_publishes_neither_document_and_blocks_route(
         candidate["documents"][1]["kind"] = "resume"
     elif failure == "duplicate_key":
         candidate["documents"][1]["sections"][0]["blocks"][0]["block_key"] = "b-1"
-    elif failure == "foreign_claim":
-        candidate["documents"][1]["sections"][0]["blocks"][0]["claim_revision_ids"] = [str(uuid4())]
+    elif failure == "connective_cites_claim":
+        candidate["documents"][1]["sections"][0]["blocks"][0]["kind"] = "connective"
     elif failure == "foreign_gap":
         candidate["gaps"] = [
             {"requirement_key": "req-999", "question": "What evidence supports this?"}
@@ -573,12 +567,20 @@ def test_invalid_pair_publishes_neither_document_and_blocks_route(
         candidate,
         failure=local_model.ModelFailure("model_incomplete") if failure == "truncated" else None,
     )
-    with pytest.raises((Problem, local_model.ModelFailure)):
+    with pytest.raises((Problem, local_model.ModelFailure)) as raised:
         suitability.execute_model(catalog.runtime, catalog.identity.settings, task, Event(), model)
+    # A schema mismatch gets exactly one corrective call; truncation gets none.
+    expected = (
+        "model_incomplete" if failure == "truncated" else "model_output_invalid_after_correction"
+    )
+    assert isinstance(raised.value, (Problem, local_model.ModelFailure))
+    assert raised.value.code == expected
+    assert model.calls == (1 if failure == "truncated" else 2)
+    assert len(model.corrections) == model.calls - 1
     records = _pair_documents(catalog, application)
     assert records["items"] == [] and records["generation_route"]["status"] == "unqualified"
     with catalog.runtime.transaction() as conn:
-        run = (
+        runs = (
             conn.execute(
                 text(
                     "SELECT status,usage_status,input_tokens,output_tokens FROM bonafides.model_runs WHERE owner_id=:owner AND workflow_run_id=:id"
@@ -586,20 +588,35 @@ def test_invalid_pair_publishes_neither_document_and_blocks_route(
                 {"owner": catalog.owner_id, "id": task.id},
             )
             .mappings()
-            .one()
+            .all()
         )
-        assert (
-            run["status"] == "unknown_usage"
-            and run["usage_status"] == "unknown"
-            and run["input_tokens"] is None
-            and run["output_tokens"] is None
-        )
+    assert len(runs) == model.calls
+    assert all(
+        run["status"] == "unknown_usage"
+        and run["usage_status"] == "unknown"
+        and run["input_tokens"] is None
+        and run["output_tokens"] is None
+        for run in runs
+    )
 
 
 @pytest.mark.postgres
-@pytest.mark.parametrize("failure", ["metric", "heading", "intent"])
+@pytest.mark.parametrize(
+    ("failure", "code"),
+    [
+        ("metric", "statement_not_in_claim_evidence"),
+        ("heading", "unestablished_heading"),
+        ("intent", "connective_not_declared"),
+        ("absent_claim", "claim_not_in_profile"),
+        ("uncited", "uncited_factual_statement"),
+    ],
+)
 def test_shape_valid_unsupported_pair_is_visible_but_unapprovable(
-    catalog: SourceContext, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, failure: str
+    catalog: SourceContext,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    failure: str,
+    code: str,
 ) -> None:
     profile, application = _setup_pair(catalog)
     _route(monkeypatch, tmp_path)
@@ -607,26 +624,43 @@ def test_shape_valid_unsupported_pair_is_visible_but_unapprovable(
     task = _queue_pair(catalog, preview)
     candidate = cast(dict[str, Any], _candidate(preview))
     letter = candidate["documents"][1]["sections"][0]
+    block = letter["blocks"][0]
     if failure == "heading":
         letter["heading"] = "Senior Kubernetes leader"
+    elif failure == "absent_claim":
+        block["claim_id"] = str(uuid4())
+    elif failure == "uncited":
+        block["claim_id"] = None
     else:
-        letter["blocks"][0]["text"] = "Led 50 Kubernetes engineers."
+        block["text"] = "Led 50 Kubernetes engineers."
         if failure == "intent":
-            letter["blocks"][0]["claim_kind"] = "intent"
-            letter["blocks"][0]["claim_revision_ids"] = []
-            letter["blocks"][0]["evidence_revision_ids"] = []
-    suitability.execute_model(
-        catalog.runtime, catalog.identity.settings, task, Event(), FixtureModel(candidate)
-    )
+            block.update({"kind": "connective", "claim_id": None})
+    model = FixtureModel(candidate)
+    suitability.execute_model(catalog.runtime, catalog.identity.settings, task, Event(), model)
+    # A per-statement blocker is not a schema mismatch: no corrective call is made.
+    assert model.calls == 1 and model.corrections == []
     records = _pair_documents(catalog, application)["items"]
     assert len(records) == 2
     letter_record = next(item for item in records if item["kind"] == "cover_letter")
-    assert (
-        letter_record["unsupported_claims"]
-        and letter_record["current_revision"]["validation_issues"]
-    )
+    issues = letter_record["current_revision"]["validation_issues"]
+    statement = letter["heading"] if failure == "heading" else block["text"]
+    assert {"code": code, "statement": statement} in [
+        {"code": issue["code"], "statement": issue["statement"]} for issue in issues
+    ]
+    assert letter_record["unsupported_claims"]
     assert _review(catalog, letter_record).status_code == 409
     assert not _document(catalog, letter_record["id"])["reviewed"]
+    revision = letter_record["current_revision"]
+    rendered = catalog.client.post(
+        f"/api/v1/documents/{letter_record['id']}/renders",
+        json={
+            "revision_id": revision["id"],
+            "content_sha256": revision["content_sha256"],
+            "format": "pdf",
+        },
+        headers=catalog.headers(letter_record["version"]),
+    )
+    assert rendered.status_code == 409 and rendered.json()["code"] == "unsupported_claims"
 
 
 @pytest.mark.postgres
