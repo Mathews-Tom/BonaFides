@@ -323,6 +323,21 @@ describe('review, export and generation boundaries', () => {
     expect(request.mock.calls.some(call => /stage|send|generation/.test(call[0]))).toBe(false);
   });
 
+  it('names each blocked statement with a plain reason and shows the claim linked to every factual sentence', async () => {
+    const fabricated = 'Hands-on experience with Kubernetes.';
+    const body = { ...saved.current_revision.body, sections: [saved.current_revision.body.sections[0]!, { key: 'skills', heading: 'Skills', blocks: [{ block_key: 'b-2', text: fabricated, claim_kind: 'factual' as const, claim_revision_ids: ['claim-absent'], evidence_revision_ids: [] }] }] };
+    const blocked = { ...saved, unsupported_claims: ['/sections/1/blocks/0'], current_revision: { ...saved.current_revision, body, validation_issues: [{ path: '/sections/1/blocks/0', code: 'claim_not_in_profile', statement: fabricated }] } };
+    const { api } = fixture(blocked, async () => { throw new ApiError(404, 'not_found'); });
+    render(<Documents api={api} profile={profile} />); await ready();
+    const blocker = screen.getByText('Export blocked: unresolved factual or source issues.').closest('div')!;
+    expect(blocker).toHaveTextContent('It cites a claim that is not in your profile.');
+    expect(blocker).toHaveTextContent(`Statement: “${fabricated}”`.replace(/[“”]/g, ''));
+    expect(screen.getByText('Linked claim: “Maintained Linux service checks.”')).toBeInTheDocument();
+    expect(screen.getByText('Linked claim: a claim that is not in your profile')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Accept this exact revision' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Render reviewed PDF' })).toBeDisabled();
+  });
+
   it('keeps unsupported manual text editable but blocks review/export even if a server review flag is true', async () => {
     const user = userEvent.setup(); const blocked = { ...saved, reviewed: true, unsupported_claims: ['/sections/0/blocks/0'], current_revision: { ...saved.current_revision, validation_issues: [{ path: '/sections/0/blocks/0', code: 'unestablished_factual_text' }] } };
     const { api, request } = fixture(blocked, async (path, method, body) => {
@@ -465,6 +480,27 @@ describe('review, export and generation boundaries', () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it('shows the safe reason of a generation that failed after its corrective retry', async () => {
+    const user = userEvent.setup();
+    const qualified = { status: 'qualified' as const, reason: 'Synthetic fixture route only', identity: { qualification_scope: 'synthetic_conformance' } };
+    const { api } = fixture(saved, async (path, method) => {
+      if (path === '/applications') return { items: [application], next_cursor: null, query_elapsed_ms: 1, as_of: application.updated_at };
+      if (path === '/applications/application-1/documents') return { ...pair, generation_route: qualified };
+      if (path.startsWith('/applications/application-1/generation-context?')) return { ...context, generation_route: qualified };
+      if (path === '/applications/application-1/generation' && method === 'POST') return { ...workflow, mode: 'tailored_ai' };
+      if (path === '/workflows/compose-1') return { ...workflow, mode: 'tailored_ai', state: 'permanent_failure', last_error_code: 'model_output_invalid_after_correction' };
+      throw new ApiError(404, 'not_found');
+    });
+    render(<Documents api={api} profile={profile} />); await ready();
+    await user.click(screen.getByRole('button', { name: 'Tracked application documents' }));
+    await user.click(screen.getByRole('button', { name: 'Reload tracked applications' }));
+    await user.selectOptions(await screen.findByLabelText('Tracked application'), 'application-1');
+    await user.click(await screen.findByRole('button', { name: 'Preview reviewed generation context' }));
+    await user.click(await screen.findByRole('checkbox', { name: /I reviewed this exact projection/ }));
+    await user.click(screen.getByRole('button', { name: 'Generate résumé and cover letter pair' }));
+    expect(await screen.findByText(/even after one corrective retry\. No documents or application changes were created\. Failure code: model_output_invalid_after_correction\./, {}, { timeout: 4000 })).toBeInTheDocument();
   });
 
   it('does not replace saved documents when a completed task returns only half the requested pair', async () => {

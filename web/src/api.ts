@@ -133,7 +133,7 @@ export interface DocumentProvenance {
   facts?: DocumentFact[]; frame?: Record<string, unknown>; mode?: string; schema_version?: number | string;
   model_run?: Record<string, unknown> | null; [key: string]: unknown;
 }
-export interface DocumentIssue { path: string; code: string }
+export interface DocumentIssue { path: string; code: string; statement?: string }
 export interface DocumentRevision {
   id: string; revision_no: number; body: DocumentBody; content_sha256: string; profile_revision_id: string;
   template_version: string; origin: string; created_at: string; reason?: string;
