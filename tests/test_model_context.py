@@ -52,9 +52,8 @@ from bonafides import imports, local_model, model_context, profile_entries, suit
 from bonafides.commands import canonical_json
 from bonafides.db import Database
 from bonafides.import_parser import ImportParserClient, ParsedImport
-from bonafides.problems import Problem
 from bonafides.worker import Worker
-from bonafides.workflows import assert_fence, claim, heartbeat
+from bonafides.workflows import Claim, assert_fence, claim, heartbeat
 
 CLAIM = "Kept the synthetic payroll batch inside its nightly window"
 WITHHELD_MARKER = "SECRET-EMPLOYER-ROADMAP-7Q"
@@ -867,18 +866,36 @@ def test_other_owner_evidence_writes_are_unaffected_by_an_active_shared_send(
 
 
 @pytest.mark.postgres
-def test_approved_import_worker_refuses_during_owner_send_and_merges_after_release(
+def test_approved_import_worker_waits_during_owner_send_without_consuming_an_attempt(
     catalog: SourceContext, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     _profile(catalog)
     importing, batch = _staged_owner_lock_import(catalog, monkeypatch)
     approved = importing.approve(batch)
     assert approved.status_code == 202, approved.text
+    worker = Worker(catalog.runtime, catalog.identity.settings)
     with catalog.runtime.transaction() as conn:
-        task = claim(conn, uuid4())
+        # Exercise the final available merge attempt, not a workflow with spare retries.
+        conn.execute(
+            text("""UPDATE bonafides.workflow_runs SET attempt=max_attempts-1
+            WHERE owner_id=:owner AND id=:id AND state='pending'"""),
+            {"owner": catalog.owner_id, "id": UUID(approved.json()["workflow_id"])},
+        )
+        task = claim(conn, worker.id)
     assert task is not None and str(task.id) == approved.json()["workflow_id"]
+    assert task.attempt == 4
     before = _evidence_write_state(catalog)
-    entered, released = Event(), Event()
+    entered, released, retried = Event(), Event(), Event()
+    tries = 0
+
+    def observe_lock(conn: Connection, owner: UUID) -> None:
+        nonlocal tries
+        tries += 1
+        if tries >= 2:
+            retried.set()
+        model_context.lock_evidence_write(conn, owner)
+
+    monkeypatch.setattr(imports, "lock_evidence_write", observe_lock)
 
     def block() -> None:
         entered.set()
@@ -892,26 +909,88 @@ def test_approved_import_worker_refuses_during_owner_send_and_merges_after_relea
             sending = executor.submit(_send_with_owner_lock, catalog, catalog.owner_id, route)
             try:
                 assert entered.wait(10), "owner send must reach HTTP before the merge worker"
-                with pytest.raises(Problem) as refused:
-                    executor.submit(
-                        imports.execute_import,
-                        catalog.runtime,
-                        catalog.identity.settings,
-                        task,
-                        Event(),
-                    ).result(timeout=5)
-                assert refused.value.status == 409
-                assert refused.value.code == "evidence_in_model_use"
+                merging = executor.submit(worker._execute_active, task, Event())
+                assert retried.wait(10), "worker must retry contention within its existing claim"
+                assert not merging.done()
                 assert _evidence_write_state(catalog) == before
+                with catalog.runtime.transaction() as conn:
+                    waiting = (
+                        conn.execute(
+                            text("""SELECT state,attempt,last_error_code,last_heartbeat_at,
+                        lease_expires_at>clock_timestamp() AS lease_valid
+                        FROM bonafides.workflow_runs WHERE owner_id=:owner AND id=:id"""),
+                            {"owner": catalog.owner_id, "id": task.id},
+                        )
+                        .mappings()
+                        .one()
+                    )
+                assert waiting["state"] == "running"
+                assert waiting["attempt"] == task.attempt
+                assert waiting["last_error_code"] is None
+                assert waiting["last_heartbeat_at"] is not None and waiting["lease_valid"]
                 assert not sending.done()
             finally:
                 released.set()
             sending.result(timeout=10)
+            merging.result(timeout=10)
         assert len(requests) == 1
-    # The failed writing transaction did not consume the claim or its reviewed input.
-    imports.execute_import(catalog.runtime, catalog.identity.settings, task, Event())
-    assert catalog.workflow(task.id)["state"] == "succeeded"
+    finished = catalog.workflow(task.id)
+    assert finished["state"] == "succeeded"
+    assert finished["attempt"] == task.attempt
     assert importing.batch(batch["id"])["state"] == "succeeded"
+    after = _evidence_write_state(catalog)
+    for table in ("profile_revisions", "evidence_records", "evidence_revisions"):
+        assert len(after[table]) == len(before[table]) + 1
+    # A repeated obsolete execution cannot duplicate the approved merge.
+    worker._execute_active(task, Event())
+    assert _evidence_write_state(catalog) == after
+
+
+@pytest.mark.postgres
+@pytest.mark.parametrize("stop", ["interrupted", "cancelled", "lease", "deadline"])
+def test_waiting_import_merge_stops_at_existing_execution_fences(
+    catalog: SourceContext, monkeypatch: pytest.MonkeyPatch, stop: str
+) -> None:
+    _profile(catalog)
+    importing, batch = _staged_owner_lock_import(catalog, monkeypatch)
+    approved = importing.approve(batch)
+    assert approved.status_code == 202, approved.text
+    worker = Worker(catalog.runtime, catalog.identity.settings)
+    with catalog.runtime.transaction() as conn:
+        task = claim(conn, worker.id)
+    assert task is not None and str(task.id) == approved.json()["workflow_id"]
+    before = _evidence_write_state(catalog)
+    interrupted = Event()
+    heartbeats = 0
+
+    def stop_wait(conn: Connection, active: Claim) -> bool:
+        nonlocal heartbeats
+        heartbeats += 1
+        if stop == "interrupted":
+            interrupted.set()
+        else:
+            updates = {
+                "cancelled": "cancel_requested_at=clock_timestamp()",
+                "lease": "lease_expires_at=clock_timestamp()-interval '1 second'",
+                "deadline": "deadline_at=clock_timestamp()-interval '1 second'",
+            }
+            conn.execute(
+                text(f"""UPDATE bonafides.workflow_runs SET {updates[stop]}
+                WHERE owner_id=:owner AND id=:id"""),
+                {"owner": active.owner_id, "id": active.id},
+            )
+        return heartbeat(conn, active)
+
+    monkeypatch.setattr(imports, "heartbeat", stop_wait)
+    with model_context.model_send_lock(catalog.runtime, catalog.owner_id):
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            executor.submit(worker._execute_active, task, interrupted).result(timeout=5)
+        assert _evidence_write_state(catalog) == before
+        assert heartbeats == 1
+        workflow = catalog.workflow(task.id)
+        assert workflow["state"] == "running"
+        assert workflow["attempt"] == task.attempt
+        assert workflow["last_error_code"] is None
 
 
 @pytest.mark.postgres
