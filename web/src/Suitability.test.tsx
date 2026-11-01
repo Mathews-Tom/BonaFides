@@ -86,6 +86,29 @@ function server() {
 afterEach(() => { vi.useRealTimers(); vi.restoreAllMocks(); window.history.replaceState(null, '', '/'); });
 
 describe('reviewed suitability boundaries', () => {
+  it('displays evidence provenance in selected claims, selected evidence, citation choices and pinned history', async () => {
+    const { api, state } = server();
+    state.view.latest_assessment = assessmentSnapshot();
+    render(<Suitability api={api} postingId="posting-one" />);
+    const inspector = await screen.findByRole('region', { name: 'Profile citation inspector' });
+    await screen.findByText('Evidence: Owner attestation');
+    fireEvent.click(within(inspector).getByText('skill: Maintained SQL queries on Linux.', { selector: 'summary' }));
+    fireEvent.click(within(inspector).getByText('Evidence: Owner attestation', { selector: 'summary' }));
+    const provenance = 'Source type: Owner statement · Origin: Entered by owner · Privacy: Private';
+    expect(within(inspector).getAllByText(provenance)).toHaveLength(2);
+    within(inspector).getAllByText(provenance).forEach(summary => expect(summary).toBeVisible());
+
+    fireEvent.click(screen.getByRole('button', { name: 'Review evidence coverage manually' }));
+    const citations = screen.getByRole('group', { name: 'Evidence revision citations' });
+    expect(within(citations).getByText(provenance)).toBeVisible();
+    expect(within(citations).getByRole('checkbox', { name: /Owner attestation: Maintained SQL queries on Linux/ })).toBeEnabled();
+
+    fireEvent.click(screen.getByRole('button', { name: "Inspect assessment's pinned profile evidence" }));
+    const historical = await screen.findByRole('region', { name: 'Assessment pinned profile evidence' });
+    fireEvent.click(within(historical).getByText('Owner attestation', { selector: 'summary' }));
+    expect(within(historical).getByText(provenance)).toBeVisible();
+  });
+
   it.each(['older', 'newer'] as const)('preserves the source of a review buffer when a delayed %s initial read arrives', async direction => {
     const { api, state } = server();
     let release!: () => void;

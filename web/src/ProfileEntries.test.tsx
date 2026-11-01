@@ -582,13 +582,21 @@ describe('focused profile sections', () => {
     });
   });
 
+  it('shows source type, origin and privacy class on every saved source', async () => {
+    const user = userEvent.setup();
+    const owned = { ...source, revision: { ...source.revision, provenance: { source_type: 'document' as const, origin: 'resume_import' as const, privacy_class: 'confidential' as const, employer_owned: true } } };
+    render(<ProfileEntries api={new Api()} profile={{ ...profile, evidence: [owned] }} disabled={false} onProfile={vi.fn()} onDirtyChange={vi.fn()} onBusyChange={vi.fn()} />);
+    await user.click(screen.getByRole('button', { name: 'Sources' }));
+    expect(screen.getByText('Source type: Document · Origin: Résumé import · Privacy: Confidential · Employer-owned · Content withheld from models')).toBeVisible();
+  });
+
   it('edits source content with source type only, without changing claim pins', async () => {
     const user = userEvent.setup(); const api = new Api(); const onProfile = vi.fn();
     const saved = { ...profile, version: 2 };
     const request = vi.spyOn(api, 'request').mockResolvedValue(saved);
     render(<ProfileEntries api={api} profile={profile} disabled={false} onProfile={onProfile} onDirtyChange={vi.fn()} onBusyChange={vi.fn()} />);
     await user.click(screen.getByRole('button', { name: 'Sources' }));
-    expect(within(screen.getByRole('region', { name: 'Sources and owner attestations' })).getByText(/Current privacy: Private/)).toBeVisible();
+    expect(within(screen.getByRole('region', { name: 'Sources and owner attestations' })).getByText(/Privacy: Private/)).toBeVisible();
     await user.click(screen.getByRole('button', { name: 'Edit source 1' }));
     expect(screen.getByLabelText('Source type')).toHaveValue('owner_statement');
     expect(screen.queryByLabelText('Privacy class')).not.toBeInTheDocument();
@@ -619,6 +627,9 @@ describe('focused profile sections', () => {
     await user.click(screen.getByRole('button', { name: 'Change classification 1' }));
     expect(screen.getByLabelText('Privacy class')).toHaveValue('private');
     expect(screen.getByLabelText('My employer owns this content')).not.toBeChecked();
+    expect(screen.getByLabelText('Privacy class')).toHaveAttribute('aria-describedby', 'evidence-classification-hint');
+    expect(screen.getByLabelText('My employer owns this content')).toHaveAttribute('aria-describedby', 'evidence-classification-hint');
+    expect(screen.getByText(/Reclassification takes effect immediately/)).toHaveTextContent('No re-save or re-pin is needed.');
     expect(screen.queryByLabelText('Source text')).not.toBeInTheDocument();
     expect(onDirtyChange).toHaveBeenLastCalledWith(true);
     expect(screen.getByRole('button', { name: 'Skills' })).toBeDisabled();
@@ -630,14 +641,14 @@ describe('focused profile sections', () => {
     expect(onProfile).toHaveBeenCalledWith(saved);
     expect(screen.getByText('Source classification updated. Source revisions and claim pins are unchanged.')).toBeVisible();
     view.rerender(<ProfileEntries api={api} profile={saved} disabled={false} onProfile={onProfile} onDirtyChange={onDirtyChange} onBusyChange={vi.fn()} />);
-    expect(within(screen.getByRole('region', { name: 'Sources and owner attestations' })).getByText(/Current privacy: Confidential/)).toBeVisible();
+    expect(within(screen.getByRole('region', { name: 'Sources and owner attestations' })).getByText(/Privacy: Confidential/)).toBeVisible();
     expect(saved.evidence[0]!.current_revision_id).toBe(source.current_revision_id);
     expect(saved.current_revision.snapshot.claim_revision_ids).toEqual(profile.current_revision.snapshot.claim_revision_ids);
     expect(saved.current_revision.claims[0]!.revision.id).toBe('skill-revision');
     expect(saved.current_revision.claims[0]!.revision.evidence_links[0]!.evidence_revision_id).toBe('source-revision');
     await user.click(screen.getByRole('button', { name: 'Skills' }));
     await user.click(screen.getByText('Evidence and authorship · revision 1'));
-    expect(within(screen.getByText('Evidence and authorship · revision 1').parentElement!).getByText(/Current privacy: Confidential/)).toBeVisible();
+    expect(within(screen.getByText('Evidence and authorship · revision 1').parentElement!).getByText(/Privacy: Confidential/)).toBeVisible();
     expect(screen.getByText(/Evidence revision source-revision/)).toBeVisible();
   });
 });

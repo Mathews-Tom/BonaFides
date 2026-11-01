@@ -160,7 +160,9 @@ export interface GenerationContext {
   application_id: string; application_version: number; profile_revision_id: string; profile_version: number;
   requirements_revision_id: string; template_version: string; tone: 'professional' | 'concise'; language: 'en';
   context_sha256: string; model_projection: Record<string, unknown>; frame: Record<string, unknown>; generation_route: GenerationRoute;
+  withheld_evidence: WithheldEvidence[];
 }
+export interface WithheldEvidence { evidence_revision_id: string; source: string; reasons: ('confidential' | 'employer_owned')[]; claim_revision_ids: string[] }
 export interface SectionRegenerationContext {
   document_id: string; document_version: number; revision_id: string; content_sha256: string;
   section_key: string; tone: 'professional' | 'concise'; context_sha256: string;

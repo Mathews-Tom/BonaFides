@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 import { useEffect, useRef, useState, type FormEvent } from 'react';
-import { Api, errorText, literalClaimPayload, type ClaimKind, type ClaimPayload, type ClaimPeriodSeparator, type ClaimPeriodStyle, type ClaimRateWording, type ClaimRecord, type ClaimRendering, type ClaimVocabulary, type StructuredClaim, type EvidenceLink, type EvidencePrivacyClass, type EvidenceRecord, type EvidenceRevision, type EvidenceSourceType, evidencePrivacyClasses, evidenceSourceTypes, type PinnedClaim, type Profile, type ProfileRevision, type ProfileRevisionSummary, type RevisionPage } from './api';
+import { Api, errorText, literalClaimPayload, type ClaimKind, type ClaimPayload, type ClaimPeriodSeparator, type ClaimPeriodStyle, type ClaimRateWording, type ClaimRecord, type ClaimRendering, type ClaimVocabulary, type StructuredClaim, type EvidenceLink, type EvidencePrivacyClass, type EvidenceProvenance, evidenceOrigins, type EvidenceRecord, type EvidenceRevision, type EvidenceSourceType, evidencePrivacyClasses, evidenceSourceTypes, type PinnedClaim, type Profile, type ProfileRevision, type ProfileRevisionSummary, type RevisionPage } from './api';
 import './ProfileEntries.css';
 
 const kinds: { value: ClaimKind; label: string }[] = [
@@ -70,14 +70,14 @@ function contextOf(payload: ClaimPayload): Omit<ClaimPayload, 'text'> {
   delete context.text;
   return context;
 }
+export function EvidenceProvenanceSummary({ provenance }: { provenance: EvidenceProvenance }) {
+  const withheld = provenance.privacy_class === 'confidential' || provenance.employer_owned;
+  return <p className="evidence-provenance">Source type: {evidenceSourceTypes[provenance.source_type]} · Origin: {evidenceOrigins[provenance.origin]} · Privacy: {evidencePrivacyClasses[provenance.privacy_class]}{provenance.employer_owned ? ' · Employer-owned' : ''}{withheld ? ' · Content withheld from models' : ''}</p>;
+}
 interface EvidenceDraft { id?: string; text: string; source: string; attestation: boolean; source_type: EvidenceSourceType | ''; privacy_class: EvidencePrivacyClass | ''; employer_owned: boolean }
 interface ArchiveChoice { kind: 'claim' | 'evidence'; id: string; text: string }
 interface ClassificationDraft { id: string; privacy_class: EvidencePrivacyClass; employer_owned: boolean }
 
-function EvidenceProvenance({ revision }: { revision: EvidenceRevision }) {
-  const provenance = revision.provenance;
-  return <p className="hint">Source type: {evidenceSourceTypes[provenance.source_type]} · Origin: {provenance.origin.replaceAll('_', ' ')} · Current privacy: {evidencePrivacyClasses[provenance.privacy_class]} · Employer owned: {provenance.employer_owned ? 'Yes' : 'No'}</p>;
-}
 
 function ClaimWords({ claim }: { claim: PinnedClaim }) {
   const payload = claim.revision.payload;
@@ -89,8 +89,7 @@ function ClaimWords({ claim }: { claim: PinnedClaim }) {
       <p>Owner assertion by {claim.revision.author_owner_id} · {claim.revision.created_at}. Not independently verified.</p>
       <p>Claim revision {claim.revision.id} · SHA-256 {claim.revision.content_sha256}</p>
       {claim.revision.evidence_links.map(link => <blockquote key={link.evidence_revision_id}><p>{link.excerpt}</p>
-        <p>{link.support_kind.replaceAll('_', ' ')} · {link.evidence.payload.source}</p><p>{link.evidence.payload.text}</p>
-        <EvidenceProvenance revision={link.evidence} />
+        <p>{link.support_kind.replaceAll('_', ' ')} · {link.evidence.payload.source}</p><EvidenceProvenanceSummary provenance={link.evidence.provenance} /><p>{link.evidence.payload.text}</p>
         <small>Evidence revision {link.evidence_revision_id} · {link.evidence.created_at} · owner {link.evidence.author_owner_id} · SHA-256 {link.evidence.content_sha256}</small></blockquote>)}
     </details></>;
 }
@@ -255,7 +254,7 @@ export function ProfileEntries({ api, profile, disabled, onProfile, onDirtyChang
         <p>{comparison.current_revision.snapshot.display_name} · {comparison.current_revision.snapshot.headline}</p>
         <p className="profile-description-preview">Description: {comparison.current_revision.snapshot.description || 'Not supplied'}</p>
         {comparison.current_revision.claims.map(item => <div key={item.id}><strong>{item.kind}</strong><ClaimWords claim={item} /></div>)}
-        {comparison.evidence.map(item => <blockquote key={item.id}><p>{item.revision.payload.source}</p><p>{item.revision.payload.text}</p></blockquote>)}
+        {comparison.evidence.map(item => <blockquote key={item.id}><p>{item.revision.payload.source}</p><EvidenceProvenanceSummary provenance={item.revision.provenance} /><p>{item.revision.payload.text}</p></blockquote>)}
         <p>Your open editor remains unchanged. Rebasing changes the save precondition, not the entry text. Archived entries cannot be revived by saving an old editor.</p>
         <button className="secondary" disabled={locked} onClick={() => { onProfile(comparison); setComparison(null); setNotice('Latest version selected explicitly. Review your retained text before saving.'); }}>Use latest version and retain my editor</button>
       </div>}
@@ -317,7 +316,7 @@ export function ProfileEntries({ api, profile, disabled, onProfile, onDirtyChang
         <h4>Pinned evidence links</h4><p className="hint">Select at least one exact source revision. Updating a source later never silently updates an existing entry.</p>
         {claim.evidence_links.map((link, index) => <fieldset key={index}><legend>Source link {index + 1}</legend>
           <label>Evidence revision {index + 1}<select required value={link.evidence_revision_id} onChange={event => changeLink(index, { evidence_revision_id: event.target.value })}><option value="">Choose a saved source</option>{Array.from(sources.values()).map(source => <option key={source.id} value={source.id}>{source.payload.source} · revision {source.revision_no} · {source.payload.text.slice(0, 100)} · {source.id}</option>)}</select></label>
-          {sources.get(link.evidence_revision_id) && <blockquote>{sources.get(link.evidence_revision_id)?.payload.text}</blockquote>}
+          {sources.get(link.evidence_revision_id) && <blockquote><EvidenceProvenanceSummary provenance={sources.get(link.evidence_revision_id)!.provenance} />{sources.get(link.evidence_revision_id)?.payload.text}</blockquote>}
           <label>Support type {index + 1}<select value={link.support_kind} onChange={event => changeLink(index, { support_kind: event.target.value as EvidenceLink['support_kind'] })}><option value="direct">Direct source (owner supplied)</option><option value="user_asserted">Owner attestation (unverified)</option><option value="context">Context only</option></select></label>
           <label>Source excerpt {index + 1}<textarea required maxLength={4000} value={link.excerpt} onChange={event => changeLink(index, { excerpt: event.target.value })} /></label>
           <button type="button" className="secondary" onClick={() => setClaim({ ...claim, evidence_links: claim.evidence_links.filter((_, position) => position !== index) })}>Remove source link {index + 1}</button>
@@ -331,9 +330,8 @@ export function ProfileEntries({ api, profile, disabled, onProfile, onDirtyChang
     </section>
     <section className="panel" hidden={section !== 'sources'} aria-labelledby="profile-evidence-title"><h2 id="profile-evidence-title">Sources and owner attestations</h2>
       <p>Manual, versioned source text only. No file import, external verification or provider calls. Archiving removes a source from the active editor, not from immutable historical links.</p>
-      {profile.evidence.length === 0 ? <p>No saved sources.</p> : <ul>{profile.evidence.map((item, index) => <li key={item.id}><h3>{item.revision.payload.source}</h3><p>{item.revision.payload.text}</p>
+      {profile.evidence.length === 0 ? <p>No saved sources.</p> : <ul>{profile.evidence.map((item, index) => <li key={item.id}><h3>{item.revision.payload.source}</h3><EvidenceProvenanceSummary provenance={item.revision.provenance} /><p>{item.revision.payload.text}</p>
         <small>Revision {item.revision.revision_no} · {item.revision.id} · {item.revision.created_at} · owner {item.revision.author_owner_id}</small>
-        <EvidenceProvenance revision={item.revision} />
         <div className="actions"><button className="secondary" disabled={locked || dirty} onClick={() => editEvidence(item)}>Edit source {index + 1}</button><button className="secondary" disabled={locked || dirty} onClick={() => setArchive({ kind: 'evidence', id: item.id, text: item.revision.payload.text })}>Archive source {index + 1}</button></div>
         <button className="secondary" disabled={locked || dirty} onClick={() => { setError(''); setNotice(''); setClassification({ id: item.id, privacy_class: item.revision.provenance.privacy_class, employer_owned: item.revision.provenance.employer_owned }); }}>Change classification {index + 1}</button>
       </li>)}</ul>}
@@ -343,15 +341,16 @@ export function ProfileEntries({ api, profile, disabled, onProfile, onDirtyChang
         <label className="check"><input type="checkbox" checked={evidence.attestation} onChange={event => setEvidence({ ...evidence, attestation: event.target.checked })} />This is my explicit owner attestation, not independent verification</label>
         <label>Source reference<input required={!evidence.attestation} disabled={evidence.attestation} maxLength={500} value={evidence.attestation ? 'Owner attestation' : evidence.source} onChange={event => setEvidence({ ...evidence, source: event.target.value })} /></label>
         <label>Source type<select required value={evidence.source_type} onChange={event => setEvidence({ ...evidence, source_type: event.target.value as EvidenceSourceType | '' })}><option value="">Choose a source type</option>{Object.entries(evidenceSourceTypes).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
-        {!evidence.id && <><label>Privacy class<select required value={evidence.privacy_class} onChange={event => setEvidence({ ...evidence, privacy_class: event.target.value as EvidencePrivacyClass | '' })}><option value="">Choose a privacy class</option>{Object.entries(evidencePrivacyClasses).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
-        <label className="check"><input type="checkbox" checked={evidence.employer_owned} onChange={event => setEvidence({ ...evidence, employer_owned: event.target.checked })} />My employer owns this content</label></>}
-        {evidence.id && <p className="hint">Content edits create a source revision without changing its classification. Use Change classification separately; existing claim pins stay unchanged.</p>}
+        {!evidence.id && <><label>Privacy class<select required aria-describedby="evidence-privacy-hint" value={evidence.privacy_class} onChange={event => setEvidence({ ...evidence, privacy_class: event.target.value as EvidencePrivacyClass | '' })}><option value="">Choose a privacy class</option>{Object.entries(evidencePrivacyClasses).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
+        <label className="check"><input type="checkbox" aria-describedby="evidence-privacy-hint" checked={evidence.employer_owned} onChange={event => setEvidence({ ...evidence, employer_owned: event.target.checked })} />My employer owns this content</label>
+        <p className="hint" id="evidence-privacy-hint">Confidential or employer-owned source text is never sent to a model. Entries citing it are still sent as their own text and are checked locally against the full source.</p></>}
+        {evidence.id && <p className="hint">Saving content or source type creates a new source revision without changing classification. Re-pin entries to that exact new revision before generating. Use Change classification separately to keep existing claim pins valid.</p>}
         <div className="actions"><button>Save source revision</button><button type="button" className="secondary" onClick={() => { setEvidence(null); setComparison(null); setError(''); }}>Discard source changes</button></div>
       </fieldset></form>}
       {classification && <form onSubmit={event => { event.preventDefault(); void mutate(`/evidence/${encodeURIComponent(classification.id)}/classification`, 'PUT', { privacy_class: classification.privacy_class, employer_owned: classification.employer_owned }); }}><fieldset disabled={locked}><legend>Change source classification</legend>
-        <p className="hint">Classification applies to this source across all revisions, including historical claim links. It does not edit source content or re-pin claims.</p>
-        <label>Privacy class<select required value={classification.privacy_class} onChange={event => setClassification({ ...classification, privacy_class: event.target.value as EvidencePrivacyClass })}>{Object.entries(evidencePrivacyClasses).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
-        <label className="check"><input type="checkbox" checked={classification.employer_owned} onChange={event => setClassification({ ...classification, employer_owned: event.target.checked })} />My employer owns this content</label>
+        <p className="hint" id="evidence-classification-hint">Reclassification takes effect immediately across all source revisions, including existing claim links and restored profiles. No re-save or re-pin is needed. Confidential or employer-owned evidence content is withheld from models; the claim text is still sent and checked locally against the full source.</p>
+        <label>Privacy class<select required aria-describedby="evidence-classification-hint" value={classification.privacy_class} onChange={event => setClassification({ ...classification, privacy_class: event.target.value as EvidencePrivacyClass })}>{Object.entries(evidencePrivacyClasses).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
+        <label className="check"><input type="checkbox" aria-describedby="evidence-classification-hint" checked={classification.employer_owned} onChange={event => setClassification({ ...classification, employer_owned: event.target.checked })} />My employer owns this content</label>
         <div className="actions"><button>Save source classification</button><button type="button" className="secondary" onClick={() => { setClassification(null); setError(''); }}>Discard classification changes</button></div>
       </fieldset></form>}
     </section>
@@ -364,7 +363,7 @@ export function ProfileEntries({ api, profile, disabled, onProfile, onDirtyChang
         <p className="profile-description-preview">Description: {preview.snapshot.description || 'Not supplied'}</p>
         <p>{preview.created_at} · {preview.reason} · owner {preview.author_owner_id}</p><small>Revision {preview.id} · SHA-256 {preview.content_sha256}</small>
         {preview.claims.map(item => <section key={item.id}><h4>{item.kind}</h4><ClaimWords claim={item} /></section>)}
-        <h4>Exact saved source state</h4>{preview.evidence.map(item => <blockquote key={item.id}><p>{item.revision.payload.source}</p><p>{item.revision.payload.text}</p><small>{item.revision.id} · {item.revision.created_at} · owner {item.revision.author_owner_id} · SHA-256 {item.revision.content_sha256}</small></blockquote>)}
+        <h4>Exact saved source state</h4>{preview.evidence.map(item => <blockquote key={item.id}><p>{item.revision.payload.source}</p><EvidenceProvenanceSummary provenance={item.revision.provenance} /><p>{item.revision.payload.text}</p><small>{item.revision.id} · {item.revision.created_at} · owner {item.revision.author_owner_id} · SHA-256 {item.revision.content_sha256}</small></blockquote>)}
         {dirty && <p className="hint">Save or discard the open editor before restoring history.</p>}
         <label className="check"><input type="checkbox" disabled={locked || dirty} checked={restoreConfirmed} onChange={event => setRestoreConfirmed(event.target.checked)} />Restore this exact saved profile and source state as a new revision; retain displaced history</label>
         <button disabled={locked || dirty || !restoreConfirmed} onClick={() => { void mutate('/profile/restore', 'POST', { revision_id: preview.id }); }}>Restore as new profile revision</button>
