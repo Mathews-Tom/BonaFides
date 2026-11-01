@@ -14,6 +14,7 @@ from uuid import UUID, uuid4
 import pytest
 from sqlalchemy import text
 from sqlalchemy.exc import DBAPIError
+from test_checked_generation import _generate, _run, _stub
 from test_document_generation import (
     _base,
     _candidate,
@@ -151,6 +152,38 @@ def _apply(
         },
         headers=context.headers(document["version"], key=key),
     )
+
+
+@pytest.mark.postgres
+def test_claim_checked_proposal_reports_same_blocker_as_applied_revision(
+    catalog: SourceContext, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    with _stub(monkeypatch, tmp_path, "valid"):
+        _, application, task = _generate(catalog)
+        workflow = _run(catalog, task)
+    assert workflow["state"] == "succeeded", workflow
+    document = next(
+        item for item in _pair_documents(catalog, application)["items"] if item["kind"] == "resume"
+    )
+    assert document["current_revision"]["provenance_snapshot"]["checker_version"] == (
+        "claim-evidence-v1"
+    )
+    _route(monkeypatch, tmp_path)
+    _, proposal = _proposal(catalog, document, unsupported=True)
+    blockers = proposal["validation_issues"]
+    assert blockers == [
+        {
+            "path": "/sections/0/blocks/0",
+            "code": "statement_not_in_claim_evidence",
+            "statement": "Led 9999 engineers and invented an unsupported credential.",
+        }
+    ]
+
+    applied = _apply(catalog, document, proposal)
+    assert applied.status_code == 200, applied.text
+    revision = applied.json()["current_revision"]
+    assert revision["validation_issues"] == blockers
+    assert revision["provenance_snapshot"]["checker_version"] == "claim-evidence-v1"
 
 
 @pytest.mark.postgres

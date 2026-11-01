@@ -31,9 +31,10 @@ from test_sources import SourceContext
 from test_sources import catalog as catalog
 from test_suitability import _after_model_send
 
-from bonafides import local_model, model_context
+from bonafides import local_model, model_context, suitability
 from bonafides.worker import Worker
 from bonafides.workflows import Claim
+from tools import stub_model
 from tools.stub_model import ABSENT_CLAIM_ID, StubModel, make_server
 from tools.stub_model import route as write_route
 
@@ -197,6 +198,79 @@ def test_malformed_once_is_corrected_once_on_the_same_projection(
     assert sorted(run.status for run in runs) == ["succeeded", "unknown_usage"]
     usage = items[0]["current_revision"]["provenance_snapshot"]["model_run"]["usage"]
     assert usage["corrected_model_run_id"] in {str(run.id) for run in runs}
+
+
+@pytest.mark.postgres
+@pytest.mark.parametrize("repeated", [False, True])
+@pytest.mark.parametrize("value", [0.9, 1 << 64])
+def test_noncanonical_output_gets_one_corrective_call(
+    catalog: SourceContext,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    repeated: bool,
+    value: float | int,
+) -> None:
+    respond = stub_model.respond
+
+    def noncanonical(scenario: str, request: dict[str, object]) -> dict[str, object]:
+        envelope = respond(scenario, request)
+        if repeated or len(cast(list[object], request["messages"])) == 2:
+            message = cast(dict[str, object], envelope["message"])
+            output = json.loads(str(message["content"]))
+            output["confidence"] = value
+            message["content"] = json.dumps(output)
+        return envelope
+
+    monkeypatch.setattr(stub_model, "respond", noncanonical)
+    with _stub(monkeypatch, tmp_path, "valid") as stub:
+        _, application, task = _generate(catalog)
+        workflow = _run(catalog, task)
+    assert len(stub.requests) == 2
+    assert "output: noncanonical_json" in stub.requests[1]["messages"][2]["content"]
+    if repeated:
+        assert workflow["state"] == "permanent_failure", workflow
+        assert workflow["last_error_code"] == "model_output_invalid_after_correction"
+        assert _pair_documents(catalog, application)["items"] == []
+        assert _count(catalog, "document_drafts") == 0
+        assert _count(catalog, "local_model_route_blocks") == 1
+    else:
+        assert workflow["state"] == "succeeded", workflow
+        assert len(_pair_documents(catalog, application)["items"]) == 2
+        assert _count(catalog, "local_model_route_blocks") == 0
+
+
+@pytest.mark.postgres
+def test_busy_corrective_reservation_does_not_spend_the_correction(
+    catalog: SourceContext, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    reserve = suitability._reserve_call
+    attempts = 0
+
+    def busy_once(*args: Any, **kwargs: Any) -> Any:
+        nonlocal attempts
+        if kwargs.get("correction"):
+            attempts += 1
+            if attempts == 1:
+                return None
+        return reserve(*args, **kwargs)
+
+    monkeypatch.setattr(suitability, "_reserve_call", busy_once)
+    with _stub(monkeypatch, tmp_path, "malformed-once") as stub:
+        _, application, task = _generate(catalog)
+        workflow = _run(catalog, task)
+    assert attempts == 2
+    assert len(stub.requests) == 2
+    assert len(stub.requests[1]["messages"]) == 3
+    assert workflow["state"] == "succeeded", workflow
+    assert len(_pair_documents(catalog, application)["items"]) == 2
+    with catalog.runtime.transaction() as conn:
+        spent = conn.execute(
+            text("""SELECT count(*) FROM bonafides.model_runs
+            WHERE owner_id=:owner AND workflow_run_id=:id
+            AND metadata->>'corrective_retry'='true'"""),
+            {"owner": catalog.owner_id, "id": task.id},
+        ).scalar_one()
+    assert spent == 1
 
 
 @pytest.mark.postgres

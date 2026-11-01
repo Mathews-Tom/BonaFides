@@ -933,11 +933,37 @@ Ollama's mutable model tag does not provide an immutable per-inference weight id
 `tools/stub_model.py` is a development tool outside the shipped image and request path; nothing enables it by default. `serve` (standard library only) answers the existing adapter's four requests and derives a pair from the projection it receives, selected by `--scenario` or a `--control-file` holding the scenario name: `valid`, `absent-claim`, `posting-only-skill`, `malformed-once`, `malformed` and `truncated`. Each chat request is logged with its call number and whether it carried a correction. `route` writes a `0600` route file for it whose `generate_documents` receipt is reviewed by `fixture-only-stub-route-not-a-qualification`: it attests nothing about any real model.
 
 ```sh
-python tools/stub_model.py serve --host 127.0.0.1 --port 11434 --scenario valid
+uv run --frozen python -m tools.stub_model serve --host 127.0.0.1 --port 11434 --scenario valid
 uv run --frozen python -m tools.stub_model route --endpoint http://127.0.0.1:11434 --approved-ip 127.0.0.1 --output .secrets/local_model_route.json
 ```
 
-Backend tests drive the real adapter against the in-process stub (`tests/test_checked_generation.py`). For a disposable Compose proof, run the stub as its own container on the project's private network, write the route with that container's address and materialize it with the steps above.
+Backend tests drive the real adapter against the in-process stub (`tests/test_checked_generation.py`). For a disposable Compose proof, use an explicitly selected disposable project, never another retained installation. Run the following from the repository root after that project's private network exists. The pinned Python image uses the same base as the application Dockerfile; the read-only bind mount supplies `tools/stub_model.py`, which is **not** included in the shipped application image. Binding to `0.0.0.0` inside this container is required for the API container to reach it; no host port is published.
+
+```sh
+export COMPOSE_PROJECT_NAME=bonafides-stub-proof
+STUB_CONTAINER="${COMPOSE_PROJECT_NAME}-stub-model"
+STUB_NETWORK="${COMPOSE_PROJECT_NAME}_private"
+docker run --detach --name "$STUB_CONTAINER" \
+  --network "$STUB_NETWORK" \
+  --read-only --cap-drop ALL --security-opt no-new-privileges \
+  --user 10001:10001 \
+  --mount "type=bind,src=$PWD/tools/stub_model.py,dst=/stub_model.py,readonly" \
+  --entrypoint python \
+  python:3.12.15-alpine3.24@sha256:b658b05ce9c4eb97ec6fc19424818a1f31993659c2b505a532f470e83807815d \
+  /stub_model.py serve --host 0.0.0.0 --port 11434 --scenario valid
+STUB_IP=$(docker inspect --format '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' "$STUB_CONTAINER")
+uv run --frozen python -m tools.stub_model route \
+  --endpoint "http://${STUB_IP}:11434" --approved-ip "$STUB_IP" \
+  --output .secrets/local_model_route.json
+```
+
+Materialize the route with the preparation/opt-in steps above using this same explicit Compose project. Recreate the route if the stub container's address changes. After the proof, stop that disposable project's application writers, disable/remove its fixture route as described above, and remove only the named stub:
+
+```sh
+docker rm --force "$STUB_CONTAINER"
+```
+
+The container command was exercised on 2026-11-01 with the pinned image and read-only script mount, using an isolated temporary container on Docker's `bridge` network and a loopback-only published proof port. Actual host `curl --fail` calls to `/api/tags` and `/api/version` returned `bonafides-stub:fixture` and `bonafides-stub-1`; the temporary container was then removed. This checks container startup and HTTP reachability, not the Compose private-network integration or model qualification.
 
 The route-file materialization boundary was exercised in actual isolated Linux arm64 containers: private UID/mode/byte-preserving copy, source removal revoking the copy while required material remained unchanged, and refusal of world-readable, symlink and oversized route files. The first check-then-open implementation failed its removal probe when host-mount metadata checks preceded an `ENOENT` on open; the descriptor-bound `O_NOFOLLOW`/`fstat` repair passed all eight checks. This is deployment-file proof only, not a real inference or model-quality result.
 

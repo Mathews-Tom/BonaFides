@@ -615,7 +615,13 @@ def _mismatch(exc: ValidationError) -> OutputMismatch:
 def validate_pair(output: dict[str, object], plan: dict[str, object]) -> CandidatePair:
     """Schema-validate a pair; claim references are checked per statement, not here."""
     try:
-        pair = CandidatePair.model_validate_json(canonical_json(output), strict=True)
+        encoded = canonical_json(output)
+    except Problem as exc:
+        if exc.code != "noncanonical_request":
+            raise
+        raise OutputMismatch(["output: noncanonical_json"]) from exc
+    try:
+        pair = CandidatePair.model_validate_json(encoded, strict=True)
         # Apply aggregate AST limits before either half is persisted.
         for item in pair.documents:
             _candidate_body(item, plan)

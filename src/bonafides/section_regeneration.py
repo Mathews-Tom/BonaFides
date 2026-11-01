@@ -264,8 +264,13 @@ def publish_proposal(
         body = _replacement(documents.parse_body(row["body"]), original.key, proposed)
     except ValidationError as exc:
         raise Problem(422, "invalid_model_output") from exc
-    validation = generation.issues(
-        body, cast(list[dict[str, object]], frozen["facts"]), str(row["kind"])
+    validation = generation.validation_issues(
+        conn,
+        task.owner_id,
+        body,
+        cast(dict[str, object], row["provenance_snapshot"]),
+        "base" if row["scope"] == "base" else str(row["kind"]),
+        UUID(str(row["profile_revision_id"])),
     )
     model_run: dict[str, object] = {
         "id": str(run),

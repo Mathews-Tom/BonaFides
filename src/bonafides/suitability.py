@@ -1300,25 +1300,26 @@ def _generate_pair(
                 if spent:
                     # An earlier execution of this generation already made its correction.
                     raise Problem(422, "model_output_invalid_after_correction")
-                conn.execute(
-                    text("""UPDATE bonafides.model_runs SET status='unknown_usage',finished_at=clock_timestamp(),
-                    metadata=CAST(:metadata AS jsonb)
-                    WHERE owner_id=:owner AND id=:id AND status='running'"""),
-                    {
-                        "owner": task.owner_id,
-                        "id": runs[-1],
-                        "metadata": canonical_json(
-                            {
-                                "usage_status": "unknown",
-                                "error_code": "invalid_model_output",
-                                "corrective_retry": True,
-                            }
-                        ),
-                    },
-                )
                 corrective = _reserve_call(
                     conn, task, settings, route.deadline_seconds, correction=True
                 )
+                if corrective is not None:
+                    conn.execute(
+                        text("""UPDATE bonafides.model_runs SET status='unknown_usage',finished_at=clock_timestamp(),
+                        metadata=CAST(:metadata AS jsonb)
+                        WHERE owner_id=:owner AND id=:id"""),
+                        {
+                            "owner": task.owner_id,
+                            "id": runs[-1],
+                            "metadata": canonical_json(
+                                {
+                                    "usage_status": "unknown",
+                                    "error_code": "invalid_model_output",
+                                    "corrective_retry": True,
+                                }
+                            ),
+                        },
+                    )
             if corrective is None and interrupted.wait(0.25):
                 raise local_model.ModelFailure("model_interrupted", retryable=False)
         runs.append(corrective)
