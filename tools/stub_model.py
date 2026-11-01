@@ -11,6 +11,9 @@ route file, for pair generation and for section regeneration (a projection with 
   connective target blocks.
 - ``absent-claim``: one factual block cites a claim id that is not in the profile.
 - ``posting-only-skill``: one factual block asserts a term found only in the posting.
+- ``inflated``: one factual block restates a claim with a stronger leadership or
+  responsibility verb, cut from that claim's own visible evidence, so containment passes
+  and only the inflation rules block it.
 - ``malformed-once``: schema-invalid until the request carries a correction.
 - ``malformed``: always schema-invalid.
 - ``truncated``: a length-limited, incomplete response.
@@ -42,10 +45,13 @@ SCENARIOS = (
     "valid",
     "absent-claim",
     "posting-only-skill",
+    "inflated",
     "malformed-once",
     "malformed",
     "truncated",
 )
+# Leadership and responsibility openings an inflated restatement uses.
+_STRONG_VERB = re.compile(r"\b(led|spearheaded|headed|directed|owned|managed)\b[^.;\n]*", re.I)
 ABSENT_CLAIM_ID = str(uuid5(NAMESPACE_URL, "bonafides-stub-model/absent-claim"))
 FIXTURE_REVIEWER = "fixture-only-stub-route-not-a-qualification"
 
@@ -144,6 +150,26 @@ def _posting_only_term(projection: dict[str, object]) -> str:
     raise StubFailure("posting has no term absent from the owner's claims and evidence")
 
 
+def _inflated(projection: dict[str, object]) -> tuple[str, str]:
+    """A claim and a strong-verb phrase cut from that claim's own visible evidence."""
+    visible = {
+        str(item["id"]): str(item["text"])
+        for item in _items(projection, "evidence")
+        if "text" in item
+    }
+    for claim in _items(projection, "claims"):
+        opening = str(claim["text"]).split(" ", 1)[0].casefold()
+        identifiers = claim["evidence_revision_ids"]
+        assert isinstance(identifiers, list)
+        # Withheld evidence carries no text to cut a phrase from.
+        for source in (visible[str(item)] for item in identifiers if str(item) in visible):
+            for match in _STRONG_VERB.finditer(source):
+                if match.group(1).casefold() != opening:
+                    phrase = match.group(0).strip()
+                    return str(claim["id"]), phrase[0].upper() + phrase[1:]
+    raise StubFailure("no claim's visible evidence holds a stronger leadership verb")
+
+
 def respond(scenario: str, request: dict[str, object]) -> dict[str, object]:
     """The complete /api/chat envelope for one request under one scenario."""
     messages = request["messages"]
@@ -170,6 +196,9 @@ def respond(scenario: str, request: dict[str, object]) -> dict[str, object]:
         elif scenario == "posting-only-skill":
             claim = str(_items(projection, "claims")[0]["id"])
             statement = f"Hands-on experience with {_posting_only_term(projection)}."
+            statements.append(_block(900, "factual", statement, claim))
+        elif scenario == "inflated":
+            claim, statement = _inflated(projection)
             statements.append(_block(900, "factual", statement, claim))
         content = json.dumps(output)
     return {
