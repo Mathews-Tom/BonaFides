@@ -339,12 +339,11 @@ describe('review, export and generation boundaries', () => {
     expect(screen.getByRole('button', { name: 'Render reviewed PDF' })).toBeDisabled();
   });
 
-  it('names the kind of strengthening for each statement that strengthens its claim', async () => {
+  it('names the reason for each statement that strengthens its claim', async () => {
     const kinds = [
-      ['statement_stronger_verb', 'Led the Linux service checks.', 'Stronger verb: it claims more ownership than its claim states.'],
-      ['statement_longer_tenure', 'Maintained Linux service checks 2018–2024.', "Longer tenure: it states a period longer than, or outside, its claim's period."],
-      ['statement_larger_metric', 'Maintained Linux service checks for 40 hosts.', 'Larger metric: it states a larger figure or a different unit, magnitude or rate than its claim.'],
-      ['statement_wider_scope', 'Maintained Linux service checks company-wide.', 'Wider scope: it states a wider scope than its claim.'],
+      ['statement_stronger_verb', 'Led the Linux service checks.', 'Stronger verb than its claim: it claims more ownership than its claim states.'],
+      ['statement_not_in_claim', 'Maintained Linux service checks 2018–2024.', "Not part of its claim: it is not its claim's text or a whole-phrase cut of it (a claim with several ownership verbs is accepted only whole)."],
+      ['statement_not_in_claim_evidence', 'Maintained Linux service checks.', "Its claim's text is not contained in the claim's own evidence."],
     ] as const;
     const first = saved.current_revision.body.sections[0]!.blocks[0]!;
     const body = { ...saved.current_revision.body, sections: [{ ...saved.current_revision.body.sections[0]!, blocks: kinds.map(([, text], index) => ({ ...first, block_key: `b-${index + 1}`, text })) }] };
@@ -563,7 +562,7 @@ const sectionProposal: SectionProposal = {
   target_document_version: tailored.version, target_content_sha256: tailored.current_revision.content_sha256,
   section_key: 'experience', original_section: tailored.current_revision.body.sections[0]!,
   proposed_section: { ...tailored.current_revision.body.sections[0]!, blocks: [{ ...tailored.current_revision.body.sections[0]!.blocks[0]!, block_key: 'proposal-1-block-0', text: 'Led an unsupported global team.' }] },
-  validation_issues: [{ path: '/sections/0/blocks/0', code: 'statement_not_in_claim_evidence', statement: 'Led an unsupported global team.' }],
+  validation_issues: [{ path: '/sections/0/blocks/0', code: 'statement_not_in_claim', statement: 'Led an unsupported global team.' }],
   facts: tailored.current_revision.provenance_snapshot.facts ?? [],
   model_run: { id: 'section-run-1', stage: 'regenerate_section' }, created_at: '2026-10-25T14:00:00Z', applicable: true, historical: false,
 };
@@ -797,7 +796,7 @@ describe('saved tailored section proposals', () => {
       expect(screen.getByLabelText('Block text: b-1')).toHaveValue('Maintained Linux service checks.');
       expect(within(screen.getByRole('article', { name: 'Proposed section' })).getByText('Led an unsupported global team.')).toBeInTheDocument();
       expect(screen.getByText('Proposed draft has review/export blockers.')).toBeVisible();
-      const blocker = screen.getByText(/^It is not contained in its claim's own evidence\./).closest('li')!;
+      const blocker = screen.getByText(/^Not part of its claim: /).closest('li')!;
       expect(within(blocker).getByText('Led an unsupported global team.', { selector: 'q' })).toBeVisible();
       expect(within(screen.getByRole('article', { name: 'Proposed section' })).getByText('Linked claim: “Maintained Linux service checks.”')).toBeVisible();
       expect(screen.getByText(/Applying retains these issues/)).toBeVisible();
