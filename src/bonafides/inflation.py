@@ -31,12 +31,11 @@ from typing import Literal, cast, get_args
 from bonafides.claim_mapping import (
     _ADVERB_RATES,
     _AMOUNT,
-    _COMPOUND,
+    _MAGNITUDES,
     _METRIC_ONLY,
     _NUMBER,
-    _RATE,
     _VERB_PHRASES,
-    _metric,
+    _duration,
     _verb,
     statement_text,
 )
@@ -57,18 +56,18 @@ CODES: dict[InflationKind, str] = {kind: f"statement_{kind}" for kind in INFLATI
 SCOPE_LEVELS: tuple[tuple[str, ...], ...] = (
     ("personal", "individual"),
     ("team", "teams", "squad", "squads"),
-    ("cross-team", "department", "departments", "division", "divisions", "business unit"),
+    ("cross-team", "cross-functional", "department-wide", "division-wide", "across teams"),
     (
-        "organization",
-        "organisation",
         "organization-wide",
         "organisation-wide",
         "org-wide",
-        "company",
         "company-wide",
+        "across the company",
+        "across the organization",
+        "across the organisation",
         "enterprise-wide",
     ),
-    ("cross-company", "industry", "industry-wide", "global", "globally", "worldwide"),
+    ("cross-company", "industry-wide", "globally", "worldwide"),
 )
 _SCOPE_TERMS = {term: level for level, terms in enumerate(SCOPE_LEVELS) for term in terms}
 _SCOPE = re.compile(
@@ -77,7 +76,11 @@ _SCOPE = re.compile(
     + r")(?![^\W_])"
 )
 _MONTHS = ("jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec")
-_MONTH_NAME = r"(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?"
+_MONTH_NAME = (
+    r"\b(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?"
+    r"|jul(?:y)?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?"
+    r"|dec(?:ember)?)\b\.?"
+)
 _DATE = (
     rf"(?:(?P<{{0}}name>{_MONTH_NAME})\s+|(?P<{{0}}slash>0?[1-9]|1[0-2])/)?"
     r"(?P<{0}year>(?:19|20)[0-9]{{2}})(?:-(?P<{0}month>0[1-9]|1[0-2]))?"
@@ -89,7 +92,27 @@ _SPAN = re.compile(
     r"(?![\w%×]|[.,][0-9])",
     re.IGNORECASE,
 )
-_BARE = re.compile(rf"(?<![\w.,$€£/-])(?:{_NUMBER})(?![\w%×]|[.,][0-9])")
+_FIGURE = re.compile(
+    rf"(?<![\w.,/-])(?P<currency>[$€£])?(?P<number>{_NUMBER})"
+    r"\s*(?P<magnitude>thousand|million|billion|[kmb])?"
+    r"\s*(?P<unit>%|percent\b|[x×](?!\w)|points?\b|pts\b|ms\b"
+    r"|milliseconds?\b|seconds?\b|minutes?\b|hours?\b|days?\b|weeks?\b|months?\b)?"
+    r"(?![\w]|[.,][0-9])",
+    re.IGNORECASE,
+)
+_CLAUSE = re.compile(r"(\band\b|&|;|,)(?![0-9])", re.IGNORECASE)
+_LEADING_ADVERBS = re.compile(r"^(?:[a-z]+ly\s+)+", re.IGNORECASE)
+_ATTACHED_RATE = re.compile(
+    r"(?:\b(?:per|a|an|each|every)\s+|/)\s*(?P<unit>day|week|month|quarter|year)\b"
+    r"|\b(?P<adverb>daily|weekly|monthly|quarterly|yearly|annually)\b",
+    re.IGNORECASE,
+)
+_FACTORS = {
+    None: Decimal(1),
+    "thousand": Decimal(1000),
+    "million": Decimal(1000000),
+    "billion": Decimal(1000000000),
+}
 
 
 @dataclass(frozen=True)
@@ -118,17 +141,21 @@ def _rank(phrase: str, rest: str) -> int | None:
 
 
 def _verb_rank(text: str) -> int | None:
-    """The strongest leading ownership verb, including a compound's second verb."""
-    found = _verb(statement_text(text))
-    if found is None:
-        return None
-    phrase, _, _, body = found
-    ranks = [_rank(phrase, body)]
-    compound = _COMPOUND.match(body)
-    if compound is not None and (second := _verb(body[compound.start("word") :])) is not None:
-        ranks.append(_rank(second[0], second[3]))
-    known = [rank for rank in ranks if rank is not None]
-    return min(known) if known else None
+    """Read only clause-initial verbs, never verbs inside relative clauses."""
+    ranks: list[int] = []
+    relative = False
+    for index, clause in enumerate(_CLAUSE.split(statement_text(text))):
+        if index % 2:
+            if clause == ";":
+                relative = False
+            continue
+        if not relative:
+            initial = _LEADING_ADVERBS.sub("", clause.strip())
+            found = _verb(initial)
+            if found is not None and (rank := _rank(found[0], found[3])) is not None:
+                ranks.append(rank)
+        relative = relative or bool(re.search(r"\b(?:that|who|which|whose)\b", clause, re.I))
+    return min(ranks) if ranks else None
 
 
 def _bound(match: re.Match[str], prefix: str, upper: bool) -> date:
@@ -151,8 +178,22 @@ def _periods(text: str) -> tuple[list[tuple[date, date]], list[tuple[int, int]]]
     periods: list[tuple[date, date]] = []
     spans: list[tuple[int, int]] = []
     for match in _SPAN.finditer(text):
+        prefix = text[: match.start()]
+        contextual = (
+            match["start_name"]
+            or match["start_slash"]
+            or match["start_month"]
+            or match["end_year"]
+            or match["open"]
+            or re.search(r"\b(?:in|since|from|during|until|through)\s*$", prefix, re.I)
+            or (prefix.rstrip().endswith("(") and text[match.end() :].lstrip().startswith(")"))
+        )
+        if not contextual:
+            continue
         start = _bound(match, "start_", False)
-        if match["open"]:
+        if match["open"] or (
+            not match["end_year"] and re.search(r"\b(?:since|from)\s*$", prefix, re.I)
+        ):
             end = date.max
         else:
             end = _bound(match, "end_" if match["end_year"] else "start_", True)
@@ -163,7 +204,9 @@ def _periods(text: str) -> tuple[list[tuple[date, date]], list[tuple[int, int]]]
 
 
 def _rate(tail: str) -> MetricRate | None:
-    rate = _RATE.match(tail.strip())
+    # A noun may separate the amount from its rate ("500 tickets per week").
+    clause = re.split(r"[;,.]|\band\b|&", tail, maxsplit=1, flags=re.I)[0]
+    rate = _ATTACHED_RATE.search(clause)
     if rate is None:
         return None
     if rate["adverb"]:
@@ -173,23 +216,29 @@ def _rate(tail: str) -> MetricRate | None:
 
 def _figures(text: str, masked: list[tuple[int, int]]) -> list[Figure]:
     figures: list[Figure] = []
-    taken = list(masked)
-    for match in _AMOUNT.finditer(text):
-        if any(match.start() < end and start < match.end() for start, end in taken):
+    for match in _FIGURE.finditer(text):
+        if any(match.start() < end and start < match.end() for start, end in masked):
             continue
-        value, unit, magnitude = _metric(match)
-        figures.append(
-            Figure(Decimal(value.replace(",", "")), unit, magnitude, _rate(text[match.end() :]))
-        )
-        taken.append(match.span())
-    for match in _BARE.finditer(text):
-        if any(match.start() < end and start < match.end() for start, end in taken):
-            continue
+        currency, word = match["currency"], (match["unit"] or "").casefold()
+        unit: MetricUnit
+        if currency:
+            unit = cast(MetricUnit, {"$": "usd", "€": "eur", "£": "gbp"}[currency])
+        elif word in ("%", "percent"):
+            unit = "percent"
+        elif word in ("x", "×"):
+            unit = "times"
+        elif word in ("point", "points", "pts"):
+            unit = "points"
+        elif word:
+            unit = "milliseconds" if word == "ms" else _duration(word)
+        else:
+            unit = "count"
+        magnitude = _MAGNITUDES[match["magnitude"].casefold()] if match["magnitude"] else None
         figures.append(
             Figure(
-                Decimal(match.group(0).replace(",", "")),
-                "count",
-                None,
+                Decimal(match["number"].replace(",", "")),
+                unit,
+                magnitude,
                 _rate(text[match.end() :]),
             )
         )
@@ -197,7 +246,10 @@ def _figures(text: str, masked: list[tuple[int, int]]) -> list[Figure]:
 
 
 def _scope_rank(text: str) -> int | None:
-    levels = [_SCOPE_TERMS[match.group(0)] for match in _SCOPE.finditer(_normalise_grounding(text))]
+    normalised = _normalise_grounding(text)
+    levels = [_SCOPE_TERMS[match.group(0)] for match in _SCOPE.finditer(normalised)]
+    if re.search(r"\bacross\s+[0-9]+\s+teams\b", normalised):
+        levels.append(2)
     return max(levels) if levels else None
 
 
@@ -211,16 +263,24 @@ def read(text: str) -> Reading:
 def _within_claim(figure: Figure, claimed: tuple[Figure, ...]) -> bool:
     return any(
         figure.unit == item.unit
-        and figure.magnitude == item.magnitude
         and figure.per in (None, item.per)
-        and figure.value <= item.value
+        and figure.value * _FACTORS[figure.magnitude] <= item.value * _FACTORS[item.magnitude]
         for item in claimed
     )
 
 
-def inflation_kinds(statement: str, claim_text: str) -> list[InflationKind]:
+def inflation_kinds(
+    statement: str,
+    claim_text: str,
+    *,
+    claim_dates: tuple[str | None, str | None] | None = None,
+) -> list[InflationKind]:
     """Each kind by which a contained statement strengthens its claim's pinned text."""
     said, claimed = read(statement), read(claim_text)
+    if not claimed.periods and claim_dates is not None and claim_dates[0]:
+        low = date_bounds(claim_dates[0])[0]
+        high = date_bounds(claim_dates[1])[1] if claim_dates[1] else date.max
+        claimed = Reading(claimed.verb_rank, ((low, high),), claimed.figures, claimed.scope_rank)
     kinds: list[InflationKind] = []
     if (
         said.verb_rank is not None

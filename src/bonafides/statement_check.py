@@ -10,7 +10,8 @@ revision's own reviewed structured-field lines) is checked by its claim text alo
 other wording, including altered, added or reordered field lines, is checked as a whole.
 A contained statement must also not strengthen its claim: the inflation rules compare it with
 the claim's pinned text and name each stronger verb, longer tenure, larger or unit-changed
-metric and wider scope. Review cannot waive any of these blockers.
+metric and wider scope. Pinned structured dates supply the claim period when its text has
+none. Review cannot waive any of these blockers.
 Non-factual text must be one of the declared connective templates, whose only variable
 slots are the posting title and organization; a base résumé has no connective text.
 Anything else is treated as an unsupported factual statement.
@@ -119,7 +120,16 @@ def _factual_issues(
     statement = claim_text if text in printable else text
     if not any(contains_statement(statement, str(fact["evidence_text"])) for fact in own):
         return ["statement_not_in_claim_evidence"]
-    return [CODES[kind] for kind in inflation_kinds(statement, claim_text)]
+    structured = own[0].get("structured_fields")
+    claim_dates = None
+    if isinstance(structured, Mapping):
+        start = structured.get("start_date")
+        end = structured.get("end_date")
+        claim_dates = (
+            start if isinstance(start, str) else None,
+            end if isinstance(end, str) else None,
+        )
+    return [CODES[kind] for kind in inflation_kinds(statement, claim_text, claim_dates=claim_dates)]
 
 
 def check_statements(

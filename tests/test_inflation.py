@@ -14,10 +14,17 @@ import pytest
 
 from bonafides.claim_coverage import main as claims_main
 from bonafides.claim_mapping import map_line, statement_text
-from bonafides.claims import OWNERSHIP_VERBS, contains_statement, date_bounds, render_claim
+from bonafides.claims import (
+    METRIC_UNITS,
+    OWNERSHIP_VERBS,
+    StructuredClaim,
+    contains_statement,
+    date_bounds,
+    render_claim,
+)
 from bonafides.documents import DocumentBlock, DocumentBody, DocumentSection
 from bonafides.inflation import CODES, Figure, inflation_kinds, read
-from bonafides.inflation_report import load, report
+from bonafides.inflation_report import MAX_FILE_BYTES, MAX_LINE_BYTES, load, report
 from bonafides.statement_check import CHECKER_VERSION, check_statements
 
 ROOT = Path(__file__).parent
@@ -125,10 +132,10 @@ def test_inflation_kinds_equal_smaller_or_unstated_metric_passes(
             "Led incident reviews for the payments team",
             "incident reviews, later adopted company-wide",
         ),
-        ("Ran onboarding for the support squad", "a model the department later copied"),
-        ("Audited access for the finance department", "later an enterprise-wide control"),
+        ("Ran onboarding for the support squad", "a model later copied department-wide"),
+        ("Audited access for the finance team", "later an enterprise-wide control"),
         ("Drafted the team charter", "the team charter that informed a cross-company standard"),
-        ("Organized personal study groups", "a division programme"),
+        ("Organized personal study groups", "a division-wide programme"),
     ],
 )
 def test_inflation_kinds_wider_scope_blocks(claim: str, statement: str) -> None:
@@ -149,6 +156,86 @@ def test_inflation_kinds_equal_narrower_or_unstated_scope_passes(
     claim: str, statement: str
 ) -> None:
     assert inflation_kinds(statement, claim) == []
+
+
+@pytest.mark.parametrize("unit", METRIC_UNITS)
+@pytest.mark.parametrize("magnitude", [None, "thousand", "million", "billion"])
+def test_read_every_editor_metric_with_role_organization_and_dates(
+    unit: str, magnitude: str | None
+) -> None:
+    claim = StructuredClaim.model_validate(
+        {
+            "schema_version": 1,
+            "verb": "reduced",
+            "subject": "processing time",
+            "scope": "as Decision analyst at Global Payments",
+            "metric": {
+                "value": "2.5",
+                "unit": unit,
+                "magnitude": magnitude,
+                "change": "decrease",
+            },
+            "period": {"start": "2020-03", "end": "2022-06"},
+        }
+    )
+    reading = read(render_claim(claim))
+    assert reading.verb_rank == OWNERSHIP_VERBS.index("reduced")
+    assert reading.periods == ((date(2020, 3, 1), date(2022, 6, 30)),)
+    assert claim.metric is not None
+    assert reading.figures == (
+        Figure(Decimal("2.5"), claim.metric.unit, claim.metric.magnitude, None),
+    )
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "Engineer since 2020",
+        "Engineer from 2020",
+        "Engineer from 2020 to present",
+    ],
+)
+def test_read_open_tenure_starts_without_explicit_end(text: str) -> None:
+    assert read(text).periods == ((date(2020, 1, 1), date.max),)
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "Processed 2000 tickets",
+        "Processed 2,000 tickets",
+        "Processed 2000 tickets per year",
+    ],
+)
+def test_read_count_that_looks_like_year_is_not_tenure(text: str) -> None:
+    reading = read(text)
+    assert reading.periods == ()
+    assert reading.figures[0].value == Decimal("2000")
+    assert reading.figures[0].unit == "count"
+
+
+@pytest.mark.parametrize("role", ["Decision analyst", "Marketing analyst"])
+def test_read_month_prefix_in_role_is_not_month_context(role: str) -> None:
+    assert read(f"{role} (2019–2022)").periods == ((date(2019, 1, 1), date(2022, 12, 31)),)
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "Saved $10K per month",
+        "Saved $10K a month",
+        "Saved $10K/month",
+        "Saved $10K monthly",
+    ],
+)
+def test_read_rate_attaches_to_its_figure(text: str) -> None:
+    assert read(text).figures == (Figure(Decimal("10"), "usd", "thousand", "month"),)
+
+
+@pytest.mark.parametrize("separator", ["; ", ", ", " and "])
+def test_read_rate_does_not_cross_clause_boundary(separator: str) -> None:
+    reading = read(f"Saved $10K{separator}reviewed reports monthly")
+    assert reading.figures == (Figure(Decimal("10"), "usd", "thousand", None),)
 
 
 def test_read_structured_rendering_recovers_verb_period_and_metric_fields() -> None:
@@ -328,3 +415,129 @@ def test_claims_cli_inflation_report_uncontained_claim_is_rejected(tmp_path: Pat
     with pytest.raises(SystemExit) as refused:
         claims_main(["inflation-report", str(tmp_path)])
     assert refused.value.code == 2
+
+
+@pytest.mark.parametrize("filename", ["honest.jsonl", "inflated.jsonl"])
+@pytest.mark.parametrize(
+    "raw",
+    [b"not JSON", b"[" * 10_000 + b"0" + b"]" * 10_000, b"\xff"],
+    ids=["malformed-json", "deeply-nested-json", "invalid-utf8"],
+)
+def test_claims_cli_inflation_report_bad_line_exits_with_location(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], filename: str, raw: bytes
+) -> None:
+    _write_sets(
+        tmp_path,
+        [
+            {
+                "evidence": "Led migration.",
+                "claim": "Led migration",
+                "statement": "Led migration",
+                "kind": None,
+            }
+        ],
+    )
+    (tmp_path / filename).write_bytes(b"\n" + raw + b"\n")
+    with pytest.raises(SystemExit) as refused:
+        claims_main(["inflation-report", str(tmp_path)])
+    assert refused.value.code == 2
+    output = capsys.readouterr()
+    assert f"{filename}:2:" in output.err
+    assert "Traceback" not in output.err
+    assert output.out == ""
+
+
+@pytest.mark.parametrize("error", [ValueError("integer exceeds limit"), RecursionError("too deep")])
+def test_claims_cli_inflation_report_parser_errors_are_case_errors(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+    error: Exception,
+) -> None:
+    _write_sets(tmp_path, [])
+    (tmp_path / "honest.jsonl").write_bytes(b"\n{}\n")
+
+    def reject_json(raw: str) -> object:
+        raise error
+
+    monkeypatch.setattr(json, "loads", reject_json)
+    with pytest.raises(SystemExit) as refused:
+        claims_main(["inflation-report", str(tmp_path)])
+    assert refused.value.code == 2
+    output = capsys.readouterr()
+    assert f"honest.jsonl:2: {error}" in output.err
+    assert "Traceback" not in output.err
+    assert output.out == ""
+
+
+@pytest.mark.parametrize("filename", ["honest.jsonl", "inflated.jsonl"])
+def test_claims_cli_inflation_report_oversized_file_is_rejected(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], filename: str
+) -> None:
+    _write_sets(
+        tmp_path,
+        [
+            {
+                "evidence": "Led migration.",
+                "claim": "Led migration",
+                "statement": "Led migration",
+                "kind": None,
+            }
+        ],
+    )
+    (tmp_path / filename).write_bytes(b" " * (MAX_FILE_BYTES + 1))
+    with pytest.raises(SystemExit) as refused:
+        claims_main(["inflation-report", str(tmp_path)])
+    assert refused.value.code == 2
+    output = capsys.readouterr()
+    assert f"{filename}:1: file exceeds {MAX_FILE_BYTES} bytes" in output.err
+    assert "Traceback" not in output.err
+    assert output.out == ""
+
+
+@pytest.mark.parametrize("filename", ["honest.jsonl", "inflated.jsonl"])
+@pytest.mark.parametrize(
+    "raw",
+    [b" " * (MAX_LINE_BYTES + 1), ("\u00e9" * (MAX_LINE_BYTES // 2) + "\n").encode()],
+    ids=["ascii", "multibyte-utf8"],
+)
+def test_claims_cli_inflation_report_oversized_line_is_rejected(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], filename: str, raw: bytes
+) -> None:
+    _write_sets(
+        tmp_path,
+        [
+            {
+                "evidence": "Led migration.",
+                "claim": "Led migration",
+                "statement": "Led migration",
+                "kind": None,
+            }
+        ],
+    )
+    (tmp_path / filename).write_bytes(b"\n" + raw)
+    with pytest.raises(SystemExit) as refused:
+        claims_main(["inflation-report", str(tmp_path)])
+    assert refused.value.code == 2
+    output = capsys.readouterr()
+    assert f"{filename}:2: line exceeds {MAX_LINE_BYTES} bytes" in output.err
+    assert "Traceback" not in output.err
+    assert output.out == ""
+
+
+@pytest.mark.parametrize("ending", [b"", b"\n", b"\r\n"])
+def test_inflation_report_line_at_byte_limit_is_accepted(tmp_path: Path, ending: bytes) -> None:
+    raw = json.dumps(
+        {
+            "evidence": "Led migration.",
+            "claim": "Led migration",
+            "statement": "Led migration",
+            "kind": None,
+        }
+    ).encode()
+    path = tmp_path / "honest.jsonl"
+    path.write_bytes(b"\n" + raw + b" " * (MAX_LINE_BYTES - len(raw) - len(ending)) + ending)
+    cases = load(path, honest=True)
+    assert len(cases) == 1
+    assert cases[0].line == 2
+    assert cases[0].claim_text == "Led migration"

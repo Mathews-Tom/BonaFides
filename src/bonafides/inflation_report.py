@@ -7,6 +7,7 @@ a statement and the expected kind (``null`` for an honest case). Every case runs
 document checker as a factual statement citing its claim, exactly as a document block does.
 The report prints counts, the honest false-block rate and the block rate per kind, and exits
 non-zero when the false-block rate exceeds the threshold. Files are neither stored nor sent.
+Each UTF-8 file is limited to 5 MiB and each line to 64 KiB, including its line ending.
 """
 
 from __future__ import annotations
@@ -25,6 +26,8 @@ from bonafides.inflation import CODES, INFLATION_KINDS, InflationKind
 from bonafides.statement_check import check_statements
 
 FALSE_BLOCK_LIMIT = 0.05
+MAX_FILE_BYTES = 5 * 1024 * 1024
+MAX_LINE_BYTES = 64 * 1024
 _CLAIM = uuid5(NAMESPACE_URL, "bonafides-inflation-report/claim")
 _EVIDENCE = uuid5(NAMESPACE_URL, "bonafides-inflation-report/evidence")
 
@@ -42,9 +45,9 @@ class Case:
     kind: InflationKind | None
 
 
-def _text(value: object, name: str, line: int) -> str:
+def _text(value: object, name: str) -> str:
     if not isinstance(value, str) or not value.strip():
-        raise CaseError(f"line {line}: {name} must be non-empty text")
+        raise CaseError(f"{name} must be non-empty text")
     return value
 
 
@@ -52,36 +55,51 @@ def _case(raw: str, line: int, honest: bool) -> Case:
     try:
         value = json.loads(raw)
     except json.JSONDecodeError as exc:
-        raise CaseError(f"line {line}: invalid JSON ({exc.msg})") from exc
+        raise CaseError(f"invalid JSON ({exc.msg})") from exc
     if not isinstance(value, dict) or set(value) != {"evidence", "claim", "statement", "kind"}:
-        raise CaseError(f"line {line}: keys must be evidence, claim, statement and kind")
+        raise CaseError("keys must be evidence, claim, statement and kind")
     claim = value["claim"]
     if isinstance(claim, dict):
         try:
             claim_text = render_claim(StructuredClaim.model_validate(claim))
         except ValidationError as exc:
-            raise CaseError(f"line {line}: invalid structured claim") from exc
+            raise CaseError("invalid structured claim") from exc
     else:
-        claim_text = _text(claim, "claim", line)
+        claim_text = _text(claim, "claim")
     kind = value["kind"]
     if honest and kind is not None:
-        raise CaseError(f"line {line}: an honest case has kind null")
+        raise CaseError("an honest case has kind null")
     if not honest and kind not in INFLATION_KINDS:
-        raise CaseError(f"line {line}: kind must be one of {', '.join(INFLATION_KINDS)}")
-    evidence = _text(value["evidence"], "evidence", line)
+        raise CaseError(f"kind must be one of {', '.join(INFLATION_KINDS)}")
+    evidence = _text(value["evidence"], "evidence")
     if not contains_statement(claim_text, evidence):
-        raise CaseError(f"line {line}: the claim is not contained in its evidence")
-    return Case(line, evidence, claim_text, _text(value["statement"], "statement", line), kind)
+        raise CaseError("the claim is not contained in its evidence")
+    return Case(line, evidence, claim_text, _text(value["statement"], "statement"), kind)
 
 
 def load(path: Path, honest: bool) -> list[Case]:
-    cases = [
-        _case(raw, number, honest)
-        for number, raw in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1)
-        if raw.strip()
-    ]
+    """Read bounded case lines and attach their filename and line to input errors."""
+    if path.stat().st_size > MAX_FILE_BYTES:
+        raise CaseError(f"{path.name}:1: file exceeds {MAX_FILE_BYTES} bytes")
+    cases: list[Case] = []
+    size = 0
+    with path.open("rb") as source:
+        number = 0
+        while raw := source.readline(MAX_LINE_BYTES + 1):
+            number += 1
+            size += len(raw)
+            if size > MAX_FILE_BYTES:
+                raise CaseError(f"{path.name}:{number}: file exceeds {MAX_FILE_BYTES} bytes")
+            if len(raw) > MAX_LINE_BYTES:
+                raise CaseError(f"{path.name}:{number}: line exceeds {MAX_LINE_BYTES} bytes")
+            try:
+                text = raw.decode("utf-8")
+                if text.strip():
+                    cases.append(_case(text, number, honest))
+            except (ValueError, RecursionError) as exc:
+                raise CaseError(f"{path.name}:{number}: {exc}") from exc
     if not cases:
-        raise CaseError(f"{path.name} contains no cases")
+        raise CaseError(f"{path.name}:1: contains no cases")
     return cases
 
 

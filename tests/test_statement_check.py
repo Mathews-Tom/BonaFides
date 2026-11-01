@@ -324,3 +324,38 @@ def test_check_statements_base_resume_declares_no_connectives() -> None:
     assert [issue["code"] for issue in check_statements(body, FIELD_FACTS, FRAME, "base")] == [
         "connective_not_declared"
     ]
+
+
+@pytest.mark.parametrize(
+    ("statement", "expected"),
+    [
+        ("Maintained Linux batch runbooks during 2015–2024", ["statement_longer_tenure"]),
+        ("Maintained Linux batch runbooks during 2020–2022", []),
+    ],
+)
+def test_check_statements_uses_pinned_dates_when_claim_text_has_no_period(
+    statement: str, expected: list[str]
+) -> None:
+    facts = [
+        {
+            **FIELD_FACTS[0],
+            "structured_fields": {"start_date": "2019-03", "end_date": "2023-06"},
+            # Both proposed statements occur in the linked evidence: only the
+            # pinned claim period determines whether either inflates tenure.
+            "evidence_text": (
+                "Maintained Linux batch runbooks during 2015–2024. "
+                "Maintained Linux batch runbooks during 2020–2022."
+            ),
+        }
+    ]
+    body = DocumentBody(
+        title="Résumé",
+        sections=[
+            DocumentSection(
+                key="experience",
+                heading="Experience",
+                blocks=[_factual(statement, [ROLE_CLAIM], [ROLE_EVIDENCE])],
+            )
+        ],
+    )
+    assert [issue["code"] for issue in check_statements(body, facts, FRAME, "resume")] == expected
