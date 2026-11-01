@@ -707,6 +707,36 @@ describe('saved tailored section proposals', () => {
     } finally { vi.useRealTimers(); }
   });
 
+  it('shows the stored section proposal when the ancillary rate refresh fails', async () => {
+    const user = userEvent.setup(); let finished = false; let reads = 0;
+    const { api } = fixture(saved, async (path, method) => {
+      if (path === '/applications') return { items: [application], next_cursor: null };
+      if (path === '/applications/application-1/documents') {
+        reads++;
+        if (finished) throw new ApiError(503, 'unavailable');
+        return pair;
+      }
+      if (path.includes('/regeneration-context?')) return sectionPreview(path);
+      if (path === '/documents/tailored-resume/regeneration-proposals' && method === 'POST') return sectionWorkflow;
+      if (path === '/workflows/section-task-1') { finished = true; return completedSectionWorkflow; }
+      if (path === '/documents/tailored-resume/regeneration-proposals/proposal-1') return sectionProposal;
+      throw new ApiError(404, 'not_found');
+    });
+    render(<Documents api={api} profile={profile} />); await openTailored(user);
+    await inspectSection(user);
+    await user.click(screen.getByRole('checkbox', { name: /I reviewed this exact selected-section projection/ }));
+    vi.useFakeTimers();
+    try {
+      await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Request section proposal' })); });
+      await act(async () => { await vi.advanceTimersByTimeAsync(1000); });
+      expect(reads).toBe(2);
+      expect(screen.getByRole('region', { name: 'Section proposal comparison' })).toBeVisible();
+      expect(screen.getByRole('heading', { name: 'Document task: succeeded' })).toBeInTheDocument();
+      expect(screen.queryByText(/Task status\/result could not be loaded/)).not.toBeInTheDocument();
+      expect(screen.getByLabelText('Block text: b-1')).toHaveValue('Maintained Linux service checks.');
+    } finally { vi.useRealTimers(); }
+  });
+
   it('shows a section-specific safe reason when a section task fails after its corrective retry', async () => {
     const user = userEvent.setup();
     const failed: Workflow = { ...sectionWorkflow, version: 2, state: 'permanent_failure', last_error_code: 'model_output_invalid_after_correction' };

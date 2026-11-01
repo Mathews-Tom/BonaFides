@@ -489,9 +489,14 @@ export function Documents({ api, profile, disabled = false, externalDocumentId, 
           // the saved document over an owner's current selection or local edits.
           if (applicationId && epoch === selection.current &&
               (value.mode === 'section_regeneration' || (value.mode === 'tailored_ai' && value.state !== 'succeeded'))) {
-            const latest = await request<ApplicationDocuments>(controller.signal, `${appPath(applicationId)}/documents`);
-            if (epoch === selection.current && current.current.applicationId === applicationId) {
-              setPair(previous => previous?.application_id === applicationId ? { ...previous, claim_json_rates: latest.claim_json_rates } : previous);
+            try {
+              const latest = await request<ApplicationDocuments>(controller.signal, `${appPath(applicationId)}/documents`);
+              if (epoch === selection.current && current.current.applicationId === applicationId) {
+                setPair(previous => previous?.application_id === applicationId ? { ...previous, claim_json_rates: latest.claim_json_rates } : previous);
+              }
+            } catch (failure) {
+              // Counters are ancillary: a failed refresh must not hide a stored result.
+              if (aborted(failure)) throw failure;
             }
           }
           if (value.state === 'succeeded') {

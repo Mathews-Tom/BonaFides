@@ -147,10 +147,11 @@ def test_citation_does_not_support_invented_kubernetes_metric() -> None:
 
 
 @pytest.mark.postgres
-@pytest.mark.parametrize("publication", ["compose_base", "benchmark"])
-def test_literal_claim_substring_does_not_support_base_statement(
+@pytest.mark.parametrize("publication", ["synthetic_stored_revision", "benchmark"])
+def test_stored_base_checker_blocks_literal_claim_substrings(
     catalog: SourceContext, publication: str
 ) -> None:
+    """Checker regression with a synthetic excerpt, not an owner rebuild admission guarantee."""
     profile = catalog.client.get("/api/v1/profile").json()
     evidence = catalog.client.post(
         "/api/v1/evidence",
