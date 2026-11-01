@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import copy
 import json
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
 from pathlib import Path
 from threading import Event
@@ -16,6 +17,7 @@ from typing import Any, cast
 from uuid import UUID
 
 import pytest
+from sqlalchemy import Connection, text
 from test_document_generation import (
     _candidate,
     _claim,
@@ -42,9 +44,10 @@ from test_suitability import (
 )
 from test_tracking import _application
 
-from bonafides import local_model, suitability
+from bonafides import local_model, model_context, suitability
 from bonafides.commands import canonical_json
 from bonafides.worker import Worker
+from bonafides.workflows import assert_fence, heartbeat
 
 CLAIM = "Kept the synthetic payroll batch inside its nightly window"
 WITHHELD_MARKER = "SECRET-EMPLOYER-ROADMAP-7Q"
@@ -353,6 +356,7 @@ def test_requirement_matching_sends_the_claim_without_withheld_evidence_content(
 @pytest.mark.parametrize(
     ("privacy_class", "employer_owned"), [("confidential", False), ("private", True)]
 )
+@pytest.mark.parametrize("after_reservation", [False, True])
 def test_reclassification_after_queue_refuses_before_transmission(
     catalog: SourceContext,
     monkeypatch: pytest.MonkeyPatch,
@@ -361,12 +365,14 @@ def test_reclassification_after_queue_refuses_before_transmission(
     error: str,
     privacy_class: str,
     employer_owned: bool,
+    after_reservation: bool,
 ) -> None:
     _profile(catalog)
     application = _application(catalog, description_text=SOURCE)
     view = _write(catalog, {"id": application["posting_id"]}, [_requirement(1, "Linux required.")])
     profile, evidence_id, _ = _withheld_source(catalog, "private", False)
-    with fixture_server(response_body()) as (endpoint, requests):
+    metadata: list[str] = []
+    with fixture_server(response_body(), metadata_paths=metadata) as (endpoint, requests):
         route = qualified_route(tmp_path, route_data(endpoint))
         monkeypatch.setattr(local_model, "load_route", lambda _path: route)
         preview = _preview(catalog, profile, application)
@@ -389,7 +395,18 @@ def test_reclassification_after_queue_refuses_before_transmission(
         else:
             task = _queue_pair(catalog, preview)
         assert WITHHELD_MARKER in canonical_json(task.input["context"])
-        _reclassify(catalog, profile, evidence_id, privacy_class, employer_owned)
+        if after_reservation:
+            lock_evidence = model_context.lock_transmitted_evidence
+
+            def classify_before_final_check(conn: Connection, owner: UUID, context: Any) -> None:
+                _reclassify(catalog, profile, evidence_id, privacy_class, employer_owned)
+                lock_evidence(conn, owner, context)
+
+            monkeypatch.setattr(
+                model_context, "lock_transmitted_evidence", classify_before_final_check
+            )
+        else:
+            _reclassify(catalog, profile, evidence_id, privacy_class, employer_owned)
         Worker(catalog.runtime, replace(catalog.identity.settings, mode="production"))._execute(
             task, Event()
         )
@@ -397,6 +414,7 @@ def test_reclassification_after_queue_refuses_before_transmission(
         assert failed["state"] == "permanent_failure", failed
         assert failed["last_error_code"] == error, failed
         assert requests == []
+        assert metadata == []
 
 
 @pytest.mark.postgres
@@ -496,3 +514,123 @@ def test_transmit_point_refuses_withheld_evidence_that_carries_content(tmp_path:
                 "match_requirements", context, local_model.PROMPT_VERSIONS["match_requirements"]
             )
         assert requests == []
+
+
+@pytest.mark.postgres
+@pytest.mark.parametrize(
+    "stage", ["generate_documents", "regenerate_section", "match_requirements"]
+)
+@pytest.mark.parametrize("phase", ["metadata", "inference", "postflight"])
+def test_inflight_send_refuses_reclassification_only_for_transmitted_records(
+    catalog: SourceContext,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    stage: str,
+    phase: str,
+) -> None:
+    _profile(catalog)
+    application = _application(catalog, description_text=SOURCE)
+    view = _write(catalog, {"id": application["posting_id"]}, [_requirement(1, "Linux required.")])
+    profile, evidence_id, _ = _withheld_source(catalog, "private", False)
+    entered, released = Event(), Event()
+
+    def block() -> None:
+        entered.set()
+        assert released.wait(20), "test must release the fixture endpoint"
+
+    response = response_body(
+        message={
+            "role": "assistant",
+            "content": json.dumps({"schema_version": "1", "stage": stage}),
+        }
+    )
+    with fixture_server(
+        response,
+        on_preflight=block if phase == "metadata" else None,
+        on_inference=block if phase == "inference" else None,
+        on_postflight=block if phase == "postflight" else None,
+    ) as (endpoint, requests):
+        data = route_data(endpoint)
+        data["deadline_seconds"] = 30
+        route = qualified_route(tmp_path, data)
+        monkeypatch.setattr(local_model, "load_route", lambda _path: route)
+        preview = _preview(catalog, profile, application)
+        if stage == "match_requirements":
+            task = _queue(catalog, view, profile)
+        elif stage == "regenerate_section":
+            suitability.execute_model(
+                catalog.runtime,
+                catalog.identity.settings,
+                _queue_pair(catalog, preview),
+                Event(),
+                FixtureModel(_candidate(preview)),
+            )
+            resume = next(
+                item
+                for item in _pair_documents(catalog, application)["items"]
+                if item["kind"] == "resume"
+            )
+            task = _queue_section(catalog, _section_preview(catalog, resume))
+        else:
+            task = _queue_pair(catalog, preview)
+        assert WITHHELD_MARKER in canonical_json(task.input["context"])
+        record = next(item for item in profile["evidence"] if item["revision"]["id"] == evidence_id)
+        worker = Worker(catalog.runtime, replace(catalog.identity.settings, mode="production"))
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            future = executor.submit(worker._execute, task, Event())
+            try:
+                assert entered.wait(10), "worker must reach the blocking fixture endpoint"
+                # A retained workflow row lock would break both lease renewal and
+                # provider admission (which already ran before the chat request).
+                with catalog.runtime.transaction() as conn:
+                    assert heartbeat(conn, task)
+                    assert_fence(conn, task)
+                current = catalog.client.get("/api/v1/profile").json()
+                rejected = catalog.client.put(
+                    f"/api/v1/evidence/{record['id']}/classification",
+                    json={"privacy_class": "private", "employer_owned": True},
+                    headers=catalog.headers(current["version"]),
+                )
+                assert rejected.status_code == 409, rejected.text
+                assert rejected.json()["code"] == "evidence_in_model_use"
+                assert catalog.client.get("/api/v1/profile").json() == current
+                with catalog.runtime.transaction() as conn:
+                    stored = conn.execute(
+                        text("""SELECT e.employer_owned,
+                        (SELECT count(*) FROM bonafides.evidence_classification_changes c
+                        WHERE c.owner_id=e.owner_id AND c.evidence_id=e.id) AS history
+                        FROM bonafides.evidence_records e WHERE e.owner_id=:owner AND e.id=:id"""),
+                        {"owner": catalog.owner_id, "id": UUID(record["id"])},
+                    ).one()
+                    assert not stored.employer_owned and stored.history == 1
+                # This newly created record is outside the frozen context, even for
+                # matching (which includes all evidence in its pinned profile).
+                extra = catalog.client.post(
+                    "/api/v1/evidence",
+                    json={
+                        "payload": {"text": "Unrelated synthetic note", "source": "Review"},
+                        "provenance": {
+                            "source_type": "work_sample",
+                            "privacy_class": "private",
+                            "employer_owned": False,
+                        },
+                    },
+                    headers=catalog.headers(current["version"]),
+                )
+                assert extra.status_code == 200, extra.text
+                unrelated = extra.json()["changed_evidence_id"]
+                extra_record = next(
+                    item for item in extra.json()["evidence"] if item["id"] == unrelated
+                )
+                assert extra_record["revision"]["id"] not in canonical_json(task.input["context"])
+                _reclassify(catalog, extra.json(), extra_record["revision"]["id"], "private", True)
+                assert not future.done()
+            finally:
+                released.set()
+            future.result(timeout=10)
+        assert len(requests) == 1
+        assert WITHHELD_MARKER.encode() in requests[0]
+        assert catalog.workflow(task.id)["last_error_code"] == "invalid_model_output"
+        # Failure also releases send locks; the original classification can now commit.
+        current = catalog.client.get("/api/v1/profile").json()
+        _reclassify(catalog, current, evidence_id, "private", True)

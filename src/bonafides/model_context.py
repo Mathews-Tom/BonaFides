@@ -20,6 +20,28 @@ from bonafides.problems import Problem
 WithheldReason = Literal["confidential", "employer_owned"]
 
 
+def lock_transmitted_evidence(conn: Connection, owner: UUID, context: Mapping[str, object]) -> None:
+    """Hold only transmitted evidence records until the model exchange returns.
+
+    The caller keeps this transaction open while checking the workflow on a separate
+    connection: its owner/workflow locks must not block heartbeats or provider admission.
+    Withheld items contain no evidence text and need no send lock.
+    """
+    evidence = cast(list[dict[str, object]], context.get("evidence", []))
+    identifiers = sorted({UUID(str(item["id"])) for item in evidence if "text" in item}, key=str)
+    if not identifiers:
+        return
+    rows = conn.execute(
+        text("""SELECT r.id FROM bonafides.evidence_revisions r
+        JOIN bonafides.evidence_records e ON e.owner_id=r.owner_id AND e.id=r.evidence_id
+        WHERE r.owner_id=:owner AND r.id=ANY(CAST(:ids AS uuid[]))
+        ORDER BY e.id,r.id FOR SHARE OF e"""),
+        {"owner": owner, "ids": identifiers},
+    ).all()
+    if len(rows) != len(identifiers):
+        raise Problem(409, "profile_evidence_unavailable")
+
+
 def withheld_evidence(
     conn: Connection, owner: UUID, revision_ids: Iterable[UUID]
 ) -> dict[UUID, list[WithheldReason]]:

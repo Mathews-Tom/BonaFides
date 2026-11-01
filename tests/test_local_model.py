@@ -130,6 +130,7 @@ def fixture_server(
     metadata_paths: list[str] | None = None,
     on_inference: Callable[[], None] | None = None,
     on_postflight: Callable[[], None] | None = None,
+    on_preflight: Callable[[], None] | None = None,
 ) -> Iterator[tuple[str, list[bytes]]]:
     requests: list[bytes] = []
     result_body = response_body() if body is None else body
@@ -156,6 +157,8 @@ def fixture_server(
             if metadata_paths is not None:
                 metadata_paths.append(self.path)
             postflight = bool(requests) and self.path == "/api/tags"
+            if not requests and on_preflight is not None:
+                on_preflight()
             if postflight:
                 if on_postflight is not None:
                     on_postflight()

@@ -1231,7 +1231,7 @@ def _execute_reserved_model(
     interrupted: Event,
     client: ModelClient | None = None,
 ) -> None:
-    """No DB transaction spans network I/O. A durable reservation survives cancellation/crash."""
+    """A durable reservation survives cancellation; record locks fence evidence egress."""
     stage = str(task.input["stage"])
     with db.transaction() as conn:
         route = _route(conn, task.owner_id, settings, stage)
@@ -1250,22 +1250,25 @@ def _execute_reserved_model(
         if run_id is None and interrupted.wait(0.25):
             raise local_model.ModelFailure("model_interrupted", retryable=False)
     try:
-        # Re-read private route immediately before transmission, not just API enqueue.
-        with db.transaction() as conn:
-            active_route = _route(conn, task.owner_id, settings, stage)
-            _check_workflow_context(conn, task, settings)
-        if active_route.identity() != task.input.get("route_identity"):
-            raise Problem(409, "stale_model_route")
-        if interrupted.is_set():
-            raise local_model.ModelFailure("model_interrupted", retryable=False)
-        result = (
-            client or local_model.OllamaClient(active_route, ProviderExecution(db, task, run_id))
-        ).call(
-            stage,
-            cast(dict[str, object], task.input["context"]),
-            str(task.input["prompt_version"]),
-            interrupted,
-        )
+        from bonafides.model_context import lock_transmitted_evidence
+
+        context = cast(dict[str, object], task.input["context"])
+        # Retain only evidence locks across HTTP. Context checks also lock owner,
+        # profile and workflow rows; commit those on a separate connection so
+        # heartbeat/cancellation and lifecycle.started() keep their existing fences.
+        with db.transaction() as sending:
+            lock_transmitted_evidence(sending, task.owner_id, context)
+            with db.transaction() as conn:
+                active_route = _route(conn, task.owner_id, settings, stage)
+                _check_workflow_context(conn, task, settings)
+            if active_route.identity() != task.input.get("route_identity"):
+                raise Problem(409, "stale_model_route")
+            if interrupted.is_set():
+                raise local_model.ModelFailure("model_interrupted", retryable=False)
+            result = (
+                client
+                or local_model.OllamaClient(active_route, ProviderExecution(db, task, run_id))
+            ).call(stage, context, str(task.input["prompt_version"]), interrupted)
         if interrupted.is_set():
             raise local_model.ModelFailure("model_interrupted", retryable=False)
         try:

@@ -12,6 +12,7 @@ from fastapi import APIRouter, Depends, Header, Response
 from pydantic import Field, HttpUrl, ValidationInfo, field_validator
 from sqlalchemy import Connection, text
 from sqlalchemy.engine import RowMapping
+from sqlalchemy.exc import OperationalError
 
 from bonafides.auth import Owner, StrictModel, require_owner
 from bonafides.claims import (
@@ -419,6 +420,18 @@ def append_classification(
 def classify_evidence(
     conn: Connection, owner_id: UUID, entity_id: UUID, body: EvidenceClassification
 ) -> dict[str, object]:
+    try:
+        # A send retains FOR SHARE until HTTP completes. Refuse immediately rather
+        # than consuming the API's lock timeout or committing a misleading success.
+        conn.execute(
+            text("""SELECT id FROM bonafides.evidence_records
+            WHERE owner_id=:owner AND id=:id FOR UPDATE NOWAIT"""),
+            {"owner": owner_id, "id": entity_id},
+        )
+    except OperationalError as exc:
+        if getattr(exc.orig, "sqlstate", None) == "55P03":
+            raise Problem(409, "evidence_in_model_use") from exc
+        raise
     _active_record(conn, owner_id, entity_id, "evidence")
     conn.execute(
         text("""UPDATE bonafides.evidence_records
