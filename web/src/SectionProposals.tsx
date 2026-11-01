@@ -1,14 +1,16 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
-import type { DocumentBody, DocumentRecord, SectionProposal, SectionProposalPage, SectionRegenerationContext } from './api';
+import type { DocumentBody, DocumentFact, DocumentRecord, SectionProposal, SectionProposalPage, SectionRegenerationContext } from './api';
+import { ISSUE_REASONS, linkedClaim } from './document-state';
 
 export function proposalMatches(proposal: SectionProposal, document: DocumentRecord) {
   return proposal.document_id === document.id && proposal.target_document_version === document.version &&
     proposal.target_revision_id === document.current_revision.id && proposal.target_content_sha256 === document.current_revision.content_sha256;
 }
 
-function ProposalSection({ section, label }: { section: DocumentBody['sections'][number]; label: string }) {
+function ProposalSection({ section, label, facts }: { section: DocumentBody['sections'][number]; label: string; facts: DocumentFact[] }) {
   return <article className="paper" aria-label={label}><h5>{label}: {section.heading}</h5>{section.blocks.map(block => <div className="evidence-seam" key={block.block_key}>
     <p className="proposal-text">{block.text}</p><small>Classification: {block.claim_kind}.</small>
+    {block.claim_kind === 'factual' && <p className="claim-link">Linked claim: {linkedClaim(facts, block.claim_revision_ids)}</p>}
     <details><summary>Statement references</summary><p>Claims: {block.claim_revision_ids.join(', ') || 'None'}. Evidence: {block.evidence_revision_ids.join(', ') || 'None'}. References are not semantic proof; compare wording with the saved document’s frozen sources.</p></details>
   </div>)}</article>;
 }
@@ -54,9 +56,9 @@ export function SectionProposals({ document, dirty, locked, archived, sectionKey
       {proposals && <>{proposals.items.length === 0 ? <p>No saved section proposals. A missing or failed task is not a proposal.</p> : <ol>{proposals.items.map(item => <li key={item.id}><button className="secondary" disabled={locked} aria-pressed={proposal?.id === item.id} onClick={() => onOpen(item.id)}>Compare proposal for {item.original_section.heading} · {item.created_at}</button><small>Target revision {item.target_revision_id}. {item.applicable ? 'Target may be applicable; compare before applying.' : 'Not applicable to the current saved target or source state.'}</small></li>)}</ol>}{proposals.next_cursor && <button className="secondary" disabled={locked} onClick={() => onReload(proposals.next_cursor!)}>Load older section proposals</button>}</>}
     </section>
     {proposal && <section className="comparison" aria-label="Section proposal comparison"><h4>Compare original and proposed section</h4><p>Proposal {proposal.id}. Target revision {proposal.target_revision_id}; document version {proposal.target_document_version}; content SHA-256 {proposal.target_content_sha256}. The original below is the proposal’s immutable target, not a claim that your current editor is unchanged.</p>
-      <div className="proposal-columns"><ProposalSection section={proposal.original_section} label="Original saved section" /><ProposalSection section={proposal.proposed_section} label="Proposed section" /></div>
+      <div className="proposal-columns"><ProposalSection section={proposal.original_section} label="Original saved section" facts={proposal.facts} /><ProposalSection section={proposal.proposed_section} label="Proposed section" facts={proposal.facts} /></div>
       {proposal.historical && <p className="disclosure">Imported historical proposal. Original model metadata is retained for inspection, not restored invocation or consent authority. This proposal cannot be applied. Request a new proposal through a separately qualified route when needed.</p>}
-      {proposal.validation_issues.length > 0 ? <div className="error"><strong>Proposed draft has review/export blockers.</strong><ul>{proposal.validation_issues.map((issue, index) => <li key={`${issue.path}-${issue.code}-${index}`}>{issue.path}: {issue.code}</li>)}</ul><p>Applying retains these issues in an editable draft. Correct unsupported statements or accepted sources and save/revalidate before exact-revision review or PDF. Human review cannot waive blockers.</p></div> : <p>No structural/source blocker was reported. This is not factual approval; compare every statement with the frozen sources.</p>}
+      {proposal.validation_issues.length > 0 ? <div className="error"><strong>Proposed draft has review/export blockers.</strong><ul>{proposal.validation_issues.map((issue, index) => <li key={`${issue.path}-${issue.code}-${index}`}>{ISSUE_REASONS[issue.code] ?? `Unsupported (${issue.code}).`}{issue.statement !== undefined && <> Statement: <q>{issue.statement}</q></>} <small>{issue.path} · {issue.code}</small></li>)}</ul><p>Applying retains these issues in an editable draft. Correct unsupported statements or accepted sources and save/revalidate before exact-revision review or PDF. Human review cannot waive blockers.</p></div> : <p>No structural/source blocker was reported. This is not factual approval; compare every statement with the frozen sources.</p>}
       {(!targetMatches || !proposal.applicable) && <p className="disclosure">This proposal cannot be applied to the displayed saved target or current source state. A manual save or restoration changes target identity even if words match. Reload proposals and compare the current document; request a new proposal when appropriate. Nothing is automatically rebased or overwritten.</p>}
       <details><summary>Stored proposal model provenance</summary><pre className="import-source">{JSON.stringify(proposal.model_run, null, 2)}</pre></details>
       <label className="check"><input type="checkbox" checked={applyConfirmed} disabled={!canApply} onChange={event => onApplyConfirm(event.target.checked)} />I compared the original and proposal and explicitly choose to apply only this section as a new draft revision</label>

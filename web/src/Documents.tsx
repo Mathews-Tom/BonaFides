@@ -2,7 +2,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Api, ApiError, errorText, terminal, type ApplicationDocuments, type BaseResumeRequest, type DocumentBody, type DocumentDefaults, type DocumentDefaultsPatch, type DocumentFact, type DocumentIssue, type DocumentRecord, type DocumentRenderRequest, type DocumentRestoreRequest, type DocumentReviewRequest, type DocumentRevision, type DocumentRevisionPage, type DocumentSaveRequest, type DocumentTemplate, type GenerationContext, type GenerationRequest, type Profile, type ProfileRevisionSummary, type RevisionPage, type SectionProposal, type SectionProposalApplyRequest, type SectionProposalPage, type SectionRegenerationContext, type SectionRegenerationRequest, type Workflow } from './api';
 import type { ApplicationPage, ApplicationSummary } from './tracking-api';
-import { copyBody, issueAnchor, rebaseBody, sameBody } from './document-state';
+import { copyBody, ISSUE_REASONS, issueAnchor, linkedClaim, rebaseBody, sameBody } from './document-state';
 import { proposalMatches, SectionProposals } from './SectionProposals';
 import './Documents.css';
 
@@ -19,17 +19,6 @@ function withheldClaimText(projection: Record<string, unknown>, id: string): str
   return typeof claim?.text === 'string' ? `“${claim.text}”` : `claim revision ${id}`;
 }
 
-const ISSUE_REASONS: Record<string, string> = {
-  claim_not_in_profile: 'It cites a claim that is not in your profile.',
-  statement_not_in_claim_evidence: "It is not contained in its claim's own evidence.",
-  uncited_factual_statement: 'It states a fact without citing a claim.',
-  statement_cites_multiple_claims: 'It cites more than one claim.',
-  evidence_not_linked_to_claim: "Its evidence is not its claim's own evidence.",
-  connective_not_declared: 'It is not one of the declared non-factual phrases, so it counts as an unsupported fact.',
-  unestablished_heading: 'It is not one of the fixed document headings.',
-  unresolved_omission_marker: 'It still contains a placeholder marker.',
-  disallowed_control: 'It contains disallowed control characters.',
-};
 
 const TASK_REASONS: Record<string, string> = {
   model_output_invalid_after_correction: 'The model output did not match the required document shape, even after one corrective retry. No documents or application changes were created.',
@@ -37,11 +26,6 @@ const TASK_REASONS: Record<string, string> = {
   stale_document_context: 'Your profile, posting or settings changed after the request. No documents were created; preview and request again.',
 };
 
-function linkedClaim(facts: DocumentFact[], claimIds: string[]): string {
-  if (claimIds.length !== 1) return claimIds.length ? 'more than one claim, so it is not linked' : 'none, this statement cites no claim';
-  const fact = facts.find(item => item.claim_revision_id === claimIds[0]);
-  return fact ? `“${fact.claim_text}”` : 'a claim that is not in your profile';
-}
 
 function Sources({ facts, claimIds, evidenceIds }: { facts: DocumentFact[]; claimIds: string[]; evidenceIds: string[] }) {
   const selected = facts.filter(fact => claimIds.includes(fact.claim_revision_id) && (!fact.evidence_revision_id || evidenceIds.includes(fact.evidence_revision_id)));
@@ -50,6 +34,12 @@ function Sources({ facts, claimIds, evidenceIds }: { facts: DocumentFact[]; clai
     <p>Accepted claim: {fact.claim_text}</p><blockquote>{fact.evidence_text || 'No separate source text was supplied.'}</blockquote><p>Source: {fact.source || 'Owner statement'}</p>
     <small>Claim {fact.claim_revision_id} · SHA-256 {fact.claim_sha256}</small>{fact.evidence_revision_id && <small>Evidence {fact.evidence_revision_id} · SHA-256 {fact.evidence_sha256 ?? 'Unavailable'}</small>}
   </div>) : <p>No frozen supporting source is available for this block. References alone do not establish support.</p>}</>;
+}
+const RATE_STAGES = [['generate_documents', 'Pair generation'], ['regenerate_section', 'Section regeneration']] as const;
+function ClaimJsonRates({ rates }: { rates: ApplicationDocuments['claim_json_rates'] }) {
+  return <section className="disclosure" aria-label="Valid claim JSON rate for this route"><h4>Valid claim JSON rate for this route</h4><ul>{RATE_STAGES.map(([stage, label]) => { const item = rates[stage]; return <li key={stage}>
+    <strong>{label}: {item.rate_percent === null ? 'no checked generations yet' : `${item.rate_percent}% valid`}.</strong> {item.valid_first} valid on the first response, {item.valid_after_correction} valid after one correction, {item.invalid_after_correction} invalid after correction; {item.failed_before_check} ended before a response could be checked (cut off, unreachable or interrupted), not counted in the rate.
+  </li>; })}</ul><p>Counts cover finished generations sent to this exact route. Valid JSON is a shape check, not proof that statements are supported.</p></section>;
 }
 function ReadonlyBody({ revision }: { revision: DocumentRevision }) {
   return <article className="paper"><h3>{revision.body.title}</h3>{revision.body.sections.map(section => <section key={section.key}><h4>{section.heading}</h4>{section.blocks.map(block => <div className="evidence-seam" key={block.block_key}><p>{block.text}</p><details><summary>Statement sources ({block.claim_kind})</summary><Sources facts={revision.provenance_snapshot.facts ?? []} claimIds={block.claim_revision_ids} evidenceIds={block.evidence_revision_ids} /></details></div>)}</section>)}</article>;
@@ -560,7 +550,7 @@ export function Documents({ api, profile, disabled = false, externalDocumentId, 
         <label>Tracked application<select value={applicationId} onChange={event => selectApplication(event.target.value)}><option value="">Select an existing tracked application</option>{applications.map(item => <option key={item.id} value={item.id}>{item.title} · {item.company} · attempt {item.attempt_no}{item.archived_at ? ' · archived (read-only generation)' : ''}</option>)}</select></label>
         {!applications.length && <p>No tracked applications loaded. Begin tracking explicitly in Tracking; generation never creates an application.</p>}
         {applicationId && <><button className="secondary" onClick={() => { void run(signal => loadPair(signal, applicationId, selection.current, doc?.id)); }}>Reload application documents</button>{pair && <><p>{pair.items.some(item => item.kind === 'resume') && pair.items.some(item => item.kind === 'cover_letter') ? 'Saved résumé and cover letter available.' : pair.items.length ? 'The requested pair is incomplete. A missing member is not a successful pair.' : 'No saved pair. Existing application data remains available.'}</p><div className="actions">{(['resume', 'cover_letter'] as const).map(kind => { const member = pair.items.find(item => item.kind === kind); return <button key={kind} className="secondary" disabled={!member} aria-pressed={doc?.id === member?.id} onClick={() => { if (member) { selection.current++; receive(member, true); } }}>{kind === 'resume' ? 'Résumé' : 'Cover letter'}{!member ? ' unavailable' : ''}</button>; })}</div></>}
-          {route && <p className="disclosure"><strong>Generation route: {route.status}.</strong> {route.reason}</p>}{!pair?.requirements_revision_id && <p>Reviewed, current, nonempty requirements are required. Review them in the posting workspace before preparing a pair.</p>}{application?.archived_at && <p>Archived applications remain readable. Generation is unavailable.</p>}
+          {route && <p className="disclosure"><strong>Generation route: {route.status}.</strong> {route.reason}</p>}{pair && <ClaimJsonRates rates={pair.claim_json_rates} />}{!pair?.requirements_revision_id && <p>Reviewed, current, nonempty requirements are required. Review them in the posting workspace before preparing a pair.</p>}{application?.archived_at && <p>Archived applications remain readable. Generation is unavailable.</p>}
           <label>Writing tone<select value={tone} onChange={event => { choicesInitialized.current = true; setTone(event.target.value as 'professional' | 'concise'); }}><option value="professional">Professional</option><option value="concise">Concise</option></select></label><button className="secondary" disabled={!profile || !profileId || !template || !!application?.archived_at} onClick={previewContext}>Preview reviewed generation context</button>
           {context && <section className="disclosure"><h3>Exact minimized model projection</h3>
             <p>Destination from this operation’s route: <code>{typeof context.generation_route.identity?.endpoint === 'string' ? context.generation_route.identity.endpoint : 'No endpoint supplied — inspect route identity below'}</code>. Model: {typeof context.generation_route.identity?.model === 'string' ? context.generation_route.identity.model : 'Not supplied'}. A local endpoint is not a universal no-network guarantee; prose may still contain personal information, not anonymization. No hosted fallback.</p>

@@ -18,7 +18,8 @@ const saved: DocumentRecord = {
 const application: ApplicationSummary = { id: 'application-1', version: 7, attempt_no: 1, posting_id: 'posting-1', opportunity_id: 'opportunity-1', title: 'Engineer', company: 'Fictional North', current_stage: 'preparing', archived_at: null, created_at: '2026-10-25T12:00:00Z', updated_at: '2026-10-25T12:00:00Z', next_action: null };
 const tailored: DocumentRecord = { ...saved, id: 'tailored-resume', scope: 'tailored', application_id: application.id };
 const route = { status: 'unqualified' as const, reason: 'generate_documents qualification has not been authorized', identity: { model: 'unqualified-local' } };
-const pair: ApplicationDocuments = { application_id: application.id, version: 7, items: [tailored], generation_route: route, requirements_revision_id: 'requirements-1' };
+const noGenerations = { valid_first: 0, valid_after_correction: 0, invalid_after_correction: 0, failed_before_check: 0, rate_percent: null };
+const pair: ApplicationDocuments = { application_id: application.id, version: 7, items: [tailored], generation_route: route, requirements_revision_id: 'requirements-1', claim_json_rates: { generate_documents: noGenerations, regenerate_section: noGenerations } };
 const context: GenerationContext = { application_id: application.id, application_version: 7, profile_revision_id: 'profile-rev-3', profile_version: 3, requirements_revision_id: 'requirements-1', template_version: 'bonafides-evidence-v1', tone: 'professional', language: 'en', context_sha256: '1'.repeat(64), model_projection: { facts: [{ text: 'Maintained Linux service checks.' }], requirements: [{ text: 'Linux' }] }, frame: { display_name: 'Mira Vale', contact: { email: 'mira@example.test' } }, generation_route: route, withheld_evidence: [] };
 const workflow: Workflow = {
   id: 'compose-1', version: 1, state: 'pending', kind: 'document_generate', mode: 'deterministic_base', attempt: 0, max_attempts: 3, last_error_code: null, result: null,
@@ -538,7 +539,8 @@ const sectionProposal: SectionProposal = {
   target_document_version: tailored.version, target_content_sha256: tailored.current_revision.content_sha256,
   section_key: 'experience', original_section: tailored.current_revision.body.sections[0]!,
   proposed_section: { ...tailored.current_revision.body.sections[0]!, blocks: [{ ...tailored.current_revision.body.sections[0]!.blocks[0]!, block_key: 'proposal-1-block-0', text: 'Led an unsupported global team.' }] },
-  validation_issues: [{ path: '/sections/0/blocks/0', code: 'unestablished_factual_text' }],
+  validation_issues: [{ path: '/sections/0/blocks/0', code: 'statement_not_in_claim_evidence', statement: 'Led an unsupported global team.' }],
+  facts: tailored.current_revision.provenance_snapshot.facts ?? [],
   model_run: { id: 'section-run-1', stage: 'regenerate_section' }, created_at: '2026-10-25T14:00:00Z', applicable: true, historical: false,
 };
 const completedSectionWorkflow: Workflow = {
@@ -576,6 +578,24 @@ async function inspectSection(user: UserEvent) {
 }
 
 describe('saved tailored section proposals', () => {
+  it('shows the valid claim JSON rate of this route for both document stages', async () => {
+    const user = userEvent.setup();
+    const rates = { generate_documents: { valid_first: 2, valid_after_correction: 1, invalid_after_correction: 1, failed_before_check: 1, rate_percent: 75 }, regenerate_section: noGenerations };
+    const { api } = fixture(saved, async path => {
+      if (path === '/applications') return { items: [application], next_cursor: null, query_elapsed_ms: 1, as_of: application.updated_at };
+      if (path === '/applications/application-1/documents') return { ...pair, claim_json_rates: rates };
+      throw new ApiError(404, 'not_found');
+    });
+    render(<Documents api={api} profile={profile} />); await ready();
+    await user.click(screen.getByRole('button', { name: 'Tracked application documents' }));
+    await user.click(screen.getByRole('button', { name: 'Reload tracked applications' }));
+    await user.selectOptions(await screen.findByLabelText('Tracked application'), application.id);
+    const panel = await screen.findByRole('region', { name: 'Valid claim JSON rate for this route' });
+    expect(within(panel).getByText('Pair generation: 75% valid.')).toBeVisible();
+    expect(within(panel).getByText(/2 valid on the first response, 1 valid after one correction, 1 invalid after correction; 1 ended before/)).toBeVisible();
+    expect(within(panel).getByText('Section regeneration: no checked generations yet.')).toBeVisible();
+  });
+
   it('exposes no model rewrite surface or model requests for a base document, including its dirty editor', async () => {
     const user = userEvent.setup(); const { api, request } = fixture();
     render(<Documents api={api} profile={profile} />); const input = await ready();
@@ -662,6 +682,10 @@ describe('saved tailored section proposals', () => {
       expect(screen.getByLabelText('Block text: b-1')).toHaveValue('Maintained Linux service checks.');
       expect(within(screen.getByRole('article', { name: 'Proposed section' })).getByText('Led an unsupported global team.')).toBeInTheDocument();
       expect(screen.getByText('Proposed draft has review/export blockers.')).toBeVisible();
+      const blocker = screen.getByText(/^It is not contained in its claim's own evidence\./).closest('li')!;
+      expect(within(blocker).getByText('Led an unsupported global team.', { selector: 'q' })).toBeVisible();
+      expect(within(screen.getByRole('article', { name: 'Proposed section' })).getByText('Linked claim: “Maintained Linux service checks.”')).toBeVisible();
+      expect(screen.getByText(/Applying retains these issues/)).toBeVisible();
       expect(request.mock.calls.filter(call => call[1] === 'POST')).toHaveLength(1);
       expect(request.mock.calls.some(call => call[0] === '/documents/tailored-resume')).toBe(false);
       expect(screen.getByRole('button', { name: 'Apply proposal as new draft revision' })).toBeDisabled();

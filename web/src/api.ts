@@ -155,6 +155,10 @@ export type DocumentDefaultsPatch = Partial<Pick<DocumentDefaults, 'template_ver
 export interface GenerationRoute { status: 'disabled' | 'unqualified' | 'qualified'; reason: string; identity: Record<string, unknown> | null }
 export interface ApplicationDocuments {
   application_id: string; version: number; items: DocumentRecord[]; generation_route: GenerationRoute; requirements_revision_id: string | null;
+  claim_json_rates: Record<'generate_documents' | 'regenerate_section', ClaimJsonRate>;
+}
+export interface ClaimJsonRate {
+  valid_first: number; valid_after_correction: number; invalid_after_correction: number; failed_before_check: number; rate_percent: number | null;
 }
 export interface GenerationContext {
   application_id: string; application_version: number; profile_revision_id: string; profile_version: number;
@@ -171,7 +175,7 @@ export interface SectionRegenerationContext {
 export interface SectionProposal {
   id: string; document_id: string; target_revision_id: string; target_content_sha256: string;
   target_document_version: number; section_key: string; original_section: DocumentBody['sections'][number];
-  proposed_section: DocumentBody['sections'][number]; validation_issues: DocumentIssue[];
+  proposed_section: DocumentBody['sections'][number]; validation_issues: DocumentIssue[]; facts: DocumentFact[];
   model_run: Record<string, unknown>; created_at: string; applicable: boolean; historical: boolean;
 }
 export interface SectionProposalPage { items: SectionProposal[]; next_cursor: string | null }
