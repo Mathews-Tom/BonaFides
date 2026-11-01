@@ -1,6 +1,8 @@
 # SPDX-License-Identifier: MIT OR Apache-2.0
 """`bonafides claims coverage <file>`: the share of bullets claim schema v1 represents.
 
+`bonafides claims inflation-report <dir>` is dispatched here too (see ``inflation_report``).
+
 Every non-blank line of a local UTF-8 text file is one bullet. Each bullet is mapped by the
 deterministic import mapper; the report prints counts and, per unrepresented bullet, its line
 number and reasons. The file content is neither stored nor sent anywhere.
@@ -66,7 +68,16 @@ def main(argv: list[str]) -> int:
         help="report the share of bullets in a local text file that structured claims represent",
     )
     report.add_argument("file", type=Path, help="UTF-8 text file; each non-blank line is a bullet")
+    inflation = actions.add_parser(
+        "inflation-report",
+        help="report the inflation rules' false-block and per-kind block rates on case sets",
+    )
+    inflation.add_argument(
+        "directory", type=Path, help="directory holding honest.jsonl and inflated.jsonl"
+    )
     arguments = parser.parse_args(argv)
+    if arguments.action == "inflation-report":
+        return _inflation(parser, arguments.directory)
     try:
         text = arguments.file.read_text(encoding="utf-8-sig")
     except (OSError, UnicodeDecodeError) as exc:
@@ -77,3 +88,14 @@ def main(argv: list[str]) -> int:
         parser.error(f"{arguments.file} contains no bullets")
     print("\n".join(result.lines()))
     return 0
+
+
+def _inflation(parser: argparse.ArgumentParser, directory: Path) -> int:
+    from bonafides.inflation_report import FALSE_BLOCK_LIMIT, CaseError, run
+
+    try:
+        result = run(directory)
+    except (OSError, UnicodeDecodeError, CaseError) as exc:
+        parser.error(f"cannot read inflation cases in {directory}: {exc}")
+    print("\n".join(result.lines()))
+    return 0 if result.false_block_rate <= FALSE_BLOCK_LIMIT else 1
