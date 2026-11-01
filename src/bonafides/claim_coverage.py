@@ -70,7 +70,7 @@ def main(argv: list[str]) -> int:
     report.add_argument("file", type=Path, help="UTF-8 text file; each non-blank line is a bullet")
     inflation = actions.add_parser(
         "inflation-report",
-        help="report the inflation rules' false-block and per-kind block rates on case sets",
+        help="report the claim checker's false-block and per-kind block rates on case sets",
     )
     inflation.add_argument(
         "directory", type=Path, help="directory holding honest.jsonl and inflated.jsonl"

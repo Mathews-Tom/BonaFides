@@ -8,7 +8,7 @@
     "tests/test_document_generation.py",
     "tests/test_greenhouse.py",
     "tests/test_identity.py",
-    "tests/test_inflation.py",
+    "tests/test_inflation_report.py",
     "tests/test_model_context.py",
     "tests/test_portable_import.py",
     "tests/test_render_safety.py",

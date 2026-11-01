@@ -1,12 +1,16 @@
 # SPDX-License-Identifier: MIT OR Apache-2.0
-"""`bonafides claims inflation-report <dir>`: the inflation rules on synthetic case sets.
+"""`bonafides claims inflation-report <dir>`: the claim checker on synthetic case sets.
 
 The directory holds ``honest.jsonl`` and ``inflated.jsonl``. Each line is one case: the
 evidence text, the claim (literal text, or claim schema v1 fields pinned as their rendering),
-a statement and the expected kind (``null`` for an honest case). Every case runs through the
+a statement and the expected kind (``null`` for an honest case); optional ``fields`` hold the
+claim's reviewed structured-field lines, which make its pinned printable text. Every case runs through the
 document checker as a factual statement citing its claim, exactly as a document block does.
-The report prints counts, the honest false-block rate and the block rate per kind, and exits
-non-zero when the false-block rate exceeds the threshold. Files are neither stored nor sent.
+A verb promoted by a cut of the claim must block as a stronger verb; a longer period, larger
+figure or wider scope taken from elsewhere in the evidence must block as not part of its
+claim. The report prints counts, the honest false-block rate and the block rate per kind,
+and exits non-zero when the false-block rate exceeds the threshold. Files are neither stored
+nor sent.
 Each UTF-8 file is limited to 5 MiB and each line to 64 KiB, including its line ending.
 """
 
@@ -16,15 +20,24 @@ import json
 import math
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Literal, get_args
 from uuid import NAMESPACE_URL, uuid5
 
 from pydantic import ValidationError
 
 from bonafides.claims import StructuredClaim, contains_statement, render_claim
 from bonafides.documents import DocumentBlock, DocumentBody, DocumentSection
-from bonafides.inflation import CODES, INFLATION_KINDS, InflationKind
-from bonafides.statement_check import check_statements
+from bonafides.statement_check import PRINTABLE_FIELDS, check_statements, printable_text
 
+InflationKind = Literal["stronger_verb", "longer_tenure", "larger_metric", "wider_scope"]
+INFLATION_KINDS: tuple[InflationKind, ...] = get_args(InflationKind)
+# The checker code each kind of strengthening must block with.
+EXPECTED_CODES: dict[InflationKind, str] = {
+    "stronger_verb": "statement_stronger_verb",
+    "longer_tenure": "statement_not_in_claim",
+    "larger_metric": "statement_not_in_claim",
+    "wider_scope": "statement_not_in_claim",
+}
 FALSE_BLOCK_LIMIT = 0.05
 MAX_FILE_BYTES = 5 * 1024 * 1024
 MAX_LINE_BYTES = 64 * 1024
@@ -43,6 +56,8 @@ class Case:
     claim_text: str
     statement: str
     kind: InflationKind | None
+    fields: dict[str, str]
+    claim_verb: str | None
 
 
 def _text(value: object, name: str) -> str:
@@ -56,14 +71,25 @@ def _case(raw: str, line: int, honest: bool) -> Case:
         value = json.loads(raw)
     except json.JSONDecodeError as exc:
         raise CaseError(f"invalid JSON ({exc.msg})") from exc
-    if not isinstance(value, dict) or set(value) != {"evidence", "claim", "statement", "kind"}:
-        raise CaseError("keys must be evidence, claim, statement and kind")
+    if not isinstance(value, dict) or not (
+        {"evidence", "claim", "statement", "kind"}
+        <= set(value)
+        <= {"evidence", "claim", "statement", "kind", "fields"}
+    ):
+        raise CaseError("keys must be evidence, claim, statement, kind and optional fields")
+    fields = value.get("fields", {})
+    if not isinstance(fields, dict) or not set(fields) <= set(PRINTABLE_FIELDS):
+        raise CaseError(f"fields must hold only {', '.join(PRINTABLE_FIELDS)}")
+    printed = {key: _text(item, key) for key, item in fields.items()}
     claim = value["claim"]
+    claim_verb: str | None = None
     if isinstance(claim, dict):
         try:
-            claim_text = render_claim(StructuredClaim.model_validate(claim))
+            structured = StructuredClaim.model_validate(claim)
         except ValidationError as exc:
             raise CaseError("invalid structured claim") from exc
+        claim_text = render_claim(structured)
+        claim_verb = structured.verb
     else:
         claim_text = _text(claim, "claim")
     kind = value["kind"]
@@ -74,7 +100,8 @@ def _case(raw: str, line: int, honest: bool) -> Case:
     evidence = _text(value["evidence"], "evidence")
     if not contains_statement(claim_text, evidence):
         raise CaseError("the claim is not contained in its evidence")
-    return Case(line, evidence, claim_text, _text(value["statement"], "statement"), kind)
+    statement = _text(value["statement"], "statement")
+    return Case(line, evidence, claim_text, statement, kind, printed, claim_verb)
 
 
 def load(path: Path, honest: bool) -> list[Case]:
@@ -128,6 +155,9 @@ def codes(case: Case) -> list[str]:
         "evidence_revision_id": str(_EVIDENCE),
         "claim_text": case.claim_text,
         "evidence_text": case.evidence,
+        "structured_fields": case.fields,
+        "printable_text": printable_text(case.claim_text, case.fields),
+        "claim_verb": case.claim_verb,
     }
     return [issue["code"] for issue in check_statements(body, [fact], {}, "base")]
 
@@ -172,7 +202,7 @@ def report(honest: list[Case], inflated: list[Case]) -> InflationReport:
             raise CaseError(f"line {case.line}: an inflated case names its kind")
         found = codes(case)
         hits, total = counts[case.kind]
-        hit = CODES[case.kind] in found
+        hit = EXPECTED_CODES[case.kind] in found
         counts[case.kind] = (hits + hit, total + 1)
         if not hit:
             misattributed.append((case.line, found))

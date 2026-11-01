@@ -46,11 +46,6 @@
 {"claim": "Audited access for the finance team", "evidence": "Audited access for the finance team, later an enterprise-wide control.", "kind": "wider_scope", "statement": "later an enterprise-wide control"}
 {"claim": "Drafted the team charter", "evidence": "Drafted the team charter that informed a cross-company standard.", "kind": "wider_scope", "statement": "the team charter that informed a cross-company standard"}
 {"claim": "Mentored team leads", "evidence": "Mentored team leads in a programme run company-wide.", "kind": "wider_scope", "statement": "a programme run company-wide"}
-{"claim": "Supported the rollout", "evidence": "Supported the rollout. Supported the rollout and led the migration.", "kind": "stronger_verb", "statement": "Supported the rollout and led the migration"}
-{"claim": "Supported the rollout", "evidence": "Supported the rollout. Supported the rollout; led the migration.", "kind": "stronger_verb", "statement": "Supported the rollout; led the migration"}
-{"claim": "Supported the rollout", "evidence": "Supported the rollout. Supported the rollout, led the migration.", "kind": "stronger_verb", "statement": "Supported the rollout, led the migration"}
-{"claim": "Supported the rollout", "evidence": "Supported the rollout. Successfully led the rollout.", "kind": "stronger_verb", "statement": "Successfully led the rollout"}
-{"claim": "Successfully supported the rollout", "evidence": "Successfully supported the rollout. Quietly led the rollout.", "kind": "stronger_verb", "statement": "Quietly led the rollout"}
 {"claim": "Processed 2K tickets", "evidence": "Processed 2K tickets. Processed 3K tickets.", "kind": "larger_metric", "statement": "Processed 3K tickets"}
 {"claim": "Processed 2 thousand tickets", "evidence": "Processed 2 thousand tickets. Processed 3 thousand tickets.", "kind": "larger_metric", "statement": "Processed 3 thousand tickets"}
 {"claim": "Processed 2M tickets", "evidence": "Processed 2M tickets. Processed 3M tickets.", "kind": "larger_metric", "statement": "Processed 3M tickets"}
@@ -114,15 +109,6 @@
 {"claim": "Reduced processing time by 2 million months", "evidence": "Reduced processing time by 2 million months. Reduced processing time by 3 million months.", "kind": "larger_metric", "statement": "Reduced processing time by 3 million months"}
 {"claim": "Reduced processing time by 2B months", "evidence": "Reduced processing time by 2B months. Reduced processing time by 3B months.", "kind": "larger_metric", "statement": "Reduced processing time by 3B months"}
 {"claim": "Reduced processing time by 2 billion months", "evidence": "Reduced processing time by 2 billion months. Reduced processing time by 3 billion months.", "kind": "larger_metric", "statement": "Reduced processing time by 3 billion months"}
-{"claim": "Assisted billing migration, led by payments team", "evidence": "Assisted billing migration, led by payments team. Led billing migration.", "kind": "stronger_verb", "statement": "Led billing migration"}
-{"claim": "Contributed redesign, directed by design lead", "evidence": "Contributed redesign, directed by design lead. Directed redesign.", "kind": "stronger_verb", "statement": "Directed redesign"}
-{"claim": "Supported API rollout; managed by release team", "evidence": "Supported API rollout; managed by release team. Managed API rollout.", "kind": "stronger_verb", "statement": "Managed API rollout"}
-{"claim": "Helped incident response, owned by operations", "evidence": "Helped incident response, owned by operations. Owned incident response.", "kind": "stronger_verb", "statement": "Owned incident response"}
-{"claim": "Assisted team that shipped API", "evidence": "Assisted team that shipped API. Assisted team that shipped API, and led rollout.", "kind": "stronger_verb", "statement": "Assisted team that shipped API, and led rollout"}
-{"claim": "Assisted team that shipped API", "evidence": "Assisted team that shipped API. Assisted team that shipped API,and led rollout.", "kind": "stronger_verb", "statement": "Assisted team that shipped API,and led rollout"}
-{"claim": "Assisted team that shipped API", "evidence": "Assisted team that shipped API. Assisted team that shipped API; led rollout.", "kind": "stronger_verb", "statement": "Assisted team that shipped API; led rollout"}
-{"claim": "Supported analyst who reviewed incidents", "evidence": "Supported analyst who reviewed incidents. Supported analyst who reviewed incidents, and owned triage.", "kind": "stronger_verb", "statement": "Supported analyst who reviewed incidents, and owned triage"}
-{"claim": "Helped team which designed API", "evidence": "Helped team which designed API. Helped team which designed API; managed rollout.", "kind": "stronger_verb", "statement": "Helped team which designed API; managed rollout"}
 {"claim": "Processed 500 tickets per week", "evidence": "Processed 500 tickets per week. Processed 500 tickets per day.", "kind": "larger_metric", "statement": "Processed 500 tickets per day"}
 {"claim": "Processed 500 tickets weekly", "evidence": "Processed 500 tickets weekly. Processed 500 tickets hourly.", "kind": "larger_metric", "statement": "Processed 500 tickets hourly"}
 {"claim": "Saved $40K per day", "evidence": "Saved $40K per day. Saved $40K per hour.", "kind": "larger_metric", "statement": "Saved $40K per hour"}
@@ -132,3 +118,6 @@
 {"claim": "Supported rollout to one team", "evidence": "Supported rollout to one team. Supported rollout to all teams.", "kind": "wider_scope", "statement": "Supported rollout to all teams"}
 {"claim": "Contributed review for the finance team", "evidence": "Contributed review for the finance team. Contributed review across every department.", "kind": "wider_scope", "statement": "Contributed review across every department"}
 {"claim": "Assisted reviews for the payments team", "evidence": "Assisted reviews for the payments team. Assisted reviews across three teams.", "kind": "wider_scope", "statement": "Assisted reviews across three teams"}
+{"claim": {"schema_version": 1, "subject": "the team that led the billing migration", "verb": "assisted"}, "evidence": "Assisted the team that led the billing migration.", "kind": "stronger_verb", "statement": "led the billing migration"}
+{"claim": {"schema_version": 1, "subject": "the engineers who architected the event pipeline", "verb": "supported"}, "evidence": "Supported the engineers who architected the event pipeline.", "kind": "stronger_verb", "statement": "architected the event pipeline"}
+{"claim": {"schema_version": 1, "subject": "a project that delivered the partner portal", "verb": "contributed_to"}, "evidence": "Contributed to a project that delivered the partner portal.", "kind": "stronger_verb", "statement": "delivered the partner portal"}
