@@ -268,6 +268,63 @@ def route_status(
     }
 
 
+def claim_json_rates(
+    conn: Connection, owner: UUID, identity: dict[str, object] | None
+) -> dict[str, dict[str, object]]:
+    """Per checked stage, how this route's finished generations ended against the schema.
+
+    Each generation counts once, by its latest model call: valid on the first response,
+    valid after the one correction, or invalid after it. Truncation, transport and other
+    failures before a response passed the schema are counted apart and excluded from the
+    rate, a whole percentage of checked generations. Kept out of ``route_status`` so the counts never enter a frozen context digest.
+    """
+    counts: dict[str, dict[str, object]] = {
+        stage: {
+            "valid_first": 0,
+            "valid_after_correction": 0,
+            "invalid_after_correction": 0,
+            "failed_before_check": 0,
+            "rate_percent": None,
+        }
+        for stage in ("generate_documents", "regenerate_section")
+    }
+    if identity is None:
+        return counts
+    rows = conn.execute(
+        text("""WITH runs AS (
+            SELECT m.task_kind,m.status,m.metadata,
+            row_number() OVER (PARTITION BY m.workflow_run_id ORDER BY m.created_at DESC,m.id DESC) AS latest,
+            bool_or(coalesce(m.metadata->>'corrective_retry','')='true') OVER (PARTITION BY m.workflow_run_id) AS corrected
+            FROM bonafides.model_runs m JOIN bonafides.workflow_runs w
+            ON w.owner_id=m.owner_id AND w.id=m.workflow_run_id
+            WHERE m.owner_id=:owner AND m.task_kind IN ('generate_documents','regenerate_section')
+            AND w.input->'route_identity'=CAST(:identity AS jsonb))
+        SELECT task_kind,
+        count(*) FILTER (WHERE valid AND NOT corrected) AS valid_first,
+        count(*) FILTER (WHERE valid AND corrected) AS valid_after_correction,
+        count(*) FILTER (WHERE invalid) AS invalid_after_correction,
+        count(*) FILTER (WHERE NOT valid AND NOT invalid) AS failed_before_check
+        FROM (SELECT task_kind,corrected,
+            status='succeeded' OR coalesce(metadata->>'output_valid','')='true' AS valid,
+            coalesce(metadata->>'error_code','')='model_output_invalid_after_correction' AS invalid
+            FROM runs WHERE latest=1 AND status NOT IN ('reserved','running')) finished
+        GROUP BY task_kind"""),
+        {"owner": owner, "identity": canonical_json(identity)},
+    ).mappings()
+    for row in rows:
+        valid = int(row["valid_first"]) + int(row["valid_after_correction"])
+        checked = valid + int(row["invalid_after_correction"])
+        counts[str(row["task_kind"])] = {
+            "valid_first": int(row["valid_first"]),
+            "valid_after_correction": int(row["valid_after_correction"]),
+            "invalid_after_correction": int(row["invalid_after_correction"]),
+            "failed_before_check": int(row["failed_before_check"]),
+            # API values are canonical JSON, which carries no floating point.
+            "rate_percent": round(100 * valid / checked) if checked else None,
+        }
+    return counts
+
+
 def base_plan(conn: Connection, owner: UUID, revision: UUID, template: str) -> dict[str, object]:
     lock_workspace(conn, owner)
     require_template(template)
@@ -1041,6 +1098,7 @@ def install_routes(router: APIRouter, db: Database, settings: Settings) -> None:
                 ),
                 {"owner": owner.id, "id": application_id},
             ).scalars()
+            route = route_status(conn, owner.id, settings)
             return _response(
                 200,
                 {
@@ -1050,7 +1108,10 @@ def install_routes(router: APIRouter, db: Database, settings: Settings) -> None:
                         documents._document(conn, owner.id, identifier, settings)
                         for identifier in ids
                     ],
-                    "generation_route": route_status(conn, owner.id, settings),
+                    "generation_route": route,
+                    "claim_json_rates": claim_json_rates(
+                        conn, owner.id, cast(dict[str, object] | None, route["identity"])
+                    ),
                     "requirements_revision_id": str(current["id"]) if current else None,
                 },
             )

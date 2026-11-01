@@ -1354,6 +1354,9 @@ def _execute_reserved_model(
         if run_id is None and interrupted.wait(0.25):
             raise local_model.ModelFailure("model_interrupted", retryable=False)
     runs = [run_id]
+    # Set once a claim-structured response passes its schema, so a later publication
+    # failure still records that the route returned valid claim JSON.
+    output_valid = False
     try:
         context = cast(dict[str, object], task.input["context"])
         # The dedicated session retains only the shared advisory lock across HTTP.
@@ -1386,6 +1389,7 @@ def _execute_reserved_model(
                     lambda output: validate_pair(output, task.input),
                 )
                 run_id = runs[-1]
+                output_valid = True
             elif stage == "regenerate_section":
                 from bonafides.section_regeneration import validate_candidate
 
@@ -1393,6 +1397,7 @@ def _execute_reserved_model(
                     db, settings, task, interrupted, client, active_route, runs, validate_candidate
                 )
                 run_id = runs[-1]
+                output_valid = True
             else:
                 result = (
                     client
@@ -1496,6 +1501,9 @@ def _execute_reserved_model(
             publish(conn, task, effect)
     except (local_model.ModelFailure, Problem, DBAPIError) as exc:
         code = "workflow_publication_fenced" if isinstance(exc, DBAPIError) else exc.code
+        failed: dict[str, object] = {"usage_status": "unknown", "error_code": code}
+        if output_valid:
+            failed["output_valid"] = True
         with db.transaction() as conn:
             conn.execute(
                 text("""UPDATE bonafides.model_runs SET status='unknown_usage',finished_at=clock_timestamp(),
@@ -1503,7 +1511,7 @@ def _execute_reserved_model(
                 {
                     "owner": task.owner_id,
                     "id": runs[-1],
-                    "metadata": canonical_json({"usage_status": "unknown", "error_code": code}),
+                    "metadata": canonical_json(failed),
                 },
             )
             if code in {
