@@ -951,7 +951,7 @@ def _section_context() -> dict[str, object]:
 def test_document_prompts_pin_prefix_cut_shape(stage: str) -> None:
     from bonafides import local_model
 
-    assert PROMPT_VERSIONS[stage] == f"ol-{stage.replace('_', '-')}-v4"
+    assert PROMPT_VERSIONS[stage] == f"ol-{stage.replace('_', '-')}-v5"
     prompt = local_model._SUFFIXES[stage]
     assert "claim's exact printable text" in prompt
     assert "whole-phrase prefix of its claim text" in prompt
@@ -963,6 +963,24 @@ def test_document_prompts_pin_prefix_cut_shape(stage: str) -> None:
     assert "including after an initial and, &, or comma" in prompt
     assert "never a verb inside a hyphen-joined word" in prompt
     assert "Never cut into a hyphen-joined word or take a middle or suffix fragment" in prompt
+    assert "prefix may end only at the end of the claim text" in prompt
+    assert "a comma, semicolon, colon or left parenthesis" in prompt
+    assert (
+        "whole boundary words (case-insensitive): for, by, to, on, with, in, across, from, "
+        "through, during, at, that" in prompt
+    )
+    assert "Never split a numeric or currency expression" in prompt
+    assert "permits dropping qualifiers introduced by those boundary words" in prompt
+    assert (
+        "'Reduced latency by 30% for one pilot region' may become 'Reduced latency by 30%'"
+        in prompt
+    )
+    assert "'Built the API for billing team' may become 'Built the API'" in prompt
+    assert "'Designed and implemented' before 'a'" in prompt
+    assert (
+        "QA/release, Node.js, migration planning, $2 million, 2 per1000 or migration jointly"
+        in prompt
+    )
     assert "stronger verb" not in prompt
 
 

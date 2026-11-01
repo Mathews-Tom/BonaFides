@@ -129,7 +129,7 @@ def test_valid_stub_section_links_every_statement_and_applied_revision_exports(
     assert applied.status_code == 200, applied.text
     revision = applied.json()["current_revision"]
     assert revision["validation_issues"] == []
-    assert revision["provenance_snapshot"]["checker_version"] == "claim-evidence-v3"
+    assert revision["provenance_snapshot"]["checker_version"] == "claim-evidence-v4"
     updated = _document(catalog, resume["id"])
     assert _review(catalog, updated).status_code == 200
     assert _render(catalog, _document(catalog, resume["id"])).status_code == 202
@@ -185,6 +185,9 @@ def test_fabricated_section_statement_blocks_proposal_and_applied_revision(
     [
         ("Assisted the team that led the Linux runbook migration", False),
         ("the team that led the Linux runbook migration", False),
+        ("Assisted the team", False),
+        ("the team", False),
+        ("Assisted the team that led the Linux runbook", True),
         ("the Linux runbook migration for the operations team", True),
         ("reducing alert noise by 30% (2021–2022)", True),
         ("Led the Linux runbook migration for the operations team", True),
@@ -235,6 +238,40 @@ def test_section_prefix_cuts_keep_the_same_result_after_apply(
     assert reviewed.status_code == (409 if blocked else 200)
     rendered = _render(catalog, _document(catalog, resume["id"]))
     assert rendered.status_code == (409 if blocked else 202)
+
+
+@pytest.mark.postgres
+@pytest.mark.parametrize(
+    ("verb", "subject", "statement", "blocked"),
+    [
+        (
+            "designed",
+            "and implemented a self-service onboarding flow",
+            "Designed and implemented",
+            True,
+        ),
+        ("built", "the API for billing team", "Built the API", False),
+        ("reduced", "latency by 30% for one pilot region", "Reduced latency by 30%", False),
+    ],
+)
+def test_section_endpoint_policy_survives_apply(
+    catalog: SourceContext,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    verb: str,
+    subject: str,
+    statement: str,
+    blocked: bool,
+) -> None:
+    import test_inflation_documents as fixtures
+
+    claim_text = f"{verb.capitalize()} {subject}"
+    monkeypatch.setattr(fixtures, "CLAIM", {"schema_version": 1, "verb": verb, "subject": subject})
+    monkeypatch.setattr(fixtures, "CLAIM_TEXT", claim_text)
+    monkeypatch.setattr(fixtures, "EVIDENCE_TEXT", claim_text)
+    test_section_prefix_cuts_keep_the_same_result_after_apply(
+        catalog, monkeypatch, tmp_path, statement, blocked
+    )
 
 
 @pytest.mark.postgres
@@ -539,7 +576,7 @@ def test_owner_base_resume_with_structured_fields_passes_the_claim_checker(
 ) -> None:
     document = _base(catalog, _profile_with_fields(catalog))
     revision = document["current_revision"]
-    assert revision["provenance_snapshot"]["checker_version"] == "claim-evidence-v3"
+    assert revision["provenance_snapshot"]["checker_version"] == "claim-evidence-v4"
     texts = [
         block["text"] for section in revision["body"]["sections"] for block in section["blocks"]
     ]

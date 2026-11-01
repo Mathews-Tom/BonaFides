@@ -65,6 +65,8 @@ HONEST = [
     "Assisted the team that led the Linux runbook migration",
     "the team that led the Linux runbook migration",
     CLAIM_TEXT,
+    "Assisted the team",
+    "the team",
 ]
 
 
@@ -223,6 +225,69 @@ def test_generated_pair_claim_prefixes_and_middle_cuts(
     assert _review(catalog, document).status_code == (409 if blocked else 200)
     assert _render(catalog, _document(catalog, document["id"])).status_code == (
         409 if blocked else 202
+    )
+
+
+@pytest.mark.postgres
+@pytest.mark.parametrize(
+    ("verb", "subject", "statement", "blocked"),
+    [
+        (
+            "designed",
+            "and implemented a self-service onboarding flow",
+            "Designed and implemented",
+            True,
+        ),
+        ("built", "the API for billing team", "Built the API", False),
+        ("reduced", "latency by 30% for one pilot region", "Reduced latency by 30%", False),
+        ("built", "migration planning", "Built migration", True),
+        ("built", "migration jointly", "Built migration", True),
+        ("built", "QA/release tooling", "Built QA", True),
+        ("built", "Node.js tooling", "Built Node", True),
+        ("built", "the team's API", "Built the team", True),
+        ("built", "the teams' API", "Built the teams", True),
+        ("built", "$2 million pipeline", "Built $2", True),
+        ("built", "2 per1000 pipeline", "Built 2", True),
+        ("built", "the API for billing team", "the API", False),
+        *[
+            ("built", f"the API{ending}", "Built the API", False)
+            for ending in (
+                ", supporting billing",
+                "; supporting billing",
+                ": supporting billing",
+                " (billing)",
+                " by billing",
+                " to support billing",
+                " on billing",
+                " with billing",
+                " in billing",
+                " across billing",
+                " from billing",
+                " through billing",
+                " during billing",
+                " at billing",
+                " that supports billing",
+            )
+        ],
+    ],
+)
+def test_generated_pair_endpoint_policy(
+    catalog: SourceContext,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    verb: str,
+    subject: str,
+    statement: str,
+    blocked: bool,
+) -> None:
+    import test_inflation_documents as fixtures
+
+    claim_text = f"{verb.capitalize()} {subject}"
+    monkeypatch.setattr(fixtures, "CLAIM", {"schema_version": 1, "verb": verb, "subject": subject})
+    monkeypatch.setattr(fixtures, "CLAIM_TEXT", claim_text)
+    monkeypatch.setattr(fixtures, "EVIDENCE_TEXT", claim_text)
+    test_generated_pair_claim_prefixes_and_middle_cuts(
+        catalog, monkeypatch, tmp_path, statement, blocked
     )
 
 

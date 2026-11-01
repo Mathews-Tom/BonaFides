@@ -171,7 +171,7 @@ def test_valid_stub_pair_links_every_factual_sentence_and_exports(
     assert {item["kind"] for item in items} == {"resume", "cover_letter"}
     for document in items:
         provenance = document["current_revision"]["provenance_snapshot"]
-        assert provenance["checker_version"] == "claim-evidence-v3"
+        assert provenance["checker_version"] == "claim-evidence-v4"
         pinned = {fact["claim_revision_id"] for fact in provenance["facts"]}
         blocks = _factual_blocks(document)
         assert blocks and all(

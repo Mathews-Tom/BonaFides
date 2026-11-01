@@ -514,6 +514,25 @@ def _claim_codes(claim_text: str, statement: str, claim_verb: str | None = None)
         ("Assisted with the data warehouse migration", "with the data warehouse", "maintained"),
         # Strict remainder rule: "automated" is vocabulary even in this adjectival use.
         ("Wrote automated tests for the API", "automated tests for the API", None),
+        (
+            "Assisted with the data warehouse migration",
+            "Assisted with the data warehouse",
+            "assisted",
+        ),
+        ("Assisted with the data warehouse migration", "with the data warehouse", "assisted"),
+        ("Assisted with the data warehouse migration", "the data warehouse", "assisted_with"),
+        (
+            "Designed and implemented a self-service onboarding flow",
+            "Designed and implemented",
+            None,
+        ),
+        ("Assisted custom-built scheduler work", "custom-built scheduler", "assisted"),
+        ("Built the “Ｂilling” self–service platform", 'built the "billing" self-service', "built"),
+        (
+            "Assisted with the data warehouse migration",
+            "Assisted with the data warehouse",
+            "maintained",
+        ),
     ],
 )
 def test_check_statements_rejects_non_prefix_or_ambiguous_post_verb_cuts(
@@ -531,21 +550,9 @@ def test_check_statements_rejects_non_prefix_or_ambiguous_post_verb_cuts(
             "Assisted with the data warehouse migration",
             "assisted",
         ),
-        (
-            "Assisted with the data warehouse migration",
-            "Assisted with the data warehouse",
-            "assisted",
-        ),
-        ("Assisted with the data warehouse migration", "with the data warehouse", "assisted"),
-        ("Assisted with the data warehouse migration", "the data warehouse", "assisted_with"),
         ("Wrote automated tests for the API", "Wrote automated tests", None),
         ("Wrote regression tests for the API", "regression tests for the API", None),
         ("Wrote regression tests for the API", "regression tests", "wrote"),
-        (
-            "Designed and implemented a self-service onboarding flow",
-            "Designed and implemented",
-            None,
-        ),
         (
             "Designed and implemented a self-service onboarding flow",
             "Designed and implemented a self-service onboarding flow",
@@ -554,15 +561,9 @@ def test_check_statements_rejects_non_prefix_or_ambiguous_post_verb_cuts(
         ("Maintained Linux batch runbooks for the payments team", "Linux batch runbooks", None),
         ("Contributed to the custom-built scheduler", "the custom-built scheduler", None),
         ("Was responsible for the billing platform", "the billing platform", None),
-        ("Assisted custom-built scheduler work", "custom-built scheduler", "assisted"),
-        ("Built the “Ｂilling” self–service platform", 'built the "billing" self-service', "built"),
         ("SQL skills for analysts", "SQL skills", None),
-        # A mismatched pinned verb disables only the post-verb path, not prefixes.
-        (
-            "Assisted with the data warehouse migration",
-            "Assisted with the data warehouse",
-            "maintained",
-        ),
+        # A mismatched pinned verb disables only post-verb cuts, not valid claim prefixes.
+        ("Assisted with the data warehouse migration", "Assisted", "maintained"),
     ],
 )
 def test_check_statements_accepts_claim_and_unambiguous_prefixes(
@@ -594,3 +595,85 @@ def test_check_statements_exact_claim_text_passes_for_every_rendered_verb(
     claim = StructuredClaim(schema_version=1, verb=claim_verb, subject="the billing migration")
     text = render_claim(claim)
     assert _claim_codes(text, text, claim_verb if structured else None) == []
+
+
+@pytest.mark.parametrize("structured", [False, True], ids=["literal", "structured"])
+@pytest.mark.parametrize("drop_verb", [False, True], ids=["claim", "post_verb"])
+@pytest.mark.parametrize(
+    ("claim_text", "statement"),
+    [
+        ("Managed the team's on-call rotation", "Managed the team"),
+        ("Managed the team’s on-call rotation", "Managed the team"),
+        ("Managed the teams' on-call rotation", "Managed the teams"),
+        ("Managed the teams’ on-call rotation", "Managed the teams"),
+        ("Owned the QA/release checklist", "Owned the QA"),
+        ("Built the Node.js gateway", "Built the Node"),
+        ("Led the migration planning but not delivery", "Led the migration"),
+        ("Saved $2 million in fees", "Saved $2"),
+        ("Reduced errors to 2 per 1,000 orders", "Reduced errors to 2"),
+        ("Led the migration jointly with the platform lead", "Led the migration"),
+    ],
+)
+def test_check_statements_blocks_mid_noun_figure_and_qualifier_endings(
+    claim_text: str, statement: str, structured: bool, drop_verb: bool
+) -> None:
+    claim_verb = claim_text.split()[0].lower() if structured else None
+    if drop_verb:
+        statement = statement.partition(" ")[2]
+    assert contains_statement(statement, claim_text)
+    assert _claim_codes(claim_text, statement, claim_verb) == ["statement_cut_inside_claim"]
+
+
+@pytest.mark.parametrize(
+    "boundary",
+    [
+        "for",
+        "by",
+        "to",
+        "on",
+        "with",
+        "in",
+        "across",
+        "from",
+        "through",
+        "during",
+        "at",
+        "that",
+        ",",
+        ";",
+        ":",
+        "(",
+    ],
+)
+@pytest.mark.parametrize("claim_verb", [None, "built"], ids=["literal", "structured"])
+@pytest.mark.parametrize("statement", ["Built the API", "the API"], ids=["claim", "post_verb"])
+def test_check_statements_accepts_only_declared_prefix_end_boundaries(
+    boundary: str, claim_verb: str | None, statement: str
+) -> None:
+    text = f"Built the API {boundary.upper()} the billing team"
+    assert _claim_codes(text, statement, claim_verb) == []
+
+
+@pytest.mark.parametrize("suffix", ["forward", "within", "throughput", "that-team", "for-profit"])
+@pytest.mark.parametrize("statement", ["Built the API", "the API"])
+def test_check_statements_boundary_words_must_be_whole_non_hyphenated_words(
+    suffix: str, statement: str
+) -> None:
+    assert _claim_codes(f"Built the API {suffix}", statement, "built") == [
+        "statement_cut_inside_claim"
+    ]
+
+
+@pytest.mark.parametrize("claim_verb", [None, "reduced"])
+def test_check_statements_accepts_boundary_word_qualifier_drop_as_documented_limitation(
+    claim_verb: str | None,
+) -> None:
+    assert (
+        _claim_codes(
+            "Reduced latency by 30% for one pilot region", "Reduced latency by 30%", claim_verb
+        )
+        == []
+    )
+    assert _claim_codes("Built the API for the billing team", "Built the API", "built") == []
+    assert _claim_codes("Built the API ＦＯＲ the billing team", "the API", "built") == []
+    assert _claim_codes("Built the API.", "Built the API.", "built") == []

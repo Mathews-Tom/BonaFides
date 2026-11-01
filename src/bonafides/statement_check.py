@@ -11,6 +11,8 @@ elsewhere in the evidence, the posting or other claims. A prefix cannot end insi
 hyphenated word. The leading verb is the structured claim's pinned rendered verb, or a
 literal claim's leading ownership-vocabulary phrase. Dropping it is unavailable if the
 remainder starts with another vocabulary verb, optionally after "and", "&" or a comma.
+Prefixes end only at the claim's end or before declared punctuation or boundary words;
+qualifiers starting with those words can still be dropped.
 Review cannot waive any of these blockers.
 Non-factual text must be one of the declared connective templates, whose only variable
 slots are the posting title and organization; a base résumé has no connective text.
@@ -29,7 +31,7 @@ from bonafides.claims import _EN_VERBS, _normalise_grounding, contains_statement
 if TYPE_CHECKING:
     from bonafides.documents import DocumentBody
 
-CHECKER_VERSION = "claim-evidence-v3"
+CHECKER_VERSION = "claim-evidence-v4"
 CATEGORIES = {
     "experience": "Experience",
     "education": "Education",
@@ -77,6 +79,9 @@ _VOCABULARY_VERB = re.compile(
     + r")(?![^\W_]|-)"
 )
 _CONJUNCTION = re.compile(r"^(?:and\b|&|,)\s*")
+_CUT_END = re.compile(
+    r"\s*(?:[,;:(]|(?:for|by|to|on|with|in|across|from|through|during|at|that)(?![^\W_]|-))"
+)
 
 
 def title_issues(body: DocumentBody, kind: str) -> list[dict[str, str]]:
@@ -161,11 +166,19 @@ def _whole_prefix(statement: str, text: str) -> bool:
     )
 
 
+def _permitted_prefix(statement: str, text: str) -> bool:
+    """A whole prefix ending at the claim end or a declared punctuation/word boundary."""
+    if not _whole_prefix(statement, text):
+        return False
+    rest = text[len(statement) :]
+    return not rest or _CUT_END.match(rest) is not None
+
+
 def _claim_prefix(statement: str, claim_text: str, claim_verb: str | None) -> bool:
     """Accept only the claim's prefix or an unambiguous prefix after its leading verb."""
     statement = _normalise_grounding(statement).rstrip(".;")
-    claim_text = _normalise_grounding(claim_text)
-    if _whole_prefix(statement, claim_text):
+    claim_text = _normalise_grounding(claim_text).rstrip(".;")
+    if _permitted_prefix(statement, claim_text):
         return True
     if claim_verb is None:
         leading = _VOCABULARY_VERB.match(claim_text)
@@ -180,7 +193,7 @@ def _claim_prefix(statement: str, claim_text: str, claim_verb: str | None) -> bo
     remainder = claim_text[end:].lstrip()
     if _VOCABULARY_VERB.match(_CONJUNCTION.sub("", remainder, count=1)):
         return False
-    return _whole_prefix(statement, remainder)
+    return _permitted_prefix(statement, remainder)
 
 
 def check_statements(

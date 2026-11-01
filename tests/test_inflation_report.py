@@ -22,10 +22,13 @@ from bonafides.inflation_report import (
 
 ROOT = Path(__file__).parent
 SETS = ROOT / "fixtures" / "inflation"
-INTENTIONAL_FALSE_BLOCKS = [
+ORIGINAL_FALSE_BLOCKS = [
     (875, ["statement_cut_inside_claim"]),
     (1131, ["statement_cut_inside_claim"]),
 ]
+# Deliberate endpoint measurement cases remain kind=null: none promotes a verb.
+ENDPOINT_FALSE_BLOCKS = [(line, ["statement_cut_inside_claim"]) for line in range(1170, 1186)]
+INTENTIONAL_FALSE_BLOCKS = [*ORIGINAL_FALSE_BLOCKS, *ENDPOINT_FALSE_BLOCKS]
 
 
 def _same(statement: str, claim_text: str) -> bool:
@@ -48,7 +51,7 @@ def test_committed_sets_are_contained_in_their_evidence() -> None:
 
 def test_committed_honest_set_preserves_cut_shapes_with_at_most_half_identical() -> None:
     honest = load(SETS / "honest.jsonl", honest=True)
-    assert len(honest) == 1135
+    assert len(honest) == 1185
     identical = [case for case in honest if _same(case.statement, case.claim_text)]
     printable = [case for case in honest if case.fields]
     prefixes = [
@@ -61,8 +64,8 @@ def test_committed_honest_set_preserves_cut_shapes_with_at_most_half_identical()
     assert len(identical) == 314
     assert len(identical) * 2 <= len(honest)
     assert len(printable) == 6
-    assert len(prefixes) == 269
-    blocked_lines = {line for line, _ in INTENTIONAL_FALSE_BLOCKS}
+    assert len(prefixes) == 294
+    blocked_lines = {line for line, _ in ORIGINAL_FALSE_BLOCKS}
     postverb = [
         case
         for case in honest
@@ -71,7 +74,7 @@ def test_committed_honest_set_preserves_cut_shapes_with_at_most_half_identical()
         and case not in prefixes
         and case.line not in blocked_lines
     ]
-    assert len(postverb) == 544
+    assert len(postverb) == 569
     vocabulary = {verb.replace("_", " ") for verb in OWNERSHIP_VERBS}
     full_remainders = 0
     for case in postverb:
@@ -81,7 +84,7 @@ def test_committed_honest_set_preserves_cut_shapes_with_at_most_half_identical()
         assert separator and before.strip() in vocabulary, case
         full_remainders += not after
     assert full_remainders == 297
-    assert len(postverb) - full_remainders == 247
+    assert len(postverb) - full_remainders == 272
     assert [(case.line, case.statement) for case in honest if case.line in blocked_lines] == [
         (875, "the billing migration"),
         (1131, "automated tests for the API"),
@@ -117,10 +120,9 @@ def test_inflation_report_committed_sets_within_limit_and_every_kind_blocked() -
 def test_claims_cli_inflation_report_prints_rates(capsys: pytest.CaptureFixture[str]) -> None:
     assert claims_main(["inflation-report", str(SETS)]) == 0
     output = capsys.readouterr().out.splitlines()
-    assert output[0] == "Honest: 2 of 1135 blocked (false-block 0.2%)"
-    assert output[1:3] == [
-        "honest line 875: statement_cut_inside_claim",
-        "honest line 1131: statement_cut_inside_claim",
+    assert output[0] == "Honest: 18 of 1185 blocked (false-block 1.6%)"
+    assert output[1:19] == [
+        f"honest line {line}: statement_cut_inside_claim" for line, _ in INTENTIONAL_FALSE_BLOCKS
     ]
     for kind in INFLATION_KINDS:
         assert any(line.startswith(f"Inflated {kind}: ") for line in output)

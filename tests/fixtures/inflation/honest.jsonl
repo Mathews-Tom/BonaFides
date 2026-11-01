@@ -1133,3 +1133,53 @@
 {"claim": "Custom-built dashboards for finance", "evidence": "Custom-built dashboards for finance.", "kind": null, "statement": "Custom-built dashboards"}
 {"claim": "Reduced checkout latency by 35% across 4 regions", "evidence": "Reduced checkout latency by 35% across 4 regions.", "kind": null, "statement": "  REDUCED\tcheckout   latency  "}
 {"claim": "Reduced checkout latency by 35% across 4 regions", "evidence": "Reduced checkout latency by 35% across 4 regions.", "kind": null, "statement": "CHECKOUT\tlatency"}
+{"claim": "Built the API for billing team", "evidence": "Built the API for billing team.", "kind": null, "statement": "Built the API"}
+{"claim": "Built the API for billing team", "evidence": "Built the API for billing team.", "kind": null, "statement": "the API"}
+{"claim": "Reduced latency by 30%", "evidence": "Reduced latency by 30%.", "kind": null, "statement": "Reduced latency"}
+{"claim": "Reduced latency by 30%", "evidence": "Reduced latency by 30%.", "kind": null, "statement": "latency"}
+{"claim": "Migrated the service to Linux", "evidence": "Migrated the service to Linux.", "kind": null, "statement": "Migrated the service"}
+{"claim": "Migrated the service to Linux", "evidence": "Migrated the service to Linux.", "kind": null, "statement": "the service"}
+{"claim": "Maintained the service ON Linux", "evidence": "Maintained the service ON Linux.", "kind": null, "statement": "  MAINTAINED\tthe service "}
+{"claim": "Maintained the service ON Linux", "evidence": "Maintained the service ON Linux.", "kind": null, "statement": " THE\tservice "}
+{"claim": "Built the dashboard with finance", "evidence": "Built the dashboard with finance.", "kind": null, "statement": "Built the dashboard"}
+{"claim": "Built the dashboard with finance", "evidence": "Built the dashboard with finance.", "kind": null, "statement": "the dashboard"}
+{"claim": "Built the service in Python", "evidence": "Built the service in Python.", "kind": null, "statement": "Built the service"}
+{"claim": "Built the service in Python", "evidence": "Built the service in Python.", "kind": null, "statement": "the service"}
+{"claim": "Reduced latency across four regions", "evidence": "Reduced latency across four regions.", "kind": null, "statement": "Reduced latency"}
+{"claim": "Reduced latency across four regions", "evidence": "Reduced latency across four regions.", "kind": null, "statement": "latency"}
+{"claim": "Reduced latency from 40 ms to 30 ms", "evidence": "Reduced latency from 40 ms to 30 ms.", "kind": null, "statement": "Reduced latency"}
+{"claim": "Reduced latency from 40 ms to 30 ms", "evidence": "Reduced latency from 40 ms to 30 ms.", "kind": null, "statement": "latency"}
+{"claim": "Supported the migration through launch", "evidence": "Supported the migration through launch.", "kind": null, "statement": "Supported the migration"}
+{"claim": "Supported the migration through launch", "evidence": "Supported the migration through launch.", "kind": null, "statement": "the migration"}
+{"claim": "Supported the service during the pilot", "evidence": "Supported the service during the pilot.", "kind": null, "statement": "Supported the service"}
+{"claim": "Supported the service during the pilot", "evidence": "Supported the service during the pilot.", "kind": null, "statement": "the service"}
+{"claim": "Maintained the service at the branch office", "evidence": "Maintained the service at the branch office.", "kind": null, "statement": "Maintained the service"}
+{"claim": "Maintained the service at the branch office", "evidence": "Maintained the service at the branch office.", "kind": null, "statement": "the service"}
+{"claim": "Built the service that handles invoices", "evidence": "Built the service that handles invoices.", "kind": null, "statement": "Built the service"}
+{"claim": "Built the service that handles invoices", "evidence": "Built the service that handles invoices.", "kind": null, "statement": "the service"}
+{"claim": "Built the API, then documented it", "evidence": "Built the API, then documented it.", "kind": null, "statement": "Built the API"}
+{"claim": "Built the API, then documented it", "evidence": "Built the API, then documented it.", "kind": null, "statement": "the API"}
+{"claim": "Built the API; documented the schema", "evidence": "Built the API; documented the schema.", "kind": null, "statement": "Built the API"}
+{"claim": "Built the API; documented the schema", "evidence": "Built the API; documented the schema.", "kind": null, "statement": "the API"}
+{"claim": "Built the API: a billing integration", "evidence": "Built the API: a billing integration.", "kind": null, "statement": "Built the API"}
+{"claim": "Built the API: a billing integration", "evidence": "Built the API: a billing integration.", "kind": null, "statement": "the API"}
+{"claim": "Built the API (2021–2022)", "evidence": "Built the API (2021–2022).", "kind": null, "statement": "Built the API"}
+{"claim": "Built the API (2021–2022)", "evidence": "Built the API (2021–2022).", "kind": null, "statement": "the API"}
+{"claim": "Reduced latency by 30% for one pilot region", "evidence": "Reduced latency by 30% for one pilot region.", "kind": null, "statement": "Reduced latency by 30%"}
+{"claim": "Reduced latency by 30% for one pilot region", "evidence": "Reduced latency by 30% for one pilot region.", "kind": null, "statement": "latency by 30%"}
+{"claim": "Supported the team's migration", "evidence": "Supported the team's migration.", "kind": null, "statement": "Supported the team"}
+{"claim": "Supported the team's migration", "evidence": "Supported the team's migration.", "kind": null, "statement": "the team"}
+{"claim": "Supported the teams' migration", "evidence": "Supported the teams' migration.", "kind": null, "statement": "Supported the teams"}
+{"claim": "Supported the teams' migration", "evidence": "Supported the teams' migration.", "kind": null, "statement": "the teams"}
+{"claim": "Supported QA/release workflows", "evidence": "Supported QA/release workflows.", "kind": null, "statement": "Supported QA"}
+{"claim": "Supported QA/release workflows", "evidence": "Supported QA/release workflows.", "kind": null, "statement": "QA"}
+{"claim": "Used Node.js for billing", "evidence": "Used Node.js for billing.", "kind": null, "statement": "Used Node"}
+{"claim": "Built Node.js services", "evidence": "Built Node.js services.", "kind": null, "statement": "Node"}
+{"claim": "Supported migration planning", "evidence": "Supported migration planning.", "kind": null, "statement": "Supported migration"}
+{"claim": "Supported migration planning", "evidence": "Supported migration planning.", "kind": null, "statement": "migration"}
+{"claim": "Managed $2 million in annual spend", "evidence": "Managed $2 million in annual spend.", "kind": null, "statement": "Managed $2"}
+{"claim": "Managed $2 million in annual spend", "evidence": "Managed $2 million in annual spend.", "kind": null, "statement": "$2"}
+{"claim": "Reduced errors to 2 per 1000 requests", "evidence": "Reduced errors to 2 per 1000 requests.", "kind": null, "statement": "Reduced errors to 2"}
+{"claim": "Reduced errors to 2 per 1000 requests", "evidence": "Reduced errors to 2 per 1000 requests.", "kind": null, "statement": "errors to 2"}
+{"claim": "Supported migration jointly with finance", "evidence": "Supported migration jointly with finance.", "kind": null, "statement": "Supported migration"}
+{"claim": "Supported migration jointly with finance", "evidence": "Supported migration jointly with finance.", "kind": null, "statement": "migration"}
