@@ -3,9 +3,12 @@
 
 This is a development tool, never part of the shipped image or request path, and never
 enabled by default. It answers the existing local-model adapter through an ordinary
-route file. Its output is derived only from the projection it receives:
+route file, for pair generation and for section regeneration (a projection with a
+``target``). Its output is derived only from the projection it receives:
 
-- ``valid``: every claim becomes a factual block citing it, worded as the claim's text.
+- ``valid``: every claim becomes a factual block citing it, worded as the claim's text;
+  a regenerated section rewords each cited target block as its claim's text and keeps
+  connective target blocks.
 - ``absent-claim``: one factual block cites a claim id that is not in the profile.
 - ``posting-only-skill``: one factual block asserts a term found only in the posting.
 - ``malformed-once``: schema-invalid until the request carries a correction.
@@ -13,8 +16,8 @@ route file. Its output is derived only from the projection it receives:
 - ``truncated``: a length-limited, incomplete response.
 
 ``serve`` uses only the standard library so it runs as its own process or container.
-``route`` writes a route file whose qualification receipt is fixture-only: it attests
-nothing about any real model.
+``route`` writes a route file whose qualification receipts for both document stages are
+fixture-only: they attest nothing about any real model.
 """
 
 from __future__ import annotations
@@ -29,7 +32,7 @@ from collections.abc import Callable
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from threading import Lock
-from typing import Any
+from typing import Any, cast
 from uuid import NAMESPACE_URL, uuid5
 
 MODEL = "bonafides-stub:fixture"
@@ -91,6 +94,32 @@ def _pair(projection: dict[str, object]) -> dict[str, Any]:
     }
 
 
+def _section(projection: dict[str, object]) -> dict[str, Any]:
+    target = projection["target"]
+    assert isinstance(target, dict) and isinstance(target["blocks"], list)
+    claims = {str(claim["id"]): str(claim["text"]) for claim in _items(projection, "claims")}
+    blocks = []
+    for index, block in enumerate(target["blocks"], start=1):
+        cited = [str(value) for value in block["claim_revision_ids"]]
+        if block["claim_kind"] == "factual" and cited:
+            blocks.append(_block(index, "factual", claims[cited[0]], cited[0]))
+        else:
+            blocks.append(_block(index, "connective", str(block["text"]), None))
+    return {
+        "schema_version": "2",
+        "stage": "regenerate_section",
+        "blocks": blocks,
+        "warnings": [],
+    }
+
+
+def _statements(output: dict[str, Any]) -> list[dict[str, object]]:
+    """The first statement list a fabrication scenario edits."""
+    if output["stage"] == "regenerate_section":
+        return cast(list[dict[str, object]], output["blocks"])
+    return cast(list[dict[str, object]], output["documents"][0]["sections"][0]["blocks"])
+
+
 def _items(projection: dict[str, object], name: str) -> list[dict[str, object]]:
     values = projection[name]
     assert isinstance(values, list) and all(isinstance(item, dict) for item in values)
@@ -122,24 +151,27 @@ def respond(scenario: str, request: dict[str, object]) -> dict[str, object]:
     projection: dict[str, object] = json.loads(messages[1]["content"])
     corrected = len(messages) == 3
     done_reason = "stop"
+    output = _section(projection) if "target" in projection else _pair(projection)
     if scenario == "malformed" or (scenario == "malformed-once" and not corrected):
-        content = json.dumps(
-            {"schema_version": "2", "stage": "generate_documents", "documents": [], "gaps": []}
-        )
+        invalid: dict[str, object] = {"schema_version": "2", "stage": output["stage"]}
+        if output["stage"] == "regenerate_section":
+            invalid["blocks"] = []
+        else:
+            invalid.update({"documents": [], "gaps": []})
+        content = json.dumps(invalid)
     elif scenario == "truncated":
         done_reason = "length"
-        content = json.dumps(_pair(projection))[:200]
+        content = json.dumps(output)[:200]
     else:
-        pair = _pair(projection)
+        statements = _statements(output)
         if scenario == "absent-claim":
-            pair["documents"][0]["sections"][0]["blocks"][0]["claim_id"] = ABSENT_CLAIM_ID
+            factual = next(item for item in statements if item["kind"] == "factual")
+            factual["claim_id"] = ABSENT_CLAIM_ID
         elif scenario == "posting-only-skill":
             claim = str(_items(projection, "claims")[0]["id"])
             statement = f"Hands-on experience with {_posting_only_term(projection)}."
-            pair["documents"][0]["sections"][0]["blocks"].append(
-                _block(900, "factual", statement, claim)
-            )
-        content = json.dumps(pair)
+            statements.append(_block(900, "factual", statement, claim))
+        content = json.dumps(output)
     return {
         "model": MODEL,
         "done": True,
@@ -226,7 +258,7 @@ def serve(host: str, port: int, scenario: str, control: Path | None) -> None:
 
 
 def route(endpoint: str, address: str, output: Path, deadline: int) -> None:
-    """Write a 0600 route file with a fixture-only receipt for document generation."""
+    """Write a 0600 route file with fixture-only receipts for both document stages."""
     from bonafides.local_model import PROMPT_VERSIONS, load_route
 
     data: dict[str, object] = {
@@ -260,7 +292,7 @@ def route(endpoint: str, address: str, output: Path, deadline: int) -> None:
     write()
     initial = load_route(output)
     assert initial is not None
-    stage = "generate_documents"
+    stages = ("generate_documents", "regenerate_section")
     data["qualification_receipts"] = {
         stage: {
             "status": "passed",
@@ -271,10 +303,11 @@ def route(endpoint: str, address: str, output: Path, deadline: int) -> None:
             "reviewed_by": FIXTURE_REVIEWER,
             "reviewed_at": "2026-11-01T00:00:00Z",
         }
+        for stage in stages
     }
     write()
     loaded = load_route(output)
-    assert loaded is not None and loaded.qualified_for(stage)
+    assert loaded is not None and all(loaded.qualified_for(stage) for stage in stages)
 
 
 def main(argv: list[str] | None = None) -> int:
