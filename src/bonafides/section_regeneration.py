@@ -352,8 +352,13 @@ def proposal_view(conn: Connection, owner: UUID, row: RowMapping) -> dict[str, o
         "original_section": row["original_section"],
         "proposed_section": row["proposed_section"],
         "validation_issues": row["validation_issues"],
-        # The original parent's pinned facts, so each proposed statement shows its claim.
-        "facts": row["context_snapshot"]["facts"],
+        # The target revision's pinned facts, which publication required to equal the
+        # proposal's own, so each proposed statement shows its claim.
+        "facts": conn.execute(
+            text("""SELECT provenance_snapshot->'facts' FROM bonafides.document_revisions
+            WHERE owner_id=:owner AND id=:id"""),
+            {"owner": owner, "id": row["target_revision_id"]},
+        ).scalar_one(),
         "model_run": row["model_run"],
         "created_at": row["created_at"].isoformat(),
         "applicable": applicable,
