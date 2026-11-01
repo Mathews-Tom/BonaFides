@@ -475,6 +475,7 @@ export function Documents({ api, profile, disabled = false, externalDocumentId, 
     if (!workflowId || !workflowState || (terminal(workflowState) && processedWorkflow.current === workflowId && !monitorError)) return;
     let stopped = false; let timer: number | undefined; const controller = new AbortController(); const pending = controllers.current; pending.add(controller);
     const epoch = workflowSelection.current;
+    const applicationId = current.current.applicationId;
     let completedWorkflow: Workflow | null = null;
     const poll = async () => {
       if (stopped) return;
@@ -484,6 +485,15 @@ export function Documents({ api, profile, disabled = false, externalDocumentId, 
         if (stopped) return;
         if (terminal(value.state)) {
           completedWorkflow = value;
+          // Refresh only route counters: proposals and failed tasks must not reload
+          // the saved document over an owner's current selection or local edits.
+          if (applicationId && epoch === selection.current &&
+              (value.mode === 'section_regeneration' || (value.mode === 'tailored_ai' && value.state !== 'succeeded'))) {
+            const latest = await request<ApplicationDocuments>(controller.signal, `${appPath(applicationId)}/documents`);
+            if (epoch === selection.current && current.current.applicationId === applicationId) {
+              setPair(previous => previous?.application_id === applicationId ? { ...previous, claim_json_rates: latest.claim_json_rates } : previous);
+            }
+          }
           if (value.state === 'succeeded') {
             if (value.mode === 'section_regeneration' || value.result?.proposal_id) {
               const result = value.result;

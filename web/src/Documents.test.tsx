@@ -661,6 +661,52 @@ describe('saved tailored section proposals', () => {
     expect(screen.getByLabelText('Block text: b-1')).toHaveValue('Keep my local wording.');
   });
 
+  it.each([
+    { mode: 'section_regeneration', state: 'succeeded', rates: { ...noGenerations, valid_after_correction: 1, rate_percent: 100 }, label: 'Section regeneration: 100% valid.' },
+    { mode: 'section_regeneration', state: 'permanent_failure', rates: { ...noGenerations, invalid_after_correction: 1, rate_percent: 0 }, label: 'Section regeneration: 0% valid.' },
+    { mode: 'section_regeneration', state: 'permanent_failure', rates: { ...noGenerations, failed_before_check: 1 }, label: 'Section regeneration: no checked generations yet.' },
+    { mode: 'tailored_ai', state: 'permanent_failure', rates: { ...noGenerations, invalid_after_correction: 1, rate_percent: 0 }, label: 'Pair generation: 0% valid.' },
+  ] as const)('refreshes route counters after $mode $state without replacing saved wording ($label)', async ({ mode, state, rates, label }) => {
+    const user = userEvent.setup(); let finished = false; let reads = 0;
+    const pending: Workflow = { ...sectionWorkflow, mode };
+    const completed: Workflow = { ...pending, version: 2, state, last_error_code: state === 'permanent_failure' ? 'model_output_invalid_after_correction' : null, result: state === 'succeeded' ? completedSectionWorkflow.result : null };
+    const { api } = fixture(saved, async (path, method) => {
+      if (path === '/applications') return { items: [application], next_cursor: null };
+      if (path === '/applications/application-1/documents') {
+        reads++;
+        return { ...pair, items: finished ? [{ ...tailored, current_revision: { ...tailored.current_revision, body: { ...tailored.current_revision.body, title: 'Concurrent saved change' } } }] : pair.items,
+          claim_json_rates: { ...pair.claim_json_rates, [mode === 'section_regeneration' ? 'regenerate_section' : 'generate_documents']: finished ? rates : noGenerations } };
+      }
+      if (path.includes('/regeneration-context?')) return sectionPreview(path);
+      if (path.startsWith('/applications/application-1/generation-context?')) return { ...context, generation_route: { ...route, status: 'qualified' } };
+      if ((path === '/documents/tailored-resume/regeneration-proposals' || path === '/applications/application-1/generation') && method === 'POST') return pending;
+      if (path === '/workflows/section-task-1') { finished = true; return completed; }
+      if (path === '/documents/tailored-resume/regeneration-proposals/proposal-1') return sectionProposal;
+      throw new ApiError(404, 'not_found');
+    });
+    render(<Documents api={api} profile={profile} />); await openTailored(user);
+    if (mode === 'section_regeneration') {
+      await inspectSection(user);
+      await user.click(screen.getByRole('checkbox', { name: /I reviewed this exact selected-section projection/ }));
+    } else {
+      await user.click(screen.getByRole('button', { name: 'Preview reviewed generation context' }));
+      await user.click(await screen.findByRole('checkbox', { name: /I reviewed this exact projection/ }));
+    }
+    vi.useFakeTimers();
+    try {
+      await act(async () => { fireEvent.click(screen.getByRole('button', { name: mode === 'section_regeneration' ? 'Request section proposal' : 'Generate résumé and cover letter pair' })); });
+      await act(async () => { await vi.advanceTimersByTimeAsync(1000); });
+      const panel = screen.getByRole('region', { name: 'Valid claim JSON rate for this route' });
+      expect(within(panel).getByText(label)).toBeVisible();
+      expect(within(panel).getByText(new RegExp(`${rates.valid_after_correction} valid after one correction, ${rates.invalid_after_correction} invalid after correction; ${rates.failed_before_check} ended before`))).toBeVisible();
+      expect(reads).toBe(2);
+      expect(screen.getByLabelText('Block text: b-1')).toHaveValue('Maintained Linux service checks.');
+      expect(screen.queryByDisplayValue('Concurrent saved change')).not.toBeInTheDocument();
+      expect(screen.getByRole('heading', { name: `Document task: ${state.replaceAll('_', ' ')}` })).toBeInTheDocument();
+      if (state === 'succeeded') expect(screen.getByRole('region', { name: 'Section proposal comparison' })).toBeInTheDocument();
+    } finally { vi.useRealTimers(); }
+  });
+
   it('shows a section-specific safe reason when a section task fails after its corrective retry', async () => {
     const user = userEvent.setup();
     const failed: Workflow = { ...sectionWorkflow, version: 2, state: 'permanent_failure', last_error_code: 'model_output_invalid_after_correction' };
