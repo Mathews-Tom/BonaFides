@@ -661,6 +661,21 @@ describe('saved tailored section proposals', () => {
     expect(screen.getByLabelText('Block text: b-1')).toHaveValue('Keep my local wording.');
   });
 
+  it('shows a section-specific safe reason when a section task fails after its corrective retry', async () => {
+    const user = userEvent.setup();
+    const failed: Workflow = { ...sectionWorkflow, version: 2, state: 'permanent_failure', last_error_code: 'model_output_invalid_after_correction' };
+    const { api } = proposalFixture(async (path, method) => {
+      if (path.includes('/regeneration-context?')) return sectionPreview(path);
+      if (path === '/documents/tailored-resume/regeneration-proposals' && method === 'POST') return sectionWorkflow;
+      if (path === '/workflows/section-task-1') return failed;
+      throw new ApiError(404, 'not_found');
+    });
+    render(<Documents api={api} profile={profile} />); await openTailored(user); await inspectSection(user);
+    await user.click(screen.getByRole('checkbox', { name: /I reviewed this exact selected-section projection/ }));
+    await user.click(screen.getByRole('button', { name: 'Request section proposal' }));
+    expect(await screen.findByText(/required section shape, even after one corrective retry\. No proposal was created and the document is unchanged\. Failure code: model_output_invalid_after_correction\./, {}, { timeout: 4000 })).toBeInTheDocument();
+  });
+
   it('stores task output without mutating words, then explicitly applies just the compared section as a blocked editable draft', async () => {
     const user = userEvent.setup();
     const applied: DocumentRecord = { ...tailored, version: 5, reviewed: false, unsupported_claims: ['/sections/0/blocks/0'], current_revision: { ...tailored.current_revision, id: 'applied-section-revision', revision_no: 3, origin: 'manual', content_sha256: '3'.repeat(64), body: { ...tailored.current_revision.body, sections: [sectionProposal.proposed_section, tailored.current_revision.body.sections[1]!] }, validation_issues: sectionProposal.validation_issues } };
