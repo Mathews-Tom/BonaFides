@@ -121,3 +121,29 @@
 {"claim": {"schema_version": 1, "subject": "the team that led the billing migration", "verb": "assisted"}, "evidence": "Assisted the team that led the billing migration.", "kind": "stronger_verb", "statement": "led the billing migration"}
 {"claim": {"schema_version": 1, "subject": "the engineers who architected the event pipeline", "verb": "supported"}, "evidence": "Supported the engineers who architected the event pipeline.", "kind": "stronger_verb", "statement": "architected the event pipeline"}
 {"claim": {"schema_version": 1, "subject": "a project that delivered the partner portal", "verb": "contributed_to"}, "evidence": "Contributed to a project that delivered the partner portal.", "kind": "stronger_verb", "statement": "delivered the partner portal"}
+{"claim": "Supported the team's migration", "evidence": "Supported the team's migration.", "kind": "truncated_phrase", "statement": "Supported the team"}
+{"claim": "Supported the team's migration", "evidence": "Supported the team's migration.", "kind": "truncated_phrase", "statement": "the team"}
+{"claim": "Supported the teams' migration", "evidence": "Supported the teams' migration.", "kind": "truncated_phrase", "statement": "Supported the teams"}
+{"claim": "Supported the teams' migration", "evidence": "Supported the teams' migration.", "kind": "truncated_phrase", "statement": "the teams"}
+{"claim": "Supported QA/release workflows", "evidence": "Supported QA/release workflows.", "kind": "truncated_phrase", "statement": "Supported QA"}
+{"claim": "Supported QA/release workflows", "evidence": "Supported QA/release workflows.", "kind": "truncated_phrase", "statement": "QA"}
+{"claim": "Used Node.js for billing", "evidence": "Used Node.js for billing.", "kind": "truncated_phrase", "statement": "Used Node"}
+{"claim": "Built Node.js services", "evidence": "Built Node.js services.", "kind": "truncated_phrase", "statement": "Node"}
+{"claim": "Supported migration planning", "evidence": "Supported migration planning.", "kind": "truncated_phrase", "statement": "Supported migration"}
+{"claim": "Supported migration planning", "evidence": "Supported migration planning.", "kind": "truncated_phrase", "statement": "migration"}
+{"claim": "Managed $2 million in annual spend", "evidence": "Managed $2 million in annual spend.", "kind": "truncated_phrase", "statement": "Managed $2"}
+{"claim": "Managed $2 million in annual spend", "evidence": "Managed $2 million in annual spend.", "kind": "truncated_phrase", "statement": "$2"}
+{"claim": "Reduced errors to 2 per 1000 requests", "evidence": "Reduced errors to 2 per 1000 requests.", "kind": "truncated_phrase", "statement": "Reduced errors to 2"}
+{"claim": "Reduced errors to 2 per 1000 requests", "evidence": "Reduced errors to 2 per 1000 requests.", "kind": "truncated_phrase", "statement": "errors to 2"}
+{"claim": "Supported migration jointly with finance", "evidence": "Supported migration jointly with finance.", "kind": "truncated_phrase", "statement": "Supported migration"}
+{"claim": "Supported migration jointly with finance", "evidence": "Supported migration jointly with finance.", "kind": "truncated_phrase", "statement": "migration"}
+{"claim": "Cut costs by 10 to 15%", "evidence": "Cut costs by 10 to 15%.", "kind": "truncated_phrase", "statement": "Cut costs by 10"}
+{"claim": "Cut costs by 10 to 15%", "evidence": "Cut costs by 10 to 15%.", "kind": "truncated_phrase", "statement": "costs by 10"}
+{"claim": "Supported 10 to 20 clients", "evidence": "Supported 10 to 20 clients.", "kind": "truncated_phrase", "statement": "Supported 10"}
+{"claim": "Supported 10 to 20 clients", "evidence": "Supported 10 to 20 clients.", "kind": "truncated_phrase", "statement": "10"}
+{"claim": "Managed $2 to $3 million in spend", "evidence": "Managed $2 to $3 million in spend.", "kind": "truncated_phrase", "statement": "Managed $2"}
+{"claim": "Managed $2 to $3 million in spend", "evidence": "Managed $2 to $3 million in spend.", "kind": "truncated_phrase", "statement": "$2"}
+{"claim": "Reduced latency from 20 to 30 milliseconds", "evidence": "Reduced latency from 20 to 30 milliseconds.", "kind": "truncated_phrase", "statement": "Reduced latency from 20"}
+{"claim": "Reduced latency from 20 to 30 milliseconds", "evidence": "Reduced latency from 20 to 30 milliseconds.", "kind": "truncated_phrase", "statement": "latency from 20"}
+{"claim": "Supported 5 through 10 teams", "evidence": "Supported 5 through 10 teams.", "kind": "truncated_phrase", "statement": "Supported 5"}
+{"claim": "Supported 5 through 10 teams", "evidence": "Supported 5 through 10 teams.", "kind": "truncated_phrase", "statement": "5"}

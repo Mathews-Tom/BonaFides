@@ -677,3 +677,65 @@ def test_check_statements_accepts_boundary_word_qualifier_drop_as_documented_lim
     assert _claim_codes("Built the API for the billing team", "Built the API", "built") == []
     assert _claim_codes("Built the API ＦＯＲ the billing team", "the API", "built") == []
     assert _claim_codes("Built the API.", "Built the API.", "built") == []
+
+
+@pytest.mark.parametrize(
+    "word",
+    ["for", "by", "to", "on", "with", "in", "across", "from", "through", "during", "at", "that"],
+)
+@pytest.mark.parametrize("claim_verb", [None, "supported"], ids=["literal", "structured"])
+@pytest.mark.parametrize("statement", ["Supported 10", "10"], ids=["claim", "post_verb"])
+def test_check_statements_boundary_words_cannot_split_numeric_ranges(
+    word: str, claim_verb: str | None, statement: str
+) -> None:
+    claim_text = f"Supported 10 {word.upper()} 20 clients"
+    assert contains_statement(statement, claim_text)
+    assert _claim_codes(claim_text, statement, claim_verb) == ["statement_cut_inside_claim"]
+
+
+@pytest.mark.parametrize(
+    ("claim_text", "statement"),
+    [
+        ("Cut costs by 10 to 15%", "Cut costs by 10"),
+        ("Supported 10 to 20 clients", "Supported 10"),
+        ("Managed $10 to $20 budgets", "Managed $10"),
+        ("Managed € 10 to € 20 budgets", "Managed € 10"),
+        ("Managed 10 € to 20 € budgets", "Managed 10 €"),
+        ("Managed $1,000.50 to $2,000.75 budgets", "Managed $1,000.50"),
+        ("Reduced latency by 30% for 1 pilot region", "Reduced latency by 30%"),
+        ("Measured -10.5 to +20.5 degrees", "Measured -10.5"),
+    ],
+)
+def test_check_statements_number_and_currency_ranges_are_not_prefix_endpoints(
+    claim_text: str, statement: str
+) -> None:
+    assert contains_statement(statement, claim_text)
+    assert _claim_codes(claim_text, statement) == ["statement_cut_inside_claim"]
+
+
+@pytest.mark.parametrize("claim_verb", [None, "supported"])
+@pytest.mark.parametrize("statement", ["Supported 10 clients", "10 clients"])
+def test_check_statements_number_followed_by_noun_still_has_a_boundary(
+    claim_verb: str | None, statement: str
+) -> None:
+    assert _claim_codes("Supported 10 clients to 20 projects", statement, claim_verb) == []
+
+
+@pytest.mark.parametrize("separator", [". ", " - ", " – ", " — ", ".\n", "\t—\t"])
+@pytest.mark.parametrize("claim_verb", [None, "led"])
+@pytest.mark.parametrize("statement", ["Led the migration", "the migration"])
+def test_check_statements_clause_full_stop_and_spaced_dash_are_prefix_endpoints(
+    separator: str, claim_verb: str | None, statement: str
+) -> None:
+    assert (
+        _claim_codes(f"Led the migration{separator}Cut costs by 10%", statement, claim_verb) == []
+    )
+
+
+@pytest.mark.parametrize("separator", [".", "-", " —", "— "])
+def test_check_statements_unspaced_clause_punctuation_does_not_split_compounds(
+    separator: str,
+) -> None:
+    assert _claim_codes(f"Led the migration{separator}cutting costs", "Led the migration") == [
+        "statement_cut_inside_claim"
+    ]

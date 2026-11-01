@@ -129,7 +129,7 @@ def test_valid_stub_section_links_every_statement_and_applied_revision_exports(
     assert applied.status_code == 200, applied.text
     revision = applied.json()["current_revision"]
     assert revision["validation_issues"] == []
-    assert revision["provenance_snapshot"]["checker_version"] == "claim-evidence-v4"
+    assert revision["provenance_snapshot"]["checker_version"] == "claim-evidence-v5"
     updated = _document(catalog, resume["id"])
     assert _review(catalog, updated).status_code == 200
     assert _render(catalog, _document(catalog, resume["id"])).status_code == 202
@@ -251,7 +251,19 @@ def test_section_prefix_cuts_keep_the_same_result_after_apply(
             True,
         ),
         ("built", "the API for billing team", "Built the API", False),
-        ("reduced", "latency by 30% for one pilot region", "Reduced latency by 30%", False),
+        ("reduced", "costs by 10 to 15%", "Reduced costs by 10", True),
+        ("supported", "10 to 20 clients", "Supported 10", True),
+        ("supported", "$10 to $20 budgets", "Supported $10", True),
+        ("supported", "10 clients to resolve incidents", "Supported 10 clients", False),
+        *[
+            ("built", f"the API{ending}", "Built the API", False)
+            for ending in (
+                ". Shipped the CLI",
+                " - shipped the CLI",
+                " – shipped the CLI",
+                " — shipped the CLI",
+            )
+        ],
     ],
 )
 def test_section_endpoint_policy_survives_apply(
@@ -576,7 +588,7 @@ def test_owner_base_resume_with_structured_fields_passes_the_claim_checker(
 ) -> None:
     document = _base(catalog, _profile_with_fields(catalog))
     revision = document["current_revision"]
-    assert revision["provenance_snapshot"]["checker_version"] == "claim-evidence-v4"
+    assert revision["provenance_snapshot"]["checker_version"] == "claim-evidence-v5"
     texts = [
         block["text"] for section in revision["body"]["sections"] for block in section["blocks"]
     ]

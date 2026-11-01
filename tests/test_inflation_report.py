@@ -26,9 +26,7 @@ ORIGINAL_FALSE_BLOCKS = [
     (875, ["statement_cut_inside_claim"]),
     (1131, ["statement_cut_inside_claim"]),
 ]
-# Deliberate endpoint measurement cases remain kind=null: none promotes a verb.
-ENDPOINT_FALSE_BLOCKS = [(line, ["statement_cut_inside_claim"]) for line in range(1170, 1186)]
-INTENTIONAL_FALSE_BLOCKS = [*ORIGINAL_FALSE_BLOCKS, *ENDPOINT_FALSE_BLOCKS]
+INTENTIONAL_FALSE_BLOCKS = ORIGINAL_FALSE_BLOCKS
 
 
 def _same(statement: str, claim_text: str) -> bool:
@@ -51,7 +49,7 @@ def test_committed_sets_are_contained_in_their_evidence() -> None:
 
 def test_committed_honest_set_preserves_cut_shapes_with_at_most_half_identical() -> None:
     honest = load(SETS / "honest.jsonl", honest=True)
-    assert len(honest) == 1185
+    assert len(honest) == 1175
     identical = [case for case in honest if _same(case.statement, case.claim_text)]
     printable = [case for case in honest if case.fields]
     prefixes = [
@@ -64,7 +62,7 @@ def test_committed_honest_set_preserves_cut_shapes_with_at_most_half_identical()
     assert len(identical) == 314
     assert len(identical) * 2 <= len(honest)
     assert len(printable) == 6
-    assert len(prefixes) == 294
+    assert len(prefixes) == 289
     blocked_lines = {line for line, _ in ORIGINAL_FALSE_BLOCKS}
     postverb = [
         case
@@ -74,7 +72,7 @@ def test_committed_honest_set_preserves_cut_shapes_with_at_most_half_identical()
         and case not in prefixes
         and case.line not in blocked_lines
     ]
-    assert len(postverb) == 569
+    assert len(postverb) == 564
     vocabulary = {verb.replace("_", " ") for verb in OWNERSHIP_VERBS}
     full_remainders = 0
     for case in postverb:
@@ -84,7 +82,7 @@ def test_committed_honest_set_preserves_cut_shapes_with_at_most_half_identical()
         assert separator and before.strip() in vocabulary, case
         full_remainders += not after
     assert full_remainders == 297
-    assert len(postverb) - full_remainders == 272
+    assert len(postverb) - full_remainders == 267
     assert [(case.line, case.statement) for case in honest if case.line in blocked_lines] == [
         (875, "the billing migration"),
         (1131, "automated tests for the API"),
@@ -93,18 +91,57 @@ def test_committed_honest_set_preserves_cut_shapes_with_at_most_half_identical()
         assert case in printable or contains_statement(case.statement, case.claim_text), case
 
 
-def test_committed_inflated_set_cuts_the_claim_only_to_promote_its_verb() -> None:
+def test_committed_inflated_set_distinguishes_promotions_and_truncated_phrases() -> None:
     inflated = load(SETS / "inflated.jsonl", honest=False)
     assert {kind: sum(case.kind == kind for case in inflated) for kind in INFLATION_KINDS} == {
         "stronger_verb": 15,
         "longer_tenure": 16,
         "larger_metric": 74,
         "wider_scope": 18,
+        "truncated_phrase": 26,
     }
     assert EXPECTED_CODES["stronger_verb"] == "statement_cut_inside_claim"
+    assert EXPECTED_CODES["truncated_phrase"] == "statement_cut_inside_claim"
     for case in inflated:
         in_claim = contains_statement(case.statement, case.claim_text)
-        assert in_claim == (case.kind == "stronger_verb"), case
+        assert in_claim == (case.kind in {"stronger_verb", "truncated_phrase"}), case
+
+
+def test_endpoint_fixture_reclassification_and_new_boundaries() -> None:
+    honest = load(SETS / "honest.jsonl", honest=True)
+    inflated = load(SETS / "inflated.jsonl", honest=False)
+    assert len(inflated) == 149
+    assert [(case.claim_text, case.statement) for case in inflated[123:139]] == [
+        ("Supported the team's migration", "Supported the team"),
+        ("Supported the team's migration", "the team"),
+        ("Supported the teams' migration", "Supported the teams"),
+        ("Supported the teams' migration", "the teams"),
+        ("Supported QA/release workflows", "Supported QA"),
+        ("Supported QA/release workflows", "QA"),
+        ("Used Node.js for billing", "Used Node"),
+        ("Built Node.js services", "Node"),
+        ("Supported migration planning", "Supported migration"),
+        ("Supported migration planning", "migration"),
+        ("Managed $2 million in annual spend", "Managed $2"),
+        ("Managed $2 million in annual spend", "$2"),
+        ("Reduced errors to 2 per 1000 requests", "Reduced errors to 2"),
+        ("Reduced errors to 2 per 1000 requests", "errors to 2"),
+        ("Supported migration jointly with finance", "Supported migration"),
+        ("Supported migration jointly with finance", "migration"),
+    ]
+    assert all(case.kind == "truncated_phrase" for case in inflated[123:])
+    assert len(inflated[139:]) == 10
+    assert all("one pilot region" not in case.claim_text for case in honest[1135:])
+    assert [(case.claim_text, case.statement) for case in honest[1167:]] == [
+        ("Built the API" + ending, statement)
+        for ending in (
+            ". Documented the schema",
+            " - documented the schema",
+            " – documented the schema",
+            " — documented the schema",
+        )
+        for statement in ("Built the API", "the API")
+    ]
 
 
 def test_inflation_report_committed_sets_within_limit_and_every_kind_blocked() -> None:
@@ -120,8 +157,8 @@ def test_inflation_report_committed_sets_within_limit_and_every_kind_blocked() -
 def test_claims_cli_inflation_report_prints_rates(capsys: pytest.CaptureFixture[str]) -> None:
     assert claims_main(["inflation-report", str(SETS)]) == 0
     output = capsys.readouterr().out.splitlines()
-    assert output[0] == "Honest: 18 of 1185 blocked (false-block 1.6%)"
-    assert output[1:19] == [
+    assert output[0] == "Honest: 2 of 1175 blocked (false-block 0.2%)"
+    assert output[1:3] == [
         f"honest line {line}: statement_cut_inside_claim" for line, _ in INTENTIONAL_FALSE_BLOCKS
     ]
     for kind in INFLATION_KINDS:

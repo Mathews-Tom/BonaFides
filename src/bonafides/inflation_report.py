@@ -6,9 +6,9 @@ evidence text, the claim (literal text, or claim schema v1 fields pinned as thei
 a statement and the expected kind (``null`` for an honest case); optional ``fields`` hold the
 claim's reviewed structured-field lines, which make its pinned printable text. Every case runs through the
 document checker as a factual statement citing its claim, exactly as a document block does.
-A verb promoted by a mid-claim cut must block as ``statement_cut_inside_claim``; a longer
-period, larger figure or wider scope taken from elsewhere in the evidence must block as
-not part of its claim. The report prints counts, the honest false-block rate and the block rate per kind,
+A verb promoted or a phrase truncated by a mid-claim cut must block as
+``statement_cut_inside_claim``; a longer period, larger figure or wider scope taken
+from elsewhere in the evidence must block as not part of its claim. The report prints counts, the honest false-block rate and the block rate per kind,
 and exits non-zero when the false-block rate exceeds the threshold. Files are neither stored
 nor sent.
 Each UTF-8 file is limited to 5 MiB and each line to 64 KiB, including its line ending.
@@ -29,7 +29,9 @@ from bonafides.claims import StructuredClaim, contains_statement, render_claim
 from bonafides.documents import DocumentBlock, DocumentBody, DocumentSection
 from bonafides.statement_check import PRINTABLE_FIELDS, check_statements, printable_text
 
-InflationKind = Literal["stronger_verb", "longer_tenure", "larger_metric", "wider_scope"]
+InflationKind = Literal[
+    "stronger_verb", "longer_tenure", "larger_metric", "wider_scope", "truncated_phrase"
+]
 INFLATION_KINDS: tuple[InflationKind, ...] = get_args(InflationKind)
 # The checker code each kind of strengthening must block with.
 EXPECTED_CODES: dict[InflationKind, str] = {
@@ -37,6 +39,7 @@ EXPECTED_CODES: dict[InflationKind, str] = {
     "longer_tenure": "statement_not_in_claim",
     "larger_metric": "statement_not_in_claim",
     "wider_scope": "statement_not_in_claim",
+    "truncated_phrase": "statement_cut_inside_claim",
 }
 FALSE_BLOCK_LIMIT = 0.05
 MAX_FILE_BYTES = 5 * 1024 * 1024

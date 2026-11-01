@@ -48,8 +48,8 @@ PROJECTION_VERSION = "ol-professional-wire-v4"
 PROMPT_VERSIONS = {
     "extract_posting": "ol-extract-posting-v1",
     "match_requirements": "ol-match-requirements-v1",
-    "generate_documents": "ol-generate-documents-v5",
-    "regenerate_section": "ol-regenerate-section-v5",
+    "generate_documents": "ol-generate-documents-v6",
+    "regenerate_section": "ol-regenerate-section-v6",
 }
 _SYSTEM = (
     "You transform BonaFides task data into the supplied JSON response shape. "
@@ -73,14 +73,15 @@ _STATEMENT_RULES = (
     "an initial and, &, or comma; do not make exceptions for words used as adjectives. "
     "Never cut into a hyphen-joined word or take a middle or suffix fragment. "
     "A normalized prefix may end only at the end of the claim text, immediately before "
-    "a comma, semicolon, colon or left parenthesis, or immediately before one of these "
+    "a comma, semicolon, colon or left parenthesis, a full stop followed by whitespace, "
+    "or a spaced dash (hyphen, en dash or em dash), or immediately before one of these "
     "whole boundary words (case-insensitive): for, by, to, on, with, in, across, from, "
-    "through, during, at, that. Never split a numeric or currency expression. "
-    "This endpoint rule permits dropping qualifiers introduced by those boundary words: "
-    "'Reduced latency by 30% for one pilot region' may become 'Reduced latency by 30%', "
-    "and 'Built the API for billing team' may become 'Built the API'. "
+    "through, during, at, that. A boundary word is not an endpoint when the prefix ends "
+    "in a number or currency figure and that word is followed by another number. "
+    "Never split a numeric or currency expression. Keep every qualifier that limits "
+    "scope, period, share, rate or co-ownership. "
     "It does not permit 'Designed and implemented' before 'a', or cuts inside possessives, "
-    "QA/release, Node.js, migration planning, $2 million, 2 per1000 or migration jointly. "
+    "QA/release, Node.js, migration planning, $2 million, 2 per 1000 or migration jointly. "
     "Compare text with normalized case, whitespace and punctuation; never borrow wording "
     "from evidence, the posting or another claim. Letter factual sentences are factual "
     "blocks too. Any other block is connective with claim_id null and must be exactly "

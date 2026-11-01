@@ -1,71 +1,68 @@
 # Claim-scoped inflation case sets
 
-Each JSONL record has `evidence`, `claim`, `statement` and `kind`; optional `fields`
-hold reviewed structured-field lines for the exact pinned printable text. A claim is
-literal text or a schema-v1 structured claim pinned as its rendering and verb. The
-sets are synthetic and local; they do not contain owner data.
+Each synthetic, local JSONL record has `evidence`, `claim`, `statement` and `kind`;
+optional `fields` hold reviewed structured-field lines for exact pinned printable
+text. A claim is literal text or a schema-v1 structured claim pinned as its rendering
+and verb. These sets contain no owner data.
 
 ## Honest set
 
-`honest.jsonl` has **1,185 cases**. These text-shape categories are disjoint;
-membership describes containment, not whether the endpoint is accepted:
+`honest.jsonl` has **1,175 cases**, with these disjoint text-shape categories:
 
 | Statement shape | Count |
 | --- | ---: |
 | Exact claim text | 314 |
 | Exact printable text, including reviewed field lines | 6 |
-| Normalized whole-phrase prefix of claim text | 294 |
+| Normalized whole-phrase prefix of claim text | 289 |
 | Complete post-verb remainder | 297 |
-| Shorter normalized whole-phrase prefix of post-verb remainder | 272 |
+| Shorter normalized whole-phrase prefix of post-verb remainder | 267 |
 | Intentionally blocked pre-existing mid-claim cut | 1 |
 | Intentionally blocked vocabulary-leading post-verb remainder | 1 |
-| **Total** | **1,185** |
+| **Total** | **1,175** |
 
-Only **314/1,185** statements equal their claim text; even counting the six exact
-printable texts gives **320/1,185**, below the maximum of one half. All preceding
-**1,135 records remain unchanged and in their original order**. The 50 endpoint
-additions contain 34 accepted prefixes and 16 deliberately blocked measurements,
-each covering both claim-prefix and post-verb-prefix shapes.
+Only **314/1,175** statements equal their claim text; including printable texts gives
+**320/1,175**, below one half. Original honest rows **1–1167 remain unchanged and in
+order**. By explicit owner authorization, original rows **1168–1169** (omitted pilot
+region qualifiers) were removed, and original rows **1170–1185** moved to inflated
+rows **124–139** as `truncated_phrase`, preserving their evidence, claim and statement.
+The remaining 32 endpoint additions from original rows 1136–1167 are retained.
+Eight new honest rows **1168–1175** cover full stops followed by whitespace and
+spaced hyphen/en-dash/em-dash endpoints, each as a claim prefix and post-verb prefix.
 
-A normalized prefix may end only at the end of the claim, before `,`, `;`, `:`
-or `(`, or before one of these whole words (case-insensitive):
+Under checker **`claim-evidence-v5`**, permitted endpoints are the end of the claim;
+before `,`, `;`, `:` or `(`; before a full stop followed by whitespace; before a
+spaced dash (hyphen, en dash or em dash, normalized to `-`); or before a whole word
 `for`, `by`, `to`, `on`, `with`, `in`, `across`, `from`, `through`, `during`, `at`,
-`that`. Numeric, currency and hyphen protections still apply. Exact claim text
-always passes the shape rule. This closed boundary list is not semantic inference:
-`Built the API for billing team` → `Built the API` and
-`Reduced latency by 30% for one pilot region` → `Reduced latency by 30%` pass.
-Dropping trailing qualifiers introduced by a boundary word is an accepted limitation.
+`that` (case-insensitive). Numeric, currency and hyphen protections still apply.
+A boundary word is **not** an endpoint when the prefix ends in a number/currency
+figure and the word is followed by a number: `Cut costs by 10 to 15%` cannot become
+`Cut costs by 10`, and `Supported 10 to 20 clients` cannot become `Supported 10`.
+`Supported 10 clients to ...` is unaffected by that numeric-range guard.
 
-Under `claim-evidence-v4`, the deliberately retained measured costs are:
+The checker cannot infer the meaning of every trailing qualifier and can still
+accept its omission at a permitted endpoint. This is a checker limitation, not
+permission to omit it: prompt versions **`ol-generate-documents-v6`** and
+**`ol-regenerate-section-v6`** instruct the model to **KEEP any qualifier limiting
+scope, period, share, rate or co-ownership**. The pilot-region limitation remains
+documented by a checker unit test, not by honest fixture examples.
 
-- **Line 875:** `the billing migration`, cut from `Assisted the team that led the
-  billing migration`. This begins inside the claim, not at its start or immediately
-  after its pinned leading verb phrase.
-- **Line 1131:** `automated tests for the API`, cut from `Wrote automated tests for
-  the API`. The post-verb remainder begins with the vocabulary verb `automated` and
-  is guarded without lexical exceptions. The set also retains the accepted prefix
-  `Wrote automated tests`.
-- **Lines 1170–1185:** paired cuts inside `team's`, `teams'`, `QA/release`,
-  `Node.js`, `migration planning`, `$2 million`, `2 per 1000 requests` and
-  `migration jointly`. These are deliberate endpoint measurement cases in the
-  honest report lane (`kind: null`), **not** verb promotions and not a new public
-  inflation kind. Their inclusion conservatively charges the false-block rate.
+Two original honest cuts remain measured blockers (`statement_cut_inside_claim`):
 
-All 18 report `statement_cut_inside_claim`. The measured honest false-block rate is
-**18/1,185**, conservatively displayed as **1.6%**, below the unchanged **5%** ceiling.
-The original 1,135 rows retain exactly their original two blockers; no additional
-endpoint costs appear among those preceding rows.
+- **Line 875:** `the billing migration` from `Assisted the team that led the billing
+  migration`, neither a claim prefix nor an immediate post-verb prefix.
+- **Line 1131:** `automated tests for the API` from `Wrote automated tests for the
+  API`; vocabulary-leading post-verb remainders are guarded without lexical
+  exceptions, even when adjective-like. `Wrote automated tests` remains valid.
 
-Post-verb cuts remove only the renderer's actual pinned leading verb wording for a
-structured claim, and the longest leading vocabulary phrase for a literal claim.
-A vocabulary verb optionally preceded by `and`, `&` or `,` cannot begin the remainder.
-Hyphen-joined words are not vocabulary verbs, and cuts inside them are not allowed.
-Exact printable text remains accepted; normalization applies to permitted prefixes,
-not arbitrary mid-claim fragments.
+Measured false-block rate: **2/1,175**, conservatively displayed as **0.2%**, below
+the unchanged **5%** ceiling. Exact printable text and claim text rules, structured
+renderer's pinned leading wording, longest literal vocabulary phrase selection and
+strict post-verb guard are unchanged. Normalization does not permit arbitrary
+mid-claim fragments.
 
 ## Inflated set
 
-`inflated.jsonl` is unchanged and has **123 cases**, at least ten of each kind:
+`inflated.jsonl` has **149 cases**, at least ten of each kind:
 
 | Kind | Count | Expected blocker |
 | --- | ---: | --- |
@@ -73,49 +70,38 @@ not arbitrary mid-claim fragments.
 | `longer_tenure` | 16 | `statement_not_in_claim` |
 | `larger_metric` | 74 | `statement_not_in_claim` |
 | `wider_scope` | 18 | `statement_not_in_claim` |
+| `truncated_phrase` | 26 | `statement_cut_inside_claim` |
 
-Every inflated statement is contained in its own evidence. The 15 verb-promoting
-cuts are also contained in their claim text but start at a later verb; the other
-three kinds borrow wording from evidence outside the pinned claim text. Evidence
-containment alone would therefore pass every inflated case.
+Original inflated rows **1–123 remain unchanged and in order**. Rows **124–139**
+are the 16 moved cuts inside `team's`, `teams'`, `QA/release`, `Node.js`,
+`migration planning`, `$2 million`, `2 per 1000 requests` and `migration jointly`.
+Rows **140–149** add ten numeric-range cuts, paired as claim/post-verb prefixes,
+covering percentages, client counts, currency, latency and team counts.
+Every inflated statement is contained in its own evidence. Both `stronger_verb`
+and `truncated_phrase` statements are also contained in their pinned claim;
+the other kinds borrow wording from elsewhere in the evidence.
 
 ## Validation
 
-The report tests enforce the category counts, preserved honest cases, expected
-blocker codes and evidence containment of every inflated statement. Running:
+Report tests pin category counts, evidence containment and expected blocker codes.
+The local report command produces:
+
+```text
+Honest: 2 of 1175 blocked (false-block 0.2%)
+honest line 875: statement_cut_inside_claim
+honest line 1131: statement_cut_inside_claim
+Inflated stronger_verb: 15 of 15 blocked (100.0%)
+Inflated longer_tenure: 16 of 16 blocked (100.0%)
+Inflated larger_metric: 74 of 74 blocked (100.0%)
+Inflated wider_scope: 18 of 18 blocked (100.0%)
+Inflated truncated_phrase: 26 of 26 blocked (100.0%)
+False-block rate within the 5% limit
+```
 
 ```sh
 uvx --from uv==0.13.0 uv run --frozen bonafides claims inflation-report tests/fixtures/inflation
 ```
 
-produces:
-
-```text
-Honest: 18 of 1185 blocked (false-block 1.6%)
-honest line 875: statement_cut_inside_claim
-honest line 1131: statement_cut_inside_claim
-honest line 1170: statement_cut_inside_claim
-honest line 1171: statement_cut_inside_claim
-honest line 1172: statement_cut_inside_claim
-honest line 1173: statement_cut_inside_claim
-honest line 1174: statement_cut_inside_claim
-honest line 1175: statement_cut_inside_claim
-honest line 1176: statement_cut_inside_claim
-honest line 1177: statement_cut_inside_claim
-honest line 1178: statement_cut_inside_claim
-honest line 1179: statement_cut_inside_claim
-honest line 1180: statement_cut_inside_claim
-honest line 1181: statement_cut_inside_claim
-honest line 1182: statement_cut_inside_claim
-honest line 1183: statement_cut_inside_claim
-honest line 1184: statement_cut_inside_claim
-honest line 1185: statement_cut_inside_claim
-Inflated stronger_verb: 15 of 15 blocked (100.0%)
-Inflated longer_tenure: 16 of 16 blocked (100.0%)
-Inflated larger_metric: 74 of 74 blocked (100.0%)
-Inflated wider_scope: 18 of 18 blocked (100.0%)
-False-block rate within the 5% limit
-```
-
 Stop and report if the honest false-block rate exceeds 5%; do not remove honest
-cases to improve the rate.
+cases to improve the rate without explicit owner authorization. The moves/removals
+above are the specifically authorized reclassification, not a general exception.
