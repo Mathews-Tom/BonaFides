@@ -960,8 +960,8 @@ Backend tests drive the real adapter against the in-process stub (`tests/test_ch
 
 ```sh
 export COMPOSE_PROJECT_NAME=bonafides-stub-proof
-docker compose build api
-STUB_IMAGE="${BONAFIDES_IMAGE:-bonafides:local}"
+docker build --target app --tag bonafides:stub-model .
+STUB_IMAGE=bonafides:stub-model
 STUB_CONTAINER="${COMPOSE_PROJECT_NAME}-stub-model"
 STUB_NETWORK="${COMPOSE_PROJECT_NAME}_private"
 docker run --detach --name "$STUB_CONTAINER" \
@@ -1115,14 +1115,28 @@ silently becoming part of the subject.
 
 `uv run --frozen bonafides claims inflation-report <dir>` reads `honest.jsonl` and `inflated.jsonl` from a directory. Each line is one case: `evidence`, `claim` (literal text, or claim schema v1 fields pinned as their rendering), `statement`, and `kind` (`null` for an honest case, otherwise one of the four kinds). Every claim must be contained in its evidence. Each statement runs through the document checker as a factual block citing its claim. The report prints the honest false-block count and rate, then the block rate for each kind, and exits `1` when the false-block rate exceeds 5%. The committed synthetic sets are in `tests/fixtures/inflation/`. Their honest cases are corpus lines and their clause-trimmed prefixes, plus hand-written weaker-verb, sub-period, equal-metric and narrower-scope rephrasings. Every statement in both sets is contained in its evidence, so any block comes from the rules and not from containment.
 
+The committed sets contain **311 honest and 134 inflated cases** (445 total), including
+50 additional honest statements that differ from their claim text. These cover passive
+attribution, incidental time phrases, direct/head-noun rates, hourly reading, relative
+clause boundaries, and quantified scopes. Every added case quotes both its claim and
+statement in the evidence; honest self-comparisons are not a substitute for paraphrases.
+
 Inflation reading compares the strongest clause-initial action (including coordinated
-actions and leading `-ly` adverbs), not actions inside relative clauses. Every numeric
-unit accepts K/M/B and thousand/million/billion; comparisons normalize magnitudes and
-retain units and clause-attached rates. Years count as dates only in date contexts,
-and open-ended `since`/`from` periods extend to the present. When claim text has no
-period, pinned start/end dates supply its evidence period. Scope matches qualifying
-phrases such as `company-wide` and `globally`, not entity nouns such as `company` or
-`Global Payments`.
+actions and leading `-ly` adverbs), not actions inside relative clauses or passive
+participles followed directly by `by`. A comma followed by `and`, or a semicolon, resets
+relative-clause scope so a new owner action is still checked. Every numeric unit accepts
+K/M/B and thousand/million/billion; comparisons normalize magnitudes and retain units.
+A rate must directly follow its amount or a single intervening head noun, using
+`per`/`a`/`an`/`each`/`every`, a slash, or a rate adverb. Incidental time phrases such as
+`4 features in a month`, `through weekly rightsizing reviews`, or `with daily releases`
+do not attach a rate. The reader recognizes hourly rates internally without adding an
+editor-schema option. Years count as dates only in date contexts, and open-ended
+`since`/`from` periods extend to the present. When claim text has no period, pinned
+start/end dates supply its evidence period. Scope matches qualifying phrases such as
+`company-wide` and `globally`, plus `across`/`to` followed by a quantifier and scope unit
+(`across two teams`, `across all teams`, `to the whole company`). `Across one team` or
+`across 1 team` remains single-team scope. Entity nouns such as `company` or
+`Global Payments` alone do not establish breadth.
 
 The unchanged 305-bullet synthetic corpus includes its 64-bullet held-out block. The fixed
 general action inventory was committed before this re-measurement; no further tuning follows.

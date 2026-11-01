@@ -541,3 +541,162 @@ def test_inflation_report_line_at_byte_limit_is_accepted(tmp_path: Path, ending:
     assert len(cases) == 1
     assert cases[0].line == 2
     assert cases[0].claim_text == "Led migration"
+
+
+@pytest.mark.parametrize(
+    ("claim", "statement"),
+    [
+        ("Assisted billing migration", "Assisted billing migration, led by payments team"),
+        ("Contributed redesign", "Contributed redesign, directed by design lead"),
+        ("Supported API rollout", "Supported API rollout; managed by release team"),
+        ("Helped incident response", "Helped incident response, owned by operations"),
+        ("Assisted schema review", "Assisted schema review; led by database team"),
+        ("Assisted billing migration", "Led by payments team, assisted billing migration"),
+        ("Contributed redesign", "Directed by design lead; contributed redesign"),
+    ],
+)
+def test_passive_by_clause_does_not_strengthen_owner_action(claim: str, statement: str) -> None:
+    assert inflation_kinds(statement, claim) == []
+
+
+@pytest.mark.parametrize(
+    ("claim", "statement"),
+    [
+        ("Assisted billing migration, led by payments team", "Led billing migration"),
+        ("Contributed redesign, directed by design lead", "Directed redesign"),
+        ("Supported API rollout; managed by release team", "Managed API rollout"),
+        ("Helped incident response, owned by operations", "Owned incident response"),
+    ],
+)
+def test_passive_by_in_claim_does_not_authorize_active_ownership(
+    claim: str, statement: str
+) -> None:
+    assert inflation_kinds(statement, claim) == ["stronger_verb"]
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "Led by payments team",
+        "Directed by design lead",
+        "Managed by release team",
+        "Designed by platform team",
+        "Implemented by platform team",
+    ],
+)
+def test_read_passive_participle_followed_by_by_is_not_owner_action(text: str) -> None:
+    assert read(text).verb_rank is None
+
+
+@pytest.mark.parametrize(
+    ("text", "value", "unit"),
+    [
+        ("Shipped 4 features in a month", "4", "count"),
+        ("Saved $40K through weekly rightsizing reviews", "40", "usd"),
+        ("Improved coverage by 40% with daily releases", "40", "percent"),
+        ("Processed 500 tickets during a week", "500", "count"),
+        ("Saved $30K after monthly budget reviews", "30", "usd"),
+        ("Reduced latency by 20% through daily profiling", "20", "percent"),
+        ("Shipped 6 features over a quarter", "6", "count"),
+        ("Saved $50K with annual contract reviews", "50", "usd"),
+        ("Processed 300 tickets through weekly triage", "300", "count"),
+        ("Improved coverage by 25% after monthly audits", "25", "percent"),
+        ("Saved $20K by reducing monthly spend", "20", "usd"),
+        ("Shipped 8 features within a year", "8", "count"),
+        ("Shipped 4 new features per month", "4", "count"),
+        ("Saved $40K of revenue per month", "40", "usd"),
+    ],
+)
+def test_read_rate_does_not_skip_prepositions_or_arbitrary_words(
+    text: str, value: str, unit: str
+) -> None:
+    reading = read(text)
+    assert len(reading.figures) == 1
+    assert reading.figures[0].value == Decimal(value)
+    assert reading.figures[0].unit == unit
+    assert reading.figures[0].per is None
+
+
+@pytest.mark.parametrize(
+    "wording",
+    [" per month", " a month", " each month", " every month", "/month", " monthly"],
+)
+@pytest.mark.parametrize(
+    ("text", "figure"),
+    [
+        ("Saved $10K", Figure(Decimal("10"), "usd", "thousand", "month")),
+        ("Processed 500 tickets", Figure(Decimal("500"), "count", None, "month")),
+    ],
+)
+def test_read_rate_attaches_directly_or_after_one_head_noun(
+    text: str, figure: Figure, wording: str
+) -> None:
+    assert read(text + wording).figures == (figure,)
+
+
+@pytest.mark.parametrize(
+    "wording",
+    [" per hour", " an hour", " each hour", " every hour", "/hour", " hourly"],
+)
+@pytest.mark.parametrize(
+    ("text", "figure"),
+    [
+        ("Saved $10K", Figure(Decimal("10"), "usd", "thousand", "hour")),
+        ("Processed 80 tickets", Figure(Decimal("80"), "count", None, "hour")),
+    ],
+)
+def test_read_hourly_rate_is_internal_not_an_editor_schema_change(
+    text: str, figure: Figure, wording: str
+) -> None:
+    assert read(text + wording).figures == (figure,)
+
+
+@pytest.mark.parametrize(
+    ("claim", "statement"),
+    [
+        ("Processed 500 tickets per week", "Processed 500 tickets per day"),
+        ("Processed 500 tickets weekly", "Processed 500 tickets hourly"),
+        ("Saved $40K per day", "Saved $40K per hour"),
+    ],
+)
+def test_changed_direct_or_head_noun_rate_still_blocks(claim: str, statement: str) -> None:
+    assert inflation_kinds(statement, claim) == ["larger_metric"]
+
+
+@pytest.mark.parametrize("boundary", [", and ", ",and ", "; ", "; and "])
+def test_relative_clause_scope_ends_before_a_new_owner_action(boundary: str) -> None:
+    claim = "Assisted team that shipped API"
+    assert inflation_kinds(f"{claim}{boundary}led rollout", claim) == ["stronger_verb"]
+
+
+@pytest.mark.parametrize("marker", ["that", "who", "which"])
+def test_relative_clause_without_boundary_keeps_its_coordinated_actions(marker: str) -> None:
+    claim = f"Assisted team {marker} shipped API"
+    assert inflation_kinds(f"{claim} and led rollout", claim) == []
+
+
+@pytest.mark.parametrize(
+    "scope",
+    [
+        "across two teams",
+        "across three teams",
+        "across all teams",
+        "across every department",
+        "to all teams",
+        "to the whole company",
+    ],
+)
+def test_quantified_across_or_to_scope_blocks_against_one_team(scope: str) -> None:
+    claim = "Assisted reviews for the payments team"
+    assert inflation_kinds(f"Assisted reviews {scope}", claim) == ["wider_scope"]
+
+
+@pytest.mark.parametrize("scope", ["across one team", "across 1 team"])
+def test_single_team_quantifier_does_not_imply_cross_team_scope(scope: str) -> None:
+    claim = "Assisted reviews for the payments team"
+    assert inflation_kinds(f"Assisted reviews {scope}", claim) == []
+
+
+def test_honest_corpus_includes_at_least_forty_nonidentical_statements() -> None:
+    honest = load(SETS / "honest.jsonl", honest=True)
+    assert sum(case.statement != case.claim_text for case in honest) >= 40

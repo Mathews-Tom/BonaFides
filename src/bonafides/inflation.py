@@ -100,13 +100,27 @@ _FIGURE = re.compile(
     r"(?![\w]|[.,][0-9])",
     re.IGNORECASE,
 )
-_CLAUSE = re.compile(r"(\band\b|&|;|,)(?![0-9])", re.IGNORECASE)
+_CLAUSE = re.compile(r"(,\s*(?:and\b|&)|\band\b|&|;|,)(?![0-9])", re.IGNORECASE)
 _LEADING_ADVERBS = re.compile(r"^(?:[a-z]+ly\s+)+", re.IGNORECASE)
 _ATTACHED_RATE = re.compile(
-    r"(?:\b(?:per|a|an|each|every)\s+|/)\s*(?P<unit>day|week|month|quarter|year)\b"
-    r"|\b(?P<adverb>daily|weekly|monthly|quarterly|yearly|annually)\b",
+    r"(?:(?:per|a|an|each|every)\s+|/)\s*(?P<unit>hour|day|week|month|quarter|year)\b"
+    r"|(?P<adverb>hourly|daily|weekly|monthly|quarterly|yearly|annually)\b",
     re.IGNORECASE,
 )
+_RATE_HEAD = re.compile(
+    r"(?!(?:in|within|through|with|over|during|at|on|for|from|by|across|under|after|before)\b)"
+    r"[a-z][a-z'-]*(?:\s+|(?=/))",
+    re.IGNORECASE,
+)
+_QUANTIFIED_SCOPE = re.compile(
+    r"\b(?:across|to)\s+(?:the\s+)?"
+    r"(?P<quantifier>[0-9]+|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve"
+    r"|all|both|each|every|several|multiple|many|whole|entire)\s+"
+    r"(?P<unit>teams?|squads?|departments?|divisions?|compan(?:y|ies)"
+    r"|organi[sz]ations?)\b",
+    re.IGNORECASE,
+)
+FigureRate = MetricRate | Literal["hour"]
 _FACTORS = {
     None: Decimal(1),
     "thousand": Decimal(1000),
@@ -120,7 +134,7 @@ class Figure:
     value: Decimal
     unit: MetricUnit
     magnitude: Magnitude | None
-    per: MetricRate | None
+    per: FigureRate | None
 
 
 @dataclass(frozen=True)
@@ -146,13 +160,17 @@ def _verb_rank(text: str) -> int | None:
     relative = False
     for index, clause in enumerate(_CLAUSE.split(statement_text(text))):
         if index % 2:
-            if clause == ";":
+            if clause == ";" or clause.lstrip().startswith(","):
                 relative = False
             continue
         if not relative:
             initial = _LEADING_ADVERBS.sub("", clause.strip())
             found = _verb(initial)
-            if found is not None and (rank := _rank(found[0], found[3])) is not None:
+            if (
+                found is not None
+                and re.match(r"by\b", found[3], re.I) is None
+                and (rank := _rank(found[0], found[3])) is not None
+            ):
                 ranks.append(rank)
         relative = relative or bool(re.search(r"\b(?:that|who|which|whose)\b", clause, re.I))
     return min(ranks) if ranks else None
@@ -203,15 +221,18 @@ def _periods(text: str) -> tuple[list[tuple[date, date]], list[tuple[int, int]]]
     return periods, spans
 
 
-def _rate(tail: str) -> MetricRate | None:
-    # A noun may separate the amount from its rate ("500 tickets per week").
-    clause = re.split(r"[;,.]|\band\b|&", tail, maxsplit=1, flags=re.I)[0]
-    rate = _ATTACHED_RATE.search(clause)
+def _rate(tail: str) -> FigureRate | None:
+    """A rate follows the amount directly or after one lexical head noun."""
+    tail = tail.lstrip()
+    rate = _ATTACHED_RATE.match(tail)
+    if rate is None and (head := _RATE_HEAD.match(tail)) is not None:
+        rate = _ATTACHED_RATE.match(tail[head.end() :])
     if rate is None:
         return None
     if rate["adverb"]:
-        return _ADVERB_RATES[rate["adverb"].casefold()]
-    return cast(MetricRate, rate["unit"].casefold())
+        adverb = rate["adverb"].casefold()
+        return "hour" if adverb == "hourly" else _ADVERB_RATES[adverb]
+    return cast(FigureRate, rate["unit"].casefold())
 
 
 def _figures(text: str, masked: list[tuple[int, int]]) -> list[Figure]:
@@ -248,8 +269,12 @@ def _figures(text: str, masked: list[tuple[int, int]]) -> list[Figure]:
 def _scope_rank(text: str) -> int | None:
     normalised = _normalise_grounding(text)
     levels = [_SCOPE_TERMS[match.group(0)] for match in _SCOPE.finditer(normalised)]
-    if re.search(r"\bacross\s+[0-9]+\s+teams\b", normalised):
-        levels.append(2)
+    for match in _QUANTIFIED_SCOPE.finditer(normalised):
+        unit = match["unit"]
+        if unit.startswith(("team", "squad")):
+            levels.append(1 if match["quantifier"] in ("one", "1") else 2)
+        else:
+            levels.append(2 if unit.startswith(("department", "division")) else 3)
     return max(levels) if levels else None
 
 
