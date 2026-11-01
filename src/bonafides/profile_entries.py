@@ -322,14 +322,24 @@ def _active_record(
     conn: Connection, owner_id: UUID, entity_id: UUID, kind: Literal["claim", "evidence"]
 ) -> RowMapping:
     table = "professional_claims" if kind == "claim" else "evidence_records"
-    row = (
-        conn.execute(
-            text(f"SELECT * FROM bonafides.{table} WHERE owner_id=:owner AND id=:id FOR UPDATE"),
-            {"owner": owner_id, "id": entity_id},
+    # Evidence sends hold FOR SHARE before checking profile context. Never wait
+    # for them while retaining the profile/owner locks acquired by command().
+    lock_clause = "FOR UPDATE NOWAIT" if kind == "evidence" else "FOR UPDATE"
+    try:
+        row = (
+            conn.execute(
+                text(
+                    f"SELECT * FROM bonafides.{table} WHERE owner_id=:owner AND id=:id {lock_clause}"
+                ),
+                {"owner": owner_id, "id": entity_id},
+            )
+            .mappings()
+            .one_or_none()
         )
-        .mappings()
-        .one_or_none()
-    )
+    except OperationalError as exc:
+        if kind == "evidence" and getattr(exc.orig, "sqlstate", None) == "55P03":
+            raise Problem(409, "evidence_in_model_use") from exc
+        raise
     if row is None:
         raise Problem(404, f"{kind}_not_found")
     if row["archived_at"] is not None:
@@ -420,18 +430,6 @@ def append_classification(
 def classify_evidence(
     conn: Connection, owner_id: UUID, entity_id: UUID, body: EvidenceClassification
 ) -> dict[str, object]:
-    try:
-        # A send retains FOR SHARE until HTTP completes. Refuse immediately rather
-        # than consuming the API's lock timeout or committing a misleading success.
-        conn.execute(
-            text("""SELECT id FROM bonafides.evidence_records
-            WHERE owner_id=:owner AND id=:id FOR UPDATE NOWAIT"""),
-            {"owner": owner_id, "id": entity_id},
-        )
-    except OperationalError as exc:
-        if getattr(exc.orig, "sqlstate", None) == "55P03":
-            raise Problem(409, "evidence_in_model_use") from exc
-        raise
     _active_record(conn, owner_id, entity_id, "evidence")
     conn.execute(
         text("""UPDATE bonafides.evidence_records

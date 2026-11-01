@@ -593,6 +593,27 @@ def test_inflight_send_refuses_reclassification_only_for_transmitted_records(
                 )
                 assert rejected.status_code == 409, rejected.text
                 assert rejected.json()["code"] == "evidence_in_model_use"
+                # Edits and archives acquire the same record lock after the
+                # profile lock; they must refuse, not wait or deadlock the send.
+                path = f"/api/v1/evidence/{record['id']}"
+                for method, body in (
+                    (
+                        "PUT",
+                        {
+                            "payload": record["revision"]["payload"],
+                            "provenance": {"source_type": "work_sample"},
+                        },
+                    ),
+                    ("DELETE", None),
+                ):
+                    blocked = catalog.client.request(
+                        method,
+                        path,
+                        json=body,
+                        headers=catalog.headers(current["version"]),
+                    )
+                    assert blocked.status_code == 409, blocked.text
+                    assert blocked.json()["code"] == "evidence_in_model_use"
                 assert catalog.client.get("/api/v1/profile").json() == current
                 with catalog.runtime.transaction() as conn:
                     stored = conn.execute(
