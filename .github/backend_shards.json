@@ -46,6 +46,7 @@
     "tests/test_spool_guard.py"
   ],
   "4": [
+    "tests/test_checked_section_regeneration.py",
     "tests/test_claim_rewrite.py",
     "tests/test_compliance.py",
     "tests/test_document_defaults.py",
