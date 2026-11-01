@@ -457,7 +457,18 @@ def grounded(claim: StructuredClaim, excerpt: str) -> bool:
     Phrase boundaries exclude matches within longer words or numeric amounts.
     This is literal containment, not a semantic assessment of the surrounding text.
     """
-    rendering = _normalise_grounding(render_claim(claim, "en")).rstrip(".;")
+    return contains_statement(render_claim(claim, "en"), excerpt)
+
+
+def contains_statement(statement: str, excerpt: str) -> bool:
+    """Apply the structured-claim containment rule to any statement text.
+
+    The same normalisation and phrase boundaries as ``grounded``; an empty statement
+    is never contained.
+    """
+    rendering = _normalise_grounding(statement).rstrip(".;")
+    if not rendering:
+        return False
     quoted = _normalise_grounding(excerpt)
     # Currency symbols present in the excerpt are escaped, never treated as regex syntax.
     currencies = re.escape("".join({char for char in quoted if unicodedata.category(char) == "Sc"}))

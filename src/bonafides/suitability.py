@@ -15,7 +15,7 @@ from contextlib import nullcontext
 from dataclasses import dataclass
 from decimal import Decimal
 from threading import Event
-from typing import Annotated, Literal, Protocol, cast
+from typing import TYPE_CHECKING, Annotated, Literal, Protocol, cast
 from uuid import UUID, uuid4
 
 from fastapi import APIRouter, Depends, Header
@@ -35,6 +35,9 @@ from bonafides.db import Database
 from bonafides.maintenance import ProviderExecution
 from bonafides.problems import Problem
 from bonafides.workflows import Claim, assert_fence, enqueue, publish
+
+if TYPE_CHECKING:
+    from bonafides.document_generation import CandidatePair
 
 POLICY_VERSION = "ol-suitability-policy-v2"
 TEMPLATE_VERSION = "ol-suitability-review-v1"
@@ -1155,32 +1158,44 @@ class ModelClient(Protocol):
         context: dict[str, object],
         prompt_version: str,
         interrupted: Event | None = None,
+        correction: Sequence[str] | None = None,
     ) -> local_model.ModelResult: ...
 
 
-def _reserve_call(conn: Connection, task: Claim, settings: Settings, seconds: int) -> UUID | None:
+def _reserve_call(
+    conn: Connection, task: Claim, settings: Settings, seconds: int, *, correction: bool = False
+) -> UUID | None:
     lock_installation(conn)
     _check_workflow_context(conn, task, settings)
     row = (
         conn.execute(
-            text("""SELECT reserved_until<=clock_timestamp() AS available FROM bonafides.local_model_reservations
-        WHERE singleton FOR UPDATE"""),
+            text("""SELECT reserved_until<=clock_timestamp() AS available,owner_id,workflow_run_id,fence
+        FROM bonafides.local_model_reservations WHERE singleton FOR UPDATE"""),
         )
         .mappings()
         .one()
     )
-    if not row["available"]:
+    # A corrective call continues this task's own unexpired reservation.
+    held = correction and (row["owner_id"], row["workflow_run_id"], row["fence"]) == (
+        task.owner_id,
+        task.id,
+        task.fence,
+    )
+    if not row["available"] and not held:
         return None
     if conn.execute(
         text("SELECT EXISTS(SELECT 1 FROM bonafides.provider_executions)")
     ).scalar_one():
         # An expired local reservation cannot prove that remote inference stopped.
         return None
+    # The one corrective call is budgeted by its own model run, never as an ordinary
+    # network attempt, so it can neither consume nor be refused by that budget.
     permitted = conn.execute(
-        text("""UPDATE bonafides.workflow_runs SET model_network_attempts=model_network_attempts+1
-        WHERE owner_id=:owner AND id=:id AND model_network_attempts<2
+        text("""UPDATE bonafides.workflow_runs
+        SET model_network_attempts=model_network_attempts+CASE WHEN :correction THEN 0 ELSE 1 END
+        WHERE owner_id=:owner AND id=:id AND (:correction OR model_network_attempts<2)
         AND deadline_at>clock_timestamp()+make_interval(secs=>:seconds) RETURNING id"""),
-        {"owner": task.owner_id, "id": task.id, "seconds": seconds},
+        {"owner": task.owner_id, "id": task.id, "seconds": seconds, "correction": correction},
     ).first()
     if permitted is None:
         raise Problem(409, "model_attempt_or_deadline_exhausted")
@@ -1225,6 +1240,90 @@ def _reserve_call(conn: Connection, task: Claim, settings: Settings, seconds: in
     return run_id
 
 
+def _generate_pair(
+    db: Database,
+    settings: Settings,
+    task: Claim,
+    interrupted: Event,
+    client: ModelClient | None,
+    route: local_model.LocalRoute,
+    runs: list[UUID],
+) -> tuple[CandidatePair, local_model.ModelResult]:
+    """Send the pinned projection; on a schema mismatch send it once more with the errors.
+
+    Runs inside the caller's owner send lock, so evidence writers stay refused across both
+    calls. The corrective call reuses the frozen projection and only adds a code-only error
+    summary; a second mismatch fails the task with no further model call.
+    """
+    from bonafides.document_generation import OutputMismatch, validate_pair
+
+    context = cast(dict[str, object], task.input["context"])
+    correction: list[str] | None = None
+    while True:
+        try:
+            result = (
+                client or local_model.OllamaClient(route, ProviderExecution(db, task, runs[-1]))
+            ).call(
+                "generate_documents",
+                context,
+                str(task.input["prompt_version"]),
+                interrupted,
+                correction,
+            )
+            if interrupted.is_set():
+                raise local_model.ModelFailure("model_interrupted", retryable=False)
+            pair = validate_pair(result.output, task.input)
+            if correction is None:
+                return pair, result
+            return pair, local_model.ModelResult(
+                result.output, {**result.metadata, "corrected_model_run_id": str(runs[0])}
+            )
+        except OutputMismatch as exc:
+            summary = exc.summary
+        except local_model.ModelFailure as exc:
+            if exc.code != "model_output_schema_mismatch":
+                raise
+            summary = ["output: json_or_schema_version_invalid"]
+        if correction is not None:
+            raise Problem(422, "model_output_invalid_after_correction")
+        correction = summary
+        corrective: UUID | None = None
+        while corrective is None:
+            if interrupted.is_set():
+                raise local_model.ModelFailure("model_interrupted", retryable=False)
+            with db.transaction() as conn:
+                spent = conn.execute(
+                    text("""SELECT EXISTS(SELECT 1 FROM bonafides.model_runs WHERE owner_id=:owner
+                    AND workflow_run_id=:id AND metadata->>'corrective_retry'='true')"""),
+                    {"owner": task.owner_id, "id": task.id},
+                ).scalar_one()
+                if spent:
+                    # An earlier execution of this generation already made its correction.
+                    raise Problem(422, "model_output_invalid_after_correction")
+                conn.execute(
+                    text("""UPDATE bonafides.model_runs SET status='unknown_usage',finished_at=clock_timestamp(),
+                    metadata=CAST(:metadata AS jsonb)
+                    WHERE owner_id=:owner AND id=:id AND status='running'"""),
+                    {
+                        "owner": task.owner_id,
+                        "id": runs[-1],
+                        "metadata": canonical_json(
+                            {
+                                "usage_status": "unknown",
+                                "error_code": "invalid_model_output",
+                                "corrective_retry": True,
+                            }
+                        ),
+                    },
+                )
+                corrective = _reserve_call(
+                    conn, task, settings, route.deadline_seconds, correction=True
+                )
+            if corrective is None and interrupted.wait(0.25):
+                raise local_model.ModelFailure("model_interrupted", retryable=False)
+        runs.append(corrective)
+
+
 def _execute_reserved_model(
     db: Database,
     settings: Settings,
@@ -1250,6 +1349,7 @@ def _execute_reserved_model(
             run_id = _reserve_call(conn, task, settings, seconds)
         if run_id is None and interrupted.wait(0.25):
             raise local_model.ModelFailure("model_interrupted", retryable=False)
+    runs = [run_id]
     try:
         context = cast(dict[str, object], task.input["context"])
         # The dedicated session retains only the shared advisory lock across HTTP.
@@ -1268,10 +1368,16 @@ def _execute_reserved_model(
                 raise Problem(409, "stale_model_route")
             if interrupted.is_set():
                 raise local_model.ModelFailure("model_interrupted", retryable=False)
-            result = (
-                client
-                or local_model.OllamaClient(active_route, ProviderExecution(db, task, run_id))
-            ).call(stage, context, str(task.input["prompt_version"]), interrupted)
+            if stage == "generate_documents":
+                pair, result = _generate_pair(
+                    db, settings, task, interrupted, client, active_route, runs
+                )
+                run_id = runs[-1]
+            else:
+                result = (
+                    client
+                    or local_model.OllamaClient(active_route, ProviderExecution(db, task, run_id))
+                ).call(stage, context, str(task.input["prompt_version"]), interrupted)
         if interrupted.is_set():
             raise local_model.ModelFailure("model_interrupted", retryable=False)
         try:
@@ -1287,9 +1393,6 @@ def _execute_reserved_model(
                 proposal = extracted.model_dump(mode="json")
                 proposal["requirements"] = [item.model_dump(mode="json") for item in requirements]
             elif stage == "generate_documents":
-                from bonafides.document_generation import validate_pair
-
-                pair = validate_pair(result.output, task.input)
                 proposal = pair.model_dump(mode="json")
             elif stage == "regenerate_section":
                 from bonafides.section_regeneration import validate_candidate
@@ -1382,7 +1485,7 @@ def _execute_reserved_model(
                 metadata=CAST(:metadata AS jsonb) WHERE owner_id=:owner AND id=:id"""),
                 {
                     "owner": task.owner_id,
-                    "id": run_id,
+                    "id": runs[-1],
                     "metadata": canonical_json({"usage_status": "unknown", "error_code": code}),
                 },
             )
@@ -1413,6 +1516,7 @@ def _execute_reserved_model(
                 "model_tls_rejected",
                 "model_incomplete",
                 "model_cloud_rejected",
+                "model_output_invalid_after_correction",
             }:
                 conn.execute(
                     text("""INSERT INTO bonafides.local_model_route_blocks(owner_id,route_sha256,stage,error_code)
