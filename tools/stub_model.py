@@ -11,15 +11,15 @@ route file, for pair generation and for section regeneration (a projection with 
   connective target blocks.
 - ``absent-claim``: one factual block cites a claim id that is not in the profile.
 - ``posting-only-skill``: one factual block asserts a term found only in the posting.
-- ``inflated``: one factual block restates a claim with a stronger leadership or
-  responsibility verb, cut from that claim's own visible evidence, so containment passes
-  and only the inflation rules block it.
+- ``inflated``: one factual block is a whole-phrase cut of a claim's own text that starts
+  at a later, stronger ownership verb ("Assisted the team that led X" -> "Led X"), so it is
+  part of its claim and only the verb rule blocks it.
 - ``malformed-once``: schema-invalid until the request carries a correction.
 - ``malformed``: always schema-invalid.
 - ``truncated``: a length-limited, incomplete response.
 
 ``serve`` uses only the standard library except for ``inflated``, which reads the
-installed application's inflation ranking. ``route`` writes a route file whose
+installed application's ownership-verb ranking. ``route`` writes a route file whose
 qualification receipts for both document stages are fixture-only: they attest nothing
 about any real model.
 """
@@ -51,9 +51,6 @@ SCENARIOS = (
     "malformed",
     "truncated",
 )
-# Leadership and responsibility openings an inflated restatement uses.
-_STRONG_VERB = re.compile(r"\b(led|spearheaded|headed|directed|owned|managed)\b", re.I)
-_PHRASE = re.compile(r"(?:[^.;\n]|(?<=\d)\.(?=\d))+")
 ABSENT_CLAIM_ID = str(uuid5(NAMESPACE_URL, "bonafides-stub-model/absent-claim"))
 FIXTURE_REVIEWER = "fixture-only-stub-route-not-a-qualification"
 
@@ -153,30 +150,26 @@ def _posting_only_term(projection: dict[str, object]) -> str:
 
 
 def _inflated(projection: dict[str, object]) -> tuple[str, str]:
-    """A claim and a genuinely stronger phrase cut from its own visible evidence."""
-    from bonafides.inflation import read as read_inflation
+    """A claim and the cut of its own text that starts at a later, stronger verb."""
+    from bonafides.statement_check import verb_ranks
 
-    visible = {
-        str(item["id"]): str(item["text"])
-        for item in _items(projection, "evidence")
-        if "text" in item
-    }
     for claim in _items(projection, "claims"):
-        claim_rank = read_inflation(str(claim["text"])).verb_rank
-        if claim_rank is None:
+        text = str(claim["text"])
+        claim_ranks = verb_ranks(text)
+        if not claim_ranks:
             continue
-        identifiers = claim["evidence_revision_ids"]
-        assert isinstance(identifiers, list)
-        # Withheld evidence carries no text to cut a phrase from.
-        for source in (visible[str(item)] for item in identifiers if str(item) in visible):
-            for match in _STRONG_VERB.finditer(source):
-                extracted = _PHRASE.match(source, match.start())
-                assert extracted is not None
-                phrase = extracted.group(0).strip()
-                phrase_rank = read_inflation(phrase).verb_rank
-                if phrase_rank is not None and phrase_rank < claim_rank:
-                    return str(claim["id"]), phrase[0].upper() + phrase[1:]
-    raise StubFailure("no claim's visible evidence holds a stronger leadership verb")
+        words = text.rstrip(".;").split()
+        for index in range(1, len(words)):
+            cut = " ".join(words[index:])
+            ranks = verb_ranks(cut)
+            # The cut starts at the verb: dropping its first word loses that verb.
+            if (
+                ranks
+                and ranks[0] < claim_ranks[0]
+                and verb_ranks(" ".join(words[index + 1 :])) != ranks
+            ):
+                return str(claim["id"]), cut[0].upper() + cut[1:]
+    raise StubFailure("no claim's text holds a later verb stronger than its own")
 
 
 def respond(scenario: str, request: dict[str, object]) -> dict[str, object]:

@@ -33,7 +33,7 @@ from test_suitability import _after_model_send
 
 from bonafides import local_model, model_context, suitability
 from bonafides.claims import contains_statement
-from bonafides.inflation import inflation_kinds
+from bonafides.statement_check import verb_issues
 from bonafides.worker import Worker
 from bonafides.workflows import Claim
 from tools import stub_model
@@ -105,42 +105,27 @@ def _factual_blocks(document: dict[str, Any]) -> list[dict[str, Any]]:
 
 
 @pytest.mark.parametrize(
-    ("claim_text", "evidence_text", "expected"),
+    ("claim_text", "expected"),
     [
+        ("Assisted the team that led the billing migration", "Led the billing migration"),
+        ("Supported analysts who managed the vendor portfolio.", "Managed the vendor portfolio"),
         (
-            "Assisted the rollout",
-            "Led the rollout, reducing latency by 2.5%. Managed the project.",
-            "Led the rollout, reducing latency by 2.5%",
+            "Helped the engineer who took ownership of the rotation",
+            "Took ownership of the rotation",
         ),
         (
-            "Managed the rollout",
-            "Managed the rollout with a team that led the migration.",
-            "Led the migration",
-        ),
-        (
-            "Owned the rollout",
-            "Managed the rollout with a team that led the migration.",
-            "Led the migration",
-        ),
-        (
-            "Was responsible for the rollout",
-            "Led the rollout; managed the project.",
-            "Led the rollout",
-        ),
-        (
-            "Assisted the rollout",
-            "LED the rollout\nManaged the project.",
-            "LED the rollout",
+            "Worked on a squad that built and shipped the dashboard",
+            "Built and shipped the dashboard",
         ),
     ],
 )
-def test_inflated_stub_selects_a_contained_genuinely_stronger_phrase(
-    claim_text: str, evidence_text: str, expected: str
+def test_inflated_stub_cuts_its_claim_at_a_later_stronger_verb(
+    claim_text: str, expected: str
 ) -> None:
     projection: dict[str, object] = {
         "posting": {},
         "claims": [{"id": "claim-1", "text": claim_text, "evidence_revision_ids": ["evidence-1"]}],
-        "evidence": [{"id": "evidence-1", "text": evidence_text}],
+        "evidence": [{"id": "evidence-1", "text": claim_text}],
     }
     response = stub_model.respond(
         "inflated",
@@ -151,27 +136,24 @@ def test_inflated_stub_selects_a_contained_genuinely_stronger_phrase(
     block = output["documents"][0]["sections"][0]["blocks"][-1]
     assert block["claim_id"] == "claim-1"
     assert block["text"] == expected
-    assert contains_statement(block["text"], evidence_text)
-    assert inflation_kinds(block["text"], claim_text) == ["stronger_verb"]
+    assert contains_statement(block["text"], claim_text)
+    assert verb_issues(block["text"], claim_text, None) == ["statement_stronger_verb"]
 
 
 @pytest.mark.parametrize(
-    ("claim_text", "evidence_text"),
+    "claim_text",
     [
-        ("Led the migration", "Led the migration. Managed the project."),
-        ("Managed the rollout", "Managed the rollout."),
-        ("Managed and led the migration", "Managed and led the migration. Owned the project."),
-        ("Migration project", "Led the migration."),
+        "Led the team that managed the migration",
+        "Managed the rollout",
+        "Migration project for the payments team",
     ],
 )
-def test_inflated_stub_refuses_equal_weaker_or_unranked_claim_verbs(
-    claim_text: str, evidence_text: str
-) -> None:
+def test_inflated_stub_refuses_claims_without_a_later_stronger_verb(claim_text: str) -> None:
     projection: dict[str, object] = {
         "claims": [{"id": "claim-1", "text": claim_text, "evidence_revision_ids": ["evidence-1"]}],
-        "evidence": [{"id": "evidence-1", "text": evidence_text}],
+        "evidence": [{"id": "evidence-1", "text": claim_text}],
     }
-    with pytest.raises(stub_model.StubFailure, match="stronger leadership verb"):
+    with pytest.raises(stub_model.StubFailure, match="later verb stronger"):
         stub_model._inflated(projection)
 
 
