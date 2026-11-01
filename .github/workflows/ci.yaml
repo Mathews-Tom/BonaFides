@@ -23,11 +23,43 @@ concurrency:
   group: bonafides-${{ github.workflow }}-${{ github.ref }}${{ (github.event.action == 'labeled' && github.event.label.name != 'full-ci') && format('-metadata-{0}', github.run_id) || '' }}
   cancel-in-progress: true
 jobs:
-  fast:
-    name: fast (amd64)
+  fast-checks:
+    name: fast lint web and source scan
     if: >-
       github.event_name == 'pull_request' &&
       (github.event.action != 'labeled' || github.event.label.name == 'full-ci')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: ./.github/actions/toolchain
+      - name: Check backend shard partition
+        run: uv run --frozen python .github/backend_shards.py
+      - name: Ruff format and strict mypy
+        run: uv run --frozen python .github/backend_gate.py --lint-only
+      - name: Frozen host frontend install and frontend gates
+        run: |
+          test "$(command -v node)" = "$BONAFIDES_NODE_BIN"
+          test "$(command -v pnpm)" = "$BONAFIDES_PNPM_BIN"
+          pnpm --dir web install --frozen-lockfile
+          pnpm --dir web exec tsc --noEmit
+          pnpm --dir web lint
+          pnpm --dir web test
+          pnpm --dir web build
+      - name: Source compliance scan
+        run: uv run --frozen python -m tools.compliance source
+  fast-backend:
+    name: fast backend shard ${{ matrix.shard }}/4
+    if: >-
+      github.event_name == 'pull_request' &&
+      (github.event.action != 'labeled' || github.event.label.name == 'full-ci')
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     env:
@@ -39,19 +71,29 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
       - uses: ./.github/actions/toolchain
-      - name: Frozen host frontend install and frontend gates
-        run: |
-          test "$(command -v node)" = "$BONAFIDES_NODE_BIN"
-          test "$(command -v pnpm)" = "$BONAFIDES_PNPM_BIN"
-          pnpm --dir web install --frozen-lockfile
-          pnpm --dir web exec tsc --noEmit
-          pnpm --dir web lint
-          pnpm --dir web test
-          pnpm --dir web build
       - name: Build application image for the sealed parser and database relay
         run: docker build --pull --target app --tag bonafides:local .
-      - name: Ruff format strict mypy pytest with actual least privilege PostgreSQL
-        run: uv run --frozen python .github/backend_gate.py
+      - name: Backend pytest shard with actual least privilege PostgreSQL
+        run: |
+          paths="$(uv run --frozen python .github/backend_shards.py --shard '${{ matrix.shard }}')"
+          mapfile -t tests <<< "$paths"
+          uv run --frozen python .github/backend_gate.py --pytest-only "${tests[@]}"
+  fast:
+    name: fast (amd64)
+    needs: [fast-checks, fast-backend]
+    if: >-
+      always() && github.event_name == 'pull_request' &&
+      (github.event.action != 'labeled' || github.event.label.name == 'full-ci')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Require every fast-tier job to succeed
+        env:
+          CHECKS_RESULT: ${{ needs.fast-checks.result }}
+          BACKEND_RESULT: ${{ needs.fast-backend.result }}
+        run: |
+          test "$CHECKS_RESULT" = success
+          test "$BACKEND_RESULT" = success
   gates:
     if: >-
       github.event_name != 'pull_request' ||
