@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import argparse
 import os
 import subprocess
 import sys
@@ -16,6 +17,24 @@ def call(
 
 
 def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument(
+        "--lint-only", action="store_true", help="Run Ruff, format and mypy without a DB."
+    )
+    mode.add_argument(
+        "--pytest-only", nargs="+", metavar="TEST_PATH", help="Run only these pytest paths."
+    )
+    arguments = parser.parse_args()
+    checks = (
+        ["uv", "run", "--frozen", "ruff", "check", "."],
+        ["uv", "run", "--frozen", "ruff", "format", "--check", "."],
+        ["uv", "run", "--frozen", "mypy", "--strict"],
+    )
+    if arguments.lint_only:
+        for check in checks:
+            call(check)
+        return 0
     root = Path(".local/ci-backend")
     root.mkdir(mode=0o700, parents=True, exist_ok=False)
     env_file, secret_dir = root / "compose.env", root / "secrets"
@@ -77,13 +96,10 @@ def main() -> int:
         )
         env[name] = dsn
     env["BONAFIDES_TEST_DSN"] = env["BONAFIDES_TEST_RUNTIME_DSN"]
-    for arguments in (
-        ["uv", "run", "--frozen", "ruff", "check", "."],
-        ["uv", "run", "--frozen", "ruff", "format", "--check", "."],
-        ["uv", "run", "--frozen", "mypy", "--strict"],
-        ["uv", "run", "--frozen", "pytest"],
-    ):
-        call(arguments, env=env)
+    if not arguments.pytest_only:
+        for check in checks:
+            call(check, env=env)
+    call(["uv", "run", "--frozen", "pytest", *(arguments.pytest_only or [])], env=env)
     return 0
 
 
