@@ -193,12 +193,23 @@ jobs:
           docker run --rm -v "$RUNNER_TEMP/bonafides-image.tar:/image.tar:ro" -v "$PWD/artifacts:/output" "$scanner" image --input /image.tar --format cyclonedx --output /output/image-sbom.json || status=$?
           docker run --rm -v "$PWD:/source:ro" -v "$PWD/artifacts:/output" "$scanner" fs --scanners secret --exit-code 1 --format json --output /output/source-secrets.json --skip-dirs /source/.docs,/source/.local,/source/.secrets,/source/.venv,/source/web/node_modules,/source/artifacts /source || status=$?
           exit "$status"
-      - name: Upload the scanned platform image for the local release index
+      - name: Verify saved layers locally and export only manifest and config metadata
+        run: |
+          saved="$RUNNER_TEMP/release-saved"
+          metadata="$RUNNER_TEMP/release-platform"
+          mkdir "$saved"
+          tar -xf "$RUNNER_TEMP/bonafides-image.tar" -C "$saved"
+          uv run --frozen python -m tools.release_index strip \
+            --version "$BONAFIDES_RELEASE_VERSION" --revision "$BONAFIDES_RELEASE_REVISION" \
+            --source "$BONAFIDES_RELEASE_SOURCE" --layout "${{ matrix.architecture }}=$saved" \
+            --output "$metadata"
+          tar -cf "$RUNNER_TEMP/bonafides-platform-metadata.tar" -C "$metadata" .
+      - name: Upload platform manifests and configs only (no image layers)
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: release-platform-${{ matrix.architecture }}
-          path: ${{ runner.temp }}/bonafides-image.tar
-          retention-days: 1
+          path: ${{ runner.temp }}/bonafides-platform-metadata.tar
+          retention-days: 3
           compression-level: 1
           if-no-files-found: error
       - name: Actual auth browser sandbox crash fencing PDF and isolated restore
@@ -221,8 +232,8 @@ jobs:
           include-hidden-files: true
           if-no-files-found: error
   release-index:
-    # Dry run: assembles and inspects a local OCI index from both native gate images. No registry
-    # login, no push and no `packages` permission; nothing leaves the workflow's artifacts.
+    # Public artifacts contain only manifests, configs and index metadata, never image layers.
+    # All layer bytes stay on their native runner; no registry login, push or packages permission.
     name: release image index (local, no push)
     needs: gates
     runs-on: ubuntu-24.04
@@ -241,7 +252,7 @@ jobs:
           release="$RUNNER_TEMP/release"
           for architecture in amd64 arm64; do
             mkdir "$release/$architecture"
-            tar -xf "$release/release-platform-$architecture/bonafides-image.tar" -C "$release/$architecture"
+            tar -xf "$release/release-platform-$architecture/bonafides-platform-metadata.tar" -C "$release/$architecture"
             rm -r "$release/release-platform-$architecture"
           done
           identity=(
@@ -252,18 +263,20 @@ jobs:
           )
           python3 -m tools.release_index assemble "${identity[@]}" \
             --layout "amd64=$release/amd64" --layout "arm64=$release/arm64"
-          python3 -m tools.release_index inspect "${identity[@]}" > "$release/index-report.json"
+          python3 -m tools.release_index inspect "${identity[@]}" --metadata-only > "$release/index-report.json"
           cat "$release/index-report.json"
           {
-            echo '### Local release index (not pushed)'
+            echo '### Release index metadata (no image layers; not pushed)'
             jq -r '"Index `\(.index_digest)` tagged " + (.tags | map("`\(.)`") | join(", "))' "$release/index-report.json"
             echo
             echo '| Platform | Manifest digest |'
             echo '| --- | --- |'
             jq -r '.platforms | to_entries[] | "| linux/\(.key) | `\(.value)` |"' "$release/index-report.json"
+            echo
+            echo 'Layer descriptors are unverified here but were sha256/size-verified on their native runner before omission.'
           } >> "$GITHUB_STEP_SUMMARY"
           tar -cf "$release/bonafides-index.tar" -C "$release/index" .
-      - name: Upload the local release index
+      - name: Upload index manifests and configs only (no image layers)
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: release-image-index

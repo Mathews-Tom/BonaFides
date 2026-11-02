@@ -9,7 +9,14 @@ from pathlib import Path
 
 import pytest
 
-from tools.release_index import OCI_INDEX, OCI_MANIFEST, LayoutError, Release, main
+from tools.release_index import (
+    MAX_METADATA_BYTES,
+    OCI_INDEX,
+    OCI_MANIFEST,
+    LayoutError,
+    Release,
+    main,
+)
 
 RELEASE = Release("0.1.0", "a" * 40, "https://example.invalid/bonafides")
 RELEASE_REVISION = "org.opencontainers.image.revision"
@@ -112,18 +119,138 @@ def test_assemble_wrong_architecture_layout_is_refused(
     assert "expected linux/amd64" in capsys.readouterr().err
 
 
-def test_inspect_corrupted_layer_reports_digest_mismatch(
+@pytest.mark.parametrize("command", ["strip", "assemble"])
+@pytest.mark.parametrize("corruption", ["digest", "size", "missing"])
+def test_runner_rejects_invalid_layers_before_upload(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], command: str, corruption: str
+) -> None:
+    amd64 = saved_layout(tmp_path, "amd64")
+    layer = amd64 / "blobs" / "sha256" / hashlib.sha256(b"layer-amd64").hexdigest()
+    if corruption == "missing":
+        layer.unlink()
+    elif corruption == "size":
+        layer.write_bytes(b"layer-amd64-extra")
+    else:
+        layer.write_bytes(b"tamper!!!!!")
+    layouts = [amd64]
+    if command == "assemble":
+        layouts.append(saved_layout(tmp_path, "arm64"))
+    output = tmp_path / "index"
+
+    assert run(command, output, *layouts) == 1
+    assert not output.exists()
+    assert "blob" in capsys.readouterr().err or corruption == "missing"
+
+
+def test_full_and_layer_free_inputs_have_identical_index_and_manifest_digests(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    originals = [saved_layout(tmp_path / "full", arch, nested=True) for arch in ("amd64", "arm64")]
+    full_output = tmp_path / "full-index"
+    assert run("assemble", full_output, *originals) == 0
+    full_report = json.loads(capsys.readouterr().out)
+    stripped = []
+    for original in originals:
+        output = tmp_path / "stripped" / original.name
+        assert run("strip", output, original) == 0
+        report = json.loads(capsys.readouterr().out)
+        assert report["layer_blobs_uploaded"] == 0
+        assert len(report["layers_verified_on_runner"]) == 1
+        assert len(list((output / "blobs" / "sha256").iterdir())) == 2
+        stripped.append(output)
+    stripped_output = tmp_path / "stripped-index"
+
+    assert run("assemble", stripped_output, *stripped) == 0
+    report = json.loads(capsys.readouterr().out)
+
+    assert report["index_digest"] == full_report["index_digest"]
+    assert report["platforms"] == full_report["platforms"]
+    assert report["layer_blobs_present"] == 0
+    for layers in report["layers"].values():
+        assert layers[0]["verification"] == "unverified-here-but-verified-on-runner"
+    assert len(list((stripped_output / "blobs" / "sha256").iterdir())) == 5
+    assert sum(path.stat().st_size for path in stripped_output.rglob("*") if path.is_file()) < (
+        MAX_METADATA_BYTES
+    )
+    assert run("inspect", stripped_output) == 0
+
+
+@pytest.mark.parametrize("blob_kind", ["layer", "extra", "oversized"])
+def test_metadata_only_inspection_refuses_layer_extra_or_oversized_artifact(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], blob_kind: str
+) -> None:
+    output = tmp_path / "index"
+    assert (
+        run("assemble", output, saved_layout(tmp_path, "amd64"), saved_layout(tmp_path, "arm64"))
+        == 0
+    )
+    if blob_kind == "layer":
+        put(output, b"layer-amd64", "application/vnd.oci.image.layer.v1.tar")
+    elif blob_kind == "extra":
+        put(output, b"unexpected blob", "application/octet-stream")
+    else:
+        with (output / "oci-layout").open("a") as stream:
+            stream.write(" " * MAX_METADATA_BYTES)
+    capsys.readouterr()
+    assert (
+        main(
+            [
+                "inspect",
+                "--version",
+                RELEASE.version,
+                "--revision",
+                RELEASE.revision,
+                "--source",
+                RELEASE.source,
+                "--output",
+                str(output),
+                "--metadata-only",
+            ]
+        )
+        == 1
+    )
+    assert "metadata artifact" in capsys.readouterr().err
+
+
+def test_inspect_corrupted_present_layer_reports_digest_mismatch(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     output = tmp_path / "index"
-    run("assemble", output, saved_layout(tmp_path, "amd64"), saved_layout(tmp_path, "arm64"))
+    assert (
+        run("assemble", output, saved_layout(tmp_path, "amd64"), saved_layout(tmp_path, "arm64"))
+        == 0
+    )
     layer = hashlib.sha256(b"layer-arm64").hexdigest()
     (output / "blobs" / "sha256" / layer).write_bytes(b"tampered!!!")
     capsys.readouterr()
 
     assert run("inspect", output) == 1
-
     assert "does not match its descriptor" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("blob_kind", ["manifest", "config"])
+def test_assemble_layer_free_input_requires_manifest_and_config(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], blob_kind: str
+) -> None:
+    layouts = []
+    for arch in ("amd64", "arm64"):
+        original = saved_layout(tmp_path / "full", arch)
+        output = tmp_path / "stripped" / arch
+        assert run("strip", output, original) == 0
+        layouts.append(output)
+    top = json.loads((layouts[0] / "index.json").read_text())
+    manifest_path = layouts[0] / "blobs" / "sha256" / top["manifests"][0]["digest"].split(":")[1]
+    manifest = json.loads(manifest_path.read_text())
+    path = (
+        manifest_path
+        if blob_kind == "manifest"
+        else (layouts[0] / "blobs" / "sha256" / manifest["config"]["digest"].split(":")[1])
+    )
+    path.unlink()
+    capsys.readouterr()
+
+    assert run("assemble", tmp_path / "index", *layouts) == 1
+    assert "missing blob" in capsys.readouterr().err
 
 
 def test_inspect_missing_release_tag_is_refused(
