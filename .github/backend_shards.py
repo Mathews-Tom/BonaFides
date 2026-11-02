@@ -26,7 +26,7 @@ def matches_python_file(path: Path, pattern: str) -> bool:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--shard", type=int, choices=range(1, 5))
+    parser.add_argument("--shard", type=int, choices=range(1, 6))
     arguments = parser.parse_args()
     shards: dict[str, list[str]] = json.loads((ROOT / ".github/backend_shards.json").read_text())
     config = tomllib.loads((ROOT / "pyproject.toml").read_text())
@@ -45,8 +45,8 @@ def main() -> int:
     }
     counts = Counter(path for paths in shards.values() for path in paths)
     errors: list[str] = []
-    if set(shards) != {"1", "2", "3", "4"} or not all(shards.values()):
-        errors.append("Partition must contain four nonempty shards numbered 1 through 4")
+    if set(shards) != {"1", "2", "3", "4", "5"} or not all(shards.values()):
+        errors.append("Partition must contain five nonempty shards numbered 1 through 5")
     errors.extend(f"Unassigned test file: {path}" for path in sorted(expected - counts.keys()))
     errors.extend(
         f"Test file assigned {count} times: {path}"
@@ -65,7 +65,7 @@ def main() -> int:
         print("\n".join(shards[str(arguments.shard)]))
     else:
         print(
-            f"Backend partition covers all {len(expected)} test files exactly once across 4 shards"
+            f"Backend partition covers all {len(expected)} test files exactly once across 5 shards"
         )
     return 0
 

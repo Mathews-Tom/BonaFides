@@ -52,14 +52,14 @@ jobs:
       - name: Source compliance scan
         run: uv run --frozen python -m tools.compliance source
   fast-backend:
-    name: fast backend shard ${{ matrix.shard }}/4
+    name: fast backend shard ${{ matrix.shard }}/5
     if: >-
       github.event_name == 'pull_request' &&
       (github.event.action != 'labeled' || github.event.label.name == 'full-ci')
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2, 3, 4]
+        shard: [1, 2, 3, 4, 5]
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     env:
