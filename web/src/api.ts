@@ -39,6 +39,13 @@ export interface EvidenceLink { evidence_revision_id: string; support_kind: 'dir
 export interface ClaimRevision extends RevisionMetadata { payload: ProfileClaimPayload; evidence_links: (EvidenceLink & { evidence: EvidenceRevision })[] }
 export interface PinnedClaim { id: string; kind: ClaimKind; revision: ClaimRevision; rendering: string; needs_attention: boolean }
 export interface ClaimRecord extends PinnedClaim { version: number; archived: boolean; current_revision_id: string }
+export interface ClaimUsageItem {
+  scope: 'base' | 'tailored'; application: { id: string; title: string; company: string; attempt_no: number; archived: boolean } | null;
+  document_id: string; kind: 'resume' | 'cover_letter'; document_revision_id: string; document_revision_no: number;
+  claim_id: string; claim_revision_id: string; claim_revision_no: number; claim_text: string; superseded: boolean; archived: boolean; statements: string[];
+}
+export interface ClaimUsage { claim_id: string; current_revision_id: string; archived: boolean; items: ClaimUsageItem[]; history?: ClaimUsageItem[] }
+export interface ApplicationClaims { application_id: string; items: ClaimUsageItem[] }
 export interface PinnedEvidence { id: string; revision: EvidenceRevision }
 export interface EvidenceRecord extends PinnedEvidence { version: number; archived: boolean; current_revision_id: string }
 export interface ProfileRevisionSummary extends RevisionMetadata { snapshot: Snapshot; reason: string }

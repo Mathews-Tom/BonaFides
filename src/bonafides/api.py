@@ -473,6 +473,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     from bonafides import (
         approvals,
         backup_configuration,
+        claim_usage,
         documents,
         imports,
         portable_exports,
@@ -490,6 +491,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(portable_exports.build_router(db, resolved))
     app.include_router(portable_previews.build_router(db, resolved))
     app.include_router(documents.build_router(db, resolved))
+    app.include_router(claim_usage.build_router(db))
     app.include_router(imports.build_router(db, resolved))
     app.include_router(sources.build_router(db, resolved))
     app.include_router(suitability.build_router(db, resolved))

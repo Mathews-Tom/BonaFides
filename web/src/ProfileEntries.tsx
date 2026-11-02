@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { Api, errorText, literalClaimPayload, type ClaimKind, type ClaimPayload, type ClaimPeriodSeparator, type ClaimPeriodStyle, type ClaimRateWording, type ClaimRecord, type ClaimRendering, type ClaimVocabulary, type StructuredClaim, type EvidenceLink, type EvidencePrivacyClass, type EvidenceProvenance, evidenceOrigins, type EvidenceRecord, type EvidenceRevision, type EvidenceSourceType, evidencePrivacyClasses, evidenceSourceTypes, type PinnedClaim, type Profile, type ProfileRevision, type ProfileRevisionSummary, type RevisionPage } from './api';
+import { ClaimUsedIn } from './ClaimUsage';
 import './ProfileEntries.css';
 
 const kinds: { value: ClaimKind; label: string }[] = [
@@ -267,6 +268,7 @@ export function ProfileEntries({ api, profile, disabled, onProfile, onDirtyChang
               <button className="secondary" disabled={locked || dirty || index === 0} onClick={() => move(item, entries[index - 1])}>Move {kind.label.toLowerCase()} entry {index + 1} up</button>
               <button className="secondary" disabled={locked || dirty || index === entries.length - 1} onClick={() => move(item, entries[index + 1])}>Move {kind.label.toLowerCase()} entry {index + 1} down</button>
               <button className="secondary" disabled={locked || dirty} onClick={() => setArchive({ kind: 'claim', id: item.id, text: item.rendering })}>Archive {kind.label.toLowerCase()} entry {index + 1}</button></div>
+            <ClaimUsedIn key={item.revision.id} api={api} claimId={item.id} label={`${kind.label.toLowerCase()} entry ${index + 1}`} />
           </li>)}</ol>}
           <button className="secondary" disabled={locked || dirty || profile.evidence.length === 0} onClick={() => { setError(''); setClaim({ kind: kind.value, payload: { text: '' }, structured: structuredKinds.has(kind.value) ? { ...emptyStructured } : null, legacyText: '', evidence_links: [], pinnedEvidence: [] }); }}>Add {kind.label.toLowerCase()} entry</button>
         </section>;
