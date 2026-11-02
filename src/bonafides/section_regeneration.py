@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from functools import partial
 from typing import Annotated, Literal, cast
 from uuid import UUID, uuid5
 
@@ -246,22 +247,32 @@ def _candidate_section(
     )
 
 
+def validate_replacement(
+    output: dict[str, object],
+    body: documents.DocumentBody,
+    frozen: dict[str, object],
+    provenance: dict[str, object],
+    task_id: UUID,
+) -> Candidate:
+    """Validate the target output against the complete pinned body, without database access."""
+    candidate = generation.parse_candidate(output, Candidate)
+    try:
+        proposed = _candidate_section(candidate, frozen, provenance, task_id)
+        _replacement(body, proposed.key, proposed)
+    except ValidationError as exc:
+        raise generation._mismatch(exc) from exc
+    return candidate
+
+
 def candidate_validator(conn: Connection, task: Claim) -> Callable[[dict[str, object]], Candidate]:
     """Freeze the target body and check the complete replacement before counting validity."""
     row = _target(conn, task.owner_id, UUID(str(task.input["document_id"])))
     body = documents.parse_body(row["body"])
     provenance = cast(dict[str, object], row["provenance_snapshot"])
 
-    def validate(output: dict[str, object]) -> Candidate:
-        candidate = generation.parse_candidate(output, Candidate)
-        try:
-            proposed = _candidate_section(candidate, task.input, provenance, task.id)
-            _replacement(body, proposed.key, proposed)
-        except ValidationError as exc:
-            raise generation._mismatch(exc) from exc
-        return candidate
-
-    return validate
+    return partial(
+        validate_replacement, body=body, frozen=task.input, provenance=provenance, task_id=task.id
+    )
 
 
 def publish_proposal(

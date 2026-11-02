@@ -13,7 +13,7 @@ from pathlib import Path
 from threading import Event
 from time import monotonic
 from typing import Literal, cast
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 from pydantic import ValidationError
 
@@ -45,7 +45,7 @@ def load_cases(directory: Path, stage: str) -> tuple[list[dict[str, object]], st
             "tone",
             "language",
             "target",
-        }:
+        } | ({"base_body"} if stage == "regenerate_section" else set()):
             raise ValueError("qualification_case_invalid")
         cases.append(case)
     if not 20 <= len(cases) <= 1000 or len({str(case["id"]) for case in cases}) != len(cases):
@@ -68,12 +68,23 @@ def projection(case: dict[str, object], stage: str) -> dict[str, object]:
 
 
 def checked_bodies(
-    output: dict[str, object], stage: str, plan: dict[str, object], target: dict[str, object]
+    output: dict[str, object],
+    stage: str,
+    plan: dict[str, object],
+    target: dict[str, object],
+    base_body: documents.DocumentBody | None = None,
 ) -> list[tuple[str, documents.DocumentBody]]:
     if stage == "generate_documents":
         pair = generation.validate_pair(output, plan)
         return [(item.kind, generation._candidate_body(item, plan)) for item in pair.documents]
-    candidate = generation.parse_candidate(output, section_regeneration.Candidate)
+    if base_body is None:
+        raise ValueError("qualification_base_body_required")
+    original = next(
+        section for section in base_body.sections if section.key == target["section_key"]
+    )
+    candidate = section_regeneration.validate_replacement(
+        output, base_body, {"original_section": original.model_dump(mode="json")}, plan, UUID(int=0)
+    )
     try:
         body = generation._candidate_body(
             generation.CandidateDocument(
@@ -148,15 +159,23 @@ def qualify(
                 partial(
                     client.call, stage, context, local_model.PROMPT_VERSIONS[stage], interrupted
                 ),
-                partial(checked_bodies, stage=stage, plan=plan, target=target),
+                partial(
+                    checked_bodies,
+                    stage=stage,
+                    plan=plan,
+                    target=target,
+                    base_body=documents.parse_body(case["base_body"])
+                    if stage == "regenerate_section"
+                    else None,
+                ),
             )
         except local_model.ModelFailure as exc:
-            if exc.code in {
-                "model_cloud_rejected",
-                "model_identity_changed",
-                "model_metadata_invalid",
-                "model_route_changed",
-                "model_route_unavailable",
+            if exc.code not in {
+                "model_incomplete",
+                "model_timeout",
+                "model_response_limit",
+                "model_usage_limit",
+                "model_refused",
             }:
                 raise
             counts["failed_before_check"] += 1
@@ -215,6 +234,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--reviewed-by", required=True)
     args = parser.parse_args(argv)
     try:
+        local_model.validate_reviewer(args.reviewed_by)
         original = read_secret(args.route, "local_model_route")
         route = local_model.load_route(args.route)
         if route is None:

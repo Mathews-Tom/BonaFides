@@ -391,7 +391,7 @@ def _route_status(conn: Connection, owner_id: UUID, settings: Settings) -> dict[
             text(
                 "SELECT stage FROM bonafides.local_model_route_blocks WHERE owner_id=:owner AND route_sha256=:sha AND stage IN ('extract_posting','match_requirements')"
             ),
-            {"owner": owner_id, "sha": _sha(route.identity())},
+            {"owner": owner_id, "sha": route.capability_sha256},
         ).first()
         is not None
     )
@@ -421,7 +421,7 @@ def _route(
         conn.execute(
             text("""SELECT stage FROM bonafides.local_model_route_blocks
         WHERE owner_id=:owner AND route_sha256=:sha AND stage=:stage"""),
-            {"owner": owner_id, "sha": _sha(route.identity()), "stage": stage},
+            {"owner": owner_id, "sha": route.capability_sha256, "stage": stage},
         ).first()
         is not None
     )
@@ -1542,7 +1542,7 @@ def _execute_reserved_model(
                     VALUES(:owner,:sha,:stage,:code) ON CONFLICT DO NOTHING"""),
                     {
                         "owner": task.owner_id,
-                        "sha": _sha(task.input["route_identity"]),
+                        "sha": route.capability_sha256,
                         "stage": stage,
                         "code": code,
                     },

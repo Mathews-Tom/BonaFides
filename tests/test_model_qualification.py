@@ -8,9 +8,15 @@ from pathlib import Path
 from typing import cast
 
 import pytest
-from test_local_model import fixture_receipt, route_data, route_file
+from test_local_model import (
+    fixture_receipt,
+    fixture_server,
+    qualified_route,
+    route_data,
+    route_file,
+)
 
-from bonafides import local_model
+from bonafides import documents, local_model, model_calls
 from bonafides import model_qualification as qualification
 from bonafides.commands import canonical_json
 from bonafides.config import ConfigurationError, read_secret
@@ -59,7 +65,7 @@ def test_qualification_counts_threshold_and_checker(
         index = calls
         calls += 1
         if index >= valid:
-            raise local_model.ModelFailure("model_output_truncated")
+            raise local_model.ModelFailure("model_incomplete")
         context = cast(dict[str, object], args[1])
         case = next(
             case
@@ -160,7 +166,20 @@ def test_dataset_digest_binds_bytes(tmp_path: Path) -> None:
 
 
 @pytest.mark.parametrize(
-    "code", ["model_cloud_rejected", "model_identity_changed", "model_metadata_invalid"]
+    "code",
+    [
+        "model_cloud_rejected",
+        "model_identity_changed",
+        "model_metadata_invalid",
+        "model_unavailable",
+        "model_destination_rejected",
+        "model_tls_rejected",
+        "model_tls_required",
+        "model_prompt_mismatch",
+        "model_context_invalid",
+        "model_interrupted",
+        "future_policy_refusal",
+    ],
 )
 def test_unverifiable_route_is_refused(
     tmp_path: Path,
@@ -178,3 +197,97 @@ def test_unverifiable_route_is_refused(
     with pytest.raises(local_model.ModelFailure) as failure:
         qualification.qualify(route, "generate_documents", cases, sha, "synthetic-only")
     assert failure.value.code == code
+
+
+def test_destination_refusal_preserves_passed_receipt(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    with fixture_server() as (endpoint, requests):
+        data = route_data(endpoint)
+        data["approved_ips"] = ["127.0.0.2"]
+        qualified_route(tmp_path, data)
+        path = tmp_path / "route.json"
+        original = path.read_bytes()
+        assert (
+            qualification.main(
+                [
+                    "qualify",
+                    "--route",
+                    str(path),
+                    "--stage",
+                    "generate_documents",
+                    "--dataset",
+                    str(DATASET),
+                    "--reviewed-by",
+                    "synthetic-only",
+                ]
+            )
+            == 2
+        )
+        assert "model_destination_rejected" in capsys.readouterr().err
+        assert path.read_bytes() == original
+        assert requests == []
+
+
+@pytest.mark.parametrize("reviewer", ["", "x" * 301, "invalid\nreviewer", "invalid\x7freviewer"])
+def test_invalid_reviewer_is_rejected_before_transport(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    reviewer: str,
+) -> None:
+    def call(*args: object, **kwargs: object) -> local_model.ModelResult:
+        raise AssertionError("invalid reviewer must not reach transport")
+
+    monkeypatch.setattr(local_model.OllamaClient, "call", call)
+    assert (
+        qualification.main(
+            [
+                "qualify",
+                "--route",
+                str(tmp_path / "missing.json"),
+                "--stage",
+                "generate_documents",
+                "--dataset",
+                str(DATASET),
+                "--reviewed-by",
+                reviewer,
+            ]
+        )
+        == 2
+    )
+    assert "qualification_reviewer_invalid" in capsys.readouterr().err
+
+
+def test_section_qualification_checks_full_replacement_limits() -> None:
+    cases, _ = qualification.load_cases(DATASET, "regenerate_section")
+    case = cases[0]
+    body = documents.parse_body(case["base_body"])
+    other = body.sections[1]
+    full = documents.DocumentBody(
+        title=body.title,
+        sections=[
+            body.sections[0],
+            other.model_copy(
+                update={
+                    "blocks": [
+                        other.blocks[0].model_copy(update={"block_key": f"existing-{index}"})
+                        for index in range(127)
+                    ]
+                }
+            ),
+        ],
+    )
+    candidate = output(case, "regenerate_section")
+    blocks = cast(list[dict[str, object]], candidate["blocks"])
+    blocks.append({**blocks[0], "block_key": "b-2"})
+    plan = {
+        "facts": case["facts"],
+        "frame": {},
+        "context": qualification.projection(case, "regenerate_section"),
+    }
+    with pytest.raises(model_calls.OutputMismatch) as mismatch:
+        qualification.checked_bodies(
+            candidate, "regenerate_section", plan, cast(dict[str, object], case["target"]), full
+        )
+    assert any("document_too_large" in item for item in mismatch.value.summary)

@@ -1,10 +1,9 @@
 # SPDX-License-Identifier: MIT OR Apache-2.0
 """Plain-data generation projections shared by production and local qualification."""
 
-import unicodedata
 from collections.abc import Mapping
 
-from bonafides import local_model
+from bonafides import local_model, suitability
 
 
 def _projection(
@@ -39,9 +38,15 @@ def generation_projection(
     language: str,
 ) -> dict[str, object]:
     """Project a current posting and already-minimized professional evidence."""
-    source = str(posting["description_text"])
-    source = unicodedata.normalize("NFC", source.replace("\r\n", "\n").replace("\r", "\n"))
-    return _projection(posting, source, requirements, claims, evidence, tone, language)
+    return _projection(
+        posting,
+        suitability.normalize(str(posting["description_text"])),
+        requirements,
+        claims,
+        evidence,
+        tone,
+        language,
+    )
 
 
 def regeneration_projection(

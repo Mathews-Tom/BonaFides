@@ -30,6 +30,8 @@ from test_local_model import (
     route_data,
     route_file,
 )
+from test_model_qualification import DATASET
+from test_model_qualification import output as qualification_output
 from test_sources import SourceContext
 from test_sources import catalog as catalog
 from test_suitability import (
@@ -45,8 +47,10 @@ from test_tracking import _application, _get
 
 from bonafides import document_generation as generation
 from bonafides import documents, local_model, suitability
+from bonafides import model_qualification as qualification
 from bonafides.commands import canonical_json
 from bonafides.document_frame import PrintableFrame, ProfileContact, template_digest
+from bonafides.frozen_migrations.stable_model_blocks_v1 import preserve_route_blocks
 from bonafides.problems import Problem
 from bonafides.render_service import render_html
 from bonafides.storage import BlobStore
@@ -1267,7 +1271,7 @@ def test_suitability_qualification_does_not_qualify_generation(tmp_path: Path) -
     initial = local_model.load_route(route_file(tmp_path, data))
     assert initial is not None
     data["qualification_receipts"] = {
-        stage: fixture_receipt(initial.capability_sha256, reviewed_by="synthetic-only")
+        stage: fixture_receipt(initial.capability_sha256, reviewed_by="synthetic-only", stage=stage)
         for stage in ("extract_posting", "match_requirements")
     }
     route = local_model.load_route(route_file(tmp_path, data))
@@ -1499,3 +1503,142 @@ def test_receipt_details_preserve_route_context_and_live_blocks(tmp_path: Path) 
         ]
         == "missing"
     )
+
+
+@pytest.mark.postgres
+@pytest.mark.parametrize("legacy", [False, True], ids=["new-block", "migrated-block"])
+def test_qualification_never_lifts_permanent_route_block(
+    catalog: SourceContext, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, legacy: bool
+) -> None:
+    profile, application = _setup_pair(catalog)
+    path = tmp_path / "route.json"
+    route = qualified_route(tmp_path, route_data("http://127.0.0.1:1"))
+    original_identity = route.identity()
+    load_route = local_model.load_route
+    configured = catalog.identity.settings.local_model_route_file
+    monkeypatch.setattr(
+        local_model,
+        "load_route",
+        lambda supplied: load_route(path if supplied == configured else supplied),
+    )
+    task = _queue_pair(catalog, _preview(catalog, profile, application))
+    model = FixtureModel({}, failure=local_model.ModelFailure("model_incomplete"))
+    with pytest.raises(local_model.ModelFailure, match="model_incomplete"):
+        suitability.execute_model(catalog.runtime, catalog.identity.settings, task, Event(), model)
+    with catalog.identity.admin.transaction() as conn:
+        block = (
+            conn.execute(
+                text("SELECT * FROM bonafides.local_model_route_blocks WHERE owner_id=:owner"),
+                {"owner": catalog.owner_id},
+            )
+            .mappings()
+            .one()
+        )
+        assert block["route_sha256"] == route.capability_sha256
+        if legacy:
+            conn.execute(
+                text("""UPDATE bonafides.local_model_route_blocks SET route_sha256=:sha
+                WHERE owner_id=:owner"""),
+                {"owner": catalog.owner_id, "sha": generation.sha(original_identity)},
+            )
+    with catalog.runtime.transaction() as conn:
+        rates = generation.claim_json_rates(conn, catalog.owner_id, original_identity)
+    cases = {stage: qualification.load_cases(DATASET, stage)[0] for stage in qualification.STAGES}
+
+    def call(
+        self: local_model.OllamaClient, stage: str, context: dict[str, object], *_args: object
+    ) -> local_model.ModelResult:
+        organization = cast(dict[str, object], context["posting"])["organization"]
+        case = next(
+            case
+            for case in cases[stage]
+            if cast(dict[str, object], case["posting"])["company"] == organization
+        )
+        return local_model.ModelResult(qualification_output(case, stage), {})
+
+    monkeypatch.setattr(local_model.OllamaClient, "call", call)
+    for stage in ("regenerate_section", "generate_documents"):
+        assert (
+            qualification.main(
+                [
+                    "qualify",
+                    "--route",
+                    str(path),
+                    "--stage",
+                    stage,
+                    "--dataset",
+                    str(DATASET),
+                    "--reviewed-by",
+                    "synthetic-only",
+                ]
+            )
+            == 0
+        )
+        current = load_route(path)
+        assert current is not None and current.identity() != original_identity
+        assert current.capability_sha256 == route.capability_sha256
+        if legacy:
+            # Recover the old block after the receipt changed, without loading that old route.
+            with catalog.identity.admin.transaction() as conn:
+                preserve_route_blocks(conn)
+                preserved = (
+                    conn.execute(
+                        text("""SELECT * FROM bonafides.local_model_route_blocks
+                        WHERE owner_id=:owner ORDER BY route_sha256"""),
+                        {"owner": catalog.owner_id},
+                    )
+                    .mappings()
+                    .all()
+                )
+                assert {row["route_sha256"] for row in preserved} == {
+                    generation.sha(original_identity),
+                    route.capability_sha256,
+                }
+                assert all(row["error_code"] == block["error_code"] for row in preserved)
+                assert all(row["created_at"] == block["created_at"] for row in preserved)
+        with catalog.runtime.transaction() as conn:
+            status = generation.route_status(conn, catalog.owner_id, catalog.identity.settings)
+            assert status["status"] == "unqualified"
+            assert status["reason"] == "model_route_failed_live_evaluation"
+            details = generation.receipt_details(
+                conn, catalog.owner_id, catalog.identity.settings, current.identity()
+            )
+            assert details["generate_documents"]["status"] == "passed"
+            assert details["generate_documents"]["qualified"] is False
+            assert details["generate_documents"]["reason"] == "model_route_failed_live_evaluation"
+            assert (
+                generation.route_status(
+                    conn, catalog.owner_id, catalog.identity.settings, stage="regenerate_section"
+                )["status"]
+                == "qualified"
+            )
+            assert generation.claim_json_rates(conn, catalog.owner_id, original_identity) == rates
+            with pytest.raises(Problem, match="model_route_unavailable"):
+                suitability._route(
+                    conn, catalog.owner_id, catalog.identity.settings, "generate_documents"
+                )
+
+
+@pytest.mark.postgres
+def test_model_block_migration_refuses_to_discard_unbound_block(catalog: SourceContext) -> None:
+    with catalog.identity.admin.transaction() as conn:
+        conn.execute(
+            text("""INSERT INTO bonafides.local_model_route_blocks
+            (owner_id,route_sha256,stage,error_code)
+            VALUES(:owner,repeat('f',64),'generate_documents','model_incomplete')"""),
+            {"owner": catalog.owner_id},
+        )
+    with (
+        pytest.raises(RuntimeError, match="no matching recorded capability"),
+        catalog.identity.admin.transaction() as conn,
+    ):
+        preserve_route_blocks(conn)
+    with catalog.runtime.transaction() as conn:
+        assert (
+            conn.execute(
+                text("""SELECT route_sha256 FROM bonafides.local_model_route_blocks
+                WHERE owner_id=:owner"""),
+                {"owner": catalog.owner_id},
+            ).scalar_one()
+            == "f" * 64
+        )

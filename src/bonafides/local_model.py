@@ -504,6 +504,14 @@ def _text(data: dict[str, object], key: str, maximum: int = 300) -> str:
     return value
 
 
+def validate_reviewer(value: str) -> str:
+    """Validate a reviewer before invoking a model or creating a receipt."""
+    try:
+        return _text({"reviewed_by": value}, "reviewed_by")
+    except ModelFailure:
+        raise ModelFailure("qualification_reviewer_invalid") from None
+
+
 def _integer(data: dict[str, object], key: str, minimum: int, maximum: int) -> int:
     value = data.get(key)
     if type(value) is not int or not minimum <= value <= maximum:
@@ -539,7 +547,7 @@ def qualification_receipt(payload: dict[str, object]) -> dict[str, object]:
     for key in ("capability_sha256", "dataset_sha256"):
         if not re.fullmatch(r"[0-9a-f]{64}", _text(item, key, 64)):
             raise ModelFailure("model_route_invalid")
-    _text(item, "reviewed_by")
+    validate_reviewer(cast(str, item.get("reviewed_by")))
     try:
         reviewed = datetime.fromisoformat(_text(item, "reviewed_at"))
         if reviewed.tzinfo is None:
@@ -774,8 +782,23 @@ def load_route(path: Path | None) -> LocalRoute | None:
             if not isinstance(receipt, dict):
                 raise ModelFailure("model_route_invalid")
             item = cast(dict[str, object], receipt)
-            if item != qualification_receipt(item):
-                raise ModelFailure("model_route_invalid")
+            if stage in QUALIFICATION_STAGES:
+                if item != qualification_receipt(item):
+                    raise ModelFailure("model_route_invalid")
+            else:
+                if set(item) != {
+                    "status",
+                    "capability_sha256",
+                    "receipt_sha256",
+                    "reviewed_by",
+                    "reviewed_at",
+                } or item.get("status") not in {"passed", "failed"}:
+                    raise ModelFailure("model_route_invalid")
+                for key in ("capability_sha256", "receipt_sha256"):
+                    if not re.fullmatch(r"[0-9a-f]{64}", _text(item, key, 64)):
+                        raise ModelFailure("model_route_invalid")
+                _text(item, "reviewed_by")
+                _text(item, "reviewed_at")
             if item["status"] == "passed" and item["capability_sha256"] == capability_sha:
                 qualified.add(str(stage))
         identity: dict[str, object] = {

@@ -31,6 +31,7 @@ from bonafides.local_model import (
     OllamaClient,
     load_route,
     qualification_receipt,
+    validate_reviewer,
 )
 
 
@@ -67,7 +68,18 @@ def route_file(tmp_path: Path, data: dict[str, object]) -> Path:
     return path
 
 
-def fixture_receipt(capability_sha256: str, **overrides: object) -> dict[str, object]:
+def fixture_receipt(
+    capability_sha256: str, *, stage: str = "generate_documents", **overrides: object
+) -> dict[str, object]:
+    if stage not in ("generate_documents", "regenerate_section"):
+        return {
+            "status": "passed",
+            "capability_sha256": capability_sha256,
+            "receipt_sha256": "b" * 64,
+            "reviewed_by": "synthetic-fixture-author",
+            "reviewed_at": "synthetic-review-date",
+            **overrides,
+        }
     return qualification_receipt(
         {
             "status": "passed",
@@ -95,7 +107,7 @@ def qualified_route(tmp_path: Path, data: dict[str, object]) -> LocalRoute:
     initial = load_route(route_file(tmp_path, data))
     assert initial is not None
     data["qualification_receipts"] = {
-        stage: fixture_receipt(initial.capability_sha256) for stage in PROMPT_VERSIONS
+        stage: fixture_receipt(initial.capability_sha256, stage=stage) for stage in PROMPT_VERSIONS
     }
     result = load_route(route_file(tmp_path, data))
     assert result is not None
@@ -550,14 +562,8 @@ def test_failed_receipts_and_every_capability_change_invalidate_qualification(
     receipts = cast(dict[str, dict[str, object]], data["qualification_receipts"])
     receipts["extract_posting"] = fixture_receipt(
         route.capability_sha256,
+        stage="extract_posting",
         status="failed",
-        valid_rate_per_mille=0,
-        counts={
-            "valid_first": 0,
-            "valid_after_correction": 0,
-            "invalid_after_correction": 20,
-            "failed_before_check": 0,
-        },
     )
     failed = load_route(route_file(tmp_path, data))
     assert failed is not None and not failed.qualified_for("extract_posting")
@@ -1138,7 +1144,7 @@ def test_section_qualification_is_separate_from_pair_and_prior_capability_receip
         assert previous is not None
         previous_data["qualification_receipts"] = {
             stage: fixture_receipt(
-                previous.capability_sha256, reviewed_by="synthetic-prior-protocol"
+                previous.capability_sha256, stage=stage, reviewed_by="synthetic-prior-protocol"
             )
             for stage in local_model.PROMPT_VERSIONS
         }
@@ -1175,6 +1181,43 @@ def test_receipt_hash_binds_every_measurement(tmp_path: Path) -> None:
     with pytest.raises(ModelFailure, match="model_route_invalid"):
         load_route(route_file(tmp_path, data))
     assert route.receipt_details()["generate_documents"]["status"] == "passed"
+
+
+@pytest.mark.parametrize("stage", ["extract_posting", "match_requirements"])
+def test_legacy_suitability_and_measured_document_receipts_load_together(
+    tmp_path: Path, stage: str
+) -> None:
+    data = route_data("http://127.0.0.1:1")
+    initial = load_route(route_file(tmp_path, data))
+    assert initial is not None
+    legacy = fixture_receipt(initial.capability_sha256, stage=stage)
+    measured = fixture_receipt(initial.capability_sha256)
+    data["qualification_receipts"] = {stage: legacy, "generate_documents": measured}
+    route = load_route(route_file(tmp_path, data))
+    assert route is not None
+    assert route.qualified_for(stage) and route.qualified_for("generate_documents")
+    assert len(legacy) == 5
+    # Legacy receipt hashes remain regex-only and dates remain operator text.
+    legacy["receipt_sha256"] = "c" * 64
+    legacy["reviewed_at"] = "another operator review"
+    assert load_route(route_file(tmp_path, data)) is not None
+    legacy["counts"] = measured["counts"]
+    with pytest.raises(ModelFailure, match="model_route_invalid"):
+        load_route(route_file(tmp_path, data))
+
+
+@pytest.mark.parametrize("reviewer", ["", "x" * 301, "name\n", "name\x00", "name\x7f"])
+def test_shared_reviewer_validation_rejects_invalid_receipt_reviewers(reviewer: str) -> None:
+    with pytest.raises(ModelFailure, match="qualification_reviewer_invalid"):
+        validate_reviewer(reviewer)
+    with pytest.raises(ModelFailure, match="qualification_reviewer_invalid"):
+        fixture_receipt("a" * 64, reviewed_by=reviewer)
+
+
+@pytest.mark.parametrize("reviewer", ["Owner", "x" * 300, "Réviseur"])
+def test_shared_reviewer_validation_preserves_valid_names(reviewer: str) -> None:
+    assert validate_reviewer(reviewer) == reviewer
+    assert fixture_receipt("a" * 64, reviewed_by=reviewer)["reviewed_by"] == reviewer
 
 
 @pytest.mark.parametrize("valid,status", [(19, "passed"), (18, "failed")])

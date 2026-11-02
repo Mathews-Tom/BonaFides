@@ -8,7 +8,9 @@ tones, with two separately cited claims and their evidence, a posting, reviewed
 requirements and a pinned existing section. The posting includes a preferred skill
 not established by the claims, so it cannot be borrowed into factual statements.
 `generate_documents.jsonl` exercises complete résumé/letter pairs;
-`regenerate_section.jsonl` exercises replacement blocks for the pinned section.
+`regenerate_section.jsonl` exercises replacement blocks for the pinned section, with
+`base_body` retaining the whole original document for production's shared aggregate
+replacement-limit validation. Non-target sections are never sent to the model.
 
 Each JSONL record has `id`, `posting` (title, company, description_text), `requirements`,
 `claims`, `evidence`, checker `facts`, `tone`, `language` and `target`. UUIDs identify

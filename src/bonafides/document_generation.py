@@ -258,7 +258,7 @@ def route_status(
         text(
             "SELECT 1 FROM bonafides.local_model_route_blocks WHERE owner_id=:owner AND route_sha256=:sha AND stage=:stage"
         ),
-        {"owner": owner, "sha": sha(route.identity()), "stage": stage},
+        {"owner": owner, "sha": route.capability_sha256, "stage": stage},
     ).first()
     qualified = route.qualified_for(stage) and blocked is None
     return {
@@ -298,7 +298,7 @@ def receipt_details(
     blocked = conn.execute(
         text("""SELECT stage FROM bonafides.local_model_route_blocks
             WHERE owner_id=:owner AND route_sha256=:sha"""),
-        {"owner": owner, "sha": sha(identity)},
+        {"owner": owner, "sha": route.capability_sha256},
     ).scalars()
     for stage in blocked:
         if stage in details:

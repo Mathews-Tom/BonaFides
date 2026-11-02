@@ -942,20 +942,29 @@ one corrective retry. Truncation is a failure, never a correction opportunity. I
 prints canonical JSON counts (`valid_first`, `valid_after_correction`,
 `invalid_after_correction`, `failed_before_check`), rates and duration, then atomically
 replaces only the selected stage's receipt in a mode-0600 route file. Exit 0 means
-passed, 1 means a completed but failed qualification, and 2 means invalid input or
-publication failure. All cases, including pre-check failures, count in the denominator;
-at least 95% must validate after at most one correction. Every valid result also runs
+passed, 1 means a completed but failed qualification, and 2 means invalid input,
+infrastructure/policy refusal or publication failure. Invalid reviewer names are rejected
+before inference. Infrastructure failures and destination/TLS/prompt/context refusals abort
+without overwriting any receipt; only model-attributable outcomes (including truncation,
+deadline and response limits) count as pre-check failures. Every counted case enters the
+denominator; at least 95% must validate after at most one correction. Every valid result runs
 through the unchanged claim checker. The factual usable-statement rate excludes
 statements with blockers; it is informative, not a passing threshold or human approval.
-Existing permanent live-evaluation route blocks are not cleared by this command.
+Permanent live-evaluation blocks are keyed by capability and stage, not mutable receipts;
+qualification of either stage cannot clear them. Run provenance and live JSON rates retain
+their exact receipt-bearing route identities. Migration 030 backfills stable keys from
+recorded model-run identities, preserving old blocks and refusing an unmappable backfill.
 
-Receipts require `status`, `capability_sha256`, `reviewed_by`, `reviewed_at`, `counts`,
+Document-stage receipts require `status`, `capability_sha256`, `reviewed_by`, `reviewed_at`, `counts`,
 `valid_rate_per_mille`, `usable_statement_rate_per_mille`, `dataset_sha256`,
 `case_count`, `duration_ms` and `receipt_sha256`. The last field is SHA-256 of canonical
 JSON of all the other fields and is recomputed on load; corruption invalidates the route.
 Rates use integer per-mille, rounded down. The dataset digest uses the benchmark's
-path/length/byte framing over the selected stage file. Old five-field receipts must
-be replaced by a real run (synthetic stub fixtures retain their fixture-only reviewer).
+path/length/byte framing over the selected stage file. Old document-stage five-field receipts
+must be replaced by a real run (synthetic stub fixtures retain their fixture-only reviewer).
+`extract_posting` and `match_requirements` retain the existing five-field receipt contract
+(`status`, `capability_sha256`, `receipt_sha256`, `reviewed_by`, `reviewed_at`), including
+its existing syntax-only receipt hash check; this command does not qualify those stages.
 This unkeyed integrity digest is not an operator signature or third-party attestation.
 
 Application document responses expose `receipt_details` beside `claim_json_rates`, outside
@@ -963,6 +972,9 @@ Application document responses expose `receipt_details` beside `claim_json_rates
 valid rate, reviewed date and effective qualification; stale capability receipts show
 missing with `capability_changed`. A passed receipt cannot override a live route block.
 Changing prompt version or text unqualifies the route without rewriting its receipt.
+Section qualification includes a pinned full base document and calls production's shared
+database-free replacement validator, enforcing whole-document limits before counting a
+valid output. Only generated target-section statements enter its usable-statement rate.
 
 After genuine authorization and qualification, make the source file private, stop application writers, materialize it and explicitly opt in using the container path:
 
