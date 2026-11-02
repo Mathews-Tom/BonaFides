@@ -324,6 +324,40 @@ Docker uses the same two-phase install with a non-editable project, then a final
 
 CI extracts the native Linux uv binary from `ghcr.io/astral-sh/uv:0.13.0@sha256:cdc6093146eb3ff6a40107b38f008b789e050e77ad87865e381d9917da55a168`, with no Python package-installer bootstrap. It installs host Node 22.23.4 through the official `actions/setup-node` v4.4.0 commit `49933ea5288caeca8642d1e84afbd3f7d6820020` and pnpm 10.33.3 into a runner-temporary prefix. Frontend frozen install, type/lint/test/build/audit gates and the Python inventory collector all inherit that same host PATH; CI checks Node/pnpm versions and executable-path identity before collection. Application Docker builds separately retain the pinned official Node image; a container-only pnpm installation does not supply the host collector.
 
+## Release images
+
+Nothing is published: public distribution waits on the rights review, so no workflow logs in to a registry, pushes an image, or creates a tag or release, and no workflow holds the `packages` permission. Signing and attestations belong to release compliance.
+
+**Labels.** The `app` stage takes `VERSION`, `REVISION` and `SOURCE` build arguments and records them as `org.opencontainers.image.version`, `.revision` and `.source`, in the stage's last layer so a new commit never invalidates the dependency layers. CI passes `bonafides.__version__`, the built commit (`git rev-parse HEAD`; on a pull request that is GitHub's merge commit) and the repository URL. Local `docker build` and Compose builds leave them empty. Each full-tier arch asserts the three labels with `docker image inspect`, checks the version against the image's own `bonafides version`, and lists them in the job summary.
+
+**Two-platform index (dry run).** Each native full-tier runner uploads the exact image it scanned (`docker save`, an OCI image layout) as `release-image-<arch>` (kept one day). The `release image index (local, no push)` job then runs `python3 -m tools.release_index assemble` over both layouts: it verifies every blob digest, each image's `linux/<arch>` platform and labels, and writes a new layout holding one OCI image index tagged `<version>` and `sha-<first 12 hex of the commit>`. `inspect` re-reads that layout from disk, and the job summary shows the index digest, both tags and both platform manifest digests; `release-image-index` (kept three days) holds the layout tar and `index-report.json`. These digests describe uncompressed local layers: a registry push would compress layers and produce different manifest digests. Docker attestation manifests are not carried over.
+
+Inspect a downloaded index:
+
+```sh
+mkdir -p .local/release-index && tar -xf bonafides-index.tar -C .local/release-index
+uv run --frozen python -m tools.release_index inspect --version 0.1.0 \
+  --revision <40-hex commit> --source https://github.com/<owner>/<repo> --output .local/release-index
+```
+
+Local dry run on one machine (the second platform is emulated and slow):
+
+```sh
+for arch in amd64 arm64; do
+  docker buildx build --platform "linux/$arch" --load --target app --build-arg VERSION=0.1.0 \
+    --build-arg REVISION="$(git rev-parse HEAD)" --build-arg SOURCE=https://github.com/<owner>/<repo> \
+    --tag "bonafides-proof-release:$arch" .
+  mkdir -p ".local/release/$arch" && docker save "bonafides-proof-release:$arch" | tar -x -C ".local/release/$arch"
+done
+uv run --frozen python -m tools.release_index assemble --version 0.1.0 --revision "$(git rev-parse HEAD)" \
+  --source https://github.com/<owner>/<repo> --layout amd64=.local/release/amd64 \
+  --layout arm64=.local/release/arm64 --output .local/release/index
+```
+
+`assemble` refuses an existing output directory. A Docker containerd image store saves a nested index with an attestation manifest; the classic store saves the manifest directly; both are accepted.
+
+**Scheduled audit.** `.github/workflows/scheduled-audit.yaml` runs weekly (Monday 05:23 UTC) and on `workflow_dispatch`, read-only (`contents: read`). On amd64 with the pinned toolchain it runs `pip-audit --local`, `pnpm audit --audit-level high`, builds the labelled image, and scans it with the Trivy pin from `deploy/images.json` (HIGH/CRITICAL vulnerabilities). The job summary lists each result with the reports; any finding fails that run and uploads `scheduled-audit` (kept 30 days). It never runs on pull requests, so a new advisory never gates a contribution; the full tier still runs the same scanners on every `main` push and `full-ci` run.
+
 ## Local setup and lifecycle
 
 ```sh
