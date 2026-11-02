@@ -50,11 +50,17 @@ def main(argv: list[str] | None = None) -> int:
         from bonafides.claim_coverage import main as claims_main
 
         return claims_main(arguments_list[1:])
+    if arguments_list[:1] == ["benchmark"]:
+        from bonafides.fabrication_benchmark import main as benchmark_main
+
+        return benchmark_main(arguments_list[1:])
     parser = argparse.ArgumentParser(
         prog="bonafides",
         epilog="bonafides claims coverage <file> reports the share of bullets in a local text "
         "file that structured claims represent; bonafides claims inflation-report <dir> reports "
-        "the inflation rules' false-block and per-kind block rates on synthetic case sets",
+        "the inflation rules' false-block and per-kind block rates on synthetic case sets; "
+        "bonafides benchmark run <dir> [--output <file>] reports checker and lexical-baseline "
+        "block rates per fabrication temptation class with the dataset digest",
     )
     parser.add_argument(
         "command",

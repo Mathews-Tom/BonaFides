@@ -16,12 +16,14 @@ Each UTF-8 file is limited to 5 MiB and each line to 64 KiB, including its line 
 
 from __future__ import annotations
 
+import io
 import json
 import math
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal, get_args
-from uuid import NAMESPACE_URL, uuid5
+from uuid import NAMESPACE_URL, UUID, uuid5
 
 from pydantic import ValidationError
 
@@ -44,12 +46,34 @@ EXPECTED_CODES: dict[InflationKind, str] = {
 FALSE_BLOCK_LIMIT = 0.05
 MAX_FILE_BYTES = 5 * 1024 * 1024
 MAX_LINE_BYTES = 64 * 1024
-_CLAIM = uuid5(NAMESPACE_URL, "bonafides-inflation-report/claim")
-_EVIDENCE = uuid5(NAMESPACE_URL, "bonafides-inflation-report/evidence")
+CLAIM = uuid5(NAMESPACE_URL, "bonafides-inflation-report/claim")
+EVIDENCE = uuid5(NAMESPACE_URL, "bonafides-inflation-report/evidence")
 
 
 class CaseError(ValueError):
     """A case line is not a valid inflation case."""
+
+
+@dataclass(frozen=True)
+class Claim:
+    """A case claim with its pinned text, reviewed field lines and the evidence holding it."""
+
+    evidence: str
+    text: str
+    fields: dict[str, str]
+    verb: str | None
+
+    def fact(self, claim_id: UUID, evidence_id: UUID) -> dict[str, object]:
+        """The claim as one pinned generation-context fact under the given revision ids."""
+        return {
+            "claim_revision_id": str(claim_id),
+            "evidence_revision_id": str(evidence_id),
+            "claim_text": self.text,
+            "evidence_text": self.evidence,
+            "structured_fields": self.fields,
+            "printable_text": printable_text(self.text, self.fields),
+            "claim_verb": self.verb,
+        }
 
 
 @dataclass(frozen=True)
@@ -63,13 +87,37 @@ class Case:
     claim_verb: str | None
 
 
-def _text(value: object, name: str) -> str:
+def text(value: object, name: str) -> str:
     if not isinstance(value, str) or not value.strip():
         raise CaseError(f"{name} must be non-empty text")
     return value
 
 
-def _case(raw: str, line: int, honest: bool) -> Case:
+def claim(value: Mapping[str, object]) -> Claim:
+    """Validate a record's ``evidence``, ``claim`` and optional ``fields``; the claim must be
+    contained in its evidence."""
+    fields = value.get("fields", {})
+    if not isinstance(fields, dict) or not set(fields) <= set(PRINTABLE_FIELDS):
+        raise CaseError(f"fields must hold only {', '.join(PRINTABLE_FIELDS)}")
+    printed = {key: text(item, key) for key, item in fields.items()}
+    raw = value["claim"]
+    verb: str | None = None
+    if isinstance(raw, dict):
+        try:
+            structured = StructuredClaim.model_validate(raw)
+        except ValidationError as exc:
+            raise CaseError("invalid structured claim") from exc
+        claim_text = render_claim(structured)
+        verb = structured.verb
+    else:
+        claim_text = text(raw, "claim")
+    evidence = text(value["evidence"], "evidence")
+    if not contains_statement(claim_text, evidence):
+        raise CaseError("the claim is not contained in its evidence")
+    return Claim(evidence, claim_text, printed, verb)
+
+
+def parse_case(raw: str, line: int, honest: bool) -> Case:
     try:
         value = json.loads(raw)
     except json.JSONDecodeError as exc:
@@ -80,61 +128,59 @@ def _case(raw: str, line: int, honest: bool) -> Case:
         <= {"evidence", "claim", "statement", "kind", "fields"}
     ):
         raise CaseError("keys must be evidence, claim, statement, kind and optional fields")
-    fields = value.get("fields", {})
-    if not isinstance(fields, dict) or not set(fields) <= set(PRINTABLE_FIELDS):
-        raise CaseError(f"fields must hold only {', '.join(PRINTABLE_FIELDS)}")
-    printed = {key: _text(item, key) for key, item in fields.items()}
-    claim = value["claim"]
-    claim_verb: str | None = None
-    if isinstance(claim, dict):
-        try:
-            structured = StructuredClaim.model_validate(claim)
-        except ValidationError as exc:
-            raise CaseError("invalid structured claim") from exc
-        claim_text = render_claim(structured)
-        claim_verb = structured.verb
-    else:
-        claim_text = _text(claim, "claim")
+    own = claim(value)
     kind = value["kind"]
     if honest and kind is not None:
         raise CaseError("an honest case has kind null")
     if not honest and kind not in INFLATION_KINDS:
         raise CaseError(f"kind must be one of {', '.join(INFLATION_KINDS)}")
-    evidence = _text(value["evidence"], "evidence")
-    if not contains_statement(claim_text, evidence):
-        raise CaseError("the claim is not contained in its evidence")
-    statement = _text(value["statement"], "statement")
-    return Case(line, evidence, claim_text, statement, kind, printed, claim_verb)
+    statement = text(value["statement"], "statement")
+    return Case(line, own.evidence, own.text, statement, kind, own.fields, own.verb)
+
+
+def read_bounded(path: Path) -> bytes:
+    """A case file's bytes, refused once it exceeds the file limit."""
+    with path.open("rb") as source:
+        data = source.read(MAX_FILE_BYTES + 1)
+    if len(data) > MAX_FILE_BYTES:
+        raise CaseError(f"{path.name}:1: file exceeds {MAX_FILE_BYTES} bytes")
+    return data
+
+
+def parse_lines[T](name: str, data: bytes, parse: Callable[[str, int], T]) -> list[T]:
+    """Parse bounded non-blank UTF-8 lines, attaching the filename and line to input errors."""
+    items: list[T] = []
+    source = io.BytesIO(data)
+    number = 0
+    while raw := source.readline(MAX_LINE_BYTES + 1):
+        number += 1
+        if len(raw) > MAX_LINE_BYTES:
+            raise CaseError(f"{name}:{number}: line exceeds {MAX_LINE_BYTES} bytes")
+        try:
+            decoded = raw.decode("utf-8")
+            if decoded.strip():
+                items.append(parse(decoded, number))
+        except (ValueError, RecursionError) as exc:
+            raise CaseError(f"{name}:{number}: {exc}") from exc
+    if not items:
+        raise CaseError(f"{name}:1: contains no cases")
+    return items
 
 
 def load(path: Path, honest: bool) -> list[Case]:
     """Read bounded case lines and attach their filename and line to input errors."""
-    if path.stat().st_size > MAX_FILE_BYTES:
-        raise CaseError(f"{path.name}:1: file exceeds {MAX_FILE_BYTES} bytes")
-    cases: list[Case] = []
-    size = 0
-    with path.open("rb") as source:
-        number = 0
-        while raw := source.readline(MAX_LINE_BYTES + 1):
-            number += 1
-            size += len(raw)
-            if size > MAX_FILE_BYTES:
-                raise CaseError(f"{path.name}:{number}: file exceeds {MAX_FILE_BYTES} bytes")
-            if len(raw) > MAX_LINE_BYTES:
-                raise CaseError(f"{path.name}:{number}: line exceeds {MAX_LINE_BYTES} bytes")
-            try:
-                text = raw.decode("utf-8")
-                if text.strip():
-                    cases.append(_case(text, number, honest))
-            except (ValueError, RecursionError) as exc:
-                raise CaseError(f"{path.name}:{number}: {exc}") from exc
-    if not cases:
-        raise CaseError(f"{path.name}:1: contains no cases")
-    return cases
+    return parse_lines(
+        path.name, read_bounded(path), lambda raw, line: parse_case(raw, line, honest)
+    )
 
 
-def codes(case: Case) -> list[str]:
-    """Every checker code for the case's statement cited as a factual block of its claim."""
+def block_codes(
+    statement: str,
+    claim_kind: Literal["factual", "intent"],
+    cited: Sequence[tuple[UUID, UUID]],
+    facts: Sequence[Mapping[str, object]],
+) -> list[str]:
+    """Every checker code for one block of a one-section base résumé over ``facts``."""
     body = DocumentBody(
         title="Base résumé",
         sections=[
@@ -144,25 +190,22 @@ def codes(case: Case) -> list[str]:
                 blocks=[
                     DocumentBlock(
                         block_key="statement",
-                        text=case.statement,
-                        claim_kind="factual",
-                        claim_revision_ids=[_CLAIM],
-                        evidence_revision_ids=[_EVIDENCE],
+                        text=statement,
+                        claim_kind=claim_kind,
+                        claim_revision_ids=[claim_id for claim_id, _ in cited],
+                        evidence_revision_ids=[evidence_id for _, evidence_id in cited],
                     )
                 ],
             )
         ],
     )
-    fact: dict[str, object] = {
-        "claim_revision_id": str(_CLAIM),
-        "evidence_revision_id": str(_EVIDENCE),
-        "claim_text": case.claim_text,
-        "evidence_text": case.evidence,
-        "structured_fields": case.fields,
-        "printable_text": printable_text(case.claim_text, case.fields),
-        "claim_verb": case.claim_verb,
-    }
-    return [issue["code"] for issue in check_statements(body, [fact], {}, "base")]
+    return [issue["code"] for issue in check_statements(body, facts, {}, "base")]
+
+
+def codes(case: Case) -> list[str]:
+    """Every checker code for the case's statement cited as a factual block of its claim."""
+    own = Claim(case.evidence, case.claim_text, case.fields, case.claim_verb)
+    return block_codes(case.statement, "factual", [(CLAIM, EVIDENCE)], [own.fact(CLAIM, EVIDENCE)])
 
 
 @dataclass(frozen=True)
