@@ -27,7 +27,7 @@ from bonafides.auth import Owner, require_owner
 from bonafides.commands import append_outbox, canonical_json, command, lock_installation
 from bonafides.config import Settings
 from bonafides.crypto import Keyring
-from bonafides.db import Database
+from bonafides.db import Database, require_baseline, schema_ledger
 from bonafides.problems import Problem
 
 LEASE_SECONDS = 60
@@ -125,6 +125,9 @@ def migrate(settings: MigrationConfig) -> None:
             conn.execute(text("SET LOCAL lock_timeout='5s'"))
             conn.execute(text("SET LOCAL statement_timeout='60s'"))
             conn.execute(text("SELECT pg_advisory_xact_lock(741903221)"))
+            # A chain-built database is refused before anything in it changes.
+            if conn.execute(text("SELECT to_regclass('bonafides.schema_migrations')")).scalar():
+                require_baseline(schema_ledger(conn))
             conn.execute(text("CREATE SCHEMA IF NOT EXISTS bonafides_migrations"))
             conn.execute(
                 text("REVOKE ALL ON SCHEMA bonafides_migrations FROM PUBLIC,bonafides_runtime")
@@ -137,38 +140,7 @@ def migrate(settings: MigrationConfig) -> None:
                     "SELECT version,source_sha256 FROM bonafides.schema_migrations ORDER BY version"
                 )
             ).all()
-            names = (
-                "001_initial.up.sql",
-                "002_hosted_consent.up.sql",
-                "003_base_resume.up.sql",
-                "004_runtime.up.sql",
-                "005_profiles.up.sql",
-                "006_imports.up.sql",
-                "007_sources.up.sql",
-                "008_catalog.up.sql",
-                "009_suitability.up.sql",
-                "010_tracking.up.sql",
-                "011_documents.up.sql",
-                "012_section_regeneration.up.sql",
-                "013_task_controls.up.sql",
-                "014_activity_admission.up.sql",
-                "015_provider_executions.up.sql",
-                "016_installation_controls.up.sql",
-                "017_portable_exports.up.sql",
-                "018_portable_model_history.up.sql",
-                "019_backup_generations.up.sql",
-                "020_portable_erasure.up.sql",
-                "021_portable_scope_binding.up.sql",
-                "022_portable_previews.up.sql",
-                "023_offline_maintenance_recovery.up.sql",
-                "024_daily_backups.up.sql",
-                "025_credential_rotation.up.sql",
-                "026_erasure_reservation.up.sql",
-                "027_streamed_portability.up.sql",
-                "028_structured_claims.up.sql",
-                "029_evidence_provenance.up.sql",
-                "030_stable_model_blocks.up.sql",
-            )
+            names = ("001_baseline.up.sql",)
             if len(rows) != len(names):
                 raise RuntimeError("unsupported migration ledger")
             for row, name in zip(rows, names, strict=True):

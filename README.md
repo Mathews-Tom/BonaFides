@@ -16,6 +16,8 @@ BonaFides is a self-hosted career workspace in development. The implemented **Ar
 
 **Development baseline:** macOS on Apple Silicon with the existing Linux arm64 Docker runtime. The observed architecture proof technical checkpoint permits private-alpha and later implementation in dependency order. Native Linux amd64 qualification is **deferred**, not passed and not a prerequisite for that private work. Independent rights review is a separate pending public-distribution gate; it is not tied to amd64 or waived by this platform decision. See the [development dispositions](docs/development/README.md#private-milestone-progression).
 
+**Schema baseline (0.1.0):** a fresh install runs one baseline migration. Databases and encrypted backups created before the baseline, and legacy `bonafides-portable` archives, are refused; export a `bonafides-workspace/1` archive from the last pre-baseline build (commit `771776e`) and import it into a fresh install. See [Schema baseline and migration policy](docs/development/README.md#schema-baseline-and-migration-policy) and [CHANGELOG.md](CHANGELOG.md).
+
 ## Run the local proof
 
 Install Docker Engine/Desktop with Compose v2 and uv **0.13.0**. The image builds its own pinned Python/Node dependencies; no ignored design files are required.

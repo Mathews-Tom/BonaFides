@@ -45,7 +45,6 @@
   ],
   "4": [
     "tests/test_backup_schedule.py",
-    "tests/test_claim_rewrite.py",
     "tests/test_database.py",
     "tests/test_identity.py",
     "tests/test_inflation_documents.py",
@@ -53,6 +52,7 @@
     "tests/test_portable_import.py",
     "tests/test_portable_quotas.py",
     "tests/test_reauthentication.py",
+    "tests/test_schema_equivalence.py",
     "tests/test_section_regeneration.py",
     "tests/test_task_control.py"
   ],

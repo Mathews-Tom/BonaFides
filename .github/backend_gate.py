@@ -25,6 +25,11 @@ def main() -> int:
     mode.add_argument(
         "--pytest-only", nargs="+", metavar="TEST_PATH", help="Run only these pytest paths."
     )
+    parser.add_argument(
+        "--schema-equivalence",
+        action="store_true",
+        help="Also prove a freshly migrated database equal to the committed schema reference.",
+    )
     arguments = parser.parse_args()
     checks = (
         ["uv", "run", "--frozen", "ruff", "check", "."],
@@ -80,7 +85,10 @@ def main() -> int:
             "-v",
             "ON_ERROR_STOP=1",
         ],
-        data="CREATE DATABASE bonafides_test OWNER bonafides_migrator; REVOKE ALL ON DATABASE bonafides_test FROM PUBLIC; GRANT CONNECT ON DATABASE bonafides_test TO bonafides_runtime;\n",
+        data="".join(
+            f"CREATE DATABASE {name} OWNER bonafides_migrator; REVOKE ALL ON DATABASE {name} FROM PUBLIC; GRANT CONNECT ON DATABASE {name} TO bonafides_runtime;\n"
+            for name in ("bonafides_test", "bonafides_equivalence")
+        ),
     )
     env = dict(os.environ)
     env["BONAFIDES_TEST_PARSER_IMAGE"] = env.get("BONAFIDES_IMAGE", "bonafides:local")
@@ -96,6 +104,22 @@ def main() -> int:
         )
         env[name] = dsn
     env["BONAFIDES_TEST_DSN"] = env["BONAFIDES_TEST_RUNTIME_DSN"]
+    if arguments.schema_equivalence:
+        dsn_file = root / "equivalence_migrator_dsn"
+        descriptor = os.open(dsn_file, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        with os.fdopen(descriptor, "w") as stream:
+            stream.write(
+                env["BONAFIDES_TEST_MIGRATION_DSN"].replace(
+                    "/bonafides_test", "/bonafides_equivalence"
+                )
+            )
+        call(
+            [
+                *("uv", "run", "--frozen", "python", "-m", "tools.schema_equivalence", "check"),
+                *("--migration-dsn-file", str(dsn_file), "--database", "bonafides_equivalence"),
+                *("--container", "bonafides-proof-ci-backend-db-1"),
+            ]
+        )
     if not arguments.pytest_only:
         for check in checks:
             call(check, env=env)

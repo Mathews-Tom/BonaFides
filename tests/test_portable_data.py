@@ -11,7 +11,6 @@ from pydantic import JsonValue
 from sqlalchemy import text
 from test_document_generation import _base, _document, _save
 from test_identity import identity as identity
-from test_portable_archive import sample
 from test_sources import SourceContext
 from test_sources import catalog as catalog
 from test_suitability import _profile
@@ -27,7 +26,6 @@ from bonafides.portable_archive import (
 from bonafides.portable_data import (
     collect_owner_data,
     export_owner_data,
-    portable_rows,
     quarantine_records,
 )
 from bonafides.profiles import content_hash
@@ -48,11 +46,6 @@ def _digest(archive: PortableArchive) -> PortableArchive:
         update={"manifest_sha256": manifest_digest(archive.manifest)}
     )
     return PortableArchive(manifest, archive.blobs)
-
-
-def _legacy(archive: PortableArchive) -> PortableArchive:
-    update = {"format": "bonafides-portable", "format_version": 2}
-    return PortableArchive(archive.manifest.model_copy(update=update), archive.blobs)
 
 
 def _snapshot(context: SourceContext) -> object:
@@ -271,10 +264,8 @@ def test_invalid_archive_rejects_without_changing_live_rows_or_sessions(
         row["content_sha256"] = content_hash(snapshot)
     elif damage == "snapshot_membership":
         records["profile_revision_claims"].pop()
-    # The record view of either wire format meets the same quarantine; a legacy view lets
-    # damage the typed contract already refuses reach the relational checks.
-    archive = _legacy(archive)
-    archive = _digest(archive)
+    # Quarantine reads the record view, so damage the typed contract already refuses
+    # still reaches the relational checks.
     before = _snapshot(catalog)
     with catalog.runtime.transaction() as conn:
         with pytest.raises(ArchiveError):
@@ -464,75 +455,3 @@ def test_proposal_requires_matching_historical_model(catalog: SourceContext, dam
     with catalog.runtime.transaction() as conn, pytest.raises(ArchiveError, match=expected):
         quarantine_records(conn, _digest(archive))
     assert _snapshot(catalog) == before
-
-
-@pytest.mark.parametrize("imported", [False, True])
-def test_schema28_rows_upgrade_frozen_revision_provenance_and_initial_record_history(
-    imported: bool,
-) -> None:
-    manifest, _ = sample()
-    evidence_id = str(uuid4())
-    payload: dict[str, JsonValue] = {"text": "Legacy evidence", "source": "Owner supplied"}
-    if imported:
-        payload["import_id"] = str(uuid4())
-    record: dict[str, JsonValue] = {
-        "owner_id": str(manifest.source_owner_id),
-        "id": evidence_id,
-        "created_at": "2026-10-25T12:34:56.123456+00:00",
-    }
-    revision: dict[str, JsonValue] = {
-        "owner_id": str(manifest.source_owner_id),
-        "id": str(uuid4()),
-        "evidence_id": evidence_id,
-        "payload": payload,
-    }
-    manifest = manifest.model_copy(
-        update={
-            "source_schema_version": 28,
-            "records": {"evidence_records": [record], "evidence_revisions": [revision]},
-        }
-    )
-    assert portable_rows(manifest, "evidence_revisions") == [
-        {
-            **revision,
-            "source_type": "document" if imported else "owner_statement",
-            "origin": "resume_import" if imported else "owner_entry",
-        }
-    ]
-    assert portable_rows(manifest, "evidence_records") == [
-        {**record, "privacy_class": "private", "employer_owned": False}
-    ]
-    assert portable_rows(manifest, "evidence_classification_changes") == [
-        {
-            "owner_id": record["owner_id"],
-            "evidence_id": evidence_id,
-            "sequence": 1,
-            "privacy_class": "private",
-            "employer_owned": False,
-            "changed_at": record["created_at"],
-        }
-    ]
-    assert manifest.records == {"evidence_records": [record], "evidence_revisions": [revision]}
-    assert not {"source_type", "origin", "privacy_class", "employer_owned"} & revision.keys()
-    assert not {"privacy_class", "employer_owned"} & record.keys()
-
-
-@pytest.mark.parametrize(
-    ("name", "column", "value"),
-    [
-        ("evidence_records", "privacy_class", "public"),
-        ("evidence_records", "employer_owned", True),
-        ("evidence_revisions", "source_type", "document"),
-        ("evidence_revisions", "origin", "resume_import"),
-        ("evidence_revisions", "privacy_class", "public"),
-        ("evidence_revisions", "employer_owned", True),
-    ],
-)
-def test_schema28_rows_cannot_override_frozen_legacy_defaults(
-    name: str, column: str, value: JsonValue
-) -> None:
-    manifest, _ = sample()
-    row: dict[str, JsonValue] = {"payload": {"text": "Legacy evidence"}, column: value}
-    manifest = manifest.model_copy(update={"source_schema_version": 28, "records": {name: [row]}})
-    with pytest.raises(ArchiveError, match="incompatible_portable_columns"):
-        portable_rows(manifest, name)

@@ -10,7 +10,38 @@ from sqlalchemy.engine import make_url
 from bonafides.config import Settings
 from bonafides.execution_guard import ExecutionGuard
 
-SCHEMA_VERSION = 30
+SCHEMA_VERSION = 1
+# Checksum of migrations/sql/001_baseline.up.sql; every supported ledger starts with it.
+BASELINE_SHA256 = "d59f2522f5e4be27f5ad367c23bc3b0979af4c9d48831249b36697df8992d3d8"
+PRE_BASELINE_GUIDANCE = (
+    "This data predates the 0.1.0 schema baseline and is never upgraded in place. "
+    "Run the last pre-baseline BonaFides build (commit 771776e) against it, export a "
+    "bonafides-workspace/1 archive, then import that archive into a fresh install."
+)
+
+
+class PreBaselineDatabase(RuntimeError):
+    """The database ledger was written by the migration chain the baseline replaced."""
+
+    code = "pre_baseline_database"
+
+    def __init__(self) -> None:
+        super().__init__(f"{self.code}: {PRE_BASELINE_GUIDANCE}")
+
+
+def schema_ledger(conn: Connection) -> dict[int, str]:
+    return {
+        row.version: row.source_sha256
+        for row in conn.execute(
+            text("SELECT version,source_sha256 FROM bonafides.schema_migrations")
+        )
+    }
+
+
+def require_baseline(ledger: dict[int, str]) -> None:
+    """Refuse every non-empty ledger other than this baseline's single row."""
+    if ledger and ledger != {SCHEMA_VERSION: BASELINE_SHA256}:
+        raise PreBaselineDatabase
 
 
 class Database:
@@ -49,10 +80,9 @@ class Database:
 
     def ready(self) -> bool:
         with self.engine.connect() as conn:
-            version = conn.execute(
-                text("SELECT max(version) FROM bonafides.schema_migrations")
-            ).scalar_one()
-            if version != SCHEMA_VERSION:
+            ledger = schema_ledger(conn)
+            require_baseline(ledger)
+            if max(ledger, default=None) != SCHEMA_VERSION:
                 return False
             if self.execution_guard is not None:
                 identity = self.execution_guard.verify()

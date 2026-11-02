@@ -30,7 +30,7 @@ Use **BonaFides** as the product name and `bonafides` as the technical identifie
 | Runtime proof | milestone-named probe module | `tools/runtime_proof.py` |
 | Web title and package | `Offerloom`, `offerloom-web` | `BonaFides`, `bonafides-web` |
 
-Existing migrations are edited in place because no deployed database exists. Persisted identifiers that carried the old name, such as built-in template versions, the theme storage key and the owner-data download name, use the new name with their existing version suffixes.
+Existing migrations were edited in place because no deployed database existed. The 0.1.0 schema baseline later replaced them with one baseline migration; the development guide's migration policy now governs edits (baseline only until the first release, append-only after it). Persisted identifiers that carried the old name, such as built-in template versions, the theme storage key and the owner-data download name, use the new name with their existing version suffixes.
 
 Describe features, stages and migrations by what they do. Story codes become feature names (for example "evidence-linked profiles" or "encrypted backup and recovery"), milestone codes become stage names ("architecture proof", "private alpha", "public beta", "stable distribution"), and contributions reference a functional feature and design contract instead of a story ID.
 
