@@ -298,7 +298,7 @@ def _prepare(
         plan.update(
             source_owner_id=str(expected_source_owner),
             source_namespace=str(archive.manifest.source_namespace),
-            source_schema_version=archive.manifest.source_schema_version,
+            source_format=f"{archive.manifest.format}/{archive.manifest.format_version}",
             manifest_sha256=archive.manifest.manifest_sha256,
             record_counts={key: len(rows) for key, rows in archive.manifest.records.items()},
             blob_count=len(archive.manifest.blob_manifest),

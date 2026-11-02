@@ -283,7 +283,7 @@ def _approved_import(context: SourceContext, digest: str) -> Prepared:
 
 
 def _assert_manifest(manifest: Manifest, inventory: BlobInventory) -> None:
-    assert manifest.format_version == 2
+    assert (manifest.format, manifest.format_version) == ("bonafides-workspace", 1)
     assert {
         member.blob_id: (member.sha256, member.byte_length) for member in manifest.blob_manifest
     } == {
@@ -414,10 +414,14 @@ def test_real_owner_quotas_roundtrip_streamed_archive(
             "saved_opportunities",
             "applications",
             "application_stage_events",
+            "application_notes",
+            "application_contacts",
+            "appointments",
             "application_attachments",
             "document_drafts",
             "document_revisions",
             "document_claim_links",
+            "document_reviews",
             "document_artifacts",
         ):
             assert restored.manifest.records[family] == manifest.records[family], family

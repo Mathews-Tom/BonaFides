@@ -39,7 +39,7 @@ def _export(context: SourceContext) -> PortableArchive:
     manifest = export_owner_data(
         context.runtime, context.identity.settings, context.owner_id, output
     )
-    assert manifest.format_version == 2
+    assert (manifest.format, manifest.format_version) == ("bonafides-workspace", 1)
     return decode_archive(output, expected_source_owner=context.owner_id)
 
 
@@ -48,6 +48,11 @@ def _digest(archive: PortableArchive) -> PortableArchive:
         update={"manifest_sha256": manifest_digest(archive.manifest)}
     )
     return PortableArchive(manifest, archive.blobs)
+
+
+def _legacy(archive: PortableArchive) -> PortableArchive:
+    update = {"format": "bonafides-portable", "format_version": 2}
+    return PortableArchive(archive.manifest.model_copy(update=update), archive.blobs)
 
 
 def _snapshot(context: SourceContext) -> object:
@@ -266,6 +271,9 @@ def test_invalid_archive_rejects_without_changing_live_rows_or_sessions(
         row["content_sha256"] = content_hash(snapshot)
     elif damage == "snapshot_membership":
         records["profile_revision_claims"].pop()
+    # The record view of either wire format meets the same quarantine; a legacy view lets
+    # damage the typed contract already refuses reach the relational checks.
+    archive = _legacy(archive)
     archive = _digest(archive)
     before = _snapshot(catalog)
     with catalog.runtime.transaction() as conn:
