@@ -301,6 +301,8 @@ def _validate(manifest: BackupManifest) -> None:
         manifest.workspace is not None and manifest.workspace.path != WORKSPACE_MEMBER
     ):
         raise BackupError("invalid_backup_workspace_member")
+    if len(manifest.members) > MAX_FILES:
+        raise BackupError("backup_file_count_limit")
     if sum(entry.byte_length for entry in manifest.members) > MAX_BUNDLE_BYTES - MAX_MANIFEST_BYTES:
         raise BackupError("backup_size_limit")
     if any(
@@ -337,7 +339,9 @@ def create_bundle(
     bytes are staged only as ciphertext. No archive is published on partial failure.
     """
     paths = [entry.path for entry in blob_files]
-    if len(paths) > MAX_FILES - 1 or len(set(paths)) != len(paths):
+    # The database member and, for format 2, the workspace member share MAX_FILES.
+    reserved = 1 + (workspace is not None)
+    if len(paths) > MAX_FILES - reserved or len(set(paths)) != len(paths):
         raise BackupError("invalid_backup_blob_set")
     name = f"{uuid4()}.cms"
     temporary = f".pending-{uuid4()}"
@@ -451,6 +455,10 @@ def _read_manifest(stream: IO[bytes]) -> BackupManifest:
         manifest = BackupManifest.model_validate_json(encoded, strict=True)
     except (ValidationError, ValueError, UnicodeError) as error:
         raise BackupError("invalid_backup_manifest") from error
+    # Writers emit exactly manifest_json; anything else (e.g. an explicit
+    # "workspace": null in format 1) would no longer match its recorded digest.
+    if manifest_json(manifest) != encoded:
+        raise BackupError("invalid_backup_manifest")
     _validate(manifest)
     return manifest
 

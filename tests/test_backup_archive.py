@@ -85,6 +85,24 @@ with tempfile.TemporaryDirectory() as temporary:
    assert [p.name for p in (root/'online').iterdir()]!=[] and not any((root/'online').rglob('*.zip'))
    staged.write(workspace)
    return create_bundle(**arguments,workspace=staged)
+ if case=='workspace_file_count':
+  # The database and workspace members share MAX_FILES with the blobs.
+  from bonafides.backup_archive import MAX_FILES
+  many=[BackupFile(path=f'blobs/{owner}/{n:02x}/{n:064x}',sha256=f'{n:064x}',byte_length=1)
+   for n in range(MAX_FILES-1)]
+  with staged_workspace(root/'online') as staged:
+   staged.write(workspace)
+   try:
+    create_bundle(dump=io.BytesIO(dump),blob_root=blobs,blob_files=many,recipient=recipient,
+     staging_root=root/'online',destination=root/'encrypted',manifest_factory=factory,workspace=staged)
+    raise AssertionError('bundle above the member limit was created')
+   except BackupError as error:
+    assert str(error)=='invalid_backup_blob_set',str(error)
+  assert not list((root/'online').iterdir())
+  assert not (root/'encrypted').exists() or not list((root/'encrypted').iterdir())
+  print(json.dumps({'case':case,'consumer_bytes_verified':False,
+   'original_generation_preserved':True,'private_staging_empty':True}))
+  sys.exit(0)
  receipt=create()
  original=root/'encrypted'/receipt.file_name
  encoded=original.read_bytes()
@@ -209,6 +227,10 @@ with tempfile.TemporaryDirectory() as temporary:
    elif case=='workspace_in_format_one':
     manifest['format_version']=1
     expected='invalid_backup_workspace_member'
+   elif case=='format_one_explicit_null':
+    # Not what the writer emits: its digest would not be the bytes' digest.
+    manifest['workspace']=None
+    expected='invalid_backup_manifest'
    elif case=='unauthenticated_envelope':
     expected='backup_crypto_format_forbidden'
    else:
@@ -266,6 +288,8 @@ with tempfile.TemporaryDirectory() as temporary:
         "corrupt_inner_ciphertext",
         "trailing_content",
         "unauthenticated_envelope",
+        "format_one_explicit_null",
+        "workspace_file_count",
         "workspace_roundtrip",
         "workspace_corrupt",
         "workspace_forged",
