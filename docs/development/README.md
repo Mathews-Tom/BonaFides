@@ -954,6 +954,8 @@ Permanent live-evaluation blocks are keyed by capability and stage, not mutable 
 qualification of either stage cannot clear them. Run provenance and live JSON rates retain
 their exact receipt-bearing route identities. Migration 030 backfills stable keys from
 recorded model-run identities, preserving old blocks and refusing an unmappable backfill.
+Schema-30 portable exports and imports retain the same owner-data shape as schema 29;
+route blocks remain excluded from portable data.
 
 Document-stage receipts require `status`, `capability_sha256`, `reviewed_by`, `reviewed_at`, `counts`,
 `valid_rate_per_mille`, `usable_statement_rate_per_mille`, `dataset_sha256`,
