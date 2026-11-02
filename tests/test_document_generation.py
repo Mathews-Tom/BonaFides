@@ -52,9 +52,9 @@ from bonafides import documents, local_model, suitability
 from bonafides import model_qualification as qualification
 from bonafides.commands import canonical_json
 from bonafides.document_frame import PrintableFrame, ProfileContact, template_digest
-from bonafides.frozen_migrations.stable_model_blocks_v1 import preserve_route_blocks
 from bonafides.import_parser import ImportParserClient
 from bonafides.installation_control import InstallationMaintenance
+from bonafides.local_model import load_route
 from bonafides.portable_erasure import delete_controlled_owner_data
 from bonafides.problems import Problem
 from bonafides.render_service import render_html
@@ -1529,9 +1529,8 @@ def test_receipt_details_preserve_route_context_and_live_blocks(tmp_path: Path) 
 
 
 @pytest.mark.postgres
-@pytest.mark.parametrize("legacy", [False, True], ids=["new-block", "migrated-block"])
 def test_qualification_never_lifts_permanent_route_block(
-    catalog: SourceContext, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, legacy: bool
+    catalog: SourceContext, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     profile, application = _setup_pair(catalog)
     path = tmp_path / "route.json"
@@ -1558,12 +1557,6 @@ def test_qualification_never_lifts_permanent_route_block(
             .one()
         )
         assert block["route_sha256"] == route.capability_sha256
-        if legacy:
-            conn.execute(
-                text("""UPDATE bonafides.local_model_route_blocks SET route_sha256=:sha
-                WHERE owner_id=:owner"""),
-                {"owner": catalog.owner_id, "sha": generation.sha(original_identity)},
-            )
     with catalog.runtime.transaction() as conn:
         rates = generation.claim_json_rates(conn, catalog.owner_id, original_identity)
     cases = {stage: qualification.load_cases(DATASET, stage)[0] for stage in qualification.STAGES}
@@ -1600,25 +1593,6 @@ def test_qualification_never_lifts_permanent_route_block(
         current = load_route(path)
         assert current is not None and current.identity() != original_identity
         assert current.capability_sha256 == route.capability_sha256
-        if legacy:
-            # Recover the old block after the receipt changed, without loading that old route.
-            with catalog.identity.admin.transaction() as conn:
-                preserve_route_blocks(conn)
-                preserved = (
-                    conn.execute(
-                        text("""SELECT * FROM bonafides.local_model_route_blocks
-                        WHERE owner_id=:owner ORDER BY route_sha256"""),
-                        {"owner": catalog.owner_id},
-                    )
-                    .mappings()
-                    .all()
-                )
-                assert {row["route_sha256"] for row in preserved} == {
-                    generation.sha(original_identity),
-                    route.capability_sha256,
-                }
-                assert all(row["error_code"] == block["error_code"] for row in preserved)
-                assert all(row["created_at"] == block["created_at"] for row in preserved)
         with catalog.runtime.transaction() as conn:
             status = generation.route_status(conn, catalog.owner_id, catalog.identity.settings)
             assert status["status"] == "unqualified"
@@ -1642,101 +1616,160 @@ def test_qualification_never_lifts_permanent_route_block(
                 )
 
 
+def _legacy_receipt_route(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, *, document_receipts: bool
+) -> local_model.LocalRoute:
+    data = route_data("http://127.0.0.1:1")
+    data["deadline_seconds"] = 30
+    initial = load_route(route_file(tmp_path, data))
+    assert initial is not None
+    stages = (
+        tuple(local_model.PROMPT_VERSIONS)
+        if document_receipts
+        else ("extract_posting", "match_requirements")
+    )
+    data["qualification_receipts"] = {
+        stage: fixture_receipt(initial.capability_sha256, stage="extract_posting")
+        for stage in stages
+    }
+
+    def legacy_receipt(item: dict[str, object]) -> dict[str, object]:
+        assert set(item) == {
+            "status",
+            "capability_sha256",
+            "receipt_sha256",
+            "reviewed_by",
+            "reviewed_at",
+        }
+        return item
+
+    # Only receipt acceptance changed: use the unchanged capability/identity builder
+    # with the exact five-field document receipts accepted by the pre-upgrade loader.
+    with monkeypatch.context() as historical:
+        historical.setattr(local_model, "qualification_receipt", legacy_receipt)
+        route = load_route(route_file(tmp_path, data))
+    assert route is not None
+    return route
+
+
+def _before_block_backfill(conn: Any) -> None:
+    # Schema 30 adds block copies, a comment and migration metadata, not table structure.
+    conn.execute(text("COMMENT ON COLUMN bonafides.local_model_route_blocks.route_sha256 IS NULL"))
+    conn.execute(text("DELETE FROM bonafides.schema_migrations WHERE version=30"))
+    conn.execute(
+        text("""UPDATE bonafides_migrations.alembic_version
+        SET version_num='0026_evidence_provenance' WHERE version_num='0027_stable_model_blocks'""")
+    )
+
+
+def _measure_fixture_stage(
+    monkeypatch: pytest.MonkeyPatch, path: Path, stage: str
+) -> local_model.LocalRoute:
+    cases, _ = qualification.load_cases(DATASET, stage)
+
+    def call(
+        self: local_model.OllamaClient, requested: str, context: dict[str, object], *_args: object
+    ) -> local_model.ModelResult:
+        assert requested == stage
+        organization = cast(dict[str, object], context["posting"])["organization"]
+        case = next(
+            case
+            for case in cases
+            if cast(dict[str, object], case["posting"])["company"] == organization
+        )
+        return local_model.ModelResult(qualification_output(case, stage), {})
+
+    monkeypatch.setattr(local_model.OllamaClient, "call", call)
+    assert (
+        qualification.main(
+            [
+                "qualify",
+                "--route",
+                str(path),
+                "--stage",
+                stage,
+                "--dataset",
+                str(DATASET),
+                "--reviewed-by",
+                "synthetic-only",
+            ]
+        )
+        == 0
+    )
+    route = load_route(path)
+    assert route is not None
+    return route
+
+
 @pytest.mark.postgres
-def test_model_block_migration_preserves_legacy_block_after_application_erasure(
+@pytest.mark.parametrize("erased", [False, True], ids=["mapped", "erased-document-run"])
+def test_legacy_document_block_pre_release_upgrade_boundary(
     catalog: SourceContext,
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
     parser: ImportParserClient,
     renderer_spool: Path,
+    erased: bool,
 ) -> None:
     from test_portable_erasure import _deletion
 
     profile, application = _setup_pair(catalog)
-    route = _route(monkeypatch, tmp_path)
-    identity = route.identity()
+    modern = _route(monkeypatch, tmp_path)
     task = _queue_pair(catalog, _preview(catalog, profile, application))
     model = FixtureModel({}, failure=local_model.ModelFailure("model_incomplete"))
     with pytest.raises(local_model.ModelFailure, match="model_incomplete"):
         suitability.execute_model(catalog.runtime, catalog.identity.settings, task, Event(), model)
+    legacy = _legacy_receipt_route(monkeypatch, tmp_path, document_receipts=True)
+    assert legacy.capability_sha256 == modern.capability_sha256
+    identity = legacy.identity()
+    path = tmp_path / "route.json"
+    original = path.read_bytes()
     with catalog.identity.admin.transaction() as conn:
-        run = (
-            conn.execute(
-                text("""SELECT * FROM bonafides.model_runs
-                WHERE owner_id=:owner AND workflow_run_id=:workflow"""),
-                {"owner": catalog.owner_id, "workflow": task.id},
-            )
-            .mappings()
-            .one()
+        # Reconstruct precisely the old writer's observation, including its old
+        # five-field receipts, rather than hashing a newly measured route identity.
+        conn.execute(
+            text("""UPDATE bonafides.model_runs SET parameters=jsonb_set(
+            parameters,'{route_identity}',CAST(:identity AS jsonb))
+            WHERE owner_id=:owner AND workflow_run_id=:workflow"""),
+            {"owner": catalog.owner_id, "workflow": task.id, "identity": canonical_json(identity)},
         )
-        assert run["status"] == "unknown_usage"
-        assert run["task_kind"] == "generate_documents"
-        assert run["parameters"]["route_identity"] == identity
-        assert run["metadata"]["error_code"] == "model_incomplete"
-        assert (
-            conn.execute(
-                text("""SELECT route_sha256 FROM bonafides.local_model_route_blocks
-            WHERE owner_id=:owner"""),
-                {"owner": catalog.owner_id},
-            ).scalar_one()
-            == route.capability_sha256
-        )
-        # Represent the pre-migration writer without bypassing generation or erasure.
         block = dict(
             conn.execute(
                 text("""UPDATE bonafides.local_model_route_blocks SET route_sha256=:sha
-                WHERE owner_id=:owner RETURNING *"""),
+            WHERE owner_id=:owner RETURNING *"""),
                 {"owner": catalog.owner_id, "sha": generation.sha(identity)},
             )
             .mappings()
             .one()
         )
-        # Schema 30 adds only block copies, a column comment and migration metadata.
-        # With only this legacy row, restore the reachable schema 29 starting point.
-        conn.execute(
-            text("COMMENT ON COLUMN bonafides.local_model_route_blocks.route_sha256 IS NULL")
+        _before_block_backfill(conn)
+    if erased:
+        control = _deletion(catalog, _get(catalog, application))
+        maintenance = InstallationMaintenance(
+            catalog.runtime, control, parser.spool, renderer_spool
         )
-        conn.execute(text("DELETE FROM bonafides.schema_migrations WHERE version=30"))
-        conn.execute(
-            text("""UPDATE bonafides_migrations.alembic_version
-            SET version_num='0026_evidence_provenance'
-            WHERE version_num='0027_stable_model_blocks'""")
-        )
-    control = _deletion(catalog, _get(catalog, application))
-    maintenance = InstallationMaintenance(catalog.runtime, control, parser.spool, renderer_spool)
-    with maintenance.quiescent():
-        result = delete_controlled_owner_data(catalog.runtime, catalog.identity.settings, control)
-        maintenance.finish(result)
-    with catalog.runtime.transaction() as conn:
-        assert (
-            conn.execute(
-                text(
-                    "SELECT count(*) FROM bonafides.applications WHERE owner_id=:owner AND id=:id"
-                ),
-                {"owner": catalog.owner_id, "id": UUID(application["id"])},
-            ).scalar_one()
-            == 0
-        )
-        assert (
-            conn.execute(
-                text("SELECT count(*) FROM bonafides.model_runs WHERE owner_id=:owner"),
-                {"owner": catalog.owner_id},
-            ).scalar_one()
-            == 0
-        )
-        retained = (
-            conn.execute(
-                text("SELECT * FROM bonafides.local_model_route_blocks WHERE owner_id=:owner"),
-                {"owner": catalog.owner_id},
+        with maintenance.quiescent():
+            result = delete_controlled_owner_data(
+                catalog.runtime, catalog.identity.settings, control
             )
-            .mappings()
-            .all()
-        )
-        assert [dict(row) for row in retained] == [block]
-        assert (
-            conn.execute(text("SELECT max(version) FROM bonafides.schema_migrations")).scalar_one()
-            == 29
-        )
+            maintenance.finish(result)
+    with catalog.runtime.transaction() as conn:
+        assert conn.execute(
+            text("SELECT count(*) FROM bonafides.applications WHERE owner_id=:owner AND id=:id"),
+            {"owner": catalog.owner_id, "id": UUID(application["id"])},
+        ).scalar_one() == (0 if erased else 1)
+        assert conn.execute(
+            text("SELECT count(*) FROM bonafides.model_runs WHERE owner_id=:owner"),
+            {"owner": catalog.owner_id},
+        ).scalar_one() == (0 if erased else 1)
+    configured = catalog.identity.settings.local_model_route_file
+    monkeypatch.setattr(
+        local_model,
+        "load_route",
+        lambda supplied: load_route(path if supplied == configured else supplied),
+    )
+    with pytest.raises(local_model.ModelFailure, match="model_route_invalid"):
+        load_route(path)
     assert catalog.client.get("/health/ready").status_code == 503
     migrate(catalog.identity.settings)
     ready = catalog.client.get("/health/ready")
@@ -1750,11 +1783,7 @@ def test_model_block_migration_preserves_legacy_block_after_application_erasure(
             == "0027_stable_model_blocks"
         )
     with catalog.runtime.transaction() as conn:
-        assert (
-            conn.execute(text("SELECT max(version) FROM bonafides.schema_migrations")).scalar_one()
-            == 30
-        )
-        retained = (
+        rows = (
             conn.execute(
                 text("SELECT * FROM bonafides.local_model_route_blocks WHERE owner_id=:owner"),
                 {"owner": catalog.owner_id},
@@ -1762,18 +1791,133 @@ def test_model_block_migration_preserves_legacy_block_after_application_erasure(
             .mappings()
             .all()
         )
-        assert [dict(row) for row in retained] == [block]
-        status = generation.route_status(conn, catalog.owner_id, catalog.identity.settings)
-        assert status["identity"] == identity
-        assert status["status"] == "unqualified"
-        assert status["reason"] == "model_route_failed_live_evaluation"
-        details = generation.receipt_details(
-            conn, catalog.owner_id, catalog.identity.settings, identity
-        )
-        assert details["generate_documents"]["status"] == "passed"
-        assert details["generate_documents"]["qualified"] is False
-        assert details["generate_documents"]["reason"] == "model_route_failed_live_evaluation"
-        with pytest.raises(Problem, match="model_route_unavailable"):
-            suitability._route(
-                conn, catalog.owner_id, catalog.identity.settings, "generate_documents"
+        expected = {generation.sha(identity)}
+        if not erased:
+            expected.add(legacy.capability_sha256)
+        assert {row["route_sha256"] for row in rows} == expected
+        assert all(row["created_at"] == block["created_at"] for row in rows)
+        assert all(row["error_code"] == block["error_code"] for row in rows)
+    assert path.read_bytes() == original
+    # The new loader cannot qualify while incompatible document receipts remain.
+    # Remove just those obsolete receipts before obtaining replacement measurements.
+    data = json.loads(path.read_text())
+    for stage in qualification.STAGES:
+        del data["qualification_receipts"][stage]
+    route_file(tmp_path, data)
+    for stage in qualification.STAGES:
+        current = _measure_fixture_stage(monkeypatch, path, stage)
+        assert current.capability_sha256 == legacy.capability_sha256
+        assert current.identity() != identity
+        with catalog.runtime.transaction() as conn:
+            assert (
+                set(
+                    conn.execute(
+                        text(
+                            "SELECT route_sha256 FROM bonafides.local_model_route_blocks WHERE owner_id=:owner"
+                        ),
+                        {"owner": catalog.owner_id},
+                    ).scalars()
+                )
+                == expected
             )
+            status = generation.route_status(conn, catalog.owner_id, catalog.identity.settings)
+            assert status["status"] == ("qualified" if erased else "unqualified")
+            details = generation.receipt_details(
+                conn, catalog.owner_id, catalog.identity.settings, current.identity()
+            )["generate_documents"]
+            assert details["status"] == "passed"
+            assert details["qualified"] is erased
+            if erased:
+                # Documented pre-release boundary: the measured run replaces the
+                # erased observation; its unmatchable legacy row is still retained.
+                assert (
+                    suitability._route(
+                        conn, catalog.owner_id, catalog.identity.settings, "generate_documents"
+                    )
+                    == current
+                )
+            else:
+                assert status["reason"] == "model_route_failed_live_evaluation"
+                with pytest.raises(Problem, match="model_route_unavailable"):
+                    suitability._route(
+                        conn, catalog.owner_id, catalog.identity.settings, "generate_documents"
+                    )
+
+
+@pytest.mark.postgres
+@pytest.mark.parametrize(
+    "document_receipts", [False, True], ids=["suitability-only", "mixed-route"]
+)
+def test_unmapped_suitability_block_uses_only_unchanged_legacy_identity(
+    catalog: SourceContext,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    document_receipts: bool,
+) -> None:
+    legacy = _legacy_receipt_route(monkeypatch, tmp_path, document_receipts=document_receipts)
+    identity = legacy.identity()
+    path = tmp_path / "route.json"
+    original = path.read_bytes()
+    with catalog.identity.admin.transaction() as conn:
+        # An unmapped row has no retained observation, but is exactly the key and
+        # stage the old writer used for this valid five-field receipt-bearing route.
+        conn.execute(
+            text("""INSERT INTO bonafides.local_model_route_blocks
+            (owner_id,route_sha256,stage,error_code) VALUES(:owner,:sha,'extract_posting','model_incomplete')"""),
+            {"owner": catalog.owner_id, "sha": generation.sha(identity)},
+        )
+        _before_block_backfill(conn)
+    migrate(catalog.identity.settings)
+    ready = catalog.client.get("/health/ready")
+    assert ready.status_code == 200, ready.text
+    assert ready.json()["schema_version"] == 30
+    configured = catalog.identity.settings.local_model_route_file
+    monkeypatch.setattr(
+        local_model,
+        "load_route",
+        lambda supplied: load_route(path if supplied == configured else supplied),
+    )
+    assert path.read_bytes() == original
+    if document_receipts:
+        with pytest.raises(local_model.ModelFailure, match="model_route_invalid"):
+            load_route(path)
+        data = json.loads(path.read_text())
+        for stage in qualification.STAGES:
+            del data["qualification_receipts"][stage]
+        route_file(tmp_path, data)
+        current = _measure_fixture_stage(monkeypatch, path, "generate_documents")
+        assert current.capability_sha256 == legacy.capability_sha256
+        assert current.identity() != identity
+    else:
+        unchanged = load_route(path)
+        assert unchanged is not None and unchanged.identity() == identity
+        current = unchanged
+    with catalog.runtime.transaction() as conn:
+        assert (
+            conn.execute(
+                text("SELECT count(*) FROM bonafides.model_runs WHERE owner_id=:owner"),
+                {"owner": catalog.owner_id},
+            ).scalar_one()
+            == 0
+        )
+        assert conn.execute(
+            text(
+                "SELECT route_sha256 FROM bonafides.local_model_route_blocks WHERE owner_id=:owner"
+            ),
+            {"owner": catalog.owner_id},
+        ).scalar_one() == generation.sha(identity)
+        status = suitability._route_status(conn, catalog.owner_id, catalog.identity.settings)
+        assert status["status"] == ("qualified" if document_receipts else "unqualified")
+        if document_receipts:
+            assert (
+                suitability._route(
+                    conn, catalog.owner_id, catalog.identity.settings, "extract_posting"
+                )
+                == current
+            )
+        else:
+            assert status["reason"] == "model_route_failed_live_evaluation"
+            with pytest.raises(Problem, match="model_route_unavailable"):
+                suitability._route(
+                    conn, catalog.owner_id, catalog.identity.settings, "extract_posting"
+                )

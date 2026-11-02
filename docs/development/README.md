@@ -955,10 +955,15 @@ statements with blockers; it is informative, not a passing threshold or human ap
 New permanent live-evaluation blocks are keyed by capability and stage, not mutable
 receipts; qualification of either stage cannot clear those stable blocks. Run provenance
 and live JSON rates retain their exact receipt-bearing route identities. Migration 030
-backfills stable keys where recorded model-run identities remain available and preserves
-all legacy rows, including rows whose model runs were erased. Readers accept both the
-stable capability key and the exact legacy route-identity key: unmapped rows retain their
-pre-upgrade protection for an unchanged route without preventing the upgrade.
+backfills capability keys for blocks whose model-run identities remain available; these
+mapped blocks survive any later qualification. Every legacy row is also preserved.
+**Pre-release upgrade boundary:** blocks whose model runs were erased cannot be mapped.
+They apply through the legacy key only while the route's identity remains byte-for-byte
+unchanged, as can happen for suitability-only routes. Old document-stage five-field
+receipts must be replaced by measured receipts after this upgrade. That re-qualification
+changes the identity and ends any unmapped legacy block on the route, including a
+suitability-stage block on a route that also carried document-stage receipts. The new
+measured run is replacement evidence; mapped capability-bound blocks still apply.
 Schema-30 portable exports and imports retain the same owner-data shape as schema 29;
 route blocks remain excluded from portable data.
 
