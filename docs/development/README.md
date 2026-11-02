@@ -121,7 +121,11 @@ Every export writes a `bonafides-workspace/1` archive: a stored ZIP whose `manif
 
 The contract has its own version axis and carries no database schema number; each release maps its database rows to and from the published sections. The JSON Schema is generated from the Pydantic models and committed at [`docs/schemas/bonafides-workspace-1.schema.json`](../schemas/bonafides-workspace-1.schema.json); regenerate it with `uv run --frozen python -m bonafides.portable_workspace > docs/schemas/bonafides-workspace-1.schema.json`. Tests fail when the committed file differs from the models and when the published v1 bytes change: any change to the models is a new `format_version` with its own schema file and a reader kept for every published version.
 
+The schema and byte pin use Pydantic 2.12.5. If a Pydantic upgrade changes generated output without changing the models, regenerate and update the pin only after confirming the JSON Schema is semantically identical, with reviewer sign-off. A real contract change requires a new `format_version`, not a refreshed v1 pin.
+
 Import accepts exactly `bonafides-workspace` 1 and the legacy `bonafides-portable` 1 and 2; legacy formats stay importable until the migration baseline decides their fate. Any other `format` or `format_version` is refused as `incompatible_portable_format` before any database row or file is written, including staged files. The preview shows the archive's source format.
+
+Legacy model-history records are normalized through PostgreSQL's native row rendering before storage and hashing, so accepted legacy timestamp spellings remain exportable under the workspace contract. Archive-byte integrity still verifies the original input.
 
 ## Encrypted installation backup and recovery
 

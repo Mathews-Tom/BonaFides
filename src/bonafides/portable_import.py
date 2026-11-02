@@ -72,8 +72,19 @@ def _empty_target(conn: Connection, owner: UUID) -> None:
 
 def _persist_records(conn: Connection, owner: UUID, archive: PortableArchive) -> None:
     conn.execute(text("SET CONSTRAINTS ALL DEFERRED"))
+    history_fields = ",".join(COLUMNS["model_run_provenance"])
     for item in archive.manifest.records["model_run_provenance"]:
-        record = cast(dict[str, JsonValue], item["record"])
+        # Legacy archives allow PostgreSQL timestamp spellings that the workspace
+        # contract does not. Persist the native rendering, not the archive text.
+        record = cast(
+            dict[str, JsonValue],
+            conn.execute(
+                text(f"""SELECT to_jsonb(r) FROM (
+                SELECT {history_fields} FROM jsonb_populate_record(
+                NULL::bonafides.model_runs,CAST(:record AS jsonb))) r"""),
+                {"record": canonical_json(cast(dict[str, JsonValue], item["record"]))},
+            ).scalar_one(),
+        )
         encoded = canonical_json(record)
         conn.execute(
             text("""INSERT INTO bonafides.portable_model_history
