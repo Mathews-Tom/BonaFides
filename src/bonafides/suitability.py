@@ -389,9 +389,13 @@ def _route_status(conn: Connection, owner_id: UUID, settings: Settings) -> dict[
     blocked = (
         conn.execute(
             text(
-                "SELECT stage FROM bonafides.local_model_route_blocks WHERE owner_id=:owner AND route_sha256=:sha AND stage IN ('extract_posting','match_requirements')"
+                "SELECT stage FROM bonafides.local_model_route_blocks WHERE owner_id=:owner AND route_sha256 IN (:capability,:legacy) AND stage IN ('extract_posting','match_requirements')"
             ),
-            {"owner": owner_id, "sha": route.capability_sha256},
+            {
+                "owner": owner_id,
+                "capability": route.capability_sha256,
+                "legacy": _sha(route.identity()),
+            },
         ).first()
         is not None
     )
@@ -420,8 +424,13 @@ def _route(
     blocked = (
         conn.execute(
             text("""SELECT stage FROM bonafides.local_model_route_blocks
-        WHERE owner_id=:owner AND route_sha256=:sha AND stage=:stage"""),
-            {"owner": owner_id, "sha": route.capability_sha256, "stage": stage},
+        WHERE owner_id=:owner AND route_sha256 IN (:capability,:legacy) AND stage=:stage"""),
+            {
+                "owner": owner_id,
+                "capability": route.capability_sha256,
+                "legacy": _sha(route.identity()),
+                "stage": stage,
+            },
         ).first()
         is not None
     )

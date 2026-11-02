@@ -547,7 +547,7 @@ def qualification_receipt(payload: dict[str, object]) -> dict[str, object]:
     for key in ("capability_sha256", "dataset_sha256"):
         if not re.fullmatch(r"[0-9a-f]{64}", _text(item, key, 64)):
             raise ModelFailure("model_route_invalid")
-    validate_reviewer(cast(str, item.get("reviewed_by")))
+    _text(item, "reviewed_by")
     try:
         reviewed = datetime.fromisoformat(_text(item, "reviewed_at"))
         if reviewed.tzinfo is None:
@@ -1207,6 +1207,11 @@ class OllamaClient:
         response_bytes = 0
         request_count = 0
         sent_request_upper_bound = 0
+        # Qualification measures inference, not metadata/connection availability.
+        # Production keeps its existing whole-call deadline failure code.
+        deadline_failure_code = (
+            "model_unavailable" if self.qualification_stage is not None else "model_timeout"
+        )
         finished = Event()
 
         def guard() -> None:
@@ -1229,6 +1234,7 @@ class OllamaClient:
 
             def request(method: str, path: str, body: bytes | None = None) -> bytes:
                 nonlocal connection, response_bytes, request_count, sent_request_upper_bound
+                nonlocal deadline_failure_code
                 request_count += 1
                 sent_request_upper_bound += (
                     len(method)
@@ -1244,7 +1250,7 @@ class OllamaClient:
                 connection.connect()
                 # No task bytes after slow DNS/TLS, cancellation or deadline.
                 if expired.is_set() or time.monotonic() - started >= deadline_seconds:
-                    raise ModelFailure("model_timeout", retryable=True)
+                    raise ModelFailure(deadline_failure_code, retryable=True)
                 if interrupted is not None and interrupted.is_set():
                     raise ModelFailure("model_interrupted")
                 if method == "POST" and self.lifecycle is not None:
@@ -1254,7 +1260,7 @@ class OllamaClient:
                     # Admission can wait on PostgreSQL. Recheck after it returns,
                     # not only before it starts; the watcher is not a send fence.
                     if expired.is_set() or time.monotonic() - started >= deadline_seconds:
-                        raise ModelFailure("model_timeout", retryable=True)
+                        raise ModelFailure(deadline_failure_code, retryable=True)
                     if interrupted is not None and interrupted.is_set():
                         raise ModelFailure("model_interrupted")
                 connection.request(
@@ -1268,6 +1274,10 @@ class OllamaClient:
                         "Connection": "close",
                     },
                 )
+                if method == "POST":
+                    # Only a fully transmitted inference request starts measurement;
+                    # connecting or failing to send cannot count against the model.
+                    deadline_failure_code = "model_timeout"
                 result = _response(connection, route.max_response_bytes - response_bytes)
                 response_bytes += len(result)
                 return result
@@ -1289,7 +1299,7 @@ class OllamaClient:
                 # a refused or length-limited terminal answer has stopped inference.
                 self.lifecycle.completed()
             if expired.is_set() or time.monotonic() - started >= deadline_seconds:
-                raise ModelFailure("model_timeout", retryable=True)
+                raise ModelFailure(deadline_failure_code, retryable=True)
             if interrupted is not None and interrupted.is_set():
                 raise ModelFailure("model_interrupted")
             if (
@@ -1340,7 +1350,7 @@ class OllamaClient:
             if interrupted is not None and interrupted.is_set():
                 raise ModelFailure("model_interrupted")
             if expired.is_set() or time.monotonic() - started >= deadline_seconds:
-                raise ModelFailure("model_timeout", retryable=True)
+                raise ModelFailure(deadline_failure_code, retryable=True)
             return ModelResult(
                 output,
                 {
@@ -1374,19 +1384,19 @@ class OllamaClient:
             if interrupted is not None and interrupted.is_set():
                 raise ModelFailure("model_interrupted") from None
             if expired.is_set() or time.monotonic() - started >= deadline_seconds:
-                raise ModelFailure("model_timeout", retryable=True) from None
+                raise ModelFailure(deadline_failure_code, retryable=True) from None
             raise
         except ssl.SSLError:
             if interrupted is not None and interrupted.is_set():
                 raise ModelFailure("model_interrupted") from None
             if expired.is_set() or time.monotonic() - started >= deadline_seconds:
-                raise ModelFailure("model_timeout", retryable=True) from None
+                raise ModelFailure(deadline_failure_code, retryable=True) from None
             raise ModelFailure("model_tls_rejected") from None
         except (OSError, http.client.HTTPException, ValueError):
             if interrupted is not None and interrupted.is_set():
                 raise ModelFailure("model_interrupted") from None
             if expired.is_set() or time.monotonic() - started >= deadline_seconds:
-                raise ModelFailure("model_timeout", retryable=True) from None
+                raise ModelFailure(deadline_failure_code, retryable=True) from None
             raise ModelFailure("model_unavailable", retryable=True) from None
         finally:
             finished.set()

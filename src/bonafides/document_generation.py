@@ -256,9 +256,14 @@ def route_status(
         return {"status": "disabled", "reason": "local_model_not_configured", "identity": None}
     blocked = conn.execute(
         text(
-            "SELECT 1 FROM bonafides.local_model_route_blocks WHERE owner_id=:owner AND route_sha256=:sha AND stage=:stage"
+            "SELECT 1 FROM bonafides.local_model_route_blocks WHERE owner_id=:owner AND route_sha256 IN (:capability,:legacy) AND stage=:stage"
         ),
-        {"owner": owner, "sha": route.capability_sha256, "stage": stage},
+        {
+            "owner": owner,
+            "capability": route.capability_sha256,
+            "legacy": sha(route.identity()),
+            "stage": stage,
+        },
     ).first()
     qualified = route.qualified_for(stage) and blocked is None
     return {
@@ -297,8 +302,8 @@ def receipt_details(
     details = route.receipt_details()
     blocked = conn.execute(
         text("""SELECT stage FROM bonafides.local_model_route_blocks
-            WHERE owner_id=:owner AND route_sha256=:sha"""),
-        {"owner": owner, "sha": route.capability_sha256},
+            WHERE owner_id=:owner AND route_sha256 IN (:capability,:legacy)"""),
+        {"owner": owner, "capability": route.capability_sha256, "legacy": sha(route.identity())},
     ).scalars()
     for stage in blocked:
         if stage in details:

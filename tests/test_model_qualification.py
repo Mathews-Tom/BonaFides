@@ -291,3 +291,49 @@ def test_section_qualification_checks_full_replacement_limits() -> None:
             candidate, "regenerate_section", plan, cast(dict[str, object], case["target"]), full
         )
     assert any("document_too_large" in item for item in mismatch.value.summary)
+
+
+@pytest.mark.parametrize("missing_key", [False, True])
+def test_missing_section_target_is_rejected_before_inference(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    missing_key: bool,
+) -> None:
+    cases, _ = qualification.load_cases(DATASET, "regenerate_section")
+    target = cast(dict[str, object], cases[0]["target"])
+    if missing_key:
+        del target["section_key"]
+    else:
+        target["section_key"] = "missing-section"
+    dataset = tmp_path / "dataset"
+    dataset.mkdir()
+    (dataset / "regenerate_section.jsonl").write_text(
+        "\n".join(canonical_json(case) for case in cases) + "\n"
+    )
+    qualified_route(tmp_path, route_data("http://127.0.0.1:11434"))
+    route = tmp_path / "route.json"
+    original = route.read_bytes()
+
+    def call(self: local_model.OllamaClient, *args: object) -> local_model.ModelResult:
+        raise AssertionError("invalid section target must not reach inference")
+
+    monkeypatch.setattr(local_model.OllamaClient, "call", call)
+    assert (
+        qualification.main(
+            [
+                "qualify",
+                "--route",
+                str(route),
+                "--stage",
+                "regenerate_section",
+                "--dataset",
+                str(dataset),
+                "--reviewed-by",
+                "synthetic-only",
+            ]
+        )
+        == 2
+    )
+    assert "qualification_target_missing" in capsys.readouterr().err
+    assert route.read_bytes() == original

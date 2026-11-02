@@ -11,7 +11,7 @@ from sqlalchemy import Connection, text
 
 
 def preserve_route_blocks(connection: Connection) -> None:
-    """Append capability-bound blocks using immutable model-run route observations."""
+    """Append mapped capability blocks; preserve unbound rows for legacy readers."""
     bindings: dict[tuple[UUID, str, str], str] = {}
     observations = connection.execute(
         text("""SELECT DISTINCT m.owner_id,m.task_kind,m.parameters->'route_identity' AS identity
@@ -41,7 +41,7 @@ def preserve_route_blocks(connection: Connection) -> None:
     for block in blocks:
         capability = bindings.get((block["owner_id"], block["stage"], block["route_sha256"]))
         if capability is None:
-            raise RuntimeError("model route block has no matching recorded capability")
+            continue
         connection.execute(
             text("""INSERT INTO bonafides.local_model_route_blocks
             (owner_id,route_sha256,stage,error_code,created_at)

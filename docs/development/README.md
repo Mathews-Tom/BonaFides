@@ -943,17 +943,22 @@ prints canonical JSON counts (`valid_first`, `valid_after_correction`,
 `invalid_after_correction`, `failed_before_check`), rates and duration, then atomically
 replaces only the selected stage's receipt in a mode-0600 route file. Exit 0 means
 passed, 1 means a completed but failed qualification, and 2 means invalid input,
-infrastructure/policy refusal or publication failure. Invalid reviewer names are rejected
-before inference. Infrastructure failures and destination/TLS/prompt/context refusals abort
-without overwriting any receipt; only model-attributable outcomes (including truncation,
-deadline and response limits) count as pre-check failures. Every counted case enters the
+infrastructure/policy refusal or publication failure. Invalid reviewer names and missing
+section targets are rejected before inference. Infrastructure failures and
+destination/TLS/prompt/context refusals abort without overwriting any receipt. Metadata
+or pre-send deadlines and connection failures are infrastructure failures; only
+model-attributable outcomes (including truncation, deadlines after sending inference,
+and response limits) count as pre-check failures. Every counted case enters the
 denominator; at least 95% must validate after at most one correction. Every valid result runs
 through the unchanged claim checker. The factual usable-statement rate excludes
 statements with blockers; it is informative, not a passing threshold or human approval.
-Permanent live-evaluation blocks are keyed by capability and stage, not mutable receipts;
-qualification of either stage cannot clear them. Run provenance and live JSON rates retain
-their exact receipt-bearing route identities. Migration 030 backfills stable keys from
-recorded model-run identities, preserving old blocks and refusing an unmappable backfill.
+New permanent live-evaluation blocks are keyed by capability and stage, not mutable
+receipts; qualification of either stage cannot clear those stable blocks. Run provenance
+and live JSON rates retain their exact receipt-bearing route identities. Migration 030
+backfills stable keys where recorded model-run identities remain available and preserves
+all legacy rows, including rows whose model runs were erased. Readers accept both the
+stable capability key and the exact legacy route-identity key: unmapped rows retain their
+pre-upgrade protection for an unchanged route without preventing the upgrade.
 Schema-30 portable exports and imports retain the same owner-data shape as schema 29;
 route blocks remain excluded from portable data.
 

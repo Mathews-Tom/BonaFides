@@ -47,6 +47,13 @@ def load_cases(directory: Path, stage: str) -> tuple[list[dict[str, object]], st
             "target",
         } | ({"base_body"} if stage == "regenerate_section" else set()):
             raise ValueError("qualification_case_invalid")
+        if stage == "regenerate_section":
+            body = documents.parse_body(case["base_body"])
+            target = case["target"]
+            if not isinstance(target, dict) or not any(
+                section.key == target.get("section_key") for section in body.sections
+            ):
+                raise ValueError("qualification_target_missing")
         cases.append(case)
     if not 20 <= len(cases) <= 1000 or len({str(case["id"]) for case in cases}) != len(cases):
         raise ValueError("qualification_case_count_invalid")
