@@ -11,13 +11,17 @@ route file, for pair generation and for section regeneration (a projection with 
   connective target blocks.
 - ``absent-claim``: one factual block cites a claim id that is not in the profile.
 - ``posting-only-skill``: one factual block asserts a term found only in the posting.
+- ``inflated``: one factual block is a cut into the middle of a claim's own text that
+  starts at a later, stronger ownership verb ("Assisted the team that led X" -> "Led X").
+  It is contained in its claim but blocked by the allowed prefix shape.
 - ``malformed-once``: schema-invalid until the request carries a correction.
 - ``malformed``: always schema-invalid.
 - ``truncated``: a length-limited, incomplete response.
 
-``serve`` uses only the standard library so it runs as its own process or container.
-``route`` writes a route file whose qualification receipts for both document stages are
-fixture-only: they attest nothing about any real model.
+``serve`` uses the standard library and, for ``inflated``, the application's ordered
+ownership vocabulary to select the fixture cut, not a checker rank rule. ``route``
+writes a route file whose qualification receipts for both document stages are fixture-only:
+they attest nothing about any real model.
 """
 
 from __future__ import annotations
@@ -42,6 +46,7 @@ SCENARIOS = (
     "valid",
     "absent-claim",
     "posting-only-skill",
+    "inflated",
     "malformed-once",
     "malformed",
     "truncated",
@@ -144,6 +149,30 @@ def _posting_only_term(projection: dict[str, object]) -> str:
     raise StubFailure("posting has no term absent from the owner's claims and evidence")
 
 
+def _inflated(projection: dict[str, object]) -> tuple[str, str]:
+    """A claim and the cut of its own text that starts at a later, stronger verb."""
+    from bonafides.claims import OWNERSHIP_VERBS
+
+    order = {verb.replace("_", " "): index for index, verb in enumerate(OWNERSHIP_VERBS)}
+    vocabulary = re.compile(
+        r"(?<![^\W_]|-)(?:"
+        + "|".join(re.escape(phrase) for phrase in sorted(order, key=len, reverse=True))
+        + r")(?![^\W_]|-)",
+        re.IGNORECASE,
+    )
+    for claim in _items(projection, "claims"):
+        text = str(claim["text"]).rstrip(".;")
+        verbs = list(vocabulary.finditer(text))
+        if not verbs:
+            continue
+        first = order[verbs[0].group().casefold()]
+        for verb in verbs[1:]:
+            if order[verb.group().casefold()] < first:
+                cut = text[verb.start() :]
+                return str(claim["id"]), cut[0].upper() + cut[1:]
+    raise StubFailure("no claim's text holds a later verb stronger than its own")
+
+
 def respond(scenario: str, request: dict[str, object]) -> dict[str, object]:
     """The complete /api/chat envelope for one request under one scenario."""
     messages = request["messages"]
@@ -170,6 +199,9 @@ def respond(scenario: str, request: dict[str, object]) -> dict[str, object]:
         elif scenario == "posting-only-skill":
             claim = str(_items(projection, "claims")[0]["id"])
             statement = f"Hands-on experience with {_posting_only_term(projection)}."
+            statements.append(_block(900, "factual", statement, claim))
+        elif scenario == "inflated":
+            claim, statement = _inflated(projection)
             statements.append(_block(900, "factual", statement, claim))
         content = json.dumps(output)
     return {

@@ -53,7 +53,8 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog="bonafides",
         epilog="bonafides claims coverage <file> reports the share of bullets in a local text "
-        "file that structured claims represent",
+        "file that structured claims represent; bonafides claims inflation-report <dir> reports "
+        "the inflation rules' false-block and per-kind block rates on synthetic case sets",
     )
     parser.add_argument(
         "command",

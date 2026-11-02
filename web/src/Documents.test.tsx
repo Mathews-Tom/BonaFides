@@ -339,6 +339,29 @@ describe('review, export and generation boundaries', () => {
     expect(screen.getByRole('button', { name: 'Render reviewed PDF' })).toBeDisabled();
   });
 
+  it('names the reason for each statement that strengthens its claim', async () => {
+    const kinds = [
+      ['statement_cut_inside_claim', 'Led the Linux service checks.', 'Cuts into the middle of its claim'],
+      ['statement_not_in_claim', 'Maintained Linux service checks 2018–2024.', "Not part of its claim: its wording is not contained in its claim's text."],
+      ['statement_not_in_claim_evidence', 'Maintained Linux service checks.', "Its claim's text is not contained in the claim's own evidence."],
+    ] as const;
+    const first = saved.current_revision.body.sections[0]!.blocks[0]!;
+    const body = { ...saved.current_revision.body, sections: [{ ...saved.current_revision.body.sections[0]!, blocks: kinds.map(([, text], index) => ({ ...first, block_key: `b-${index + 1}`, text })) }] };
+    const issues = kinds.map(([code, statement], index) => ({ path: `/sections/0/blocks/${index}`, code, statement }));
+    const blocked = { ...saved, unsupported_claims: issues.map(issue => issue.path), current_revision: { ...saved.current_revision, body, validation_issues: issues } };
+    const { api } = fixture(blocked, async () => { throw new ApiError(404, 'not_found'); });
+    render(<Documents api={api} profile={profile} />); await ready();
+    const items = within(screen.getByText('Export blocked: unresolved factual or source issues.').closest('div')!).getAllByRole('listitem');
+    expect(items).toHaveLength(kinds.length);
+    kinds.forEach(([code, statement, reason], index) => {
+      expect(items[index]).toHaveTextContent(reason);
+      expect(items[index]).toHaveTextContent(`Statement: ${statement}`);
+      expect(items[index]).toHaveTextContent(code);
+    });
+    expect(screen.getByRole('button', { name: 'Accept this exact revision' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Render reviewed PDF' })).toBeDisabled();
+  });
+
   it('keeps unsupported manual text editable but blocks review/export even if a server review flag is true', async () => {
     const user = userEvent.setup(); const blocked = { ...saved, reviewed: true, unsupported_claims: ['/sections/0/blocks/0'], current_revision: { ...saved.current_revision, validation_issues: [{ path: '/sections/0/blocks/0', code: 'unestablished_factual_text' }] } };
     const { api, request } = fixture(blocked, async (path, method, body) => {
@@ -539,7 +562,7 @@ const sectionProposal: SectionProposal = {
   target_document_version: tailored.version, target_content_sha256: tailored.current_revision.content_sha256,
   section_key: 'experience', original_section: tailored.current_revision.body.sections[0]!,
   proposed_section: { ...tailored.current_revision.body.sections[0]!, blocks: [{ ...tailored.current_revision.body.sections[0]!.blocks[0]!, block_key: 'proposal-1-block-0', text: 'Led an unsupported global team.' }] },
-  validation_issues: [{ path: '/sections/0/blocks/0', code: 'statement_not_in_claim_evidence', statement: 'Led an unsupported global team.' }],
+  validation_issues: [{ path: '/sections/0/blocks/0', code: 'statement_not_in_claim', statement: 'Led an unsupported global team.' }],
   facts: tailored.current_revision.provenance_snapshot.facts ?? [],
   model_run: { id: 'section-run-1', stage: 'regenerate_section' }, created_at: '2026-10-25T14:00:00Z', applicable: true, historical: false,
 };
@@ -773,7 +796,7 @@ describe('saved tailored section proposals', () => {
       expect(screen.getByLabelText('Block text: b-1')).toHaveValue('Maintained Linux service checks.');
       expect(within(screen.getByRole('article', { name: 'Proposed section' })).getByText('Led an unsupported global team.')).toBeInTheDocument();
       expect(screen.getByText('Proposed draft has review/export blockers.')).toBeVisible();
-      const blocker = screen.getByText(/^It is not contained in its claim's own evidence\./).closest('li')!;
+      const blocker = screen.getByText(/^Not part of its claim: /).closest('li')!;
       expect(within(blocker).getByText('Led an unsupported global team.', { selector: 'q' })).toBeVisible();
       expect(within(screen.getByRole('article', { name: 'Proposed section' })).getByText('Linked claim: “Maintained Linux service checks.”')).toBeVisible();
       expect(screen.getByText(/Applying retains these issues/)).toBeVisible();

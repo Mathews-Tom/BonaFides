@@ -91,6 +91,8 @@ class Fact:
     claim_sha256: str
     evidence_sha256: str
     status: Literal["supported", "user_asserted"]
+    # A structured claim's ownership verb key; ``None`` for a literal claim.
+    claim_verb: str | None
 
 
 @dataclass(frozen=True)
@@ -194,6 +196,7 @@ def _facts(conn: Connection, owner_id: UUID, profile_revision_id: UUID) -> tuple
                 row["claim_sha256"],
                 row["evidence_sha256"],
                 "supported" if row["support_kind"] == "direct" else "user_asserted",
+                structured.verb if structured else None,
             )
         )
     facts.sort(key=lambda fact: (order[str(fact.claim_id)], str(fact.evidence_id)))
@@ -245,6 +248,7 @@ def publish_document(
             "claim_sha256": fact.claim_sha256,
             "evidence_sha256": fact.evidence_sha256,
             "status": fact.status,
+            "claim_verb": fact.claim_verb,
         }
         for fact in facts
     ]

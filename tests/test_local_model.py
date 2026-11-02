@@ -947,6 +947,47 @@ def _section_context() -> dict[str, object]:
     }
 
 
+@pytest.mark.parametrize("stage", ["generate_documents", "regenerate_section"])
+def test_document_prompts_pin_prefix_cut_shape(stage: str) -> None:
+    from bonafides import local_model
+
+    assert PROMPT_VERSIONS[stage] == f"ol-{stage.replace('_', '-')}-v7"
+    prompt = local_model._SUFFIXES[stage]
+    assert "claim's exact printable text" in prompt
+    assert "whole-phrase prefix of its claim text" in prompt
+    assert "after removing only its leading ownership-verb phrase" in prompt
+    assert "renderer's actual pinned verb wording" in prompt
+    assert "longest matching leading ownership-vocabulary phrase" in prompt
+    assert "entire remainder" in prompt
+    assert "must not start with another ownership-vocabulary verb" in prompt
+    assert "including after an initial and, &, or comma" in prompt
+    assert "never a verb inside a hyphen-joined word" in prompt
+    assert "Never cut into a hyphen-joined word or take a middle or suffix fragment" in prompt
+    assert "prefix may end only at the end of the claim text" in prompt
+    assert "a comma, semicolon, colon or left parenthesis" in prompt
+    assert "a full stop followed by whitespace" in prompt
+    assert "a spaced dash (hyphen, en dash or em dash)" in prompt
+    assert (
+        "whole boundary words (case-insensitive): for, by, to, on, with, in, across, from, "
+        "through, during, at, that" in prompt
+    )
+    assert "Never split a numeric or currency expression" in prompt
+    assert (
+        "No endpoint is permitted when the prefix ends in a number or currency figure "
+        "and the endpoint is followed by another number" in prompt
+    )
+    assert "Keep every qualifier that limits scope, period, share, rate or co-ownership" in prompt
+    assert "permits dropping qualifiers" not in prompt
+    assert "Reduced latency by 30% for one pilot region" not in prompt
+    assert "Built the API for billing team" not in prompt
+    assert "'Designed and implemented' before 'a'" in prompt
+    assert (
+        "QA/release, Node.js, migration planning, $2 million, 2 per 1000 or migration jointly"
+        in prompt
+    )
+    assert "stronger verb" not in prompt
+
+
 def test_section_stage_sends_exact_minimized_projection_and_section_only_schema(
     tmp_path: Path,
 ) -> None:
@@ -981,6 +1022,7 @@ def test_section_stage_sends_exact_minimized_projection_and_section_only_schema(
         payload = json.loads(requests[0])
         assert json.loads(payload["messages"][1]["content"]) == context
         assert "tools" not in payload and payload["stream"] is False
+        assert local_model._STATEMENT_RULES in payload["messages"][0]["content"]
         schema = payload["format"]
         assert set(schema["properties"]) == {"schema_version", "stage", "blocks", "warnings"}
         assert set(schema["properties"]["blocks"]["items"]["properties"]) == {

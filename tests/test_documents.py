@@ -57,6 +57,7 @@ def example(text: str = "Maintained Linux services.") -> tuple[DocumentBody, Fac
         "a" * 64,
         "b" * 64,
         "user_asserted",
+        None,
     )
     body = DocumentBody(
         title="Base résumé",
@@ -142,7 +143,7 @@ def test_citation_does_not_support_invented_kubernetes_metric() -> None:
     wire = body.model_dump(mode="json")
     wire["sections"][0]["blocks"][0]["text"] = "Led Kubernetes migration improving uptime by 99%."
     assert _base_issues(parse_body(wire), fact) == [
-        ("/sections/0/blocks/0", "statement_not_in_claim_evidence")
+        ("/sections/0/blocks/0", "statement_not_in_claim")
     ]
 
 

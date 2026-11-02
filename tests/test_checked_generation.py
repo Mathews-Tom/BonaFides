@@ -32,6 +32,7 @@ from test_sources import catalog as catalog
 from test_suitability import _after_model_send
 
 from bonafides import local_model, model_context, suitability
+from bonafides.claims import contains_statement
 from bonafides.worker import Worker
 from bonafides.workflows import Claim
 from tools import stub_model
@@ -102,6 +103,61 @@ def _factual_blocks(document: dict[str, Any]) -> list[dict[str, Any]]:
     ]
 
 
+@pytest.mark.parametrize(
+    ("claim_text", "expected"),
+    [
+        ("Assisted the team that led the billing migration", "Led the billing migration"),
+        ("Supported analysts who managed the vendor portfolio.", "Managed the vendor portfolio"),
+        (
+            "Helped the engineer who took ownership of the rotation",
+            "Took ownership of the rotation",
+        ),
+        (
+            "Worked on a squad that built and shipped the dashboard",
+            "Built and shipped the dashboard",
+        ),
+    ],
+)
+def test_inflated_stub_cuts_its_claim_at_a_later_stronger_verb(
+    claim_text: str, expected: str
+) -> None:
+    projection: dict[str, object] = {
+        "posting": {},
+        "claims": [{"id": "claim-1", "text": claim_text, "evidence_revision_ids": ["evidence-1"]}],
+        "evidence": [{"id": "evidence-1", "text": claim_text}],
+    }
+    response = stub_model.respond(
+        "inflated",
+        {"messages": [{"content": ""}, {"content": json.dumps(projection)}]},
+    )
+    message = cast(dict[str, str], response["message"])
+    output = json.loads(message["content"])
+    block = output["documents"][0]["sections"][0]["blocks"][-1]
+    assert block["claim_id"] == "claim-1"
+    assert block["text"] == expected
+    assert contains_statement(block["text"], claim_text)
+    assert not claim_text.casefold().startswith(block["text"].casefold())
+
+
+@pytest.mark.parametrize(
+    "claim_text",
+    [
+        "Led the team that managed the migration",
+        "Managed the rollout",
+        "Migration project for the payments team",
+        "Assisted the custom-built dashboard team",
+        "Helped the team that custom-built the dashboard",
+    ],
+)
+def test_inflated_stub_refuses_claims_without_a_later_stronger_verb(claim_text: str) -> None:
+    projection: dict[str, object] = {
+        "claims": [{"id": "claim-1", "text": claim_text, "evidence_revision_ids": ["evidence-1"]}],
+        "evidence": [{"id": "evidence-1", "text": claim_text}],
+    }
+    with pytest.raises(stub_model.StubFailure, match="later verb stronger"):
+        stub_model._inflated(projection)
+
+
 @pytest.mark.postgres
 def test_valid_stub_pair_links_every_factual_sentence_and_exports(
     catalog: SourceContext, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
@@ -115,7 +171,7 @@ def test_valid_stub_pair_links_every_factual_sentence_and_exports(
     assert {item["kind"] for item in items} == {"resume", "cover_letter"}
     for document in items:
         provenance = document["current_revision"]["provenance_snapshot"]
-        assert provenance["checker_version"] == "claim-evidence-v1"
+        assert provenance["checker_version"] == "claim-evidence-v6"
         pinned = {fact["claim_revision_id"] for fact in provenance["facts"]}
         blocks = _factual_blocks(document)
         assert blocks and all(
@@ -134,7 +190,7 @@ def test_valid_stub_pair_links_every_factual_sentence_and_exports(
     ("scenario", "code"),
     [
         ("absent-claim", "claim_not_in_profile"),
-        ("posting-only-skill", "statement_not_in_claim_evidence"),
+        ("posting-only-skill", "statement_not_in_claim"),
     ],
 )
 def test_fabricated_stub_statement_blocks_export_even_after_review(

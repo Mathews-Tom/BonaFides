@@ -2,12 +2,18 @@
 """Deterministic checking of claim-structured generated documents.
 
 A factual statement is supported only when it cites exactly one claim of the pinned
-generation context and its text is contained, under the structured-claim containment
-rule, in the full text of one of that claim's own linked evidence revisions. The
-posting and other claims' evidence are never consulted. A statement that reproduces
-exactly the cited claim's pinned printable text (its claim text followed by that claim
-revision's own reviewed structured-field lines) is checked by its claim text alone; any
-other wording, including altered, added or reordered field lines, is checked as a whole.
+generation context, that claim's pinned text is contained, under the structured-claim
+containment rule, in the full text of one of the claim's own linked evidence revisions, and
+the statement is either exactly the claim's pinned printable text (its claim text followed by
+that claim revision's own reviewed structured-field lines), a whole-phrase prefix of its claim
+text, or a whole-phrase prefix after the claim's leading verb. Nothing is borrowed from
+elsewhere in the evidence, the posting or other claims. A prefix cannot end inside a
+hyphenated word. The leading verb is the structured claim's pinned rendered verb, or a
+literal claim's leading ownership-vocabulary phrase. Dropping it is unavailable if the
+remainder starts with another vocabulary verb, optionally after "and", "&" or a comma.
+Prefixes end only at the claim's end or before declared punctuation or boundary words;
+qualifiers starting with those words can still be dropped.
+Review cannot waive any of these blockers.
 Non-factual text must be one of the declared connective templates, whose only variable
 slots are the posting title and organization; a base résumé has no connective text.
 Anything else is treated as an unsupported factual statement.
@@ -16,15 +22,16 @@ Anything else is treated as an unsupported factual statement.
 from __future__ import annotations
 
 import re
+import unicodedata
 from collections.abc import Mapping, Sequence
 from typing import TYPE_CHECKING, Literal
 
-from bonafides.claims import contains_statement
+from bonafides.claims import _EN_VERBS, _normalise_grounding, contains_statement
 
 if TYPE_CHECKING:
     from bonafides.documents import DocumentBody
 
-CHECKER_VERSION = "claim-evidence-v1"
+CHECKER_VERSION = "claim-evidence-v6"
 CATEGORIES = {
     "experience": "Experience",
     "education": "Education",
@@ -56,7 +63,27 @@ CONNECTIVES: dict[ConnectiveKind, tuple[str, ...]] = {
         "The following examples from my record are relevant to this role.",
     ),
 }
+# Reviewed structured fields printed after a claim's text, one line each, in this order.
+PRINTABLE_FIELDS = ("role", "organization", "start_date", "end_date", "proficiency")
 _SLOT = re.compile(r"\{(title|organization)\}")
+# Use the renderer's wording, not a second rendering of the vocabulary keys.
+_VERB_WORDING: dict[str, str] = {
+    key: _normalise_grounding(wording) for key, wording in _EN_VERBS.items()
+}
+# Longest phrase first; hyphen-joined words do not hold a vocabulary verb.
+_VOCABULARY_VERB = re.compile(
+    r"(?:"
+    + "|".join(
+        re.escape(phrase) for phrase in sorted(_VERB_WORDING.values(), key=len, reverse=True)
+    )
+    + r")(?![^\W_]|-)"
+)
+_CONJUNCTION = re.compile(r"^(?:and\b|&|,)\s*")
+_CUT_END = re.compile(
+    r"(?:\s*(?:[,;:(]|\.\s)|\s+-\s|"
+    r"\s+(?:for|by|to|on|with|in|across|from|through|during|at|that)(?![^\W_]|-))"
+)
+_FIGURE = re.compile(r"[+-]?\d+(?:[.,]\d+)*(?:[%×])?")
 
 
 def title_issues(body: DocumentBody, kind: str) -> list[dict[str, str]]:
@@ -94,27 +121,95 @@ def connectives(frame: Mapping[str, object]) -> dict[str, ConnectiveKind]:
     return rendered
 
 
-def _factual_issue(
+def printable_text(claim_text: str, fields: Mapping[str, str]) -> str:
+    """A claim's printable text: its claim text, then its reviewed structured-field lines."""
+    return "\n".join([claim_text, *(fields[key] for key in PRINTABLE_FIELDS if key in fields)])
+
+
+def _factual_issues(
     claim_ids: Sequence[str],
     evidence_ids: Sequence[str],
     text: str,
     facts: Sequence[Mapping[str, object]],
-) -> str | None:
+) -> list[str]:
     if not claim_ids:
-        return "uncited_factual_statement"
+        return ["uncited_factual_statement"]
     if len(claim_ids) != 1:
-        return "statement_cites_multiple_claims"
+        return ["statement_cites_multiple_claims"]
     own = [fact for fact in facts if str(fact["claim_revision_id"]) == claim_ids[0]]
     if not own:
-        return "claim_not_in_profile"
+        return ["claim_not_in_profile"]
     if set(evidence_ids) != {str(fact["evidence_revision_id"]) for fact in own}:
-        return "evidence_not_linked_to_claim"
+        return ["evidence_not_linked_to_claim"]
+    claim_text = str(own[0]["claim_text"])
+    if not any(contains_statement(claim_text, str(fact["evidence_text"])) for fact in own):
+        return ["statement_not_in_claim_evidence"]
     # The pinned printable text appends only the claim revision's own reviewed fields.
-    printable = {fact.get("printable_text") for fact in own}
-    statement = str(own[0]["claim_text"]) if text in printable else text
-    if not any(contains_statement(statement, str(fact["evidence_text"])) for fact in own):
-        return "statement_not_in_claim_evidence"
-    return None
+    if text in {fact.get("printable_text") for fact in own}:
+        return []
+    if not contains_statement(text, claim_text):
+        return ["statement_not_in_claim"]
+    verb = own[0].get("claim_verb")
+    if _claim_prefix(text, claim_text, verb if isinstance(verb, str) else None):
+        return []
+    return ["statement_cut_inside_claim"]
+
+
+def _whole_prefix(statement: str, text: str) -> bool:
+    """An already normalised prefix, with containment's boundaries plus no hyphen cut."""
+    currencies = re.escape("".join({char for char in text if unicodedata.category(char) == "Sc"}))
+    currency_boundary = rf"|[{currencies}]" if currencies else ""
+    return (
+        re.match(
+            rf"{re.escape(statement)}(?![^\W_]|-|(?<=\d)[%×]|[.,]\d{currency_boundary})",
+            text,
+        )
+        is not None
+    )
+
+
+def _permitted_prefix(statement: str, text: str) -> bool:
+    """A whole prefix ending at the claim end or a declared punctuation/word boundary."""
+    if not _whole_prefix(statement, text):
+        return False
+    rest = text[len(statement) :]
+    if not rest:
+        return True
+    boundary = _CUT_END.match(rest)
+    if boundary is None:
+        return False
+    return not _numeric_range_cut(statement, rest[boundary.end() :])
+
+
+def _numeric_range_cut(statement: str, following: str) -> bool:
+    """No endpoint can separate a terminal number/currency figure from another."""
+    # Currency symbols can be adjacent to a figure or separated from it by whitespace.
+    last = "".join(char for char in statement if unicodedata.category(char) != "Sc")
+    last = last.rstrip().rsplit(" ", 1)[-1]
+    following = "".join(char for char in following if unicodedata.category(char) != "Sc")
+    return _FIGURE.fullmatch(last) is not None and _FIGURE.match(following.lstrip()) is not None
+
+
+def _claim_prefix(statement: str, claim_text: str, claim_verb: str | None) -> bool:
+    """Accept only the claim's prefix or an unambiguous prefix after its leading verb."""
+    statement = _normalise_grounding(statement).rstrip(".;")
+    claim_text = _normalise_grounding(claim_text).rstrip(".;")
+    if _permitted_prefix(statement, claim_text):
+        return True
+    if claim_verb is None:
+        leading = _VOCABULARY_VERB.match(claim_text)
+        if leading is None:
+            return False
+        end = leading.end()
+    else:
+        wording = _VERB_WORDING.get(claim_verb)
+        if wording is None or not _whole_prefix(wording, claim_text):
+            return False
+        end = len(wording)
+    remainder = claim_text[end:].lstrip()
+    if _VOCABULARY_VERB.match(_CONJUNCTION.sub("", remainder, count=1)):
+        return False
+    return _permitted_prefix(statement, remainder)
 
 
 def check_statements(
@@ -141,13 +236,13 @@ def check_statements(
                 ):
                     codes.append("connective_not_declared")
             else:
-                code = _factual_issue(
-                    [str(item) for item in block.claim_revision_ids],
-                    [str(item) for item in block.evidence_revision_ids],
-                    block.text,
-                    facts,
+                codes.extend(
+                    _factual_issues(
+                        [str(item) for item in block.claim_revision_ids],
+                        [str(item) for item in block.evidence_revision_ids],
+                        block.text,
+                        facts,
+                    )
                 )
-                if code is not None:
-                    codes.append(code)
             found.extend({"path": path, "code": code, "statement": block.text} for code in codes)
     return found
