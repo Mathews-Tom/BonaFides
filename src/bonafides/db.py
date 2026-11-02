@@ -15,8 +15,8 @@ SCHEMA_VERSION = 1
 BASELINE_SHA256 = "d59f2522f5e4be27f5ad367c23bc3b0979af4c9d48831249b36697df8992d3d8"
 PRE_BASELINE_GUIDANCE = (
     "This data predates the 0.1.0 schema baseline and is never upgraded in place. "
-    "Run the previous BonaFides release against it, export a bonafides-workspace/1 "
-    "archive, then import that archive into a fresh install."
+    "Run the last pre-baseline BonaFides build (commit 771776e) against it, export a "
+    "bonafides-workspace/1 archive, then import that archive into a fresh install."
 )
 
 

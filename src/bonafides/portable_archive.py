@@ -50,7 +50,8 @@ EXCLUSIONS = (
     "sessions",
 )
 # Pre-baseline archives; convert them by importing into and re-exporting from the
-# previous release. They're refused, like every unsupported format, before any write.
+# last pre-baseline build (commit 771776e). They're refused, like every unsupported
+# format, before any write.
 LEGACY_FORMAT = "bonafides-portable"
 # Exactly these wire formats are read; anything else is refused before any write.
 SUPPORTED_FORMATS = frozenset({(WORKSPACE_FORMAT, WORKSPACE_VERSION)})

@@ -28,8 +28,8 @@ The first release line of the self-hosted, single-owner career workspace, in whi
 
 ### Removed
 
-- **Breaking:** databases and encrypted backups created before the baseline are refused (`pre_baseline_database`, `pre_baseline_backup`) and never upgraded in place. Export a `bonafides-workspace/1` archive from the previous release and import it into a fresh install.
-- **Breaking:** import of legacy `bonafides-portable` v1 and v2 archives (`legacy_portable_format`). Convert one by importing it into the previous release and exporting a `bonafides-workspace/1` archive.
+- **Breaking:** databases and encrypted backups created before the baseline are refused (`pre_baseline_database`, `pre_baseline_backup`) and never upgraded in place. Export a `bonafides-workspace/1` archive from the last pre-baseline build (commit `771776e`) and import it into a fresh install.
+- **Breaking:** import of legacy `bonafides-portable` v1 and v2 archives (`legacy_portable_format`). Convert one by importing it into the last pre-baseline build (commit `771776e`) and exporting a `bonafides-workspace/1` archive.
 
 [Unreleased]: https://github.com/Mathews-Tom/BonaFides/compare/v0.1.0...HEAD
 [0.1.0]: https://github.com/Mathews-Tom/BonaFides/releases/tag/v0.1.0
