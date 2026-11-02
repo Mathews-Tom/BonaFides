@@ -33,6 +33,8 @@ from bonafides.installation_backup import (
     schema_sources,
     table_integrity,
 )
+from bonafides.portable_archive import ArchiveError, content_digest, decode_archive
+from bonafides.portable_data import restored_owner_manifest
 from bonafides.storage import directory, subdirectory
 
 
@@ -45,6 +47,7 @@ class NativeRecoveryReceipt:
     tables_verified: int
     files_verified: int
     credentials_verified: int
+    workspace_verified: bool
     maintenance_active: bool = True
     promoted: bool = False
 
@@ -76,6 +79,23 @@ def _empty_target(conn: Connection, blob_root: Path) -> None:
     with directory(blob_root, create=True) as root:
         if set(os.listdir(root)) - {LOCK_NAME}:
             raise BackupError("restore_blob_target_not_empty")
+
+
+def verify_workspace(conn: Connection, workspace: Path, owner: UUID, blob_root: Path) -> None:
+    """Require the carried archive to hold exactly the restored owner's records."""
+    # Same rendering as capture, so exact PostgreSQL timestamp text compares equal.
+    conn.execute(text("SET LOCAL timezone='UTC'"))
+    try:
+        with (
+            workspace.open("rb") as stream,
+            decode_archive(stream, expected_source_owner=owner) as carried,
+        ):
+            expected = content_digest(carried.manifest)
+        restored = content_digest(restored_owner_manifest(conn, blob_root, owner))
+    except ArchiveError as error:
+        raise BackupError("restore_workspace_unreadable") from error
+    if restored != expected:
+        raise BackupError("restore_workspace_mismatch")
 
 
 def _copy_blobs(bundle: RecoveredBundle, blob_root: Path) -> None:
@@ -374,6 +394,8 @@ def _restore_installation(
         ).scalar_one():
             raise BackupError("restore_native_constraints_unvalidated")
         _copy_blobs(bundle, blob_root)
+        if bundle.workspace is not None:
+            verify_workspace(conn, bundle.workspace, manifest.source_owner_id, blob_root)
         credentials = _rebind_credentials(conn, manifest, keyring, namespace)
         # Only the independently verified exact public source ledger permits a
         # standard Alembic stamp. Never copy a guessed/fabricated private ledger.
@@ -402,6 +424,7 @@ def _restore_installation(
         len(counts),
         len(manifest.files) - 1,
         credentials,
+        bundle.workspace is not None,
     )
 
 

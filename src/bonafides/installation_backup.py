@@ -15,22 +15,28 @@ import subprocess
 from datetime import UTC, datetime
 from pathlib import Path
 from threading import Timer
+from typing import BinaryIO
 
 from sqlalchemy import Connection, text
 from sqlalchemy.engine import make_url
 
 from bonafides.backup_archive import (
+    MAX_BUNDLE_BYTES,
     MAX_FILES,
+    MAX_MANIFEST_BYTES,
     BackupError,
     BackupFile,
     BackupManifest,
     BundleReceipt,
     create_bundle,
+    staged_workspace,
 )
 from bonafides.backup_generations import register_generation
 from bonafides.config import Settings
 from bonafides.db import SCHEMA_VERSION, Database
 from bonafides.installation_control import Control, assert_control
+from bonafides.portable_archive import ArchiveError, encode_archive
+from bonafides.portable_data import collect_fenced_owner_data
 from bonafides.storage import MAX_PDF_BYTES, directory, read_file
 
 _MIGRATION_LOCK = 741903221
@@ -133,6 +139,22 @@ def referenced_files(conn: Connection) -> list[BackupFile]:
     return [files[name] for name in sorted(files)]
 
 
+def build_workspace(
+    conn: Connection, settings: Settings, control: Control, output: BinaryIO, budget: int
+) -> None:
+    """Encode the owner's workspace archive from this exact snapshot, or fail closed."""
+    conn.execute(text("SET LOCAL timezone='UTC'"))
+    try:
+        archive = collect_fenced_owner_data(conn, settings, control.owner_id)
+        if sum(blob.byte_length for blob in archive.manifest.blob_manifest) > budget:
+            raise BackupError("backup_size_limit")
+        encode_archive(archive.manifest, archive.blobs, output)
+    except ArchiveError as error:
+        raise BackupError("backup_workspace_unavailable") from error
+    if output.tell() > budget:
+        raise BackupError("backup_size_limit")
+
+
 def postgres_environment(dsn: str) -> dict[str, str]:
     """No DSN/password in argv, errors or ambient inherited libpq configuration."""
     url = make_url(dsn)
@@ -188,8 +210,9 @@ def capture_installation(
 
     The caller holds InstallationMaintenance.quiescent, including both live sealed
     daemon acknowledgements. A shared migration lock and exported PostgreSQL
-    snapshot bind manifest rows and pg_dump to one exact database cut. Controller
-    heartbeat runs independently; its row lock is never held across this I/O.
+    snapshot bind manifest rows, the workspace archive and pg_dump to one exact
+    database cut. Controller heartbeat runs independently; its row lock is never
+    held across this I/O. Failing to build the workspace archive fails the capture.
     """
     if control.purpose != "backup":
         raise BackupError("backup_control_required")
@@ -215,6 +238,7 @@ def capture_installation(
     with (
         db.engine.connect().execution_options(isolation_level="REPEATABLE READ") as conn,
         conn.begin(),
+        staged_workspace(staging_root) as workspace,
     ):
         conn.execute(text("SET TRANSACTION READ ONLY"))
         conn.execute(text("SELECT pg_advisory_xact_lock_shared(:key)"), {"key": _MIGRATION_LOCK})
@@ -244,18 +268,24 @@ def capture_installation(
         if counts.get("installation_activities") != 0 or counts.get("provider_executions") != 0:
             raise BackupError("backup_writers_not_drained")
         blobs = referenced_files(conn)
+        budget = MAX_BUNDLE_BYTES - MAX_MANIFEST_BYTES - sum(entry.byte_length for entry in blobs)
+        build_workspace(conn, settings, control, workspace, budget)
         server_version = conn.execute(text("SHOW server_version")).scalar_one().split()[0]
         now = datetime.now(UTC)
 
         captured: BackupManifest | None = None
 
         def manifest(
-            sha: str, size: int, fingerprint: str, files: list[BackupFile]
+            sha: str,
+            size: int,
+            fingerprint: str,
+            files: list[BackupFile],
+            workspace_file: BackupFile | None,
         ) -> BackupManifest:
             nonlocal captured
             captured = BackupManifest(
                 format="bonafides-installation",
-                format_version=1,
+                format_version=2,
                 created_at=now,
                 source_namespace=cut["namespace_id"],
                 source_owner_id=control.owner_id,
@@ -281,6 +311,7 @@ def capture_installation(
                 dump_sha256=sha,
                 dump_byte_length=size,
                 files=files,
+                workspace=workspace_file,
             )
             return captured
 
@@ -313,6 +344,7 @@ def capture_installation(
                     staging_root=staging_root,
                     destination=destination,
                     manifest_factory=manifest,
+                    workspace=workspace,
                     execution_fds=(guard.fd,),
                 )
         finally:

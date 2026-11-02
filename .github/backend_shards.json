@@ -30,6 +30,7 @@
   ],
   "3": [
     "tests/test_backup_generations.py",
+    "tests/test_backup_workspace.py",
     "tests/test_claim_usage.py",
     "tests/test_claims.py",
     "tests/test_document_defaults.py",

@@ -5,6 +5,8 @@ Online creation needs only a public recipient. PostgreSQL bytes are encrypted
 before staging; decrypted dump/blobs exist only in the offline private quarantine.
 The independently trusted outer digest is mandatory: encryption is not sender
 identity. Neither archive creation nor successful decryption is a restore drill.
+Format 2 also carries the owner's ``bonafides-workspace/1`` archive, built from the
+same database cut, as one plaintext member inside the authenticated envelope.
 """
 
 from __future__ import annotations
@@ -24,7 +26,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from threading import Timer
-from typing import IO, Annotated, Literal
+from typing import IO, Annotated, BinaryIO, Literal
 from uuid import UUID, uuid4
 
 from cryptography import x509
@@ -33,6 +35,7 @@ from cryptography.hazmat.primitives.asymmetric import rsa
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, ValidationError
 
 from bonafides.commands import canonical_json
+from bonafides.portable_archive import ArchiveError, decode_archive
 from bonafides.storage import directory, subdirectory
 
 MAX_BUNDLE_BYTES = 4 * 1024**3
@@ -46,6 +49,7 @@ _COMPONENT = re.compile(r"[a-zA-Z0-9][a-zA-Z0-9_.-]{0,127}\Z")
 # format discriminator; OpenSSL remains responsible for all ASN.1 and AEAD.
 _AUTH_ENVELOPE = bytes.fromhex("3080060b2a864886f70d0109100117")
 Digest = Annotated[str, Field(pattern=r"^[0-9a-f]{64}$")]
+WORKSPACE_MEMBER = "workspace/bonafides-workspace-1.zip"
 
 
 class BackupError(ValueError):
@@ -64,7 +68,7 @@ class BackupFile(_Model):
 
 class BackupManifest(_Model):
     format: Literal["bonafides-installation"]
-    format_version: Literal[1]
+    format_version: Literal[1, 2]
     created_at: AwareDatetime
     source_namespace: UUID
     source_owner_id: UUID
@@ -87,6 +91,19 @@ class BackupManifest(_Model):
     dump_sha256: Digest
     dump_byte_length: Annotated[int, Field(ge=1, le=MAX_DUMP_BYTES)]
     files: Annotated[list[BackupFile], Field(min_length=1, max_length=MAX_FILES)]
+    # Required by format 2 and absent from format 1; see manifest_json.
+    workspace: BackupFile | None = None
+
+    @property
+    def members(self) -> list[BackupFile]:
+        """Every tar member after the manifest, in archive order."""
+        return [*self.files, *([self.workspace] if self.workspace is not None else [])]
+
+
+def manifest_json(manifest: BackupManifest) -> bytes:
+    """Canonical manifest bytes; format 1 keeps its original field set and digest."""
+    exclude = {"workspace"} if manifest.workspace is None else set()
+    return canonical_json(manifest.model_dump(mode="json", exclude=exclude)).encode()
 
 
 @dataclass(frozen=True)
@@ -102,6 +119,7 @@ class RecoveredBundle:
     manifest: BackupManifest
     dump: Path
     blobs: Path
+    workspace: Path | None
 
 
 def _components(value: str) -> tuple[str, ...]:
@@ -196,6 +214,17 @@ def _private_staging(root: Path) -> Iterator[Path]:
 
 
 @contextmanager
+def staged_workspace(staging_root: Path) -> Iterator[BinaryIO]:
+    """A private, already-unlinked file: plaintext never outlives its descriptor."""
+    with _private_staging(staging_root) as staging:
+        path = staging / "workspace.zip"
+        fd = os.open(path, os.O_RDWR | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+        path.unlink()
+        with os.fdopen(fd, "w+b") as output:
+            yield output
+
+
+@contextmanager
 def recipient_certificate(path: Path) -> Iterator[tuple[int, str]]:
     with directory(path.parent) as parent, _source(parent, path.name) as stream:
         payload = stream.read(65537)
@@ -268,7 +297,13 @@ def _validate(manifest: BackupManifest) -> None:
         _components(entry.path)
         if not entry.path.startswith("blobs/"):
             raise BackupError("invalid_backup_member")
-    if sum(entry.byte_length for entry in manifest.files) > MAX_BUNDLE_BYTES - MAX_MANIFEST_BYTES:
+    if (manifest.format_version == 2) != (manifest.workspace is not None) or (
+        manifest.workspace is not None and manifest.workspace.path != WORKSPACE_MEMBER
+    ):
+        raise BackupError("invalid_backup_workspace_member")
+    if len(manifest.members) > MAX_FILES:
+        raise BackupError("backup_file_count_limit")
+    if sum(entry.byte_length for entry in manifest.members) > MAX_BUNDLE_BYTES - MAX_MANIFEST_BYTES:
         raise BackupError("backup_size_limit")
     if any(
         not re.fullmatch(r"[a-z][a-z0-9_]{0,62}", name) or type(count) is not int or count < 0
@@ -289,17 +324,24 @@ def create_bundle(
     recipient: Path,
     staging_root: Path,
     destination: Path,
-    manifest_factory: Callable[[str, int, str, list[BackupFile]], BackupManifest],
+    manifest_factory: Callable[
+        [str, int, str, list[BackupFile], BackupFile | None], BackupManifest
+    ],
+    workspace: IO[bytes] | None = None,
     execution_fds: tuple[int, ...] = (),
 ) -> BundleReceipt:
     """Caller must hold a live quiescent installation fence throughout this call.
 
-    The manifest factory receives plaintext dump digest/size, recipient fingerprint
-    and encrypted member inventory; it must supply the independently captured cut.
-    Only ciphertext is staged online. No archive is published on partial failure.
+    The manifest factory receives plaintext dump digest/size, recipient fingerprint,
+    encrypted member inventory and the workspace member; it must supply the
+    independently captured cut. ``workspace`` is a seekable private file built from
+    that cut (see staged_workspace); without it the bundle is format 1. Database
+    bytes are staged only as ciphertext. No archive is published on partial failure.
     """
     paths = [entry.path for entry in blob_files]
-    if len(paths) > MAX_FILES - 1 or len(set(paths)) != len(paths):
+    # The database member and, for format 2, the workspace member share MAX_FILES.
+    reserved = 1 + (workspace is not None)
+    if len(paths) > MAX_FILES - reserved or len(set(paths)) != len(paths):
         raise BackupError("invalid_backup_blob_set")
     name = f"{uuid4()}.cms"
     temporary = f".pending-{uuid4()}"
@@ -320,28 +362,30 @@ def create_bundle(
         with inner.open("rb") as encrypted_dump:
             sha, size = _copy(encrypted_dump, None, MAX_DUMP_BYTES + _CHUNK)
         files = [BackupFile(path="database.cms", sha256=sha, byte_length=size), *blob_files]
-        manifest = manifest_factory(*dump_identity[0], fingerprint, files)
+        workspace_entry: BackupFile | None = None
+        if workspace is not None:
+            workspace.seek(0)
+            sha, size = _copy(workspace, None, MAX_BUNDLE_BYTES)
+            workspace_entry = BackupFile(path=WORKSPACE_MEMBER, sha256=sha, byte_length=size)
+        manifest = manifest_factory(*dump_identity[0], fingerprint, files, workspace_entry)
         _validate(manifest)
         if (
             manifest.files != files
+            or manifest.workspace != workspace_entry
             or manifest.recipient_sha256 != fingerprint
             or (manifest.dump_sha256, manifest.dump_byte_length) != dump_identity[0]
         ):
             raise BackupError("backup_manifest_cut_mismatch")
-        encoded = canonical_json(manifest.model_dump(mode="json")).encode()
+        encoded = manifest_json(manifest)
         if len(encoded) > MAX_MANIFEST_BYTES:
             raise BackupError("backup_manifest_size_limit")
 
         def package(pipe: IO[bytes]) -> None:
             with tarfile.open(fileobj=pipe, mode="w|", format=tarfile.USTAR_FORMAT) as archive:
                 _add(archive, "manifest.json", io.BytesIO(encoded), len(encoded))
-                for entry in files:
+                for entry in manifest.members:
                     with (
-                        (
-                            inner.open("rb")
-                            if entry.path == "database.cms"
-                            else _source(root, entry.path.removeprefix("blobs/"))
-                        ) as source,
+                        _member_source(entry.path, inner, root, workspace) as source,
                         _HashingReader(source) as checked,
                     ):
                         _add(archive, entry.path, checked, entry.byte_length)
@@ -378,6 +422,21 @@ def create_bundle(
     return BundleReceipt(name, digest, size, hashlib.sha256(encoded).hexdigest())
 
 
+@contextmanager
+def _member_source(
+    path: str, inner: Path, blob_root: int, workspace: IO[bytes] | None
+) -> Iterator[IO[bytes]]:
+    if path == "database.cms":
+        with inner.open("rb") as source:
+            yield source
+    elif path == WORKSPACE_MEMBER and workspace is not None:
+        workspace.seek(0)
+        yield workspace
+    else:
+        with _source(blob_root, path.removeprefix("blobs/")) as source:
+            yield source
+
+
 def _unique(pairs: list[tuple[str, object]]) -> dict[str, object]:
     result: dict[str, object] = {}
     for key, value in pairs:
@@ -396,6 +455,10 @@ def _read_manifest(stream: IO[bytes]) -> BackupManifest:
         manifest = BackupManifest.model_validate_json(encoded, strict=True)
     except (ValidationError, ValueError, UnicodeError) as error:
         raise BackupError("invalid_backup_manifest") from error
+    # Writers emit exactly manifest_json; anything else (e.g. an explicit
+    # "workspace": null in format 1) would no longer match its recorded digest.
+    if manifest_json(manifest) != encoded:
+        raise BackupError("invalid_backup_manifest")
     _validate(manifest)
     return manifest
 
@@ -490,7 +553,7 @@ def recover_bundle(
             if manifest.image_sha256 != expected_image_sha256:
                 raise BackupError("incompatible_backup_image")
             offset = 512 + ((first.size + 511) // 512) * 512
-            for entry in manifest.files:
+            for entry in manifest.members:
                 member = archive.next()
                 if (
                     member is None
@@ -533,4 +596,15 @@ def recover_bundle(
                 raise BackupError("backup_dump_hash_mismatch")
         blobs = quarantine / "blobs"
         blobs.mkdir(mode=0o700, exist_ok=True)
-        yield RecoveredBundle(manifest, dump, blobs)
+        workspace: Path | None = None
+        if manifest.workspace is not None:
+            workspace = quarantine.joinpath(*_components(manifest.workspace.path))
+            try:
+                with (
+                    workspace.open("rb") as stream,
+                    decode_archive(stream, expected_source_owner=manifest.source_owner_id),
+                ):
+                    pass
+            except ArchiveError as error:
+                raise BackupError("invalid_backup_workspace") from error
+        yield RecoveredBundle(manifest, dump, blobs, workspace)
