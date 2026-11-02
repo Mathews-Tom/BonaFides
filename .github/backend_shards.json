@@ -6,6 +6,7 @@
     "tests/test_backup_schedule.py",
     "tests/test_catalog.py",
     "tests/test_document_generation.py",
+    "tests/test_fabrication_benchmark.py",
     "tests/test_greenhouse.py",
     "tests/test_identity.py",
     "tests/test_inflation_report.py",
