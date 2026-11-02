@@ -6,6 +6,7 @@ from __future__ import annotations
 import hashlib
 from collections.abc import Iterator, Mapping
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import BinaryIO, cast
 from uuid import UUID, uuid4
 
@@ -115,7 +116,7 @@ def collect_owner_data(conn: Connection, settings: Settings, owner_id: UUID) -> 
     if conn.execute(text("SHOW transaction_isolation")).scalar_one() != "repeatable read":
         raise ValueError("portable_export_requires_repeatable_read")
     lock_installation(conn)
-    return _collect_owner_data(conn, settings, owner_id)
+    return _collect_owner_data(conn, settings.blob_root, owner_id)
 
 
 def collect_controlled_owner_data(
@@ -146,10 +147,15 @@ def collect_controlled_owner_data(
     ).scalar_one()
     if not valid:
         raise ArchiveError("stale_portable_snapshot_control")
-    return _collect_owner_data(conn, settings, control.owner_id)
+    return _collect_owner_data(conn, settings.blob_root, control.owner_id)
 
 
-def _collect_owner_data(conn: Connection, settings: Settings, owner_id: UUID) -> PortableArchive:
+def restored_owner_manifest(conn: Connection, blob_root: Path, owner_id: UUID) -> Manifest:
+    """Records of a natively restored target that is still closed to every writer."""
+    return _collect_owner_data(conn, blob_root, owner_id).manifest
+
+
+def _collect_owner_data(conn: Connection, blob_root: Path, owner_id: UUID) -> PortableArchive:
     namespace = conn.execute(
         text("SELECT namespace_id FROM bonafides.installation_state WHERE singleton")
     ).scalar_one()
@@ -293,9 +299,7 @@ def _collect_owner_data(conn: Connection, settings: Settings, owner_id: UUID) ->
         exclusions=list(EXCLUSIONS),
     )
     manifest = manifest.model_copy(update={"manifest_sha256": manifest_digest(manifest)})
-    return PortableArchive(
-        manifest, _CollectedBlobs(BlobStore(settings.blob_root), owner_id, locations)
-    )
+    return PortableArchive(manifest, _CollectedBlobs(BlobStore(blob_root), owner_id, locations))
 
 
 def export_owner_data(

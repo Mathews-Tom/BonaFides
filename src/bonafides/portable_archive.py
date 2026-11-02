@@ -160,6 +160,12 @@ def manifest_digest(manifest: Manifest) -> str:
     return _digest(_wire(manifest))
 
 
+def content_digest(manifest: Manifest) -> str:
+    """SHA-256 of the owner data an archive carries, without its export time."""
+    value = _wire(manifest).model_dump(mode="json", exclude={"created_at", "manifest_sha256"})
+    return hashlib.sha256(canonical_json(value).encode()).hexdigest()
+
+
 def _pairs(pairs: list[tuple[str, JsonValue]]) -> dict[str, JsonValue]:
     result: dict[str, JsonValue] = {}
     for key, value in pairs:

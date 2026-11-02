@@ -12,7 +12,13 @@ from uuid import UUID
 
 from sqlalchemy import Connection, text
 
-from bonafides.backup_archive import MAX_BUNDLE_BYTES, BackupError, BackupManifest, BundleReceipt
+from bonafides.backup_archive import (
+    MAX_BUNDLE_BYTES,
+    BackupError,
+    BackupManifest,
+    BundleReceipt,
+    manifest_json,
+)
 from bonafides.commands import canonical_json
 from bonafides.installation_control import Control
 from bonafides.storage import directory
@@ -83,6 +89,7 @@ def verify_generation(
         or receipt.tables_verified != len(manifest.table_counts)
         or receipt.files_verified != len(manifest.files) - 1
         or receipt.credentials_verified != manifest.table_counts["encrypted_credentials"]
+        or receipt.workspace_verified != (manifest.workspace is not None)
     ):
         raise BackupError("backup_verification_receipt_mismatch")
     receipt_sha = hashlib.sha256(
@@ -102,9 +109,7 @@ def verify_generation(
         ).encode()
     ).hexdigest()
     record = _pins(manifest)
-    record["manifest_sha256"] = hashlib.sha256(
-        canonical_json(manifest.model_dump(mode="json")).encode()
-    ).hexdigest()
+    record["manifest_sha256"] = hashlib.sha256(manifest_json(manifest)).hexdigest()
     record["cipher_sha256"] = cipher_sha256
     updated = conn.execute(
         text("""UPDATE bonafides.installation_backups b

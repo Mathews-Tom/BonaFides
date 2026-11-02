@@ -19,7 +19,9 @@ from cryptography import x509
 from cryptography.hazmat.primitives import hashes,serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
 from cryptography.x509.oid import NameOID
-from bonafides.backup_archive import BackupFile,BackupManifest,BackupError,create_bundle,recover_bundle
+from bonafides.backup_archive import BackupFile,BackupManifest,BackupError,WORKSPACE_MEMBER,create_bundle,recover_bundle,staged_workspace
+from bonafides.portable_archive import EXCLUSIONS,WORKSPACE_RECORD_SCHEMA,Manifest,encode_archive,manifest_digest
+from bonafides.portable_columns import COLUMNS
 case=sys.argv[1]
 with tempfile.TemporaryDirectory() as temporary:
  root=Path(temporary)
@@ -56,19 +58,33 @@ with tempfile.TemporaryDirectory() as temporary:
   for name,rows in snapshot.items()}
  schema={str(n):hashlib.sha256(f'synthetic schema {n}'.encode()).hexdigest() for n in range(1,30)}
  namespace=uuid4()
- def factory(sha,size,fingerprint,files):
-  return BackupManifest(format='bonafides-installation',format_version=1,created_at=now,
+ def workspace_archive(source_owner):
+  carried=Manifest(format='bonafides-workspace',format_version=1,source_schema_version=WORKSPACE_RECORD_SCHEMA,
+   created_at=now,source_namespace=namespace,source_owner_id=source_owner,current_profile_revision_id=uuid4(),
+   manifest_sha256='0'*64,records={table:[] for table in COLUMNS},blob_manifest=[],exclusions=list(EXCLUSIONS))
+  carried=carried.model_copy(update={'manifest_sha256':manifest_digest(carried)})
+  output=io.BytesIO();encode_archive(carried,{},output);return output.getvalue()
+ # Cases named workspace_* build format 2; every other case keeps building format 1.
+ workspace=workspace_archive(owner) if case.startswith('workspace_') else None
+ def factory(sha,size,fingerprint,files,member):
+  return BackupManifest(format='bonafides-installation',format_version=1 if member is None else 2,created_at=now,
    source_namespace=namespace,source_owner_id=owner,control_id=uuid4(),installation_auth_epoch=1,
    owner_auth_epoch=1,maintenance_epoch=1,workspace_version=1,image_sha256='2'*64,
    source_sha256='3'*64,config_sha256='4'*64,recipient_sha256=fingerprint,
    credential_keys={'synthetic-key':'5'*64},credential_active_key_id='synthetic-key',
    postgres_version='18.6',dump_tool_version='opaque transport fixture, not native pg_dump',
    schema_versions=schema,table_counts=counts,table_sha256=fingerprints,
-   dump_sha256=sha,dump_byte_length=size,files=files)
+   dump_sha256=sha,dump_byte_length=size,files=files,workspace=member)
  def create():
-  return create_bundle(dump=io.BytesIO(dump),blob_root=blobs,
+  arguments=dict(dump=io.BytesIO(dump),blob_root=blobs,
    blob_files=[BackupFile(path='blobs/'+relative,sha256=digest,byte_length=len(payload))],
    recipient=recipient,staging_root=root/'online',destination=root/'encrypted',manifest_factory=factory)
+  if workspace is None: return create_bundle(**arguments)
+  with staged_workspace(root/'online') as staged:
+   # Already unlinked: nothing in staging names the plaintext archive.
+   assert [p.name for p in (root/'online').iterdir()]!=[] and not any((root/'online').rglob('*.zip'))
+   staged.write(workspace)
+   return create_bundle(**arguments,workspace=staged)
  receipt=create()
  original=root/'encrypted'/receipt.file_name
  encoded=original.read_bytes()
@@ -77,8 +93,19 @@ with tempfile.TemporaryDirectory() as temporary:
  assert not list((root/'online').iterdir())
  arguments=dict(source=original,trusted_sha256=receipt.sha256,private_key=private,
   staging_root=root/'offline',expected_schema=schema,expected_image_sha256='2'*64)
- if case=='roundtrip':
+ if case=='workspace_roundtrip':
   with recover_bundle(**arguments) as restored:
+   assert restored.manifest.format_version==2
+   assert restored.manifest.workspace==BackupFile(path=WORKSPACE_MEMBER,
+    sha256=hashlib.sha256(workspace).hexdigest(),byte_length=len(workspace))
+   assert restored.workspace is not None and restored.workspace.read_bytes()==workspace
+   assert restored.dump.read_bytes()==dump
+   assert (restored.blobs/relative).read_bytes()==payload
+  assert not list((root/'offline').iterdir())
+ elif case=='roundtrip':
+  with recover_bundle(**arguments) as restored:
+   assert restored.manifest.format_version==1 and restored.manifest.workspace is None
+   assert restored.workspace is None
    assert restored.dump.read_bytes()==dump
    assert (restored.blobs/relative).read_bytes()==payload
    assert restored.manifest.source_namespace==namespace
@@ -164,6 +191,24 @@ with tempfile.TemporaryDirectory() as temporary:
     expected='backup_crypto_failed'
    elif case=='trailing_content':
     expected='invalid_backup_trailer'
+   elif case in ('workspace_corrupt','workspace_forged','workspace_wrong_owner'):
+    name,data,kind=members[-1]
+    assert name==WORKSPACE_MEMBER
+    if case=='workspace_corrupt':
+     members[-1]=(name,data[:-1]+bytes([data[-1]^1]),kind)
+     expected='backup_member_hash_mismatch'
+    else:
+     # A consistent bundle needs only the public recipient; its manifest cannot vouch.
+     forged=b'not a workspace archive' if case=='workspace_forged' else workspace_archive(uuid4())
+     members[-1]=(name,forged,kind)
+     manifest['workspace'].update(sha256=hashlib.sha256(forged).hexdigest(),byte_length=len(forged))
+     expected='invalid_backup_workspace'
+   elif case=='workspace_missing':
+    members.pop();del manifest['workspace']
+    expected='invalid_backup_workspace_member'
+   elif case=='workspace_in_format_one':
+    manifest['format_version']=1
+    expected='invalid_backup_workspace_member'
    elif case=='unauthenticated_envelope':
     expected='backup_crypto_format_forbidden'
    else:
@@ -195,7 +240,7 @@ with tempfile.TemporaryDirectory() as temporary:
   assert not list((root/'offline').iterdir())
   assert original.read_bytes()==encoded
   assert stored.read_bytes()==payload
- print(json.dumps({'case':case,'consumer_bytes_verified':case=='roundtrip',
+ print(json.dumps({'case':case,'consumer_bytes_verified':case.endswith('roundtrip'),
   'original_generation_preserved':True,'private_staging_empty':True}))
 """
 
@@ -221,6 +266,12 @@ with tempfile.TemporaryDirectory() as temporary:
         "corrupt_inner_ciphertext",
         "trailing_content",
         "unauthenticated_envelope",
+        "workspace_roundtrip",
+        "workspace_corrupt",
+        "workspace_forged",
+        "workspace_wrong_owner",
+        "workspace_missing",
+        "workspace_in_format_one",
     ],
 )
 def test_actual_authenticated_archive_boundary(case: str) -> None:
@@ -270,7 +321,7 @@ def test_actual_authenticated_archive_boundary(case: str) -> None:
     receipt = json.loads(result.stdout)
     assert receipt == {
         "case": case,
-        "consumer_bytes_verified": case == "roundtrip",
+        "consumer_bytes_verified": case.endswith("roundtrip"),
         "original_generation_preserved": True,
         "private_staging_empty": True,
     }
