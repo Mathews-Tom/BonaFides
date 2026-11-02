@@ -77,7 +77,9 @@ jobs:
         run: |
           paths="$(uv run --frozen python .github/backend_shards.py --shard '${{ matrix.shard }}')"
           mapfile -t tests <<< "$paths"
-          uv run --frozen python .github/backend_gate.py --pytest-only "${tests[@]}"
+          equivalence=()
+          if [ '${{ matrix.shard }}' = 1 ]; then equivalence=(--schema-equivalence); fi
+          uv run --frozen python .github/backend_gate.py "${equivalence[@]}" --pytest-only "${tests[@]}"
   fast:
     name: fast (amd64)
     needs: [fast-checks, fast-backend]
@@ -139,7 +141,7 @@ jobs:
       - name: Build shipped application image without ignored planning assets
         run: docker build --pull --target app --tag bonafides:local .
       - name: Ruff format strict mypy pytest with actual least privilege PostgreSQL
-        run: uv run --frozen python .github/backend_gate.py
+        run: uv run --frozen python .github/backend_gate.py --schema-equivalence
       - name: Source and Python vulnerability gates
         run: |
           mkdir -p artifacts

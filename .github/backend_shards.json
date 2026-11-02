@@ -45,7 +45,6 @@
   ],
   "4": [
     "tests/test_backup_schedule.py",
-    "tests/test_claim_rewrite.py",
     "tests/test_database.py",
     "tests/test_identity.py",
     "tests/test_inflation_documents.py",
