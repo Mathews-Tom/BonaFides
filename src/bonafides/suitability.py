@@ -25,7 +25,7 @@ from sqlalchemy import Connection, text
 from sqlalchemy.engine import RowMapping
 from sqlalchemy.exc import DBAPIError
 
-from bonafides import local_model, model_context
+from bonafides import local_model, model_calls, model_context
 from bonafides.auth import Owner, StrictModel, audit, require_owner
 from bonafides.claims import claim_text as rendered_claim_text
 from bonafides.claims import grounded, structured_claim
@@ -389,9 +389,13 @@ def _route_status(conn: Connection, owner_id: UUID, settings: Settings) -> dict[
     blocked = (
         conn.execute(
             text(
-                "SELECT stage FROM bonafides.local_model_route_blocks WHERE owner_id=:owner AND route_sha256=:sha AND stage IN ('extract_posting','match_requirements')"
+                "SELECT stage FROM bonafides.local_model_route_blocks WHERE owner_id=:owner AND route_sha256 IN (:capability,:legacy) AND stage IN ('extract_posting','match_requirements')"
             ),
-            {"owner": owner_id, "sha": _sha(route.identity())},
+            {
+                "owner": owner_id,
+                "capability": route.capability_sha256,
+                "legacy": _sha(route.identity()),
+            },
         ).first()
         is not None
     )
@@ -420,8 +424,13 @@ def _route(
     blocked = (
         conn.execute(
             text("""SELECT stage FROM bonafides.local_model_route_blocks
-        WHERE owner_id=:owner AND route_sha256=:sha AND stage=:stage"""),
-            {"owner": owner_id, "sha": _sha(route.identity()), "stage": stage},
+        WHERE owner_id=:owner AND route_sha256 IN (:capability,:legacy) AND stage=:stage"""),
+            {
+                "owner": owner_id,
+                "capability": route.capability_sha256,
+                "legacy": _sha(route.identity()),
+                "stage": stage,
+            },
         ).first()
         is not None
     )
@@ -1257,39 +1266,24 @@ def _checked_call[T](
     projection and only adds a code-only error summary; a second mismatch fails the task
     with no further model call.
     """
-    from bonafides.document_generation import OutputMismatch
-
     stage = str(task.input["stage"])
     context = cast(dict[str, object], task.input["context"])
-    correction: list[str] | None = None
-    while True:
-        try:
-            result = (
-                client or local_model.OllamaClient(route, ProviderExecution(db, task, runs[-1]))
-            ).call(
-                stage,
-                context,
-                str(task.input["prompt_version"]),
-                interrupted,
-                correction,
-            )
-            if interrupted.is_set():
-                raise local_model.ModelFailure("model_interrupted", retryable=False)
-            checked = validate(result.output)
-            if correction is None:
-                return checked, result
-            return checked, local_model.ModelResult(
-                result.output, {**result.metadata, "corrected_model_run_id": str(runs[0])}
-            )
-        except OutputMismatch as exc:
-            summary = exc.summary
-        except local_model.ModelFailure as exc:
-            if exc.code != "model_output_schema_mismatch":
-                raise
-            summary = ["output: json_or_schema_version_invalid"]
-        if correction is not None:
-            raise Problem(422, "model_output_invalid_after_correction")
-        correction = summary
+
+    def call(correction: Sequence[str] | None) -> local_model.ModelResult:
+        result = (
+            client or local_model.OllamaClient(route, ProviderExecution(db, task, runs[-1]))
+        ).call(
+            stage,
+            context,
+            str(task.input["prompt_version"]),
+            interrupted,
+            correction,
+        )
+        if interrupted.is_set():
+            raise local_model.ModelFailure("model_interrupted", retryable=False)
+        return result
+
+    def before_correction() -> None:
         corrective: UUID | None = None
         while corrective is None:
             if interrupted.is_set():
@@ -1326,6 +1320,13 @@ def _checked_call[T](
             if corrective is None and interrupted.wait(0.25):
                 raise local_model.ModelFailure("model_interrupted", retryable=False)
         runs.append(corrective)
+
+    checked, result, corrected = model_calls.checked_call(call, validate, before_correction)
+    if corrected:
+        result = local_model.ModelResult(
+            result.output, {**result.metadata, "corrected_model_run_id": str(runs[0])}
+        )
+    return checked, result
 
 
 def _execute_reserved_model(
@@ -1550,7 +1551,7 @@ def _execute_reserved_model(
                     VALUES(:owner,:sha,:stage,:code) ON CONFLICT DO NOTHING"""),
                     {
                         "owner": task.owner_id,
-                        "sha": _sha(task.input["route_identity"]),
+                        "sha": route.capability_sha256,
                         "stage": stage,
                         "code": code,
                     },

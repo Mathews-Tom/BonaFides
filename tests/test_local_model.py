@@ -30,6 +30,8 @@ from bonafides.local_model import (
     ModelFailure,
     OllamaClient,
     load_route,
+    qualification_receipt,
+    validate_reviewer,
 )
 
 
@@ -66,19 +68,46 @@ def route_file(tmp_path: Path, data: dict[str, object]) -> Path:
     return path
 
 
+def fixture_receipt(
+    capability_sha256: str, *, stage: str = "generate_documents", **overrides: object
+) -> dict[str, object]:
+    if stage not in ("generate_documents", "regenerate_section"):
+        return {
+            "status": "passed",
+            "capability_sha256": capability_sha256,
+            "receipt_sha256": "b" * 64,
+            "reviewed_by": "synthetic-fixture-author",
+            "reviewed_at": "synthetic-review-date",
+            **overrides,
+        }
+    return qualification_receipt(
+        {
+            "status": "passed",
+            "capability_sha256": capability_sha256,
+            "reviewed_by": "synthetic-fixture-author",
+            "reviewed_at": "2026-10-25T00:00:00Z",
+            "counts": {
+                "valid_first": 20,
+                "valid_after_correction": 0,
+                "invalid_after_correction": 0,
+                "failed_before_check": 0,
+            },
+            "valid_rate_per_mille": 1000,
+            "usable_statement_rate_per_mille": 1000,
+            "dataset_sha256": hashlib.sha256(b"synthetic-test-only").hexdigest(),
+            "case_count": 20,
+            "duration_ms": 1,
+            **overrides,
+        }
+    )
+
+
 def qualified_route(tmp_path: Path, data: dict[str, object]) -> LocalRoute:
     # These synthetic receipts authorize fixture transport only, never production.
     initial = load_route(route_file(tmp_path, data))
     assert initial is not None
     data["qualification_receipts"] = {
-        stage: {
-            "status": "passed",
-            "capability_sha256": initial.capability_sha256,
-            "receipt_sha256": "b" * 64,
-            "reviewed_by": "synthetic-fixture-author",
-            "reviewed_at": "2026-10-25T00:00:00Z",
-        }
-        for stage in PROMPT_VERSIONS
+        stage: fixture_receipt(initial.capability_sha256, stage=stage) for stage in PROMPT_VERSIONS
     }
     result = load_route(route_file(tmp_path, data))
     assert result is not None
@@ -409,6 +438,136 @@ def test_deadline_and_cancellation_interrupt_socket(tmp_path: Path) -> None:
         assert len(requests) == 1
 
 
+@pytest.mark.parametrize("phase", ["/api/tags", "/api/version"])
+def test_qualification_preflight_timeout_preserves_passed_receipt(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], phase: str
+) -> None:
+    from bonafides import model_qualification as qualification
+
+    metadata_paths: list[str] = []
+    release = Event()
+
+    def hang_preflight() -> None:
+        if metadata_paths[-1] == phase:
+            release.wait(5)
+
+    with fixture_server(metadata_paths=metadata_paths, on_preflight=hang_preflight) as (
+        endpoint,
+        requests,
+    ):
+        data = route_data(endpoint)
+        data["deadline_seconds"] = 1
+        qualified_route(tmp_path, data)
+        path = tmp_path / "route.json"
+        original = path.read_bytes()
+        try:
+            assert (
+                qualification.main(
+                    [
+                        "qualify",
+                        "--route",
+                        str(path),
+                        "--stage",
+                        "generate_documents",
+                        "--dataset",
+                        str(Path(__file__).parent / "fixtures" / "qualification"),
+                        "--reviewed-by",
+                        "synthetic-only",
+                    ]
+                )
+                == 2
+            )
+        finally:
+            release.set()
+        captured = capsys.readouterr()
+        assert "model_unavailable" in captured.err
+        assert captured.out == ""
+        assert path.read_bytes() == original
+        assert requests == []
+        assert metadata_paths == (
+            ["/api/tags"] if phase == "/api/tags" else ["/api/tags", "/api/version"]
+        )
+
+
+@pytest.mark.parametrize(
+    "failure", ["connection_timeout", "connection_refused", "presend_deadline"]
+)
+def test_qualification_post_connection_failure_is_not_measured(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, failure: str
+) -> None:
+    from bonafides import local_model
+
+    connect = local_model._PinnedConnection.connect
+    connections = 0
+
+    def fail_before_post(connection: local_model._PinnedConnection) -> None:
+        nonlocal connections
+        connections += 1
+        if connections != 3:
+            connect(connection)
+            return
+        if failure == "connection_refused":
+            raise ConnectionRefusedError
+        if failure == "presend_deadline":
+            connect(connection)
+        assert connection.aborted.wait(5)
+        if failure == "connection_timeout":
+            raise TimeoutError
+
+    monkeypatch.setattr(local_model._PinnedConnection, "connect", fail_before_post)
+    with fixture_server() as (endpoint, requests):
+        data = route_data(endpoint)
+        data["deadline_seconds"] = 1
+        route = qualified_route(tmp_path, data)
+        with pytest.raises(ModelFailure) as error:
+            OllamaClient(route, qualification_stage="regenerate_section").call(
+                "regenerate_section", _section_context(), PROMPT_VERSIONS["regenerate_section"]
+            )
+        assert error.value.code == "model_unavailable"
+        assert error.value.retryable
+        assert connections == 3
+        assert requests == []
+
+
+@pytest.mark.parametrize("stage", ["generate_documents", "regenerate_section"])
+def test_qualification_sent_inference_timeout_remains_measured(tmp_path: Path, stage: str) -> None:
+    from bonafides import model_qualification as qualification
+
+    cases, dataset_sha256 = qualification.load_cases(
+        Path(__file__).parent / "fixtures" / "qualification", stage
+    )
+    with fixture_server(delay=2) as (endpoint, requests):
+        data = route_data(endpoint)
+        data["deadline_seconds"] = 1
+        route = qualified_route(tmp_path, data)
+        receipt = qualification.qualify(route, stage, cases[:1], dataset_sha256, "synthetic-only")
+        assert receipt["status"] == "failed"
+        assert receipt["counts"] == {
+            "valid_first": 0,
+            "valid_after_correction": 0,
+            "invalid_after_correction": 0,
+            "failed_before_check": 1,
+        }
+        assert len(requests) == 1
+
+
+def test_production_preflight_deadline_remains_model_timeout(tmp_path: Path) -> None:
+    release = Event()
+
+    def hang_preflight() -> None:
+        release.wait(5)
+
+    with fixture_server(on_preflight=hang_preflight) as (endpoint, requests):
+        data = route_data(endpoint)
+        data["deadline_seconds"] = 1
+        try:
+            with pytest.raises(ModelFailure, match="model_timeout"):
+                call(qualified_route(tmp_path, data))
+        finally:
+            release.set()
+        assert requests == []
+
+
 def test_outage_is_sanitized_and_retryable(tmp_path: Path) -> None:
     with socket.socket() as sock:
         sock.bind(("127.0.0.1", 0))
@@ -531,7 +690,11 @@ def test_failed_receipts_and_every_capability_change_invalidate_qualification(
         assert not next_route.qualified_for("extract_posting")
         assert next_route.identity()["sha256"] != original_identity["sha256"]
     receipts = cast(dict[str, dict[str, object]], data["qualification_receipts"])
-    receipts["extract_posting"]["status"] = "failed"
+    receipts["extract_posting"] = fixture_receipt(
+        route.capability_sha256,
+        stage="extract_posting",
+        status="failed",
+    )
     failed = load_route(route_file(tmp_path, data))
     assert failed is not None and not failed.qualified_for("extract_posting")
     assert failed.qualified_for("match_requirements")
@@ -1110,13 +1273,9 @@ def test_section_qualification_is_separate_from_pair_and_prior_capability_receip
         previous = load_route(route_file(tmp_path, previous_data))
         assert previous is not None
         previous_data["qualification_receipts"] = {
-            stage: {
-                "status": "passed",
-                "capability_sha256": previous.capability_sha256,
-                "receipt_sha256": "b" * 64,
-                "reviewed_by": "synthetic-prior-protocol",
-                "reviewed_at": "2026-10-25T00:00:00Z",
-            }
+            stage: fixture_receipt(
+                previous.capability_sha256, stage=stage, reviewed_by="synthetic-prior-protocol"
+            )
             for stage in local_model.PROMPT_VERSIONS
         }
     current = load_route(route_file(tmp_path, previous_data))
@@ -1135,3 +1294,162 @@ def test_section_prompt_or_schema_change_invalidates_all_existing_receipts(
     changed = load_route(route_file(tmp_path, data))
     assert changed is not None and changed.capability_sha256 != original.capability_sha256
     assert all(not changed.qualified_for(stage) for stage in PROMPT_VERSIONS)
+
+
+def test_receipt_hash_binds_every_measurement(tmp_path: Path) -> None:
+    data = route_data("http://127.0.0.1:1")
+    route = qualified_route(tmp_path, data)
+    receipt = cast(dict[str, dict[str, object]], data["qualification_receipts"])[
+        "generate_documents"
+    ]
+    payload = {key: value for key, value in receipt.items() if key != "receipt_sha256"}
+    canonical = json.dumps(
+        payload, ensure_ascii=False, allow_nan=False, sort_keys=True, separators=(",", ":")
+    )
+    assert receipt["receipt_sha256"] == hashlib.sha256(canonical.encode()).hexdigest()
+    receipt["duration_ms"] = 2
+    with pytest.raises(ModelFailure, match="model_route_invalid"):
+        load_route(route_file(tmp_path, data))
+    assert route.receipt_details()["generate_documents"]["status"] == "passed"
+
+
+@pytest.mark.parametrize("stage", ["extract_posting", "match_requirements"])
+def test_legacy_suitability_and_measured_document_receipts_load_together(
+    tmp_path: Path, stage: str
+) -> None:
+    data = route_data("http://127.0.0.1:1")
+    initial = load_route(route_file(tmp_path, data))
+    assert initial is not None
+    legacy = fixture_receipt(initial.capability_sha256, stage=stage)
+    measured = fixture_receipt(initial.capability_sha256)
+    data["qualification_receipts"] = {stage: legacy, "generate_documents": measured}
+    route = load_route(route_file(tmp_path, data))
+    assert route is not None
+    assert route.qualified_for(stage) and route.qualified_for("generate_documents")
+    assert len(legacy) == 5
+    # Legacy receipt hashes remain regex-only and dates remain operator text.
+    legacy["receipt_sha256"] = "c" * 64
+    legacy["reviewed_at"] = "another operator review"
+    assert load_route(route_file(tmp_path, data)) is not None
+    legacy["counts"] = measured["counts"]
+    with pytest.raises(ModelFailure, match="model_route_invalid"):
+        load_route(route_file(tmp_path, data))
+
+
+@pytest.mark.parametrize("reviewer", ["", "x" * 301, "name\n", "name\x00", "name\x7f"])
+@pytest.mark.parametrize("stage", PROMPT_VERSIONS)
+def test_invalid_reviewer_codes_distinguish_cli_and_stored_receipts(
+    tmp_path: Path, reviewer: str, stage: str
+) -> None:
+    with pytest.raises(ModelFailure, match="qualification_reviewer_invalid"):
+        validate_reviewer(reviewer)
+    with pytest.raises(ModelFailure, match="model_route_invalid"):
+        fixture_receipt("a" * 64, reviewed_by=reviewer)
+    data = route_data("http://127.0.0.1:1")
+    qualified_route(tmp_path, data)
+    receipts = cast(dict[str, dict[str, object]], data["qualification_receipts"])
+    receipts[stage]["reviewed_by"] = reviewer
+    with pytest.raises(ModelFailure, match="model_route_invalid"):
+        load_route(route_file(tmp_path, data))
+
+
+@pytest.mark.parametrize("reviewer", ["Owner", "x" * 300, "Réviseur"])
+def test_shared_reviewer_validation_preserves_valid_names(reviewer: str) -> None:
+    assert validate_reviewer(reviewer) == reviewer
+    assert fixture_receipt("a" * 64, reviewed_by=reviewer)["reviewed_by"] == reviewer
+
+
+@pytest.mark.parametrize("valid,status", [(19, "passed"), (18, "failed")])
+def test_receipt_threshold_and_measurement_consistency(
+    tmp_path: Path, valid: int, status: str
+) -> None:
+    data = route_data("http://127.0.0.1:1")
+    initial = load_route(route_file(tmp_path, data))
+    assert initial is not None
+    receipt = fixture_receipt(
+        initial.capability_sha256,
+        status=status,
+        valid_rate_per_mille=valid * 50,
+        counts={
+            "valid_first": valid - 1,
+            "valid_after_correction": 1,
+            "invalid_after_correction": 19 - valid,
+            "failed_before_check": 1,
+        },
+    )
+    data["qualification_receipts"] = {"generate_documents": receipt}
+    route = load_route(route_file(tmp_path, data))
+    assert route is not None and route.qualified_for("generate_documents") == (status == "passed")
+    assert route.receipt_details()["generate_documents"]["status"] == status
+    for overrides in (
+        {"status": "failed" if status == "passed" else "passed"},
+        {"valid_rate_per_mille": 999},
+        {"case_count": 21},
+        {"duration_ms": -1},
+        {"dataset_sha256": "forged"},
+        {"usable_statement_rate_per_mille": 1001},
+        {"reviewed_at": "not-a-date"},
+        {"case_count": True},
+    ):
+        with pytest.raises(ModelFailure, match="model_route_invalid"):
+            qualification_receipt({**receipt, **overrides})
+
+
+def test_receipt_details_hide_stale_capability(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from bonafides import local_model
+
+    data = route_data("http://127.0.0.1:1")
+    original = qualified_route(tmp_path, data)
+    identity = original.identity()
+    details = original.receipt_details()
+    details["generate_documents"]["status"] = "mutated"
+    assert original.identity() == identity
+    assert original.receipt_details()["generate_documents"]["status"] == "passed"
+    monkeypatch.setattr(local_model, "_SYSTEM", local_model._SYSTEM + " changed")
+    stale = load_route(route_file(tmp_path, data))
+    assert stale is not None
+    assert stale.receipt_details()["generate_documents"] == {
+        "status": "missing",
+        "valid_rate_per_mille": None,
+        "reviewed_at": None,
+        "qualified": False,
+        "reason": "capability_changed",
+    }
+
+
+def test_qualification_execution_is_explicit_and_stage_scoped(tmp_path: Path) -> None:
+    output = {
+        "schema_version": "2",
+        "stage": "regenerate_section",
+        "blocks": [
+            {
+                "block_key": "b-1",
+                "kind": "factual",
+                "text": "Maintained Linux systems.",
+                "claim_id": "11111111-1111-4111-8111-111111111111",
+            },
+        ],
+        "warnings": [],
+    }
+    with fixture_server(
+        response_body(message={"role": "assistant", "content": json.dumps(output)})
+    ) as (endpoint, requests):
+        route = load_route(route_file(tmp_path, route_data(endpoint)))
+        assert route is not None
+        with pytest.raises(ModelFailure, match="model_route_unavailable"):
+            OllamaClient(route).call(
+                "regenerate_section", _section_context(), PROMPT_VERSIONS["regenerate_section"]
+            )
+        with pytest.raises(ModelFailure, match="model_route_unavailable"):
+            OllamaClient(route, qualification_stage="extract_posting")
+        client = OllamaClient(route, qualification_stage="regenerate_section")
+        with pytest.raises(ModelFailure, match="model_route_unavailable"):
+            client.call("generate_documents", {}, PROMPT_VERSIONS["generate_documents"])
+        assert requests == []
+        result = client.call(
+            "regenerate_section", _section_context(), PROMPT_VERSIONS["regenerate_section"]
+        )
+        assert result.output == output and len(requests) == 1
+        assert not route.qualified_for("regenerate_section")

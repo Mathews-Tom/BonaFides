@@ -21,6 +21,8 @@
     "tests/test_greenhouse.py",
     "tests/test_installation_control.py",
     "tests/test_model_context.py",
+    "tests/test_model_calls.py",
+    "tests/test_model_qualification.py",
     "tests/test_portable_archive.py",
     "tests/test_portable_exports.py",
     "tests/test_profiles.py",

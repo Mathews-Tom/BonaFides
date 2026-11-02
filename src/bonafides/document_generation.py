@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import hashlib
 import re
+from collections.abc import Mapping
 from datetime import date
 from typing import Annotated, Literal, cast
 from uuid import UUID, uuid4, uuid5
@@ -23,7 +24,9 @@ from bonafides import (
     document_defaults,
     documents,
     local_model,
+    model_calls,
     model_context,
+    model_projections,
     statement_check,
     suitability,
 )
@@ -253,9 +256,14 @@ def route_status(
         return {"status": "disabled", "reason": "local_model_not_configured", "identity": None}
     blocked = conn.execute(
         text(
-            "SELECT 1 FROM bonafides.local_model_route_blocks WHERE owner_id=:owner AND route_sha256=:sha AND stage=:stage"
+            "SELECT 1 FROM bonafides.local_model_route_blocks WHERE owner_id=:owner AND route_sha256 IN (:capability,:legacy) AND stage=:stage"
         ),
-        {"owner": owner, "sha": sha(route.identity()), "stage": stage},
+        {
+            "owner": owner,
+            "capability": route.capability_sha256,
+            "legacy": sha(route.identity()),
+            "stage": stage,
+        },
     ).first()
     qualified = route.qualified_for(stage) and blocked is None
     return {
@@ -267,6 +275,41 @@ def route_status(
         else "model_route_not_qualified",
         "identity": route.identity(),
     }
+
+
+def receipt_details(
+    conn: Connection, owner: UUID, settings: Settings, identity: dict[str, object] | None
+) -> dict[str, dict[str, object]]:
+    """Qualification measurements are display-only, never frozen context inputs."""
+    missing: dict[str, dict[str, object]] = {
+        stage: {
+            "status": "missing",
+            "valid_rate_per_mille": None,
+            "reviewed_at": None,
+            "qualified": False,
+            "reason": None,
+        }
+        for stage in local_model.QUALIFICATION_STAGES
+    }
+    if identity is None:
+        return missing
+    try:
+        route = local_model.load_route(settings.local_model_route_file)
+    except local_model.ModelFailure:
+        return missing
+    if route is None or route.identity() != identity:
+        return missing
+    details = route.receipt_details()
+    blocked = conn.execute(
+        text("""SELECT stage FROM bonafides.local_model_route_blocks
+            WHERE owner_id=:owner AND route_sha256 IN (:capability,:legacy)"""),
+        {"owner": owner, "capability": route.capability_sha256, "legacy": sha(route.identity())},
+    ).scalars()
+    for stage in blocked:
+        if stage in details:
+            details[stage]["qualified"] = False
+            details[stage]["reason"] = "model_route_failed_live_evaluation"
+    return details
 
 
 def claim_json_rates(
@@ -383,13 +426,9 @@ def generation_plan(
     profile = _profile(conn, owner, revision)
     facts = _fact_data(conn, owner, revision)
     claims, evidence = model_context.professional_context(conn, owner, facts)
-    projection = {
-        "posting": {
-            "title": posting["title"],
-            "organization": posting["company"],
-            "source_text": suitability.normalize(str(posting["description_text"])),
-        },
-        "requirements": [
+    projection = model_projections.generation_projection(
+        cast(Mapping[str, object], posting),
+        [
             {
                 "requirement_key": item.requirement_key,
                 "text": item.text,
@@ -398,11 +437,11 @@ def generation_plan(
             }
             for item in requirements
         ],
-        "claims": claims,
-        "evidence": evidence,
-        "tone": tone,
-        "language": language,
-    }
+        claims,
+        evidence,
+        tone,
+        language,
+    )
     route = route_status(conn, owner, settings)
     targets = _targets(conn, owner, application)
     if any(item["deleted"] for item in targets):
@@ -580,15 +619,7 @@ class CandidatePair(documents.StrictModel):
         return self
 
 
-class OutputMismatch(Problem):
-    """Model output that does not match its schema; the summary carries no owner data."""
-
-    def __init__(self, summary: list[str]) -> None:
-        super().__init__(422, "invalid_model_output")
-        self.summary = summary[:12]
-
-
-def _mismatch(exc: ValidationError) -> OutputMismatch:
+def _mismatch(exc: ValidationError) -> model_calls.OutputMismatch:
     summary: list[str] = []
     for error in exc.errors():
         location = ".".join(
@@ -600,7 +631,7 @@ def _mismatch(exc: ValidationError) -> OutputMismatch:
         if reason == "value_error" and found:
             reason = found.group(1)
         summary.append(f"{location or 'output'}: {reason}")
-    return OutputMismatch(summary)
+    return model_calls.OutputMismatch(summary)
 
 
 def parse_candidate[T: documents.StrictModel](output: dict[str, object], schema: type[T]) -> T:
@@ -610,7 +641,7 @@ def parse_candidate[T: documents.StrictModel](output: dict[str, object], schema:
     except Problem as exc:
         if exc.code != "noncanonical_request":
             raise
-        raise OutputMismatch(["output: noncanonical_json"]) from exc
+        raise model_calls.OutputMismatch(["output: noncanonical_json"]) from exc
     try:
         return schema.model_validate_json(encoded, strict=True)
     except ValidationError as exc:
@@ -633,9 +664,9 @@ def validate_pair(output: dict[str, object], plan: dict[str, object]) -> Candida
         )
     }
     if any(gap.requirement_key not in requirements for gap in pair.gaps):
-        raise OutputMismatch(["gaps: foreign_document_gap"])
+        raise model_calls.OutputMismatch(["gaps: foreign_document_gap"])
     if len({gap.requirement_key for gap in pair.gaps}) != len(pair.gaps):
-        raise OutputMismatch(["gaps: duplicate_document_gap"])
+        raise model_calls.OutputMismatch(["gaps: duplicate_document_gap"])
     return pair
 
 
@@ -1111,6 +1142,12 @@ def install_routes(router: APIRouter, db: Database, settings: Settings) -> None:
                     "generation_route": route,
                     "claim_json_rates": claim_json_rates(
                         conn, owner.id, cast(dict[str, object] | None, route["identity"])
+                    ),
+                    "receipt_details": receipt_details(
+                        conn,
+                        owner.id,
+                        settings,
+                        cast(dict[str, object] | None, route["identity"]),
                     ),
                     "requirements_revision_id": str(current["id"]) if current else None,
                 },

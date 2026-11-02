@@ -14,6 +14,7 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
 from pathlib import Path
 from threading import Event
+from types import SimpleNamespace
 from typing import Any, cast
 from uuid import UUID, uuid4
 
@@ -21,7 +22,18 @@ import pytest
 from sqlalchemy import text
 from sqlalchemy.exc import DBAPIError
 from test_identity import identity as identity
-from test_local_model import fixture_server, qualified_route, response_body, route_data, route_file
+from test_import_parser import parser as parser
+from test_installation_control import renderer_spool as renderer_spool
+from test_local_model import (
+    fixture_receipt,
+    fixture_server,
+    qualified_route,
+    response_body,
+    route_data,
+    route_file,
+)
+from test_model_qualification import DATASET
+from test_model_qualification import output as qualification_output
 from test_sources import SourceContext
 from test_sources import catalog as catalog
 from test_suitability import (
@@ -37,13 +49,18 @@ from test_tracking import _application, _get
 
 from bonafides import document_generation as generation
 from bonafides import documents, local_model, suitability
+from bonafides import model_qualification as qualification
 from bonafides.commands import canonical_json
 from bonafides.document_frame import PrintableFrame, ProfileContact, template_digest
+from bonafides.import_parser import ImportParserClient
+from bonafides.installation_control import InstallationMaintenance
+from bonafides.local_model import load_route
+from bonafides.portable_erasure import delete_controlled_owner_data
 from bonafides.problems import Problem
 from bonafides.render_service import render_html
 from bonafides.storage import BlobStore
 from bonafides.worker import Worker
-from bonafides.workflows import Claim, cancel_workflow, claim, publish, reap
+from bonafides.workflows import Claim, cancel_workflow, claim, migrate, publish, reap
 
 
 def _document(context: SourceContext, identifier: str) -> dict[str, Any]:
@@ -1259,13 +1276,7 @@ def test_suitability_qualification_does_not_qualify_generation(tmp_path: Path) -
     initial = local_model.load_route(route_file(tmp_path, data))
     assert initial is not None
     data["qualification_receipts"] = {
-        stage: {
-            "status": "passed",
-            "capability_sha256": initial.capability_sha256,
-            "receipt_sha256": "b" * 64,
-            "reviewed_by": "synthetic-only",
-            "reviewed_at": "2026-10-25T00:00:00Z",
-        }
+        stage: fixture_receipt(initial.capability_sha256, reviewed_by="synthetic-only", stage=stage)
         for stage in ("extract_posting", "match_requirements")
     }
     route = local_model.load_route(route_file(tmp_path, data))
@@ -1462,3 +1473,451 @@ def test_contradicted_structured_claim_cannot_escape_review_and_render(
         headers=catalog.headers(blocked["version"]),
     )
     assert rendered.status_code == 409 and rendered.json()["code"] == "unsupported_claims"
+
+
+def test_receipt_details_preserve_route_context_and_live_blocks(tmp_path: Path) -> None:
+    data = route_data("http://127.0.0.1:1")
+    route = qualified_route(tmp_path, data)
+    settings = cast(Any, SimpleNamespace(local_model_route_file=tmp_path / "route.json"))
+    blocked: list[str] = []
+    result = SimpleNamespace(first=lambda: blocked[0] if blocked else None, scalars=lambda: blocked)
+
+    def execute(statement: object, parameters: dict[str, object]) -> SimpleNamespace:
+        assert "route_sha256 IN (:capability,:legacy)" in str(statement)
+        assert parameters["capability"] == route.capability_sha256
+        assert parameters["legacy"] == generation.sha(route.identity())
+        return result
+
+    conn = cast(Any, SimpleNamespace(execute=execute))
+    owner = uuid4()
+    before = generation.route_status(conn, owner, settings)
+    details = generation.receipt_details(conn, owner, settings, route.identity())
+    assert details["generate_documents"]["status"] == "passed"
+    assert details["generate_documents"]["qualified"] is True
+    assert generation.route_status(conn, owner, settings) == before
+    assert "receipt_details" not in before
+    assert suitability._route_status(conn, owner, settings)["status"] == "qualified"
+    assert suitability._route(conn, owner, settings, "generate_documents") == route
+    blocked.append("generate_documents")
+    details = generation.receipt_details(conn, owner, settings, route.identity())
+    assert details["generate_documents"]["status"] == "passed"
+    assert details["generate_documents"]["qualified"] is False
+    assert details["generate_documents"]["reason"] == "model_route_failed_live_evaluation"
+    assert generation.route_status(conn, owner, settings)["status"] == "unqualified"
+    with pytest.raises(Problem, match="model_route_unavailable"):
+        suitability._route(conn, owner, settings, "generate_documents")
+    assert (
+        generation.receipt_details(conn, owner, settings, None)["generate_documents"]["status"]
+        == "missing"
+    )
+    blocked[:] = ["extract_posting"]
+    status = suitability._route_status(conn, owner, settings)
+    assert status["status"] == "unqualified"
+    assert status["reason"] == "model_route_failed_live_evaluation"
+    with pytest.raises(Problem, match="model_route_unavailable"):
+        suitability._route(conn, owner, settings, "extract_posting")
+    data["runtime_version"] = "changed"
+    stale = local_model.load_route(route_file(tmp_path, data))
+    assert stale is not None
+    route = stale
+    assert (
+        generation.receipt_details(conn, owner, settings, stale.identity())["generate_documents"][
+            "status"
+        ]
+        == "missing"
+    )
+
+
+@pytest.mark.postgres
+def test_qualification_never_lifts_permanent_route_block(
+    catalog: SourceContext, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    profile, application = _setup_pair(catalog)
+    path = tmp_path / "route.json"
+    route = qualified_route(tmp_path, route_data("http://127.0.0.1:1"))
+    original_identity = route.identity()
+    load_route = local_model.load_route
+    configured = catalog.identity.settings.local_model_route_file
+    monkeypatch.setattr(
+        local_model,
+        "load_route",
+        lambda supplied: load_route(path if supplied == configured else supplied),
+    )
+    task = _queue_pair(catalog, _preview(catalog, profile, application))
+    model = FixtureModel({}, failure=local_model.ModelFailure("model_incomplete"))
+    with pytest.raises(local_model.ModelFailure, match="model_incomplete"):
+        suitability.execute_model(catalog.runtime, catalog.identity.settings, task, Event(), model)
+    with catalog.identity.admin.transaction() as conn:
+        block = (
+            conn.execute(
+                text("SELECT * FROM bonafides.local_model_route_blocks WHERE owner_id=:owner"),
+                {"owner": catalog.owner_id},
+            )
+            .mappings()
+            .one()
+        )
+        assert block["route_sha256"] == route.capability_sha256
+    with catalog.runtime.transaction() as conn:
+        rates = generation.claim_json_rates(conn, catalog.owner_id, original_identity)
+    cases = {stage: qualification.load_cases(DATASET, stage)[0] for stage in qualification.STAGES}
+
+    def call(
+        self: local_model.OllamaClient, stage: str, context: dict[str, object], *_args: object
+    ) -> local_model.ModelResult:
+        organization = cast(dict[str, object], context["posting"])["organization"]
+        case = next(
+            case
+            for case in cases[stage]
+            if cast(dict[str, object], case["posting"])["company"] == organization
+        )
+        return local_model.ModelResult(qualification_output(case, stage), {})
+
+    monkeypatch.setattr(local_model.OllamaClient, "call", call)
+    for stage in ("regenerate_section", "generate_documents"):
+        assert (
+            qualification.main(
+                [
+                    "qualify",
+                    "--route",
+                    str(path),
+                    "--stage",
+                    stage,
+                    "--dataset",
+                    str(DATASET),
+                    "--reviewed-by",
+                    "synthetic-only",
+                ]
+            )
+            == 0
+        )
+        current = load_route(path)
+        assert current is not None and current.identity() != original_identity
+        assert current.capability_sha256 == route.capability_sha256
+        with catalog.runtime.transaction() as conn:
+            status = generation.route_status(conn, catalog.owner_id, catalog.identity.settings)
+            assert status["status"] == "unqualified"
+            assert status["reason"] == "model_route_failed_live_evaluation"
+            details = generation.receipt_details(
+                conn, catalog.owner_id, catalog.identity.settings, current.identity()
+            )
+            assert details["generate_documents"]["status"] == "passed"
+            assert details["generate_documents"]["qualified"] is False
+            assert details["generate_documents"]["reason"] == "model_route_failed_live_evaluation"
+            assert (
+                generation.route_status(
+                    conn, catalog.owner_id, catalog.identity.settings, stage="regenerate_section"
+                )["status"]
+                == "qualified"
+            )
+            assert generation.claim_json_rates(conn, catalog.owner_id, original_identity) == rates
+            with pytest.raises(Problem, match="model_route_unavailable"):
+                suitability._route(
+                    conn, catalog.owner_id, catalog.identity.settings, "generate_documents"
+                )
+
+
+def _legacy_receipt_route(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, *, document_receipts: bool
+) -> local_model.LocalRoute:
+    data = route_data("http://127.0.0.1:1")
+    data["deadline_seconds"] = 30
+    initial = load_route(route_file(tmp_path, data))
+    assert initial is not None
+    stages = (
+        tuple(local_model.PROMPT_VERSIONS)
+        if document_receipts
+        else ("extract_posting", "match_requirements")
+    )
+    data["qualification_receipts"] = {
+        stage: fixture_receipt(initial.capability_sha256, stage="extract_posting")
+        for stage in stages
+    }
+
+    def legacy_receipt(item: dict[str, object]) -> dict[str, object]:
+        assert set(item) == {
+            "status",
+            "capability_sha256",
+            "receipt_sha256",
+            "reviewed_by",
+            "reviewed_at",
+        }
+        return item
+
+    # Only receipt acceptance changed: use the unchanged capability/identity builder
+    # with the exact five-field document receipts accepted by the pre-upgrade loader.
+    with monkeypatch.context() as historical:
+        historical.setattr(local_model, "qualification_receipt", legacy_receipt)
+        route = load_route(route_file(tmp_path, data))
+    assert route is not None
+    return route
+
+
+def _before_block_backfill(conn: Any) -> None:
+    # Schema 30 adds block copies, a comment and migration metadata, not table structure.
+    conn.execute(text("COMMENT ON COLUMN bonafides.local_model_route_blocks.route_sha256 IS NULL"))
+    conn.execute(text("DELETE FROM bonafides.schema_migrations WHERE version=30"))
+    conn.execute(
+        text("""UPDATE bonafides_migrations.alembic_version
+        SET version_num='0026_evidence_provenance' WHERE version_num='0027_stable_model_blocks'""")
+    )
+
+
+def _measure_fixture_stage(
+    monkeypatch: pytest.MonkeyPatch, path: Path, stage: str
+) -> local_model.LocalRoute:
+    cases, _ = qualification.load_cases(DATASET, stage)
+
+    def call(
+        self: local_model.OllamaClient, requested: str, context: dict[str, object], *_args: object
+    ) -> local_model.ModelResult:
+        assert requested == stage
+        organization = cast(dict[str, object], context["posting"])["organization"]
+        case = next(
+            case
+            for case in cases
+            if cast(dict[str, object], case["posting"])["company"] == organization
+        )
+        return local_model.ModelResult(qualification_output(case, stage), {})
+
+    monkeypatch.setattr(local_model.OllamaClient, "call", call)
+    assert (
+        qualification.main(
+            [
+                "qualify",
+                "--route",
+                str(path),
+                "--stage",
+                stage,
+                "--dataset",
+                str(DATASET),
+                "--reviewed-by",
+                "synthetic-only",
+            ]
+        )
+        == 0
+    )
+    route = load_route(path)
+    assert route is not None
+    return route
+
+
+@pytest.mark.postgres
+@pytest.mark.parametrize("erased", [False, True], ids=["mapped", "erased-document-run"])
+def test_legacy_document_block_pre_release_upgrade_boundary(
+    catalog: SourceContext,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    parser: ImportParserClient,
+    renderer_spool: Path,
+    erased: bool,
+) -> None:
+    from test_portable_erasure import _deletion
+
+    profile, application = _setup_pair(catalog)
+    modern = _route(monkeypatch, tmp_path)
+    task = _queue_pair(catalog, _preview(catalog, profile, application))
+    model = FixtureModel({}, failure=local_model.ModelFailure("model_incomplete"))
+    with pytest.raises(local_model.ModelFailure, match="model_incomplete"):
+        suitability.execute_model(catalog.runtime, catalog.identity.settings, task, Event(), model)
+    legacy = _legacy_receipt_route(monkeypatch, tmp_path, document_receipts=True)
+    assert legacy.capability_sha256 == modern.capability_sha256
+    identity = legacy.identity()
+    path = tmp_path / "route.json"
+    original = path.read_bytes()
+    with catalog.identity.admin.transaction() as conn:
+        # Reconstruct precisely the old writer's observation, including its old
+        # five-field receipts, rather than hashing a newly measured route identity.
+        conn.execute(
+            text("""UPDATE bonafides.model_runs SET parameters=jsonb_set(
+            parameters,'{route_identity}',CAST(:identity AS jsonb))
+            WHERE owner_id=:owner AND workflow_run_id=:workflow"""),
+            {"owner": catalog.owner_id, "workflow": task.id, "identity": canonical_json(identity)},
+        )
+        block = dict(
+            conn.execute(
+                text("""UPDATE bonafides.local_model_route_blocks SET route_sha256=:sha
+            WHERE owner_id=:owner RETURNING *"""),
+                {"owner": catalog.owner_id, "sha": generation.sha(identity)},
+            )
+            .mappings()
+            .one()
+        )
+        _before_block_backfill(conn)
+    if erased:
+        control = _deletion(catalog, _get(catalog, application))
+        maintenance = InstallationMaintenance(
+            catalog.runtime, control, parser.spool, renderer_spool
+        )
+        with maintenance.quiescent():
+            result = delete_controlled_owner_data(
+                catalog.runtime, catalog.identity.settings, control
+            )
+            maintenance.finish(result)
+    with catalog.runtime.transaction() as conn:
+        assert conn.execute(
+            text("SELECT count(*) FROM bonafides.applications WHERE owner_id=:owner AND id=:id"),
+            {"owner": catalog.owner_id, "id": UUID(application["id"])},
+        ).scalar_one() == (0 if erased else 1)
+        assert conn.execute(
+            text("SELECT count(*) FROM bonafides.model_runs WHERE owner_id=:owner"),
+            {"owner": catalog.owner_id},
+        ).scalar_one() == (0 if erased else 1)
+    configured = catalog.identity.settings.local_model_route_file
+    monkeypatch.setattr(
+        local_model,
+        "load_route",
+        lambda supplied: load_route(path if supplied == configured else supplied),
+    )
+    with pytest.raises(local_model.ModelFailure, match="model_route_invalid"):
+        load_route(path)
+    assert catalog.client.get("/health/ready").status_code == 503
+    migrate(catalog.identity.settings)
+    ready = catalog.client.get("/health/ready")
+    assert ready.status_code == 200, ready.text
+    assert ready.json()["schema_version"] == 30
+    with catalog.identity.admin.transaction() as conn:
+        assert (
+            conn.execute(
+                text("SELECT version_num FROM bonafides_migrations.alembic_version")
+            ).scalar_one()
+            == "0027_stable_model_blocks"
+        )
+    with catalog.runtime.transaction() as conn:
+        rows = (
+            conn.execute(
+                text("SELECT * FROM bonafides.local_model_route_blocks WHERE owner_id=:owner"),
+                {"owner": catalog.owner_id},
+            )
+            .mappings()
+            .all()
+        )
+        expected = {generation.sha(identity)}
+        if not erased:
+            expected.add(legacy.capability_sha256)
+        assert {row["route_sha256"] for row in rows} == expected
+        assert all(row["created_at"] == block["created_at"] for row in rows)
+        assert all(row["error_code"] == block["error_code"] for row in rows)
+    assert path.read_bytes() == original
+    # The new loader cannot qualify while incompatible document receipts remain.
+    # Remove just those obsolete receipts before obtaining replacement measurements.
+    data = json.loads(path.read_text())
+    for stage in qualification.STAGES:
+        del data["qualification_receipts"][stage]
+    route_file(tmp_path, data)
+    for stage in qualification.STAGES:
+        current = _measure_fixture_stage(monkeypatch, path, stage)
+        assert current.capability_sha256 == legacy.capability_sha256
+        assert current.identity() != identity
+        with catalog.runtime.transaction() as conn:
+            assert (
+                set(
+                    conn.execute(
+                        text(
+                            "SELECT route_sha256 FROM bonafides.local_model_route_blocks WHERE owner_id=:owner"
+                        ),
+                        {"owner": catalog.owner_id},
+                    ).scalars()
+                )
+                == expected
+            )
+            status = generation.route_status(conn, catalog.owner_id, catalog.identity.settings)
+            assert status["status"] == ("qualified" if erased else "unqualified")
+            details = generation.receipt_details(
+                conn, catalog.owner_id, catalog.identity.settings, current.identity()
+            )["generate_documents"]
+            assert details["status"] == "passed"
+            assert details["qualified"] is erased
+            if erased:
+                # Documented pre-release boundary: the measured run replaces the
+                # erased observation; its unmatchable legacy row is still retained.
+                assert (
+                    suitability._route(
+                        conn, catalog.owner_id, catalog.identity.settings, "generate_documents"
+                    )
+                    == current
+                )
+            else:
+                assert status["reason"] == "model_route_failed_live_evaluation"
+                with pytest.raises(Problem, match="model_route_unavailable"):
+                    suitability._route(
+                        conn, catalog.owner_id, catalog.identity.settings, "generate_documents"
+                    )
+
+
+@pytest.mark.postgres
+@pytest.mark.parametrize(
+    "document_receipts", [False, True], ids=["suitability-only", "mixed-route"]
+)
+def test_unmapped_suitability_block_uses_only_unchanged_legacy_identity(
+    catalog: SourceContext,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    document_receipts: bool,
+) -> None:
+    legacy = _legacy_receipt_route(monkeypatch, tmp_path, document_receipts=document_receipts)
+    identity = legacy.identity()
+    path = tmp_path / "route.json"
+    original = path.read_bytes()
+    with catalog.identity.admin.transaction() as conn:
+        # An unmapped row has no retained observation, but is exactly the key and
+        # stage the old writer used for this valid five-field receipt-bearing route.
+        conn.execute(
+            text("""INSERT INTO bonafides.local_model_route_blocks
+            (owner_id,route_sha256,stage,error_code) VALUES(:owner,:sha,'extract_posting','model_incomplete')"""),
+            {"owner": catalog.owner_id, "sha": generation.sha(identity)},
+        )
+        _before_block_backfill(conn)
+    migrate(catalog.identity.settings)
+    ready = catalog.client.get("/health/ready")
+    assert ready.status_code == 200, ready.text
+    assert ready.json()["schema_version"] == 30
+    configured = catalog.identity.settings.local_model_route_file
+    monkeypatch.setattr(
+        local_model,
+        "load_route",
+        lambda supplied: load_route(path if supplied == configured else supplied),
+    )
+    assert path.read_bytes() == original
+    if document_receipts:
+        with pytest.raises(local_model.ModelFailure, match="model_route_invalid"):
+            load_route(path)
+        data = json.loads(path.read_text())
+        for stage in qualification.STAGES:
+            del data["qualification_receipts"][stage]
+        route_file(tmp_path, data)
+        current = _measure_fixture_stage(monkeypatch, path, "generate_documents")
+        assert current.capability_sha256 == legacy.capability_sha256
+        assert current.identity() != identity
+    else:
+        unchanged = load_route(path)
+        assert unchanged is not None and unchanged.identity() == identity
+        current = unchanged
+    with catalog.runtime.transaction() as conn:
+        assert (
+            conn.execute(
+                text("SELECT count(*) FROM bonafides.model_runs WHERE owner_id=:owner"),
+                {"owner": catalog.owner_id},
+            ).scalar_one()
+            == 0
+        )
+        assert conn.execute(
+            text(
+                "SELECT route_sha256 FROM bonafides.local_model_route_blocks WHERE owner_id=:owner"
+            ),
+            {"owner": catalog.owner_id},
+        ).scalar_one() == generation.sha(identity)
+        status = suitability._route_status(conn, catalog.owner_id, catalog.identity.settings)
+        assert status["status"] == ("qualified" if document_receipts else "unqualified")
+        if document_receipts:
+            assert (
+                suitability._route(
+                    conn, catalog.owner_id, catalog.identity.settings, "extract_posting"
+                )
+                == current
+            )
+        else:
+            assert status["reason"] == "model_route_failed_live_evaluation"
+            with pytest.raises(Problem, match="model_route_unavailable"):
+                suitability._route(
+                    conn, catalog.owner_id, catalog.identity.settings, "extract_posting"
+                )

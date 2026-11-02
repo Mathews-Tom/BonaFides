@@ -99,9 +99,9 @@ def _source(context: SourceContext, source_schema: int = 29) -> tuple[PortableAr
         for row in archive.manifest.records["evidence_revisions"]:
             for key in ("source_type", "origin"):
                 del row[key]
-        archive = PortableArchive(
-            archive.manifest.model_copy(update={"source_schema_version": source_schema}), blobs
-        )
+    archive = PortableArchive(
+        archive.manifest.model_copy(update={"source_schema_version": source_schema}), blobs
+    )
     archive = _digest(archive)
     return archive, _encoded(archive.manifest, archive.blobs)
 
@@ -157,7 +157,7 @@ def _approved_import(context: SourceContext, payload: bytes) -> Prepared:
 
 
 @pytest.mark.postgres
-@pytest.mark.parametrize("source_schema", [28, 29])
+@pytest.mark.parametrize("source_schema", [28, 29, 30])
 def test_foreign_historical_import_preserves_native_rows_and_bytes_without_authority(
     catalog: SourceContext,
     parser: ImportParserClient,
@@ -346,7 +346,7 @@ def test_foreign_historical_import_preserves_native_rows_and_bytes_without_autho
             canonical_json({key: value for key, value in row.items() if key != "owner_id"})
             for row in again.manifest.records[family]
         } == expected_rows, family
-    if source_schema == 29:
+    if source_schema >= 29:
         assert ("confidential", True) in {
             (row["privacy_class"], row["employer_owned"])
             for row in again.manifest.records["evidence_records"]

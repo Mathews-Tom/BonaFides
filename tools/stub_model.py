@@ -291,7 +291,7 @@ def serve(host: str, port: int, scenario: str, control: Path | None) -> None:
 
 def route(endpoint: str, address: str, output: Path, deadline: int) -> None:
     """Write a 0600 route file with fixture-only receipts for both document stages."""
-    from bonafides.local_model import PROMPT_VERSIONS, load_route
+    from bonafides.local_model import load_route, qualification_receipt
 
     data: dict[str, object] = {
         "version": 1,
@@ -326,15 +326,25 @@ def route(endpoint: str, address: str, output: Path, deadline: int) -> None:
     assert initial is not None
     stages = ("generate_documents", "regenerate_section")
     data["qualification_receipts"] = {
-        stage: {
-            "status": "passed",
-            "capability_sha256": initial.capability_sha256,
-            "receipt_sha256": hashlib.sha256(
-                f"fixture-only:{initial.capability_sha256}:{PROMPT_VERSIONS[stage]}".encode()
-            ).hexdigest(),
-            "reviewed_by": FIXTURE_REVIEWER,
-            "reviewed_at": "2026-11-01T00:00:00Z",
-        }
+        stage: qualification_receipt(
+            {
+                "status": "passed",
+                "capability_sha256": initial.capability_sha256,
+                "reviewed_by": FIXTURE_REVIEWER,
+                "reviewed_at": "2026-11-01T00:00:00Z",
+                "counts": {
+                    "valid_first": 20,
+                    "valid_after_correction": 0,
+                    "invalid_after_correction": 0,
+                    "failed_before_check": 0,
+                },
+                "valid_rate_per_mille": 1000,
+                "usable_statement_rate_per_mille": 1000,
+                "dataset_sha256": hashlib.sha256(b"fixture-only-stub-route").hexdigest(),
+                "case_count": 20,
+                "duration_ms": 0,
+            }
+        )
         for stage in stages
     }
     write()

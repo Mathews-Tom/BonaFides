@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from functools import partial
 from typing import Annotated, Literal, cast
 from uuid import UUID, uuid5
 
@@ -13,7 +14,7 @@ from sqlalchemy import Connection, text
 from sqlalchemy.engine import RowMapping
 
 from bonafides import document_generation as generation
-from bonafides import documents, local_model, model_context, suitability
+from bonafides import documents, local_model, model_context, model_projections, suitability
 from bonafides.auth import Owner, require_owner
 from bonafides.commands import canonical_json, command
 from bonafides.config import Settings
@@ -121,36 +122,36 @@ def _source_context(
     ) != suitability._posting_digest(posting):
         raise Problem(409, "stale_regeneration_posting_context")
     claims, evidence = model_context.professional_context(conn, owner, facts)
-    projection: dict[str, object] = {
-        "posting": {
-            "title": pinned_posting["title"],
-            "organization": pinned_posting["company"],
-            "source_text": pinned_posting["source_text"],
-        },
-        "requirements": [
-            {
-                "requirement_key": item.requirement_key,
-                "text": item.text,
-                "importance": item.importance,
-                "span": item.span.model_dump(mode="json"),
-            }
-            for item in reviewed
-        ],
-        "claims": claims,
-        "evidence": evidence,
-        "tone": tone,
-        "language": provenance.get("language", "en"),
-        "target": {
-            "kind": row["kind"],
-            "section_key": selected.key,
-            "heading": selected.heading,
-            "blocks": [
-                block.model_dump(mode="json", exclude={"block_key"}) for block in selected.blocks
-            ],
-        },
-    }
     try:
-        projection = local_model.section_projection(projection)
+        projection = model_projections.regeneration_projection(
+            {
+                "title": pinned_posting["title"],
+                "company": pinned_posting["company"],
+                "description_text": pinned_posting["source_text"],
+            },
+            [
+                {
+                    "requirement_key": item.requirement_key,
+                    "text": item.text,
+                    "importance": item.importance,
+                    "span": item.span.model_dump(mode="json"),
+                }
+                for item in reviewed
+            ],
+            claims,
+            evidence,
+            tone,
+            cast(str, provenance.get("language", "en")),
+            {
+                "kind": row["kind"],
+                "section_key": selected.key,
+                "heading": selected.heading,
+                "blocks": [
+                    block.model_dump(mode="json", exclude={"block_key"})
+                    for block in selected.blocks
+                ],
+            },
+        )
     except local_model.ModelFailure as exc:
         raise Problem(409, "document_context_outside_model_limits") from exc
     binding: dict[str, object] = {
@@ -246,22 +247,32 @@ def _candidate_section(
     )
 
 
+def validate_replacement(
+    output: dict[str, object],
+    body: documents.DocumentBody,
+    frozen: dict[str, object],
+    provenance: dict[str, object],
+    task_id: UUID,
+) -> Candidate:
+    """Validate the target output against the complete pinned body, without database access."""
+    candidate = generation.parse_candidate(output, Candidate)
+    try:
+        proposed = _candidate_section(candidate, frozen, provenance, task_id)
+        _replacement(body, proposed.key, proposed)
+    except ValidationError as exc:
+        raise generation._mismatch(exc) from exc
+    return candidate
+
+
 def candidate_validator(conn: Connection, task: Claim) -> Callable[[dict[str, object]], Candidate]:
     """Freeze the target body and check the complete replacement before counting validity."""
     row = _target(conn, task.owner_id, UUID(str(task.input["document_id"])))
     body = documents.parse_body(row["body"])
     provenance = cast(dict[str, object], row["provenance_snapshot"])
 
-    def validate(output: dict[str, object]) -> Candidate:
-        candidate = generation.parse_candidate(output, Candidate)
-        try:
-            proposed = _candidate_section(candidate, task.input, provenance, task.id)
-            _replacement(body, proposed.key, proposed)
-        except ValidationError as exc:
-            raise generation._mismatch(exc) from exc
-        return candidate
-
-    return validate
+    return partial(
+        validate_replacement, body=body, frozen=task.input, provenance=provenance, task_id=task.id
+    )
 
 
 def publish_proposal(
