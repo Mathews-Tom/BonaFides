@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react';
 import { Api, ApiError, errorText, type PostingPage, type PostingSummary } from './api';
+import { ApplicationClaimsUsed } from './ClaimUsage';
 import { MAX_ATTACHMENT_BYTES, attachmentDigest, stageName, stages, uploadAttachment, type ApplicationCounts, type ApplicationDetail, type ApplicationPage, type ApplicationSummary, type Appointment, type AppointmentWrite, type AttentionPage, type Stage, type StageEvent, type StagePage } from './tracking-api';
 
 type Draft =
@@ -292,6 +293,7 @@ export function Tracking({ api, disabled = false, onDirtyChange, onBusyChange }:
           <button className="secondary" disabled={locked || dirty} onClick={() => begin({ kind: 'repeat' })}>Start a separate repeat attempt</button>
           <button className="secondary" disabled={locked || dirty} onClick={() => begin({ kind: 'archive', archived: !detail.archived_at })}>{detail.archived_at ? 'Reactivate archived attempt' : 'Archive attempt'}</button></div>
         <p className="hint">Reopening is a stage change on this same attempt. A repeat is a separately confirmed new Preparing pursuit. Reactivation changes archive visibility only, never the stage.</p>
+        <ApplicationClaimsUsed key={detail.id} api={api} applicationId={detail.id} />
         <section aria-labelledby="tracking-history-title"><h4 id="tracking-history-title">Append-only stage history</h4><p>Newest recorded first. Effective time determines period reporting; recorded time tells when you entered the event. Older events are retained after correction.</p>
           <button className="secondary" disabled={locked || historyLoading} onClick={() => { void loadHistory(detail.id, selection.current.epoch); }}>Refresh stage history</button>
           {historyError && <p className="error" role="status">Stage history unavailable. {historyError} {history ? 'Earlier loaded events may be stale.' : ''}</p>}
