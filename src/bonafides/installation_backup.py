@@ -36,7 +36,7 @@ from bonafides.config import Settings
 from bonafides.db import SCHEMA_VERSION, Database
 from bonafides.installation_control import Control, assert_control
 from bonafides.portable_archive import ArchiveError, encode_archive
-from bonafides.portable_data import collect_controlled_owner_data
+from bonafides.portable_data import collect_fenced_owner_data
 from bonafides.storage import MAX_PDF_BYTES, directory, read_file
 
 _MIGRATION_LOCK = 741903221
@@ -145,7 +145,7 @@ def build_workspace(
     """Encode the owner's workspace archive from this exact snapshot, or fail closed."""
     conn.execute(text("SET LOCAL timezone='UTC'"))
     try:
-        archive = collect_controlled_owner_data(conn, settings, control)
+        archive = collect_fenced_owner_data(conn, settings, control.owner_id)
         if sum(blob.byte_length for blob in archive.manifest.blob_manifest) > budget:
             raise BackupError("backup_size_limit")
         encode_archive(archive.manifest, archive.blobs, output)

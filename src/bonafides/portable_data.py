@@ -150,6 +150,19 @@ def collect_controlled_owner_data(
     return _collect_owner_data(conn, settings.blob_root, control.owner_id)
 
 
+def collect_fenced_owner_data(
+    conn: Connection, settings: Settings, owner_id: UUID
+) -> PortableArchive:
+    """Backup capture's snapshot: its caller fences the cut and rechecks authority after.
+
+    A lease timestamp read through a long-lived snapshot never sees heartbeat
+    renewals, so this collector deliberately does not test lease freshness.
+    """
+    if conn.execute(text("SHOW transaction_isolation")).scalar_one() != "repeatable read":
+        raise ValueError("portable_export_requires_repeatable_read")
+    return _collect_owner_data(conn, settings.blob_root, owner_id)
+
+
 def restored_owner_manifest(conn: Connection, blob_root: Path, owner_id: UUID) -> Manifest:
     """Records of a natively restored target that is still closed to every writer."""
     return _collect_owner_data(conn, blob_root, owner_id).manifest

@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import time
 from pathlib import Path
 from uuid import UUID, uuid4
 
@@ -23,7 +24,7 @@ from bonafides.installation_backup import build_workspace
 from bonafides.installation_control import Control, InstallationMaintenance, begin_control
 from bonafides.installation_restore import verify_workspace
 from bonafides.portable_archive import content_digest, decode_archive
-from bonafides.portable_data import collect_controlled_owner_data
+from bonafides.portable_data import collect_fenced_owner_data
 from bonafides.workflows import claim_control, enqueue
 
 
@@ -35,7 +36,9 @@ def _backup_control(context: SourceContext) -> Control:
         return begin_control(conn, task)
 
 
-def _build(context: SourceContext, control: Control, staging: Path, budget: int) -> bytes:
+def _build(
+    context: SourceContext, control: Control, staging: Path, budget: int, delay: float = 0
+) -> bytes:
     """Build exactly as capture does: one read-only repeatable-read snapshot."""
     # staged_workspace needs Linux /dev/fd directory paths; the archive test covers it.
     path = staging / "workspace.zip"
@@ -47,8 +50,12 @@ def _build(context: SourceContext, control: Control, staging: Path, budget: int)
         path.open("w+b") as workspace,
     ):
         conn.execute(text("SET TRANSACTION READ ONLY"))
+        conn.execute(text("SELECT count(*) FROM bonafides.installation_controls"))  # snapshot
+        # Capture fingerprints every table before building; the snapshot's view of the
+        # heartbeat-renewed control lease (30 s) must not decide the outcome.
+        time.sleep(delay)
         build_workspace(conn, context.identity.settings, control, workspace, budget)
-        snapshot = collect_controlled_owner_data(conn, context.identity.settings, control)
+        snapshot = collect_fenced_owner_data(conn, context.identity.settings, context.owner_id)
         workspace.seek(0)
         with decode_archive(workspace, expected_source_owner=context.owner_id) as carried:
             assert content_digest(carried.manifest) == content_digest(snapshot.manifest)
@@ -78,6 +85,7 @@ def test_backup_workspace_matches_its_snapshot_fails_closed_and_imports(
     maintenance = InstallationMaintenance(catalog.runtime, control, parser.spool, renderer_spool)
     with maintenance.quiescent():
         payload = _build(catalog, control, staging, MAX_BUNDLE_BYTES)
+        delayed = _build(catalog, control, staging, MAX_BUNDLE_BYTES, delay=31)
         with pytest.raises(BackupError, match="^backup_size_limit$"):
             _build(catalog, control, staging, stored.byte_length - 1)
         blob = catalog.identity.settings.blob_root / str(catalog.owner_id) / stored.storage_key
@@ -94,6 +102,11 @@ def test_backup_workspace_matches_its_snapshot_fails_closed_and_imports(
             application["id"]
         ]
         assert [blob.sha256 for blob in carried.manifest.blob_manifest] == [stored.sha256]
+    with (
+        decode_archive(payload, expected_source_owner=catalog.owner_id) as first,
+        decode_archive(delayed, expected_source_owner=catalog.owner_id) as second,
+    ):
+        assert content_digest(first.manifest) == content_digest(second.manifest)
     archive = tmp_path / "carried.zip"
     archive.write_bytes(payload)
     _verify(catalog, archive)
