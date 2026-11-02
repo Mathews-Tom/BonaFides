@@ -4,7 +4,7 @@
 Each input is one architecture's `docker save` output extracted as an OCI image layout. The
 assembled layout holds a single image index tagged with the package version and `sha-<12 hex>`
 whose platform manifests and blobs are copied verbatim, so its digests describe this local
-layout only: a registry push would compress layers and produce different manifest digests.
+layout only: a registry push re-encodes layers and produces different manifest digests.
 Docker attestation manifests are not carried over.
 """
 

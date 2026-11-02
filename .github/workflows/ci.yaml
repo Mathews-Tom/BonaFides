@@ -196,7 +196,7 @@ jobs:
       - name: Upload the scanned platform image for the local release index
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: release-image-${{ matrix.architecture }}
+          name: release-platform-${{ matrix.architecture }}
           path: ${{ runner.temp }}/bonafides-image.tar
           retention-days: 1
           compression-level: 1
@@ -233,7 +233,7 @@ jobs:
           persist-credentials: false
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
-          pattern: release-image-*
+          pattern: release-platform-*
           path: ${{ runner.temp }}/release
       - name: Assemble and inspect the two-platform index tagged with the version and commit
         run: |
@@ -241,8 +241,8 @@ jobs:
           release="$RUNNER_TEMP/release"
           for architecture in amd64 arm64; do
             mkdir "$release/$architecture"
-            tar -xf "$release/release-image-$architecture/bonafides-image.tar" -C "$release/$architecture"
-            rm -r "$release/release-image-$architecture"
+            tar -xf "$release/release-platform-$architecture/bonafides-image.tar" -C "$release/$architecture"
+            rm -r "$release/release-platform-$architecture"
           done
           identity=(
             --version "$(python3 -c 'import tomllib; print(tomllib.load(open("pyproject.toml", "rb"))["project"]["version"])')"

@@ -40,8 +40,8 @@ jobs:
       - name: Build the application image
         id: build
         run: |
-          docker build --pull --target app \
-            --build-arg VERSION="$(uv run --frozen python -c 'import bonafides; print(bonafides.__version__)')" \
+          version="$(uv run --frozen python -c 'import bonafides; print(bonafides.__version__)')"
+          docker build --pull --target app --build-arg VERSION="$version" \
             --build-arg REVISION="$(git rev-parse HEAD)" --build-arg SOURCE="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY" \
             --tag bonafides:audit .
           docker save --output "$RUNNER_TEMP/bonafides-image.tar" bonafides:audit

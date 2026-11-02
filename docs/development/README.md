@@ -330,27 +330,31 @@ Nothing is published: public distribution waits on the rights review, so no work
 
 **Labels.** The `app` stage takes `VERSION`, `REVISION` and `SOURCE` build arguments and records them as `org.opencontainers.image.version`, `.revision` and `.source`, in the stage's last layer so a new commit never invalidates the dependency layers. CI passes `bonafides.__version__`, the built commit (`git rev-parse HEAD`; on a pull request that is GitHub's merge commit) and the repository URL. Local `docker build` and Compose builds leave them empty. Each full-tier arch asserts the three labels with `docker image inspect`, checks the version against the image's own `bonafides version`, and lists them in the job summary.
 
-**Two-platform index (dry run).** Each native full-tier runner uploads the exact image it scanned (`docker save`, an OCI image layout) as `release-image-<arch>` (kept one day). The `release image index (local, no push)` job then runs `python3 -m tools.release_index assemble` over both layouts: it verifies every blob digest, each image's `linux/<arch>` platform and labels, and writes a new layout holding one OCI image index tagged `<version>` and `sha-<first 12 hex of the commit>`. `inspect` re-reads that layout from disk, and the job summary shows the index digest, both tags and both platform manifest digests; `release-image-index` (kept three days) holds the layout tar and `index-report.json`. These digests describe uncompressed local layers: a registry push would compress layers and produce different manifest digests. Docker attestation manifests are not carried over.
+**Two-platform index (dry run).** Each native full-tier runner uploads the exact image it scanned (`docker save`, an OCI image layout) as `release-platform-<arch>` (kept one day). The `release image index (local, no push)` job then runs `python3 -m tools.release_index assemble` over both layouts: it verifies every blob digest, each image's `linux/<arch>` platform and labels, and writes a new layout holding one OCI image index tagged `<version>` and `sha-<first 12 hex of the commit>`. `inspect` re-reads that layout from disk, and the job summary shows the index digest, both tags and both platform manifest digests; `release-image-index` (kept three days) holds the layout tar and `index-report.json`. These digests describe the layer bytes `docker save` wrote (uncompressed on the classic store, gzip on the containerd store): a registry push re-encodes layers and produces different manifest digests. `docker save` writes an OCI layout only from Docker Engine 25. Docker attestation manifests are not carried over.
 
 Inspect a downloaded index:
 
 ```sh
 mkdir -p .local/release-index && tar -xf bonafides-index.tar -C .local/release-index
-uv run --frozen python -m tools.release_index inspect --version 0.1.0 \
-  --revision <40-hex commit> --source https://github.com/<owner>/<repo> --output .local/release-index
+uv run --frozen python -m tools.release_index inspect \
+  --version "$(jq -r '.labels["org.opencontainers.image.version"]' index-report.json)" \
+  --revision "$(jq -r '.labels["org.opencontainers.image.revision"]' index-report.json)" \
+  --source https://github.com/Mathews-Tom/BonaFides --output .local/release-index
 ```
 
 Local dry run on one machine (the second platform is emulated and slow):
 
 ```sh
+version="$(uv run --frozen python -c 'import bonafides; print(bonafides.__version__)')"
+source=https://github.com/Mathews-Tom/BonaFides
 for arch in amd64 arm64; do
-  docker buildx build --platform "linux/$arch" --load --target app --build-arg VERSION=0.1.0 \
-    --build-arg REVISION="$(git rev-parse HEAD)" --build-arg SOURCE=https://github.com/<owner>/<repo> \
+  docker buildx build --platform "linux/$arch" --load --target app --build-arg VERSION="$version" \
+    --build-arg REVISION="$(git rev-parse HEAD)" --build-arg SOURCE="$source" \
     --tag "bonafides-proof-release:$arch" .
   mkdir -p ".local/release/$arch" && docker save "bonafides-proof-release:$arch" | tar -x -C ".local/release/$arch"
 done
-uv run --frozen python -m tools.release_index assemble --version 0.1.0 --revision "$(git rev-parse HEAD)" \
-  --source https://github.com/<owner>/<repo> --layout amd64=.local/release/amd64 \
+uv run --frozen python -m tools.release_index assemble --version "$version" --revision "$(git rev-parse HEAD)" \
+  --source "$source" --layout amd64=.local/release/amd64 \
   --layout arm64=.local/release/arm64 --output .local/release/index
 ```
 
