@@ -3,6 +3,7 @@
     "tests/test_action_approvals.py",
     "tests/test_backup_configuration.py",
     "tests/test_checked_section_regeneration.py",
+    "tests/test_fabrication_benchmark.py",
     "tests/test_import_parser.py",
     "tests/test_inflation_report.py",
     "tests/test_installation_open.py",
