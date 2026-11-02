@@ -139,7 +139,35 @@ jobs:
           pnpm --dir web build
           pnpm --dir web audit --audit-level high
       - name: Build shipped application image without ignored planning assets
-        run: docker build --pull --target app --tag bonafides:local .
+        run: |
+          version="$(uv run --frozen python -c 'import bonafides; print(bonafides.__version__)')"
+          revision="$(git rev-parse HEAD)"
+          source="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY"
+          {
+            echo "BONAFIDES_RELEASE_VERSION=$version"
+            echo "BONAFIDES_RELEASE_REVISION=$revision"
+            echo "BONAFIDES_RELEASE_SOURCE=$source"
+          } >> "$GITHUB_ENV"
+          docker build --pull --target app --build-arg VERSION="$version" --build-arg REVISION="$revision" \
+            --build-arg SOURCE="$source" --tag bonafides:local .
+      # Pull-request runs build the merge commit, so their revision is that merge commit's SHA.
+      - name: Assert release labels against the image's own reported version
+        run: |
+          test "$(docker run --rm --network none bonafides:local version)" = "$BONAFIDES_RELEASE_VERSION"
+          labels="$(docker image inspect --format '{{json .Config.Labels}}' bonafides:local)"
+          test "$(docker image inspect --format '{{.Os}}/{{.Architecture}}' bonafides:local)" = '${{ matrix.platform }}'
+          {
+            echo '### Release labels (${{ matrix.platform }})'
+            echo '| Label | Value |'
+            echo '| --- | --- |'
+          } >> "$GITHUB_STEP_SUMMARY"
+          for key in version revision source; do
+            variable="BONAFIDES_RELEASE_${key^^}"
+            value="$(jq -r --arg key "org.opencontainers.image.$key" '.[$key] // empty' <<< "$labels")"
+            test -n "$value"
+            test "$value" = "${!variable}"
+            echo "| \`org.opencontainers.image.$key\` | \`$value\` |" >> "$GITHUB_STEP_SUMMARY"
+          done
       - name: Ruff format strict mypy pytest with actual least privilege PostgreSQL
         run: uv run --frozen python .github/backend_gate.py --schema-equivalence
       - name: Source and Python vulnerability gates
