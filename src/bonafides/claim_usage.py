@@ -20,10 +20,15 @@ from bonafides.db import Database
 from bonafides.problems import Problem
 
 _USAGE = """WITH used AS (
- SELECT document_revision_id,claim_revision_id,array_agg(DISTINCT excerpt ORDER BY excerpt) AS statements
- FROM bonafides.document_claim_links
- WHERE owner_id=:owner AND status IN ('supported','user_asserted') AND claim_revision_id IS NOT NULL
- GROUP BY document_revision_id,claim_revision_id)
+ SELECT l.document_revision_id,l.claim_revision_id,
+  array_agg(DISTINCT l.excerpt ORDER BY l.excerpt) AS statements
+ FROM bonafides.document_claim_links l
+ JOIN bonafides.claim_revisions cr ON cr.owner_id=l.owner_id AND cr.id=l.claim_revision_id
+ JOIN bonafides.document_revisions r ON r.owner_id=l.owner_id AND r.id=l.document_revision_id
+ JOIN bonafides.document_drafts d ON d.owner_id=r.owner_id AND d.id=r.document_draft_id
+ WHERE l.owner_id=:owner AND l.status IN ('supported','user_asserted') AND d.deleted_at IS NULL
+  AND {scope}
+ GROUP BY l.document_revision_id,l.claim_revision_id)
 SELECT d.id AS document_id,d.kind,d.scope,d.application_id,d.current_revision_id,
  r.id AS document_revision_id,r.revision_no AS document_revision_no,
  cr.claim_id,cr.id AS claim_revision_id,cr.revision_no AS claim_revision_no,cr.payload,
@@ -37,8 +42,7 @@ JOIN bonafides.document_drafts d ON d.owner_id=:owner AND d.id=r.document_draft_
 LEFT JOIN bonafides.applications a ON a.owner_id=:owner AND a.id=d.application_id
 LEFT JOIN bonafides.saved_opportunities o ON o.owner_id=:owner AND o.id=a.opportunity_id
 LEFT JOIN bonafides.job_postings p ON p.owner_id=:owner AND p.id=o.posting_id
-WHERE d.deleted_at IS NULL AND {scope}
-ORDER BY d.scope,a.created_at,a.id,d.kind DESC,r.revision_no DESC,cr.revision_no"""
+ORDER BY d.scope,a.created_at,a.id,d.kind DESC,r.revision_no DESC,c.created_at,c.id,cr.revision_no"""
 
 
 def _item(row: RowMapping) -> dict[str, object]:

@@ -7,7 +7,7 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, cast
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
 from sqlalchemy import Engine, event, text
@@ -26,7 +26,8 @@ from test_identity import identity as identity
 from test_sources import SourceContext
 from test_sources import catalog as catalog
 
-from bonafides import documents
+from bonafides import claim_usage, documents
+from bonafides.problems import Problem
 
 TABLES = ("document_drafts", "document_revisions", "document_claim_links")
 
@@ -227,10 +228,22 @@ def test_base_resume_usage_is_not_an_application(
 
 
 @pytest.mark.postgres
-def test_usage_routes_are_owner_scoped(catalog: SourceContext) -> None:
+def test_usage_routes_are_owner_scoped(
+    catalog: SourceContext, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _, application = _pair(catalog, monkeypatch, tmp_path, "valid")
+    _, claim = _claim_item(catalog)
     for path in (f"/api/v1/claims/{uuid4()}/usage", f"/api/v1/applications/{uuid4()}/claims"):
         response = catalog.client.get(path)
         assert response.status_code == 404 and response.json()["code"] == "not_found"
+    # The installation bootstraps one owner; another owner's id must not see these rows.
+    other = uuid4()
+    with catalog.runtime.transaction() as conn:
+        with pytest.raises(Problem) as claim_refused:
+            claim_usage.claim_usage(conn, other, UUID(claim["id"]), history=True)
+        with pytest.raises(Problem) as application_refused:
+            claim_usage.application_claims(conn, other, UUID(application["id"]))
+    assert claim_refused.value.status == application_refused.value.status == 404
 
 
 @pytest.mark.postgres
