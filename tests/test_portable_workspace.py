@@ -285,6 +285,8 @@ def test_workspace_export_reimports_claims_usage_documents_and_tracking(
     for section in ("profile", "claims", "evidence", "claim_usage", "documents", "tracking"):
         for family in SECTION_TABLES[section]:
             assert restored.manifest.records[family] == records[family], family
+    # Workspace history records are stored verbatim (no re-rendering, so no time-zone drift).
+    assert restored.manifest.records["model_run_provenance"] == records["model_run_provenance"]
     assert _usage(catalog, restored) == before
 
 
