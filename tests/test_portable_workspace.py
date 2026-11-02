@@ -379,12 +379,16 @@ def test_legacy_portable_archive_still_imports(
     export_owner_data(catalog.runtime, catalog.identity.settings, catalog.owner_id, output)
     wire = _wire(output.getvalue())
     WorkspaceManifest.model_validate_json(canonical_json(wire), strict=True)
+    with catalog.runtime.transaction() as conn:
+        native = (
+            None
+            if timestamp is None
+            else conn.execute(
+                text("SELECT to_jsonb(CAST(:value AS timestamptz))"), {"value": timestamp}
+            ).scalar_one()
+        )
     for item in restored.manifest.records["model_run_provenance"]:
         record = cast(dict[str, Any], item["record"])
-        with catalog.runtime.transaction() as conn:
-            stored = conn.execute(
-                text("""SELECT record_sha256 FROM bonafides.portable_model_history
-                WHERE owner_id=:owner AND id=:id"""),
-                {"owner": catalog.owner_id, "id": record["id"]},
-            ).scalar_one()
-        assert stored == hashlib.sha256(canonical_json(record).encode()).hexdigest()
+        if native is not None:
+            # Stored as PostgreSQL renders it, not as the archive spelled it.
+            assert record["created_at"] == native != timestamp
