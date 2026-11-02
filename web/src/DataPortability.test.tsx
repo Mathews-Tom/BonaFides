@@ -31,7 +31,7 @@ function preview(replacement = false): PortablePreview {
     plan: { id: 'preview-one', workflow_run_id: task.id, action_kind: kind, binding: { namespace_id: 'namespace-one', workspace_version: 42, maintenance_epoch: 3, session_id: 'session-one', owner_id: owner },
       expires_at: expiry, remaining_copies: ['downloaded_exports', 'encrypted_backups', 'external_copies'], connections_after_operation: 'disabled_reauthorization_and_review_required',
       record_counts: { applications: 1, application_notes: 2 }, payload: replacement ? { replacement_sha256: 'c'.repeat(64) } : { categories: ['all_workspace'] },
-      ...(replacement ? { source_owner_id: owner, source_namespace: 'original-namespace', source_schema_version: 22, manifest_sha256: 'd'.repeat(64), byte_length: 120, blob_count: 2, checkpoint_id: 'checkpoint-one', credential_policy: 'excluded_from_portable_archive', runtime_pins: { backend: 'immutable-image' } } : { credentials_erased: true, local_login_retained: true }) },
+      ...(replacement ? { source_owner_id: owner, source_namespace: 'original-namespace', source_format: 'bonafides-workspace/1', manifest_sha256: 'd'.repeat(64), byte_length: 120, blob_count: 2, checkpoint_id: 'checkpoint-one', credential_policy: 'excluded_from_portable_archive', runtime_pins: { backend: 'immutable-image' } } : { credentials_erased: true, local_login_retained: true }) },
     approval: { id: 'approval-one', workflow_run_id: task.id, action_kind: kind, intent: { session_id: 'session-one', payload: { preview_sha256: 'b'.repeat(64) } },
       payload_sha256: 'e'.repeat(64), destination_sha256: 'f'.repeat(64), revision_id: null, target_version: 42, expires_at: expiry,
       approved_at: null, consumed_at: null, version: 1, applicable: true, reason: 'approval_required', capability_available: true,
@@ -226,7 +226,7 @@ describe('replacement source and browser-buffer safety', () => {
     expect(upload).toHaveBeenCalledTimes(3);
     for (const call of upload.mock.calls) expect(call).toEqual([file, 42, upload.mock.calls[0]?.[2], owner, expect.any(AbortSignal)]);
     expect(screen.getByRole('list', { name: 'Exact server record counts' })).toHaveTextContent('application_notes: 2');
-    expect(screen.getByText('original-namespace / 22')).toBeVisible(); expect(screen.getByText('checkpoint-one')).toBeVisible();
+    expect(screen.getByText('original-namespace / bonafides-workspace/1')).toBeVisible(); expect(screen.getByText('checkpoint-one')).toBeVisible();
   });
 
   it('lets the server default the expected original owner instead of reading the uploaded manifest', async () => {

@@ -89,7 +89,7 @@ export interface PortablePlan {
   expires_at: string; remaining_copies: string[]; connections_after_operation: string;
   payload: { categories?: string[]; application_id?: string; application_version?: number; replacement_sha256?: string };
   record_counts: Record<string, number>; credentials_erased?: boolean; local_login_retained?: boolean;
-  source_owner_id?: string; source_namespace?: string; source_schema_version?: number;
+  source_owner_id?: string; source_namespace?: string; source_format?: string;
   manifest_sha256?: string; blob_count?: number; byte_length?: number; checkpoint_id?: string;
   runtime_pins?: Record<string, unknown>; credential_policy?: string;
 }

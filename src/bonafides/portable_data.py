@@ -31,6 +31,7 @@ from bonafides.portable_archive import (
     MAX_BLOBS,
     MAX_MANIFEST_BYTES,
     MAX_RECORDS,
+    WORKSPACE_RECORD_SCHEMA,
     ArchiveError,
     BlobMember,
     Manifest,
@@ -39,14 +40,14 @@ from bonafides.portable_archive import (
     manifest_digest,
 )
 from bonafides.portable_columns import COLUMNS
+from bonafides.portable_workspace import FORMAT as WORKSPACE_FORMAT
+from bonafides.portable_workspace import FORMAT_VERSION as WORKSPACE_VERSION
 from bonafides.profiles import ProfileSnapshot, content_hash
 from bonafides.storage import BlobStore
 
 JsonRow = dict[str, JsonValue]
 _BLOB_REFERENCES = ("evidence_revisions", "application_attachments", "document_artifacts")
-_SOURCE_SCHEMAS = frozenset(
-    {13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30}
-)
+_SOURCE_SCHEMAS = frozenset(range(13, WORKSPACE_RECORD_SCHEMA + 1))
 
 
 class _CollectedBlobs(Mapping[str, bytes]):
@@ -153,7 +154,7 @@ def _collect_owner_data(conn: Connection, settings: Settings, owner_id: UUID) ->
         text("SELECT namespace_id FROM bonafides.installation_state WHERE singleton")
     ).scalar_one()
     schema = conn.execute(text("SELECT max(version) FROM bonafides.schema_migrations")).scalar_one()
-    if schema not in _SOURCE_SCHEMAS:
+    if schema != WORKSPACE_RECORD_SCHEMA:
         raise ArchiveError("incompatible_portable_schema")
     profile = conn.execute(
         text("SELECT current_revision_id FROM bonafides.profiles WHERE owner_id=:owner"),
@@ -162,15 +163,6 @@ def _collect_owner_data(conn: Connection, settings: Settings, owner_id: UUID) ->
     records: dict[str, list[JsonRow]] = {}
     count, remaining = 0, MAX_MANIFEST_BYTES
     for name, columns in COLUMNS.items():
-        if schema < EVIDENCE_PROVENANCE_SCHEMA:
-            if name == "evidence_classification_changes":
-                continue
-            if name == "evidence_records":
-                columns = tuple(
-                    column for column in columns if column not in CLASSIFICATION_COLUMNS
-                )
-            elif name == "evidence_revisions":
-                columns = tuple(column for column in columns if column not in PROVENANCE_COLUMNS)
         relation = _relation(name)
         fields = ",".join(columns)
         if schema >= 18 and name in {
@@ -288,8 +280,8 @@ def _collect_owner_data(conn: Connection, settings: Settings, owner_id: UUID) ->
             )
         )
     manifest = Manifest(
-        format="bonafides-portable",
-        format_version=2,
+        format=WORKSPACE_FORMAT,
+        format_version=WORKSPACE_VERSION,
         source_schema_version=schema,
         created_at=datetime.now(UTC),
         source_namespace=namespace,

@@ -29,7 +29,12 @@ from bonafides.approvals import consume_action_approval, prepare_action_approval
 from bonafides.commands import canonical_json
 from bonafides.import_parser import ImportParserClient
 from bonafides.installation_control import InstallationMaintenance, begin_control
-from bonafides.portable_archive import ArchiveError, BlobMember, PortableArchive
+from bonafides.portable_archive import (
+    WORKSPACE_RECORD_SCHEMA,
+    ArchiveError,
+    BlobMember,
+    PortableArchive,
+)
 from bonafides.portable_data import portable_rows
 from bonafides.portable_import import import_controlled_owner_data
 from bonafides.storage import BlobStore
@@ -99,11 +104,20 @@ def _source(context: SourceContext, source_schema: int = 29) -> tuple[PortableAr
         for row in archive.manifest.records["evidence_revisions"]:
             for key in ("source_type", "origin"):
                 del row[key]
-    archive = PortableArchive(
-        archive.manifest.model_copy(update={"source_schema_version": source_schema}), blobs
-    )
+    archive = PortableArchive(archive.manifest.model_copy(update=_schema(source_schema)), blobs)
     archive = _digest(archive)
     return archive, _encoded(archive.manifest, archive.blobs)
+
+
+def _schema(source_schema: int) -> dict[str, object]:
+    """Older databases only ever wrote legacy archives; the current one writes the contract."""
+    if source_schema == WORKSPACE_RECORD_SCHEMA:
+        return {}
+    return {
+        "format": "bonafides-portable",
+        "format_version": 2,
+        "source_schema_version": source_schema,
+    }
 
 
 def _approved_import(context: SourceContext, payload: bytes) -> Prepared:
@@ -556,9 +570,7 @@ def test_archive_from_before_structured_claims_rewrites_free_text_claims(
             del row[key]
     archive = _digest(
         PortableArchive(
-            original.manifest.model_copy(
-                update={"source_owner_id": source_owner, "source_schema_version": 27}
-            ),
+            original.manifest.model_copy(update={"source_owner_id": source_owner, **_schema(27)}),
             original.blobs,
         )
     )

@@ -1,0 +1,3001 @@
+{
+  "$defs": {
+    "ApplicationAttachmentRow": {
+      "additionalProperties": false,
+      "properties": {
+        "application_id": {
+          "format": "uuid",
+          "title": "Application Id",
+          "type": "string"
+        },
+        "blob_id": {
+          "format": "uuid",
+          "title": "Blob Id",
+          "type": "string"
+        },
+        "created_at": {
+          "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]{1,6})?[+-][0-9]{2}(:[0-9]{2}){0,2}$",
+          "title": "Created At",
+          "type": "string"
+        },
+        "display_name": {
+          "title": "Display Name",
+          "type": "string"
+        },
+        "id": {
+          "format": "uuid",
+          "title": "Id",
+          "type": "string"
+        },
+        "owner_id": {
+          "format": "uuid",
+          "title": "Owner Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "owner_id",
+        "id",
+        "application_id",
+        "blob_id",
+        "display_name",
+        "created_at"
+      ],
+      "title": "ApplicationAttachmentRow",
+      "type": "object"
+    },
+    "ApplicationContactRow": {
+      "additionalProperties": false,
+      "properties": {
+        "application_id": {
+          "format": "uuid",
+          "title": "Application Id",
+          "type": "string"
+        },
+        "created_at": {
+          "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]{1,6})?[+-][0-9]{2}(:[0-9]{2}){0,2}$",
+          "title": "Created At",
+          "type": "string"
+        },
+        "display_name": {
+          "title": "Display Name",
+          "type": "string"
+        },
+        "email": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Email"
+        },
+        "id": {
+          "format": "uuid",
+          "title": "Id",
+          "type": "string"
+        },
+        "owner_id": {
+          "format": "uuid",
+          "title": "Owner Id",
+          "type": "string"
+        },
+        "role_label": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Role Label"
+        },
+        "version": {
+          "title": "Version",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "owner_id",
+        "id",
+        "application_id",
+        "display_name",
+        "email",
+        "role_label",
+        "version",
+        "created_at"
+      ],
+      "title": "ApplicationContactRow",
+      "type": "object"
+    },
+    "ApplicationNoteRow": {
+      "additionalProperties": false,
+      "properties": {
+        "application_id": {
+          "format": "uuid",
+          "title": "Application Id",
+          "type": "string"
+        },
+        "body": {
+          "title": "Body",
+          "type": "string"
+        },
+        "created_at": {
+          "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]{1,6})?[+-][0-9]{2}(:[0-9]{2}){0,2}$",
+          "title": "Created At",
+          "type": "string"
+        },
+        "id": {
+          "format": "uuid",
+          "title": "Id",
+          "type": "string"
+        },
+        "owner_id": {
+          "format": "uuid",
+          "title": "Owner Id",
+          "type": "string"
+        },
+        "updated_at": {
+          "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]{1,6})?[+-][0-9]{2}(:[0-9]{2}){0,2}$",
+          "title": "Updated At",
+          "type": "string"
+        },
+        "version": {
+          "title": "Version",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "owner_id",
+        "id",
+        "application_id",
+        "body",
+        "version",
+        "created_at",
+        "updated_at"
+      ],
+      "title": "ApplicationNoteRow",
+      "type": "object"
+    },
+    "ApplicationRow": {
+      "additionalProperties": false,
+      "properties": {
+        "archived_at": {
+          "anyOf": [
+            {
+              "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]{1,6})?[+-][0-9]{2}(:[0-9]{2}){0,2}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Archived At"
+        },
+        "attempt_no": {
+          "title": "Attempt No",
+          "type": "integer"
+        },
+        "created_at": {
+          "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]{1,6})?[+-][0-9]{2}(:[0-9]{2}){0,2}$",
+          "title": "Created At",
+          "type": "string"
+        },
+        "current_stage": {
+          "enum": [
+            "preparing",
+            "applied",
+            "screening",
+            "interview",
+            "offer",
+            "accepted",
+            "rejected",
+            "withdrawn"
+          ],
+          "title": "Current Stage",
+          "type": "string"
+        },
+        "current_stage_event_id": {
+          "anyOf": [
+            {
+              "format": "uuid",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Current Stage Event Id"
+        },
+        "id": {
+          "format": "uuid",
+          "title": "Id",
+          "type": "string"
+        },
+        "opportunity_id": {
+          "format": "uuid",
+          "title": "Opportunity Id",
+          "type": "string"
+        },
+        "owner_id": {
+          "format": "uuid",
+          "title": "Owner Id",
+          "type": "string"
+        },
+        "updated_at": {
+          "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]{1,6})?[+-][0-9]{2}(:[0-9]{2}){0,2}$",
+          "title": "Updated At",
+          "type": "string"
+        },
+        "version": {
+          "title": "Version",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "owner_id",
+        "id",
+        "opportunity_id",
+        "current_stage",
+        "version",
+        "created_at",
+        "updated_at",
+        "archived_at",
+        "attempt_no",
+        "current_stage_event_id"
+      ],
+      "title": "ApplicationRow",
+      "type": "object"
+    },
+    "ApplicationStageEventRow": {
+      "additionalProperties": false,
+      "properties": {
+        "affects_current_stage": {
+          "title": "Affects Current Stage",
+          "type": "boolean"
+        },
+        "application_id": {
+          "format": "uuid",
+          "title": "Application Id",
+          "type": "string"
+        },
+        "correction_of": {
+          "anyOf": [
+            {
+              "format": "uuid",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Correction Of"
+        },
+        "created_at": {
+          "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]{1,6})?[+-][0-9]{2}(:[0-9]{2}){0,2}$",
+          "title": "Created At",
+          "type": "string"
+        },
+        "effective_at": {
+          "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]{1,6})?[+-][0-9]{2}(:[0-9]{2}){0,2}$",
+          "title": "Effective At",
+          "type": "string"
+        },
+        "from_stage": {
+          "anyOf": [
+            {
+              "enum": [
+                "preparing",
+                "applied",
+                "screening",
+                "interview",
+                "offer",
+                "accepted",
+                "rejected",
+                "withdrawn"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "From Stage"
+        },
+        "id": {
+          "format": "uuid",
+          "title": "Id",
+          "type": "string"
+        },
+        "owner_id": {
+          "format": "uuid",
+          "title": "Owner Id",
+          "type": "string"
+        },
+        "reason": {
+          "title": "Reason",
+          "type": "string"
+        },
+        "sequence": {
+          "title": "Sequence",
+          "type": "integer"
+        },
+        "to_stage": {
+          "enum": [
+            "preparing",
+            "applied",
+            "screening",
+            "interview",
+            "offer",
+            "accepted",
+            "rejected",
+            "withdrawn"
+          ],
+          "title": "To Stage",
+          "type": "string"
+        }
+      },
+      "required": [
+        "owner_id",
+        "id",
+        "application_id",
+        "from_stage",
+        "to_stage",
+        "effective_at",
+        "reason",
+        "created_at",
+        "sequence",
+        "correction_of",
+        "affects_current_stage"
+      ],
+      "title": "ApplicationStageEventRow",
+      "type": "object"
+    },
+    "AppointmentRow": {
+      "additionalProperties": false,
+      "properties": {
+        "application_id": {
+          "format": "uuid",
+          "title": "Application Id",
+          "type": "string"
+        },
+        "cancelled_at": {
+          "anyOf": [
+            {
+              "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]{1,6})?[+-][0-9]{2}(:[0-9]{2}){0,2}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Cancelled At"
+        },
+        "completed_at": {
+          "anyOf": [
+            {
+              "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]{1,6})?[+-][0-9]{2}(:[0-9]{2}){0,2}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Completed At"
+        },
+        "created_at": {
+          "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]{1,6})?[+-][0-9]{2}(:[0-9]{2}){0,2}$",
+          "title": "Created At",
+          "type": "string"
+        },
+        "display_timezone": {
+          "title": "Display Timezone",
+          "type": "string"
+        },
+        "duration_minutes": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Duration Minutes"
+        },
+        "ends_at": {
+          "anyOf": [
+            {
+              "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]{1,6})?[+-][0-9]{2}(:[0-9]{2}){0,2}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Ends At"
+        },
+        "id": {
+          "format": "uuid",
+          "title": "Id",
+          "type": "string"
+        },
+        "kind": {
+          "enum": [
+            "interview",
+            "follow_up"
+          ],
+          "title": "Kind",
+          "type": "string"
+        },
+        "local_end": {
+          "anyOf": [
+            {
+              "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]{1,6})?$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Local End"
+        },
+        "local_start": {
+          "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]{1,6})?$",
+          "title": "Local Start",
+          "type": "string"
+        },
+        "owner_id": {
+          "format": "uuid",
+          "title": "Owner Id",
+          "type": "string"
+        },
+        "starts_at": {
+          "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]{1,6})?[+-][0-9]{2}(:[0-9]{2}){0,2}$",
+          "title": "Starts At",
+          "type": "string"
+        },
+        "status": {
+          "enum": [
+            "scheduled",
+            "completed",
+            "cancelled"
+          ],
+          "title": "Status",
+          "type": "string"
+        },
+        "timezone": {
+          "title": "Timezone",
+          "type": "string"
+        },
+        "title": {
+          "title": "Title",
+          "type": "string"
+        },
+        "version": {
+          "title": "Version",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "owner_id",
+        "id",
+        "application_id",
+        "kind",
+        "title",
+        "starts_at",
+        "timezone",
+        "local_start",
+        "duration_minutes",
+        "completed_at",
+        "version",
+        "created_at",
+        "ends_at",
+        "local_end",
+        "display_timezone",
+        "status",
+        "cancelled_at"
+      ],
+      "title": "AppointmentRow",
+      "type": "object"
+    },
+    "BlobMember": {
+      "additionalProperties": false,
+      "properties": {
+        "archive_member": {
+          "pattern": "^blobs/[0-9a-f]{64}$",
+          "title": "Archive Member",
+          "type": "string"
+        },
+        "blob_id": {
+          "format": "uuid",
+          "title": "Blob Id",
+          "type": "string"
+        },
+        "byte_length": {
+          "maximum": 67108864,
+          "minimum": 1,
+          "title": "Byte Length",
+          "type": "integer"
+        },
+        "media_type": {
+          "maxLength": 200,
+          "minLength": 1,
+          "title": "Media Type",
+          "type": "string"
+        },
+        "sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Sha256",
+          "type": "string"
+        }
+      },
+      "required": [
+        "blob_id",
+        "sha256",
+        "byte_length",
+        "media_type",
+        "archive_member"
+      ],
+      "title": "BlobMember",
+      "type": "object"
+    },
+    "ClaimEvidenceLinkRow": {
+      "additionalProperties": false,
+      "properties": {
+        "claim_revision_id": {
+          "format": "uuid",
+          "title": "Claim Revision Id",
+          "type": "string"
+        },
+        "created_at": {
+          "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]{1,6})?[+-][0-9]{2}(:[0-9]{2}){0,2}$",
+          "title": "Created At",
+          "type": "string"
+        },
+        "evidence_revision_id": {
+          "format": "uuid",
+          "title": "Evidence Revision Id",
+          "type": "string"
+        },
+        "excerpt": {
+          "title": "Excerpt",
+          "type": "string"
+        },
+        "owner_id": {
+          "format": "uuid",
+          "title": "Owner Id",
+          "type": "string"
+        },
+        "support_kind": {
+          "enum": [
+            "direct",
+            "user_asserted",
+            "context"
+          ],
+          "title": "Support Kind",
+          "type": "string"
+        }
+      },
+      "required": [
+        "owner_id",
+        "claim_revision_id",
+        "evidence_revision_id",
+        "support_kind",
+        "excerpt",
+        "created_at"
+      ],
+      "title": "ClaimEvidenceLinkRow",
+      "type": "object"
+    },
+    "ClaimRevisionRow": {
+      "additionalProperties": false,
+      "properties": {
+        "claim_id": {
+          "format": "uuid",
+          "title": "Claim Id",
+          "type": "string"
+        },
+        "content_sha256": {
+          "title": "Content Sha256",
+          "type": "string"
+        },
+        "created_at": {
+          "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]{1,6})?[+-][0-9]{2}(:[0-9]{2}){0,2}$",
+          "title": "Created At",
+          "type": "string"
+        },
+        "id": {
+          "format": "uuid",
+          "title": "Id",
+          "type": "string"
+        },
+        "owner_id": {
+          "format": "uuid",
+          "title": "Owner Id",
+          "type": "string"
+        },
+        "payload": {
+          "$ref": "#/$defs/JsonValue"
+        },
+        "revision_no": {
+          "title": "Revision No",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "owner_id",
+        "id",
+        "claim_id",
+        "revision_no",
+        "payload",
+        "content_sha256",
+        "created_at"
+      ],
+      "title": "ClaimRevisionRow",
+      "type": "object"
+    },
+    "ClaimUsageSection": {
+      "additionalProperties": false,
+      "description": "Which pinned claim revision each document statement cites, and its status.",
+      "properties": {
+        "document_claim_links": {
+          "items": {
+            "$ref": "#/$defs/DocumentClaimLinkRow"
+          },
+          "title": "Document Claim Links",
+          "type": "array"
+        }
+      },
+      "required": [
+        "document_claim_links"
+      ],
+      "title": "ClaimUsageSection",
+      "type": "object"
+    },
+    "ClaimsSection": {
+      "additionalProperties": false,
+      "description": "Structured claims, their revisions and evidence support.",
+      "properties": {
+        "claim_evidence_links": {
+          "items": {
+            "$ref": "#/$defs/ClaimEvidenceLinkRow"
+          },
+          "title": "Claim Evidence Links",
+          "type": "array"
+        },
+        "claim_revisions": {
+          "items": {
+            "$ref": "#/$defs/ClaimRevisionRow"
+          },
+          "title": "Claim Revisions",
+          "type": "array"
+        },
+        "professional_claims": {
+          "items": {
+            "$ref": "#/$defs/ProfessionalClaimRow"
+          },
+          "title": "Professional Claims",
+          "type": "array"
+        }
+      },
+      "required": [
+        "professional_claims",
+        "claim_revisions",
+        "claim_evidence_links"
+      ],
+      "title": "ClaimsSection",
+      "type": "object"
+    },
+    "DocumentArtifactRow": {
+      "additionalProperties": false,
+      "properties": {
+        "blob_id": {
+          "format": "uuid",
+          "title": "Blob Id",
+          "type": "string"
+        },
+        "created_at": {
+          "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]{1,6})?[+-][0-9]{2}(:[0-9]{2}){0,2}$",
+          "title": "Created At",
+          "type": "string"
+        },
+        "document_revision_id": {
+          "format": "uuid",
+          "title": "Document Revision Id",
+          "type": "string"
+        },
+        "format": {
+          "enum": [
+            "pdf",
+            "docx"
+          ],
+          "title": "Format",
+          "type": "string"
+        },
+        "id": {
+          "format": "uuid",
+          "title": "Id",
+          "type": "string"
+        },
+        "owner_id": {
+          "format": "uuid",
+          "title": "Owner Id",
+          "type": "string"
+        },
+        "renderer_version": {
+          "title": "Renderer Version",
+          "type": "string"
+        }
+      },
+      "required": [
+        "owner_id",
+        "id",
+        "document_revision_id",
+        "blob_id",
+        "renderer_version",
+        "format",
+        "created_at"
+      ],
+      "title": "DocumentArtifactRow",
+      "type": "object"
+    },
+    "DocumentClaimLinkRow": {
+      "additionalProperties": false,
+      "properties": {
+        "claim_path": {
+          "title": "Claim Path",
+          "type": "string"
+        },
+        "claim_revision_id": {
+          "anyOf": [
+            {
+              "format": "uuid",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Claim Revision Id"
+        },
+        "created_at": {
+          "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]{1,6})?[+-][0-9]{2}(:[0-9]{2}){0,2}$",
+          "title": "Created At",
+          "type": "string"
+        },
+        "document_revision_id": {
+          "format": "uuid",
+          "title": "Document Revision Id",
+          "type": "string"
+        },
+        "evidence_revision_id": {
+          "anyOf": [
+            {
+              "format": "uuid",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Evidence Revision Id"
+        },
+        "excerpt": {
+          "title": "Excerpt",
+          "type": "string"
+        },
+        "id": {
+          "format": "uuid",
+          "title": "Id",
+          "type": "string"
+        },
+        "owner_id": {
+          "format": "uuid",
+          "title": "Owner Id",
+          "type": "string"
+        },
+        "status": {
+          "enum": [
+            "supported",
+            "unsupported",
+            "user_asserted"
+          ],
+          "title": "Status",
+          "type": "string"
+        }
+      },
+      "required": [
+        "owner_id",
+        "id",
+        "document_revision_id",
+        "claim_path",
+        "claim_revision_id",
+        "evidence_revision_id",
+        "excerpt",
+        "status",
+        "created_at"
+      ],
+      "title": "DocumentClaimLinkRow",
+      "type": "object"
+    },
+    "DocumentDraftRow": {
+      "additionalProperties": false,
+      "properties": {
+        "application_id": {
+          "anyOf": [
+            {
+              "format": "uuid",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Application Id"
+        },
+        "created_at": {
+          "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]{1,6})?[+-][0-9]{2}(:[0-9]{2}){0,2}$",
+          "title": "Created At",
+          "type": "string"
+        },
+        "current_revision_id": {
+          "anyOf": [
+            {
+              "format": "uuid",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Current Revision Id"
+        },
+        "deleted_at": {
+          "anyOf": [
+            {
+              "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]{1,6})?[+-][0-9]{2}(:[0-9]{2}){0,2}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Deleted At"
+        },
+        "id": {
+          "format": "uuid",
+          "title": "Id",
+          "type": "string"
+        },
+        "kind": {
+          "enum": [
+            "resume",
+            "cover_letter"
+          ],
+          "title": "Kind",
+          "type": "string"
+        },
+        "owner_id": {
+          "format": "uuid",
+          "title": "Owner Id",
+          "type": "string"
+        },
+        "profile_revision_id": {
+          "format": "uuid",
+          "title": "Profile Revision Id",
+          "type": "string"
+        },
+        "scope": {
+          "enum": [
+            "base",
+            "tailored"
+          ],
+          "title": "Scope",
+          "type": "string"
+        },
+        "stale_at": {
+          "anyOf": [
+            {
+              "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]{1,6})?[+-][0-9]{2}(:[0-9]{2}){0,2}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Stale At"
+        },
+        "version": {
+          "title": "Version",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "owner_id",
+        "id",
+        "application_id",
+        "kind",
+        "profile_revision_id",
+        "current_revision_id",
+        "version",
+        "stale_at",
+        "created_at",
+        "scope",
+        "deleted_at"
+      ],
+      "title": "DocumentDraftRow",
+      "type": "object"
+    },
+    "DocumentRegenerationProposalRow": {
+      "additionalProperties": false,
+      "properties": {
+        "context_snapshot": {
+          "$ref": "#/$defs/JsonValue"
+        },
+        "created_at": {
+          "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]{1,6})?[+-][0-9]{2}(:[0-9]{2}){0,2}$",
+          "title": "Created At",
+          "type": "string"
+        },
+        "document_draft_id": {
+          "format": "uuid",
+          "title": "Document Draft Id",
+          "type": "string"
+        },
+        "id": {
+          "format": "uuid",
+          "title": "Id",
+          "type": "string"
+        },
+        "model_run": {
+          "$ref": "#/$defs/JsonValue"
+        },
+        "model_run_id": {
+          "anyOf": [
+            {
+              "format": "uuid",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Model Run Id"
+        },
+        "original_section": {
+          "$ref": "#/$defs/JsonValue"
+        },
+        "owner_id": {
+          "format": "uuid",
+          "title": "Owner Id",
+          "type": "string"
+        },
+        "proposed_section": {
+          "$ref": "#/$defs/JsonValue"
+        },
+        "section_key": {
+          "title": "Section Key",
+          "type": "string"
+        },
+        "target_content_sha256": {
+          "title": "Target Content Sha256",
+          "type": "string"
+        },
+        "target_document_version": {
+          "title": "Target Document Version",
+          "type": "integer"
+        },
+        "target_revision_id": {
+          "format": "uuid",
+          "title": "Target Revision Id",
+          "type": "string"
+        },
+        "validation_issues": {
+          "$ref": "#/$defs/JsonValue"
+        },
+        "workflow_run_id": {
+          "anyOf": [
+            {
+              "format": "uuid",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Workflow Run Id"
+        }
+      },
+      "required": [
+        "owner_id",
+        "id",
+        "document_draft_id",
+        "target_revision_id",
+        "target_content_sha256",
+        "target_document_version",
+        "section_key",
+        "original_section",
+        "proposed_section",
+        "validation_issues",
+        "model_run_id",
+        "workflow_run_id",
+        "model_run",
+        "context_snapshot",
+        "created_at"
+      ],
+      "title": "DocumentRegenerationProposalRow",
+      "type": "object"
+    },
+    "DocumentReviewRow": {
+      "additionalProperties": false,
+      "properties": {
+        "created_at": {
+          "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]{1,6})?[+-][0-9]{2}(:[0-9]{2}){0,2}$",
+          "title": "Created At",
+          "type": "string"
+        },
+        "decision": {
+          "enum": [
+            "accepted",
+            "changes_requested"
+          ],
+          "title": "Decision",
+          "type": "string"
+        },
+        "document_revision_id": {
+          "format": "uuid",
+          "title": "Document Revision Id",
+          "type": "string"
+        },
+        "id": {
+          "format": "uuid",
+          "title": "Id",
+          "type": "string"
+        },
+        "owner_id": {
+          "format": "uuid",
+          "title": "Owner Id",
+          "type": "string"
+        },
+        "reviewed_block_keys": {
+          "$ref": "#/$defs/JsonValue"
+        },
+        "reviewed_content_sha256": {
+          "title": "Reviewed Content Sha256",
+          "type": "string"
+        }
+      },
+      "required": [
+        "owner_id",
+        "id",
+        "document_revision_id",
+        "decision",
+        "reviewed_content_sha256",
+        "created_at",
+        "reviewed_block_keys"
+      ],
+      "title": "DocumentReviewRow",
+      "type": "object"
+    },
+    "DocumentRevisionRow": {
+      "additionalProperties": false,
+      "properties": {
+        "body": {
+          "$ref": "#/$defs/JsonValue"
+        },
+        "content_sha256": {
+          "title": "Content Sha256",
+          "type": "string"
+        },
+        "created_at": {
+          "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]{1,6})?[+-][0-9]{2}(:[0-9]{2}){0,2}$",
+          "title": "Created At",
+          "type": "string"
+        },
+        "document_draft_id": {
+          "format": "uuid",
+          "title": "Document Draft Id",
+          "type": "string"
+        },
+        "id": {
+          "format": "uuid",
+          "title": "Id",
+          "type": "string"
+        },
+        "model_run_id": {
+          "anyOf": [
+            {
+              "format": "uuid",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Model Run Id"
+        },
+        "origin": {
+          "enum": [
+            "generated",
+            "deterministic",
+            "manual",
+            "restore"
+          ],
+          "title": "Origin",
+          "type": "string"
+        },
+        "owner_id": {
+          "format": "uuid",
+          "title": "Owner Id",
+          "type": "string"
+        },
+        "posting_snapshot": {
+          "$ref": "#/$defs/JsonValue"
+        },
+        "profile_revision_id": {
+          "format": "uuid",
+          "title": "Profile Revision Id",
+          "type": "string"
+        },
+        "provenance_snapshot": {
+          "$ref": "#/$defs/JsonValue"
+        },
+        "reason": {
+          "title": "Reason",
+          "type": "string"
+        },
+        "revision_no": {
+          "title": "Revision No",
+          "type": "integer"
+        },
+        "scope": {
+          "enum": [
+            "base",
+            "tailored"
+          ],
+          "title": "Scope",
+          "type": "string"
+        },
+        "template_version": {
+          "title": "Template Version",
+          "type": "string"
+        },
+        "validation_issues": {
+          "$ref": "#/$defs/JsonValue"
+        }
+      },
+      "required": [
+        "owner_id",
+        "id",
+        "document_draft_id",
+        "revision_no",
+        "profile_revision_id",
+        "model_run_id",
+        "body",
+        "posting_snapshot",
+        "provenance_snapshot",
+        "template_version",
+        "content_sha256",
+        "origin",
+        "reason",
+        "created_at",
+        "scope",
+        "validation_issues"
+      ],
+      "title": "DocumentRevisionRow",
+      "type": "object"
+    },
+    "DocumentsSection": {
+      "additionalProperties": false,
+      "description": "Résumé and letter drafts, revisions, reviews and rendered artifacts.",
+      "properties": {
+        "document_artifacts": {
+          "items": {
+            "$ref": "#/$defs/DocumentArtifactRow"
+          },
+          "title": "Document Artifacts",
+          "type": "array"
+        },
+        "document_drafts": {
+          "items": {
+            "$ref": "#/$defs/DocumentDraftRow"
+          },
+          "title": "Document Drafts",
+          "type": "array"
+        },
+        "document_regeneration_proposals": {
+          "items": {
+            "$ref": "#/$defs/DocumentRegenerationProposalRow"
+          },
+          "title": "Document Regeneration Proposals",
+          "type": "array"
+        },
+        "document_reviews": {
+          "items": {
+            "$ref": "#/$defs/DocumentReviewRow"
+          },
+          "title": "Document Reviews",
+          "type": "array"
+        },
+        "document_revisions": {
+          "items": {
+            "$ref": "#/$defs/DocumentRevisionRow"
+          },
+          "title": "Document Revisions",
+          "type": "array"
+        }
+      },
+      "required": [
+        "document_drafts",
+        "document_revisions",
+        "document_reviews",
+        "document_artifacts",
+        "document_regeneration_proposals"
+      ],
+      "title": "DocumentsSection",
+      "type": "object"
+    },
+    "EvidenceClassificationChangeRow": {
+      "additionalProperties": false,
+      "properties": {
+        "changed_at": {
+          "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]{1,6})?[+-][0-9]{2}(:[0-9]{2}){0,2}$",
+          "title": "Changed At",
+          "type": "string"
+        },
+        "employer_owned": {
+          "title": "Employer Owned",
+          "type": "boolean"
+        },
+        "evidence_id": {
+          "format": "uuid",
+          "title": "Evidence Id",
+          "type": "string"
+        },
+        "owner_id": {
+          "format": "uuid",
+          "title": "Owner Id",
+          "type": "string"
+        },
+        "privacy_class": {
+          "enum": [
+            "public",
+            "private",
+            "confidential"
+          ],
+          "title": "Privacy Class",
+          "type": "string"
+        },
+        "sequence": {
+          "title": "Sequence",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "owner_id",
+        "evidence_id",
+        "sequence",
+        "privacy_class",
+        "employer_owned",
+        "changed_at"
+      ],
+      "title": "EvidenceClassificationChangeRow",
+      "type": "object"
+    },
+    "EvidenceRecordRow": {
+      "additionalProperties": false,
+      "properties": {
+        "archived_at": {
+          "anyOf": [
+            {
+              "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]{1,6})?[+-][0-9]{2}(:[0-9]{2}){0,2}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Archived At"
+        },
+        "created_at": {
+          "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]{1,6})?[+-][0-9]{2}(:[0-9]{2}){0,2}$",
+          "title": "Created At",
+          "type": "string"
+        },
+        "current_revision_id": {
+          "anyOf": [
+            {
+              "format": "uuid",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Current Revision Id"
+        },
+        "employer_owned": {
+          "title": "Employer Owned",
+          "type": "boolean"
+        },
+        "id": {
+          "format": "uuid",
+          "title": "Id",
+          "type": "string"
+        },
+        "owner_id": {
+          "format": "uuid",
+          "title": "Owner Id",
+          "type": "string"
+        },
+        "privacy_class": {
+          "enum": [
+            "public",
+            "private",
+            "confidential"
+          ],
+          "title": "Privacy Class",
+          "type": "string"
+        },
+        "version": {
+          "title": "Version",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "owner_id",
+        "id",
+        "version",
+        "current_revision_id",
+        "archived_at",
+        "created_at",
+        "privacy_class",
+        "employer_owned"
+      ],
+      "title": "EvidenceRecordRow",
+      "type": "object"
+    },
+    "EvidenceRevisionRow": {
+      "additionalProperties": false,
+      "properties": {
+        "blob_id": {
+          "anyOf": [
+            {
+              "format": "uuid",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Blob Id"
+        },
+        "content_sha256": {
+          "title": "Content Sha256",
+          "type": "string"
+        },
+        "created_at": {
+          "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]{1,6})?[+-][0-9]{2}(:[0-9]{2}){0,2}$",
+          "title": "Created At",
+          "type": "string"
+        },
+        "evidence_id": {
+          "format": "uuid",
+          "title": "Evidence Id",
+          "type": "string"
+        },
+        "id": {
+          "format": "uuid",
+          "title": "Id",
+          "type": "string"
+        },
+        "origin": {
+          "enum": [
+            "owner_entry",
+            "resume_import"
+          ],
+          "title": "Origin",
+          "type": "string"
+        },
+        "owner_id": {
+          "format": "uuid",
+          "title": "Owner Id",
+          "type": "string"
+        },
+        "payload": {
+          "$ref": "#/$defs/JsonValue"
+        },
+        "revision_no": {
+          "title": "Revision No",
+          "type": "integer"
+        },
+        "source_type": {
+          "enum": [
+            "owner_statement",
+            "document",
+            "work_sample",
+            "web_page",
+            "credential",
+            "other"
+          ],
+          "title": "Source Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "owner_id",
+        "id",
+        "evidence_id",
+        "revision_no",
+        "payload",
+        "blob_id",
+        "content_sha256",
+        "created_at",
+        "source_type",
+        "origin"
+      ],
+      "title": "EvidenceRevisionRow",
+      "type": "object"
+    },
+    "EvidenceSection": {
+      "additionalProperties": false,
+      "description": "Evidence records, revisions and append-only classification history.",
+      "properties": {
+        "evidence_classification_changes": {
+          "items": {
+            "$ref": "#/$defs/EvidenceClassificationChangeRow"
+          },
+          "title": "Evidence Classification Changes",
+          "type": "array"
+        },
+        "evidence_records": {
+          "items": {
+            "$ref": "#/$defs/EvidenceRecordRow"
+          },
+          "title": "Evidence Records",
+          "type": "array"
+        },
+        "evidence_revisions": {
+          "items": {
+            "$ref": "#/$defs/EvidenceRevisionRow"
+          },
+          "title": "Evidence Revisions",
+          "type": "array"
+        }
+      },
+      "required": [
+        "evidence_records",
+        "evidence_revisions",
+        "evidence_classification_changes"
+      ],
+      "title": "EvidenceSection",
+      "type": "object"
+    },
+    "JobPostingRow": {
+      "additionalProperties": false,
+      "properties": {
+        "canonical_url": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Canonical Url"
+        },
+        "company": {
+          "title": "Company",
+          "type": "string"
+        },
+        "content_sha256": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Content Sha256"
+        },
+        "created_at": {
+          "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]{1,6})?[+-][0-9]{2}(:[0-9]{2}){0,2}$",
+          "title": "Created At",
+          "type": "string"
+        },
+        "dedupe_key": {
+          "title": "Dedupe Key",
+          "type": "string"
+        },
+        "description_text": {
+          "title": "Description Text",
+          "type": "string"
+        },
+        "external_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "External Id"
+        },
+        "id": {
+          "format": "uuid",
+          "title": "Id",
+          "type": "string"
+        },
+        "last_observed_at": {
+          "anyOf": [
+            {
+              "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]{1,6})?[+-][0-9]{2}(:[0-9]{2}){0,2}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Last Observed At"
+        },
+        "location_text": {
+          "title": "Location Text",
+          "type": "string"
+        },
+        "owner_id": {
+          "format": "uuid",
+          "title": "Owner Id",
+          "type": "string"
+        },
+        "requirements": {
+          "$ref": "#/$defs/JsonValue"
+        },
+        "requirements_reviewed_at": {
+          "anyOf": [
+            {
+              "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]{1,6})?[+-][0-9]{2}(:[0-9]{2}){0,2}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Requirements Reviewed At"
+        },
+        "source_config_id": {
+          "anyOf": [
+            {
+              "format": "uuid",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Source Config Id"
+        },
+        "status": {
+          "enum": [
+            "open",
+            "closed",
+            "unknown"
+          ],
+          "title": "Status",
+          "type": "string"
+        },
+        "title": {
+          "title": "Title",
+          "type": "string"
+        },
+        "updated_at": {
+          "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]{1,6})?[+-][0-9]{2}(:[0-9]{2}){0,2}$",
+          "title": "Updated At",
+          "type": "string"
+        },
+        "version": {
+          "title": "Version",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "owner_id",
+        "id",
+        "title",
+        "company",
+        "location_text",
+        "description_text",
+        "canonical_url",
+        "dedupe_key",
+        "version",
+        "status",
+        "requirements",
+        "requirements_reviewed_at",
+        "created_at",
+        "updated_at",
+        "source_config_id",
+        "external_id",
+        "content_sha256",
+        "last_observed_at"
+      ],
+      "title": "JobPostingRow",
+      "type": "object"
+    },
+    "JobSourceObservationRow": {
+      "additionalProperties": false,
+      "properties": {
+        "content_sha256": {
+          "title": "Content Sha256",
+          "type": "string"
+        },
+        "created_at": {
+          "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]{1,6})?[+-][0-9]{2}(:[0-9]{2}){0,2}$",
+          "title": "Created At",
+          "type": "string"
+        },
+        "external_id": {
+          "title": "External Id",
+          "type": "string"
+        },
+        "fetched_at": {
+          "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]{1,6})?[+-][0-9]{2}(:[0-9]{2}){0,2}$",
+          "title": "Fetched At",
+          "type": "string"
+        },
+        "id": {
+          "format": "uuid",
+          "title": "Id",
+          "type": "string"
+        },
+        "owner_id": {
+          "format": "uuid",
+          "title": "Owner Id",
+          "type": "string"
+        },
+        "policy_review_id": {
+          "anyOf": [
+            {
+              "format": "uuid",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Policy Review Id"
+        },
+        "policy_version": {
+          "title": "Policy Version",
+          "type": "integer"
+        },
+        "posting_id": {
+          "format": "uuid",
+          "title": "Posting Id",
+          "type": "string"
+        },
+        "snapshot": {
+          "$ref": "#/$defs/JsonValue"
+        },
+        "source_config_id": {
+          "format": "uuid",
+          "title": "Source Config Id",
+          "type": "string"
+        },
+        "source_url": {
+          "title": "Source Url",
+          "type": "string"
+        }
+      },
+      "required": [
+        "owner_id",
+        "id",
+        "posting_id",
+        "source_config_id",
+        "external_id",
+        "content_sha256",
+        "fetched_at",
+        "source_url",
+        "snapshot",
+        "created_at",
+        "policy_version",
+        "policy_review_id"
+      ],
+      "title": "JobSourceObservationRow",
+      "type": "object"
+    },
+    "JsonValue": {},
+    "MatchAssessmentRow": {
+      "additionalProperties": false,
+      "properties": {
+        "created_at": {
+          "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]{1,6})?[+-][0-9]{2}(:[0-9]{2}){0,2}$",
+          "title": "Created At",
+          "type": "string"
+        },
+        "evidence_coverage": {
+          "$ref": "#/$defs/JsonValue"
+        },
+        "explanation": {
+          "title": "Explanation",
+          "type": "string"
+        },
+        "hard_constraints": {
+          "$ref": "#/$defs/JsonValue"
+        },
+        "hard_eligibility": {
+          "enum": [
+            "met",
+            "not_met",
+            "unknown"
+          ],
+          "title": "Hard Eligibility",
+          "type": "string"
+        },
+        "id": {
+          "format": "uuid",
+          "title": "Id",
+          "type": "string"
+        },
+        "model_run_id": {
+          "anyOf": [
+            {
+              "format": "uuid",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Model Run Id"
+        },
+        "owner_id": {
+          "format": "uuid",
+          "title": "Owner Id",
+          "type": "string"
+        },
+        "posting_id": {
+          "format": "uuid",
+          "title": "Posting Id",
+          "type": "string"
+        },
+        "posting_version": {
+          "title": "Posting Version",
+          "type": "integer"
+        },
+        "profile_revision_id": {
+          "format": "uuid",
+          "title": "Profile Revision Id",
+          "type": "string"
+        },
+        "provenance": {
+          "$ref": "#/$defs/JsonValue"
+        },
+        "requirements_revision_id": {
+          "anyOf": [
+            {
+              "format": "uuid",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Requirements Revision Id"
+        }
+      },
+      "required": [
+        "owner_id",
+        "id",
+        "posting_id",
+        "profile_revision_id",
+        "model_run_id",
+        "posting_version",
+        "hard_constraints",
+        "evidence_coverage",
+        "explanation",
+        "created_at",
+        "requirements_revision_id",
+        "hard_eligibility",
+        "provenance"
+      ],
+      "title": "MatchAssessmentRow",
+      "type": "object"
+    },
+    "ModelRunProvenance": {
+      "additionalProperties": false,
+      "description": "A historical model-run observation, never live execution authority.",
+      "properties": {
+        "record": {
+          "$ref": "#/$defs/ModelRunRecord"
+        },
+        "source_namespace": {
+          "format": "uuid",
+          "title": "Source Namespace",
+          "type": "string"
+        },
+        "source_owner_id": {
+          "format": "uuid",
+          "title": "Source Owner Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "source_namespace",
+        "source_owner_id",
+        "record"
+      ],
+      "title": "ModelRunProvenance",
+      "type": "object"
+    },
+    "ModelRunRecord": {
+      "additionalProperties": false,
+      "properties": {
+        "actual_cost_microunits": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Actual Cost Microunits"
+        },
+        "created_at": {
+          "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]{1,6})?[+-][0-9]{2}(:[0-9]{2}){0,2}$",
+          "title": "Created At",
+          "type": "string"
+        },
+        "egress_class": {
+          "title": "Egress Class",
+          "type": "string"
+        },
+        "finished_at": {
+          "anyOf": [
+            {
+              "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]{1,6})?[+-][0-9]{2}(:[0-9]{2}){0,2}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Finished At"
+        },
+        "id": {
+          "format": "uuid",
+          "title": "Id",
+          "type": "string"
+        },
+        "input_sha256": {
+          "title": "Input Sha256",
+          "type": "string"
+        },
+        "input_tokens": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Input Tokens"
+        },
+        "metadata": {
+          "$ref": "#/$defs/JsonValue"
+        },
+        "model_id": {
+          "title": "Model Id",
+          "type": "string"
+        },
+        "model_revision": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Model Revision"
+        },
+        "output_sha256": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Output Sha256"
+        },
+        "output_tokens": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Output Tokens"
+        },
+        "owner_id": {
+          "format": "uuid",
+          "title": "Owner Id",
+          "type": "string"
+        },
+        "parameters": {
+          "$ref": "#/$defs/JsonValue"
+        },
+        "prompt_version": {
+          "title": "Prompt Version",
+          "type": "string"
+        },
+        "provider_key": {
+          "title": "Provider Key",
+          "type": "string"
+        },
+        "reserved_cost_microunits": {
+          "title": "Reserved Cost Microunits",
+          "type": "integer"
+        },
+        "reserved_tokens": {
+          "title": "Reserved Tokens",
+          "type": "integer"
+        },
+        "status": {
+          "title": "Status",
+          "type": "string"
+        },
+        "task_kind": {
+          "title": "Task Kind",
+          "type": "string"
+        },
+        "usage_status": {
+          "title": "Usage Status",
+          "type": "string"
+        },
+        "workflow_run_id": {
+          "format": "uuid",
+          "title": "Workflow Run Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "owner_id",
+        "id",
+        "workflow_run_id",
+        "provider_key",
+        "model_id",
+        "model_revision",
+        "task_kind",
+        "prompt_version",
+        "input_sha256",
+        "output_sha256",
+        "parameters",
+        "egress_class",
+        "input_tokens",
+        "output_tokens",
+        "reserved_tokens",
+        "reserved_cost_microunits",
+        "actual_cost_microunits",
+        "status",
+        "created_at",
+        "finished_at",
+        "usage_status",
+        "metadata"
+      ],
+      "title": "ModelRunRecord",
+      "type": "object"
+    },
+    "PostingDuplicateDecisionRow": {
+      "additionalProperties": false,
+      "properties": {
+        "candidate_id": {
+          "format": "uuid",
+          "title": "Candidate Id",
+          "type": "string"
+        },
+        "created_at": {
+          "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]{1,6})?[+-][0-9]{2}(:[0-9]{2}){0,2}$",
+          "title": "Created At",
+          "type": "string"
+        },
+        "decision": {
+          "enum": [
+            "suspected",
+            "distinct"
+          ],
+          "title": "Decision",
+          "type": "string"
+        },
+        "owner_id": {
+          "format": "uuid",
+          "title": "Owner Id",
+          "type": "string"
+        },
+        "posting_id": {
+          "format": "uuid",
+          "title": "Posting Id",
+          "type": "string"
+        },
+        "updated_at": {
+          "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]{1,6})?[+-][0-9]{2}(:[0-9]{2}){0,2}$",
+          "title": "Updated At",
+          "type": "string"
+        },
+        "version": {
+          "title": "Version",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "owner_id",
+        "posting_id",
+        "candidate_id",
+        "decision",
+        "version",
+        "created_at",
+        "updated_at"
+      ],
+      "title": "PostingDuplicateDecisionRow",
+      "type": "object"
+    },
+    "PostingRequirementRevisionRow": {
+      "additionalProperties": false,
+      "properties": {
+        "confirmed": {
+          "title": "Confirmed",
+          "type": "boolean"
+        },
+        "created_at": {
+          "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]{1,6})?[+-][0-9]{2}(:[0-9]{2}){0,2}$",
+          "title": "Created At",
+          "type": "string"
+        },
+        "id": {
+          "format": "uuid",
+          "title": "Id",
+          "type": "string"
+        },
+        "owner_id": {
+          "format": "uuid",
+          "title": "Owner Id",
+          "type": "string"
+        },
+        "posting_content_sha256": {
+          "title": "Posting Content Sha256",
+          "type": "string"
+        },
+        "posting_id": {
+          "format": "uuid",
+          "title": "Posting Id",
+          "type": "string"
+        },
+        "provenance": {
+          "$ref": "#/$defs/JsonValue"
+        },
+        "requirements": {
+          "$ref": "#/$defs/JsonValue"
+        },
+        "revision_no": {
+          "title": "Revision No",
+          "type": "integer"
+        },
+        "source_sha256": {
+          "title": "Source Sha256",
+          "type": "string"
+        },
+        "source_text": {
+          "title": "Source Text",
+          "type": "string"
+        }
+      },
+      "required": [
+        "owner_id",
+        "id",
+        "posting_id",
+        "revision_no",
+        "source_text",
+        "source_sha256",
+        "posting_content_sha256",
+        "requirements",
+        "confirmed",
+        "provenance",
+        "created_at"
+      ],
+      "title": "PostingRequirementRevisionRow",
+      "type": "object"
+    },
+    "PostingsSection": {
+      "additionalProperties": false,
+      "description": "Saved postings, observations, requirements and match assessments.",
+      "properties": {
+        "job_postings": {
+          "items": {
+            "$ref": "#/$defs/JobPostingRow"
+          },
+          "title": "Job Postings",
+          "type": "array"
+        },
+        "job_source_observations": {
+          "items": {
+            "$ref": "#/$defs/JobSourceObservationRow"
+          },
+          "title": "Job Source Observations",
+          "type": "array"
+        },
+        "match_assessments": {
+          "items": {
+            "$ref": "#/$defs/MatchAssessmentRow"
+          },
+          "title": "Match Assessments",
+          "type": "array"
+        },
+        "posting_duplicate_decisions": {
+          "items": {
+            "$ref": "#/$defs/PostingDuplicateDecisionRow"
+          },
+          "title": "Posting Duplicate Decisions",
+          "type": "array"
+        },
+        "posting_requirement_revisions": {
+          "items": {
+            "$ref": "#/$defs/PostingRequirementRevisionRow"
+          },
+          "title": "Posting Requirement Revisions",
+          "type": "array"
+        },
+        "saved_opportunities": {
+          "items": {
+            "$ref": "#/$defs/SavedOpportunityRow"
+          },
+          "title": "Saved Opportunities",
+          "type": "array"
+        }
+      },
+      "required": [
+        "job_postings",
+        "job_source_observations",
+        "saved_opportunities",
+        "posting_duplicate_decisions",
+        "posting_requirement_revisions",
+        "match_assessments"
+      ],
+      "title": "PostingsSection",
+      "type": "object"
+    },
+    "ProfessionalClaimRow": {
+      "additionalProperties": false,
+      "properties": {
+        "archived_at": {
+          "anyOf": [
+            {
+              "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]{1,6})?[+-][0-9]{2}(:[0-9]{2}){0,2}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Archived At"
+        },
+        "created_at": {
+          "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]{1,6})?[+-][0-9]{2}(:[0-9]{2}){0,2}$",
+          "title": "Created At",
+          "type": "string"
+        },
+        "current_revision_id": {
+          "anyOf": [
+            {
+              "format": "uuid",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Current Revision Id"
+        },
+        "id": {
+          "format": "uuid",
+          "title": "Id",
+          "type": "string"
+        },
+        "kind": {
+          "enum": [
+            "identity",
+            "experience",
+            "education",
+            "skill",
+            "project",
+            "certification",
+            "preference",
+            "other",
+            "language"
+          ],
+          "title": "Kind",
+          "type": "string"
+        },
+        "owner_id": {
+          "format": "uuid",
+          "title": "Owner Id",
+          "type": "string"
+        },
+        "profile_id": {
+          "format": "uuid",
+          "title": "Profile Id",
+          "type": "string"
+        },
+        "version": {
+          "title": "Version",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "owner_id",
+        "id",
+        "profile_id",
+        "kind",
+        "version",
+        "current_revision_id",
+        "archived_at",
+        "created_at"
+      ],
+      "title": "ProfessionalClaimRow",
+      "type": "object"
+    },
+    "ProfileRevisionClaimRow": {
+      "additionalProperties": false,
+      "properties": {
+        "claim_revision_id": {
+          "format": "uuid",
+          "title": "Claim Revision Id",
+          "type": "string"
+        },
+        "owner_id": {
+          "format": "uuid",
+          "title": "Owner Id",
+          "type": "string"
+        },
+        "profile_revision_id": {
+          "format": "uuid",
+          "title": "Profile Revision Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "owner_id",
+        "profile_revision_id",
+        "claim_revision_id"
+      ],
+      "title": "ProfileRevisionClaimRow",
+      "type": "object"
+    },
+    "ProfileRevisionEvidenceRow": {
+      "additionalProperties": false,
+      "properties": {
+        "evidence_revision_id": {
+          "format": "uuid",
+          "title": "Evidence Revision Id",
+          "type": "string"
+        },
+        "owner_id": {
+          "format": "uuid",
+          "title": "Owner Id",
+          "type": "string"
+        },
+        "profile_revision_id": {
+          "format": "uuid",
+          "title": "Profile Revision Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "owner_id",
+        "profile_revision_id",
+        "evidence_revision_id"
+      ],
+      "title": "ProfileRevisionEvidenceRow",
+      "type": "object"
+    },
+    "ProfileRevisionRow": {
+      "additionalProperties": false,
+      "properties": {
+        "content_sha256": {
+          "title": "Content Sha256",
+          "type": "string"
+        },
+        "created_at": {
+          "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]{1,6})?[+-][0-9]{2}(:[0-9]{2}){0,2}$",
+          "title": "Created At",
+          "type": "string"
+        },
+        "id": {
+          "format": "uuid",
+          "title": "Id",
+          "type": "string"
+        },
+        "owner_id": {
+          "format": "uuid",
+          "title": "Owner Id",
+          "type": "string"
+        },
+        "profile_id": {
+          "format": "uuid",
+          "title": "Profile Id",
+          "type": "string"
+        },
+        "reason": {
+          "title": "Reason",
+          "type": "string"
+        },
+        "revision_no": {
+          "title": "Revision No",
+          "type": "integer"
+        },
+        "snapshot": {
+          "$ref": "#/$defs/JsonValue"
+        }
+      },
+      "required": [
+        "owner_id",
+        "id",
+        "profile_id",
+        "revision_no",
+        "snapshot",
+        "content_sha256",
+        "reason",
+        "created_at"
+      ],
+      "title": "ProfileRevisionRow",
+      "type": "object"
+    },
+    "ProfileRow": {
+      "additionalProperties": false,
+      "properties": {
+        "created_at": {
+          "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]{1,6})?[+-][0-9]{2}(:[0-9]{2}){0,2}$",
+          "title": "Created At",
+          "type": "string"
+        },
+        "current_revision_id": {
+          "anyOf": [
+            {
+              "format": "uuid",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Current Revision Id"
+        },
+        "id": {
+          "format": "uuid",
+          "title": "Id",
+          "type": "string"
+        },
+        "owner_id": {
+          "format": "uuid",
+          "title": "Owner Id",
+          "type": "string"
+        },
+        "version": {
+          "title": "Version",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "owner_id",
+        "id",
+        "version",
+        "current_revision_id",
+        "created_at"
+      ],
+      "title": "ProfileRow",
+      "type": "object"
+    },
+    "ProfileSection": {
+      "additionalProperties": false,
+      "description": "The owner's profile and its immutable revisions.",
+      "properties": {
+        "profile_revision_claims": {
+          "items": {
+            "$ref": "#/$defs/ProfileRevisionClaimRow"
+          },
+          "title": "Profile Revision Claims",
+          "type": "array"
+        },
+        "profile_revision_evidence": {
+          "items": {
+            "$ref": "#/$defs/ProfileRevisionEvidenceRow"
+          },
+          "title": "Profile Revision Evidence",
+          "type": "array"
+        },
+        "profile_revisions": {
+          "items": {
+            "$ref": "#/$defs/ProfileRevisionRow"
+          },
+          "title": "Profile Revisions",
+          "type": "array"
+        },
+        "profiles": {
+          "items": {
+            "$ref": "#/$defs/ProfileRow"
+          },
+          "title": "Profiles",
+          "type": "array"
+        }
+      },
+      "required": [
+        "profiles",
+        "profile_revisions",
+        "profile_revision_claims",
+        "profile_revision_evidence"
+      ],
+      "title": "ProfileSection",
+      "type": "object"
+    },
+    "ProvenanceSection": {
+      "additionalProperties": false,
+      "description": "Model runs that produced exported records.",
+      "properties": {
+        "model_run_provenance": {
+          "items": {
+            "$ref": "#/$defs/ModelRunProvenance"
+          },
+          "title": "Model Run Provenance",
+          "type": "array"
+        }
+      },
+      "required": [
+        "model_run_provenance"
+      ],
+      "title": "ProvenanceSection",
+      "type": "object"
+    },
+    "SavedOpportunityRow": {
+      "additionalProperties": false,
+      "properties": {
+        "created_at": {
+          "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]{1,6})?[+-][0-9]{2}(:[0-9]{2}){0,2}$",
+          "title": "Created At",
+          "type": "string"
+        },
+        "disposition": {
+          "enum": [
+            "saved",
+            "dismissed",
+            "archived",
+            "unmarked"
+          ],
+          "title": "Disposition",
+          "type": "string"
+        },
+        "id": {
+          "format": "uuid",
+          "title": "Id",
+          "type": "string"
+        },
+        "owner_id": {
+          "format": "uuid",
+          "title": "Owner Id",
+          "type": "string"
+        },
+        "posting_id": {
+          "format": "uuid",
+          "title": "Posting Id",
+          "type": "string"
+        },
+        "version": {
+          "title": "Version",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "owner_id",
+        "id",
+        "posting_id",
+        "disposition",
+        "version",
+        "created_at"
+      ],
+      "title": "SavedOpportunityRow",
+      "type": "object"
+    },
+    "SourceConfigRow": {
+      "additionalProperties": false,
+      "properties": {
+        "allowed_host": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Allowed Host"
+        },
+        "board_token": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Board Token"
+        },
+        "company": {
+          "title": "Company",
+          "type": "string"
+        },
+        "created_at": {
+          "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]{1,6})?[+-][0-9]{2}(:[0-9]{2}){0,2}$",
+          "title": "Created At",
+          "type": "string"
+        },
+        "current_policy_review_id": {
+          "anyOf": [
+            {
+              "format": "uuid",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Current Policy Review Id"
+        },
+        "enabled": {
+          "title": "Enabled",
+          "type": "boolean"
+        },
+        "id": {
+          "format": "uuid",
+          "title": "Id",
+          "type": "string"
+        },
+        "last_error_code": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Last Error Code"
+        },
+        "last_success_at": {
+          "anyOf": [
+            {
+              "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]{1,6})?[+-][0-9]{2}(:[0-9]{2}){0,2}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Last Success At"
+        },
+        "next_allowed_at": {
+          "anyOf": [
+            {
+              "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]{1,6})?[+-][0-9]{2}(:[0-9]{2}){0,2}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Next Allowed At"
+        },
+        "owner_id": {
+          "format": "uuid",
+          "title": "Owner Id",
+          "type": "string"
+        },
+        "policy_version": {
+          "title": "Policy Version",
+          "type": "integer"
+        },
+        "rate_limit_blocked": {
+          "title": "Rate Limit Blocked",
+          "type": "boolean"
+        },
+        "rate_limit_retry_after_seconds": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Rate Limit Retry After Seconds"
+        },
+        "removed_at": {
+          "anyOf": [
+            {
+              "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]{1,6})?[+-][0-9]{2}(:[0-9]{2}){0,2}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Removed At"
+        },
+        "request_limit_per_minute": {
+          "title": "Request Limit Per Minute",
+          "type": "integer"
+        },
+        "source_kind": {
+          "enum": [
+            "manual",
+            "greenhouse"
+          ],
+          "title": "Source Kind",
+          "type": "string"
+        },
+        "terms_reviewed_at": {
+          "anyOf": [
+            {
+              "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]{1,6})?[+-][0-9]{2}(:[0-9]{2}){0,2}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Terms Reviewed At"
+        },
+        "terms_revision": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Terms Revision"
+        },
+        "terms_url": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Terms Url"
+        },
+        "version": {
+          "title": "Version",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "owner_id",
+        "id",
+        "source_kind",
+        "board_token",
+        "enabled",
+        "terms_url",
+        "terms_reviewed_at",
+        "terms_revision",
+        "allowed_host",
+        "request_limit_per_minute",
+        "last_success_at",
+        "last_error_code",
+        "next_allowed_at",
+        "version",
+        "created_at",
+        "company",
+        "policy_version",
+        "current_policy_review_id",
+        "rate_limit_blocked",
+        "rate_limit_retry_after_seconds",
+        "removed_at"
+      ],
+      "title": "SourceConfigRow",
+      "type": "object"
+    },
+    "SourcePolicyReviewRow": {
+      "additionalProperties": false,
+      "properties": {
+        "acknowledged_by_owner_id": {
+          "format": "uuid",
+          "title": "Acknowledged By Owner Id",
+          "type": "string"
+        },
+        "allowed_host": {
+          "title": "Allowed Host",
+          "type": "string"
+        },
+        "board_token": {
+          "title": "Board Token",
+          "type": "string"
+        },
+        "company": {
+          "title": "Company",
+          "type": "string"
+        },
+        "id": {
+          "format": "uuid",
+          "title": "Id",
+          "type": "string"
+        },
+        "owner_id": {
+          "format": "uuid",
+          "title": "Owner Id",
+          "type": "string"
+        },
+        "policy_sha256": {
+          "title": "Policy Sha256",
+          "type": "string"
+        },
+        "policy_version": {
+          "title": "Policy Version",
+          "type": "integer"
+        },
+        "request_limit_per_minute": {
+          "title": "Request Limit Per Minute",
+          "type": "integer"
+        },
+        "reviewed_at": {
+          "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]{1,6})?[+-][0-9]{2}(:[0-9]{2}){0,2}$",
+          "title": "Reviewed At",
+          "type": "string"
+        },
+        "source_config_id": {
+          "format": "uuid",
+          "title": "Source Config Id",
+          "type": "string"
+        },
+        "terms_revision": {
+          "title": "Terms Revision",
+          "type": "string"
+        },
+        "terms_url": {
+          "title": "Terms Url",
+          "type": "string"
+        }
+      },
+      "required": [
+        "owner_id",
+        "id",
+        "source_config_id",
+        "policy_version",
+        "board_token",
+        "company",
+        "terms_url",
+        "terms_revision",
+        "allowed_host",
+        "request_limit_per_minute",
+        "policy_sha256",
+        "acknowledged_by_owner_id",
+        "reviewed_at"
+      ],
+      "title": "SourcePolicyReviewRow",
+      "type": "object"
+    },
+    "SourcesSection": {
+      "additionalProperties": false,
+      "description": "Posting source configurations and their policy reviews.",
+      "properties": {
+        "source_configs": {
+          "items": {
+            "$ref": "#/$defs/SourceConfigRow"
+          },
+          "title": "Source Configs",
+          "type": "array"
+        },
+        "source_policy_reviews": {
+          "items": {
+            "$ref": "#/$defs/SourcePolicyReviewRow"
+          },
+          "title": "Source Policy Reviews",
+          "type": "array"
+        }
+      },
+      "required": [
+        "source_configs",
+        "source_policy_reviews"
+      ],
+      "title": "SourcesSection",
+      "type": "object"
+    },
+    "TrackingSection": {
+      "additionalProperties": false,
+      "description": "Applications, stage history, notes, contacts, appointments and attachments.",
+      "properties": {
+        "application_attachments": {
+          "items": {
+            "$ref": "#/$defs/ApplicationAttachmentRow"
+          },
+          "title": "Application Attachments",
+          "type": "array"
+        },
+        "application_contacts": {
+          "items": {
+            "$ref": "#/$defs/ApplicationContactRow"
+          },
+          "title": "Application Contacts",
+          "type": "array"
+        },
+        "application_notes": {
+          "items": {
+            "$ref": "#/$defs/ApplicationNoteRow"
+          },
+          "title": "Application Notes",
+          "type": "array"
+        },
+        "application_stage_events": {
+          "items": {
+            "$ref": "#/$defs/ApplicationStageEventRow"
+          },
+          "title": "Application Stage Events",
+          "type": "array"
+        },
+        "applications": {
+          "items": {
+            "$ref": "#/$defs/ApplicationRow"
+          },
+          "title": "Applications",
+          "type": "array"
+        },
+        "appointments": {
+          "items": {
+            "$ref": "#/$defs/AppointmentRow"
+          },
+          "title": "Appointments",
+          "type": "array"
+        }
+      },
+      "required": [
+        "applications",
+        "application_stage_events",
+        "application_notes",
+        "application_contacts",
+        "appointments",
+        "application_attachments"
+      ],
+      "title": "TrackingSection",
+      "type": "object"
+    },
+    "WorkspaceSections": {
+      "additionalProperties": false,
+      "properties": {
+        "claim_usage": {
+          "$ref": "#/$defs/ClaimUsageSection"
+        },
+        "claims": {
+          "$ref": "#/$defs/ClaimsSection"
+        },
+        "documents": {
+          "$ref": "#/$defs/DocumentsSection"
+        },
+        "evidence": {
+          "$ref": "#/$defs/EvidenceSection"
+        },
+        "postings": {
+          "$ref": "#/$defs/PostingsSection"
+        },
+        "profile": {
+          "$ref": "#/$defs/ProfileSection"
+        },
+        "provenance": {
+          "$ref": "#/$defs/ProvenanceSection"
+        },
+        "sources": {
+          "$ref": "#/$defs/SourcesSection"
+        },
+        "tracking": {
+          "$ref": "#/$defs/TrackingSection"
+        }
+      },
+      "required": [
+        "profile",
+        "claims",
+        "evidence",
+        "claim_usage",
+        "documents",
+        "tracking",
+        "postings",
+        "sources",
+        "provenance"
+      ],
+      "title": "WorkspaceSections",
+      "type": "object"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "``manifest.json`` of a ``bonafides-workspace/1`` archive.",
+  "properties": {
+    "blob_manifest": {
+      "items": {
+        "$ref": "#/$defs/BlobMember"
+      },
+      "maxItems": 10000,
+      "title": "Blob Manifest",
+      "type": "array"
+    },
+    "created_at": {
+      "format": "date-time",
+      "title": "Created At",
+      "type": "string"
+    },
+    "current_profile_revision_id": {
+      "format": "uuid",
+      "title": "Current Profile Revision Id",
+      "type": "string"
+    },
+    "exclusions": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Exclusions",
+      "type": "array"
+    },
+    "format": {
+      "const": "bonafides-workspace",
+      "title": "Format",
+      "type": "string"
+    },
+    "format_version": {
+      "const": 1,
+      "title": "Format Version",
+      "type": "integer"
+    },
+    "manifest_sha256": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Manifest Sha256",
+      "type": "string"
+    },
+    "sections": {
+      "$ref": "#/$defs/WorkspaceSections"
+    },
+    "source_namespace": {
+      "format": "uuid",
+      "title": "Source Namespace",
+      "type": "string"
+    },
+    "source_owner_id": {
+      "format": "uuid",
+      "title": "Source Owner Id",
+      "type": "string"
+    }
+  },
+  "required": [
+    "format",
+    "format_version",
+    "created_at",
+    "source_namespace",
+    "source_owner_id",
+    "current_profile_revision_id",
+    "manifest_sha256",
+    "sections",
+    "blob_manifest",
+    "exclusions"
+  ],
+  "title": "WorkspaceManifest",
+  "type": "object"
+}

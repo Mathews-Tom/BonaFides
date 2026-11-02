@@ -20,14 +20,23 @@ from types import TracebackType
 from typing import IO, Annotated, BinaryIO, Literal, Self
 from uuid import UUID
 
-from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, JsonValue, ValidationError
+from pydantic import AwareDatetime, Field, JsonValue, ValidationError
 
 from bonafides.commands import canonical_json
+from bonafides.portable_workspace import FORMAT as WORKSPACE_FORMAT
+from bonafides.portable_workspace import FORMAT_VERSION as WORKSPACE_VERSION
+from bonafides.portable_workspace import MAX_BLOB_BYTES as MAX_BLOB_BYTES
+from bonafides.portable_workspace import MAX_BLOBS as MAX_BLOBS
+from bonafides.portable_workspace import (
+    SECTION_TABLES,
+    ArchiveModel,
+    Digest,
+    WorkspaceManifest,
+)
+from bonafides.portable_workspace import BlobMember as BlobMember
 from bonafides.problems import Problem
 
 MAX_MANIFEST_BYTES = 16 * 1024 * 1024
-MAX_BLOB_BYTES = 64 * 1024 * 1024
-MAX_BLOBS = 10_000
 MAX_RECORDS = 100_000
 _MAX_ZIP_OVERHEAD = 4 * 1024 * 1024
 MAX_ARCHIVE_BYTES = MAX_BLOBS * MAX_BLOB_BYTES + MAX_MANIFEST_BYTES + _MAX_ZIP_OVERHEAD
@@ -40,7 +49,14 @@ EXCLUSIONS = (
     "raw_workflow_inputs",
     "sessions",
 )
-Digest = Annotated[str, Field(pattern=r"^[0-9a-f]{64}$")]
+LEGACY_FORMAT = "bonafides-portable"
+# Exactly these wire formats are read; anything else is refused before any write.
+SUPPORTED_FORMATS = frozenset(
+    {(WORKSPACE_FORMAT, WORKSPACE_VERSION), (LEGACY_FORMAT, 1), (LEGACY_FORMAT, 2)}
+)
+# The database schema whose portable rows the workspace sections carry. A migration
+# that changes exported columns changes this mapping, never the published contract.
+WORKSPACE_RECORD_SCHEMA = 30
 _MEMBER = re.compile(r"blobs/[0-9a-f]{64}\Z")
 
 
@@ -48,20 +64,14 @@ class ArchiveError(ValueError):
     """A content-free, stable reason suitable for an owner-facing failure."""
 
 
-class ArchiveModel(BaseModel):
-    model_config = ConfigDict(extra="forbid", strict=True, frozen=True)
-
-
-class BlobMember(ArchiveModel):
-    blob_id: UUID
-    sha256: Digest
-    byte_length: Annotated[int, Field(ge=1, le=MAX_BLOB_BYTES)]
-    media_type: Annotated[str, Field(min_length=1, max_length=200)]
-    archive_member: Annotated[str, Field(pattern=r"^blobs/[0-9a-f]{64}$")]
-
-
 class Manifest(ArchiveModel):
-    format: Literal["bonafides-portable"]
+    """The legacy ``bonafides-portable`` wire manifest and every archive's record view.
+
+    ``records`` is keyed by database relation in the shape of
+    ``source_schema_version``; workspace archives map to and from their sections.
+    """
+
+    format: Literal["bonafides-portable", "bonafides-workspace"]
     format_version: Literal[1, 2]
     source_schema_version: Annotated[int, Field(ge=13)]
     created_at: AwareDatetime
@@ -96,9 +106,58 @@ class PortableArchive:
         self.close()
 
 
-def manifest_digest(manifest: Manifest) -> str:
-    value = manifest.model_dump(mode="json", exclude={"manifest_sha256"})
+def _workspace(manifest: Manifest) -> WorkspaceManifest:
+    """Group the record view into published sections, validating every row's type."""
+    if manifest.format_version != WORKSPACE_VERSION or (
+        manifest.source_schema_version != WORKSPACE_RECORD_SCHEMA
+    ):
+        raise ArchiveError("incompatible_portable_format")
+    records = dict(manifest.records)
+    sections: dict[str, dict[str, list[dict[str, JsonValue]]]] = {}
+    for section, tables in SECTION_TABLES.items():
+        if not set(tables) <= records.keys():
+            raise ArchiveError("incompatible_portable_schema")
+        sections[section] = {table: records.pop(table) for table in tables}
+    if records:
+        raise ArchiveError("incompatible_portable_schema")
+    wire = manifest.model_dump(mode="json", exclude={"records", "source_schema_version"})
+    try:
+        return WorkspaceManifest.model_validate_json(
+            canonical_json({**wire, "sections": sections}), strict=True
+        )
+    except (ValidationError, Problem, ValueError) as exc:
+        raise ArchiveError("invalid_portable_manifest") from exc
+
+
+def _records(workspace: WorkspaceManifest) -> Manifest:
+    sections = workspace.sections.model_dump(mode="json")
+    return Manifest(
+        format=workspace.format,
+        format_version=workspace.format_version,
+        source_schema_version=WORKSPACE_RECORD_SCHEMA,
+        created_at=workspace.created_at,
+        source_namespace=workspace.source_namespace,
+        source_owner_id=workspace.source_owner_id,
+        current_profile_revision_id=workspace.current_profile_revision_id,
+        manifest_sha256=workspace.manifest_sha256,
+        records={table: rows for tables in sections.values() for table, rows in tables.items()},
+        blob_manifest=workspace.blob_manifest,
+        exclusions=workspace.exclusions,
+    )
+
+
+def _wire(manifest: Manifest) -> Manifest | WorkspaceManifest:
+    return _workspace(manifest) if manifest.format == WORKSPACE_FORMAT else manifest
+
+
+def _digest(wire: Manifest | WorkspaceManifest) -> str:
+    value = wire.model_dump(mode="json", exclude={"manifest_sha256"})
     return hashlib.sha256(canonical_json(value).encode()).hexdigest()
+
+
+def manifest_digest(manifest: Manifest) -> str:
+    """SHA-256 of the canonical wire manifest without its own digest field."""
+    return _digest(_wire(manifest))
 
 
 def _pairs(pairs: list[tuple[str, JsonValue]]) -> dict[str, JsonValue]:
@@ -121,9 +180,19 @@ def _manifest(data: bytes, expected_source_owner: UUID) -> Manifest:
     try:
         # Reject duplicate keys before Pydantic sees a lossy last-key-wins object.
         raw = json.loads(data, object_pairs_hook=_pairs, parse_constant=_constant)
-        if not isinstance(raw, dict) or type(raw.get("format_version")) is not int:
+        if (
+            not isinstance(raw, dict)
+            or type(raw.get("format")) is not str
+            or type(raw.get("format_version")) is not int
+            or (raw["format"], raw["format_version"]) not in SUPPORTED_FORMATS
+        ):
             raise ArchiveError("incompatible_portable_format")
-        manifest = Manifest.model_validate_json(canonical_json(raw), strict=True)
+        wire: Manifest | WorkspaceManifest
+        if raw["format"] == WORKSPACE_FORMAT:
+            wire = WorkspaceManifest.model_validate_json(canonical_json(raw), strict=True)
+            manifest = _records(wire)
+        else:
+            wire = manifest = Manifest.model_validate_json(canonical_json(raw), strict=True)
     except ArchiveError:
         raise
     except (ValidationError, Problem, ValueError, UnicodeError, RecursionError) as exc:
@@ -134,7 +203,7 @@ def _manifest(data: bytes, expected_source_owner: UUID) -> Manifest:
         raise ArchiveError("invalid_portable_exclusions")
     if sum(len(rows) for rows in manifest.records.values()) > MAX_RECORDS:
         raise ArchiveError("portable_record_limit")
-    if manifest_digest(manifest) != manifest.manifest_sha256:
+    if _digest(wire) != manifest.manifest_sha256:
         raise ArchiveError("manifest_hash_mismatch")
     identifiers: set[UUID] = set()
     digests: set[str] = set()
@@ -402,8 +471,10 @@ def decode_archive(data: bytes | BinaryIO, *, expected_source_owner: UUID) -> Po
 
 def encode_archive(manifest: Manifest, blobs: Mapping[str, bytes], output: BinaryIO) -> None:
     """Stream stored ZIP members to a seekable output; never omit a missing blob."""
-    data = canonical_json(manifest.model_dump(mode="json")).encode()
+    data = canonical_json(_wire(manifest).model_dump(mode="json")).encode()
     _manifest(data, manifest.source_owner_id)
+    # Only legacy v1 archives were ZIP32; every later format uses stored ZIP64 members.
+    zip64 = (manifest.format, manifest.format_version) != (LEGACY_FORMAT, 1)
     expected = {blob.sha256 for blob in manifest.blob_manifest}
     if set(blobs) != expected:
         raise ArchiveError("archive_member_set_mismatch")
@@ -413,7 +484,7 @@ def encode_archive(manifest: Manifest, blobs: Mapping[str, bytes], output: Binar
     output.truncate(0)
     with zipfile.ZipFile(output, "w", compression=zipfile.ZIP_STORED, allowZip64=True) as archive:
         info = _member_info("manifest.json", len(data))
-        with archive.open(info, "w", force_zip64=manifest.format_version == 2) as member:
+        with archive.open(info, "w", force_zip64=zip64) as member:
             member.write(data)
         for blob in manifest.blob_manifest:
             try:
@@ -426,7 +497,7 @@ def encode_archive(manifest: Manifest, blobs: Mapping[str, bytes], output: Binar
             ):
                 raise ArchiveError("blob_hash_mismatch")
             info = _member_info(blob.archive_member, blob.byte_length)
-            with archive.open(info, "w", force_zip64=manifest.format_version == 2) as member:
+            with archive.open(info, "w", force_zip64=zip64) as member:
                 member.write(payload)
             del payload
     if output.tell() > MAX_ARCHIVE_BYTES:

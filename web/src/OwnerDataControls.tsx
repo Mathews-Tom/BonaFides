@@ -44,7 +44,7 @@ function PlanDetails({ plan }: { plan: PortablePlan }) {
     <ul aria-label="Exact server record counts">{Object.entries(plan.record_counts).map(([kind, count]) => <li key={kind}>{kind}: {count.toLocaleString()}</li>)}</ul>
     {replacement && <dl>
       <dt>Expected original owner</dt><dd>{plan.source_owner_id}</dd>
-      <dt>Source namespace / schema</dt><dd>{plan.source_namespace} / {plan.source_schema_version}</dd>
+      <dt>Source namespace / format</dt><dd>{plan.source_namespace} / {plan.source_format}</dd>
       <dt>Archive bytes / blobs</dt><dd>{plan.byte_length?.toLocaleString()} / {plan.blob_count?.toLocaleString()}</dd>
       <dt>Archive SHA-256</dt><dd><code style={{ overflowWrap: 'anywhere' }}>{plan.payload.replacement_sha256}</code></dd>
       <dt>Manifest SHA-256</dt><dd><code style={{ overflowWrap: 'anywhere' }}>{plan.manifest_sha256}</code></dd>
