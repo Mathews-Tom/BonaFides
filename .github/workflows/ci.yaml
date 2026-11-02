@@ -120,6 +120,12 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
       - uses: ./.github/actions/toolchain
+      # The report holds no architecture-specific values; amd64 and arm64 JSON must match.
+      - name: Fabrication benchmark report as evidence and job summary
+        run: |
+          mkdir -p artifacts
+          uv run --frozen bonafides benchmark run tests/fixtures/fabrication --output artifacts/fabrication-benchmark.json > "$RUNNER_TEMP/fabrication-benchmark.md"
+          tee -a "$GITHUB_STEP_SUMMARY" < "$RUNNER_TEMP/fabrication-benchmark.md"
       - name: Frozen host frontend install and all frontend gates
         run: |
           test "$(command -v node)" = "$BONAFIDES_NODE_BIN"
