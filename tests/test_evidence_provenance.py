@@ -3,8 +3,6 @@
 
 from __future__ import annotations
 
-import re
-from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
@@ -15,14 +13,6 @@ from test_identity import IdentityContext, _bootstrap
 from test_identity import identity as identity
 from test_profiles import _claim_body, _json, _mutate
 from test_profiles import profile_owner as profile_owner
-
-from bonafides.frozen_migrations.evidence_provenance_v1 import (
-    legacy_classification,
-    legacy_provenance,
-)
-from bonafides.profiles import canonical, content_hash
-
-MIGRATION = Path(__file__).resolve().parents[1] / "migrations/sql/029_evidence_provenance.up.sql"
 
 
 def _evidence(
@@ -109,140 +99,6 @@ def test_evidence_save_rejects_missing_or_invalid_provenance(
         response = _mutate(client, profile_owner, csrf, "POST", "/evidence", 1, body)
         assert response.status_code == 422, response.text
         assert _json(client.get("/api/v1/evidence"))["items"] == []
-
-
-@pytest.mark.postgres
-def test_provenance_upgrade_assigns_the_frozen_legacy_values_without_updating_revisions(
-    profile_owner: IdentityContext,
-) -> None:
-    sql = "\n".join(
-        line
-        for line in MIGRATION.read_text(encoding="utf-8").splitlines()
-        if not line.lstrip().startswith("--")
-    )
-    statements = [
-        part.strip()
-        for part in sql.split(";")
-        if part.strip().startswith("ALTER TABLE evidence_revisions")
-    ]
-    assert len(statements) == 3
-    payloads = [
-        {"text": "Owner typed fact", "source": "Owner attestation"},
-        {"text": "Imported line", "source": "Imported", "import_id": str(uuid4())},
-    ]
-    with profile_owner.admin.transaction() as conn:
-        conn.execute(
-            text("""CREATE TEMP TABLE evidence_revisions ON COMMIT DROP AS
-            SELECT owner_id,id,evidence_id,revision_no,payload,blob_id,content_sha256,created_at
-            FROM bonafides.evidence_revisions WITH NO DATA""")
-        )
-        conn.execute(
-            text("""CREATE TRIGGER immutable_update BEFORE UPDATE ON pg_temp.evidence_revisions
-            FOR EACH ROW EXECUTE FUNCTION bonafides.reject_revision_update()""")
-        )
-        for payload in payloads:
-            conn.execute(
-                text("""INSERT INTO pg_temp.evidence_revisions
-                (owner_id,id,evidence_id,revision_no,payload,content_sha256)
-                VALUES(:owner,:id,:evidence,1,CAST(:payload AS jsonb),:sha)"""),
-                {
-                    "owner": uuid4(),
-                    "id": uuid4(),
-                    "evidence": uuid4(),
-                    "payload": canonical(payload),
-                    "sha": content_hash(payload),
-                },
-            )
-        for statement in statements:
-            conn.execute(
-                text(
-                    re.sub(
-                        r"\bevidence_revisions\b", "pg_temp.evidence_revisions", statement, count=1
-                    )
-                )
-            )
-        rows = (
-            conn.execute(
-                text("""SELECT payload,source_type,origin
-                FROM pg_temp.evidence_revisions ORDER BY payload ? 'import_id'""")
-            )
-            .mappings()
-            .all()
-        )
-        assert [{key: row[key] for key in ("source_type", "origin")} for row in rows] == [
-            legacy_provenance(payload) for payload in payloads
-        ]
-        assert [legacy_provenance(payload)["origin"] for payload in payloads] == [
-            "owner_entry",
-            "resume_import",
-        ]
-        defaults = conn.execute(
-            text("""SELECT count(*) FROM information_schema.columns
-            WHERE table_schema='bonafides' AND table_name='evidence_revisions'
-            AND column_name IN ('source_type','origin')
-            AND column_default IS NULL AND is_nullable='NO'""")
-        ).scalar_one()
-        assert defaults == 2
-        defaults = conn.execute(
-            text("""SELECT count(*) FROM information_schema.columns
-            WHERE table_schema='bonafides' AND table_name='evidence_records'
-            AND column_name IN ('privacy_class','employer_owned')
-            AND column_default IS NULL AND is_nullable='NO'""")
-        ).scalar_one()
-        assert defaults == 2
-        assert legacy_classification() == {"privacy_class": "private", "employer_owned": False}
-        assert (
-            conn.execute(
-                text("""SELECT count(*) FROM information_schema.columns
-            WHERE table_schema='bonafides' AND table_name='evidence_revisions'
-            AND column_name IN ('privacy_class','employer_owned')""")
-            ).scalar_one()
-            == 0
-        )
-        conn.execute(
-            text("""CREATE TEMP TABLE evidence_records ON COMMIT DROP AS
-            SELECT owner_id,id,created_at FROM bonafides.evidence_records WITH NO DATA""")
-        )
-        conn.execute(
-            text("""INSERT INTO pg_temp.evidence_records(owner_id,id,created_at)
-            VALUES(:owner,:id,clock_timestamp())"""),
-            {"owner": uuid4(), "id": uuid4()},
-        )
-        conn.execute(
-            text("""CREATE TEMP TABLE evidence_classification_changes ON COMMIT DROP AS
-            SELECT * FROM bonafides.evidence_classification_changes WITH NO DATA""")
-        )
-        for part in sql.split(";"):
-            statement = part.strip()
-            if statement.startswith(
-                ("ALTER TABLE evidence_records", "INSERT INTO evidence_classification_changes")
-            ):
-                statement = re.sub(
-                    r"\bevidence_records\b",
-                    "pg_temp.evidence_records",
-                    statement,
-                )
-                statement = re.sub(
-                    r"\bevidence_classification_changes\b",
-                    "pg_temp.evidence_classification_changes",
-                    statement,
-                )
-                conn.execute(text(statement))
-        initial = (
-            conn.execute(
-                text("""SELECT h.sequence,h.privacy_class,h.employer_owned,
-            h.changed_at=r.created_at AS original_timestamp
-            FROM pg_temp.evidence_classification_changes h
-            JOIN pg_temp.evidence_records r ON r.owner_id=h.owner_id AND r.id=h.evidence_id""")
-            )
-            .mappings()
-            .one()
-        )
-        assert dict(initial) == {
-            "sequence": 1,
-            **legacy_classification(),
-            "original_timestamp": True,
-        }
 
 
 @pytest.mark.postgres

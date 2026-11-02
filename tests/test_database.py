@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: MIT OR Apache-2.0
 """Real PostgreSQL18 invariants; never substitute SQLite or mock SQL outcomes."""
 
+import hashlib
 import os
 from collections.abc import Iterator
 from dataclasses import dataclass
@@ -13,6 +14,7 @@ from sqlalchemy.engine import make_url
 from sqlalchemy.exc import DBAPIError
 
 from bonafides.commands import command
+from bonafides.db import BASELINE_SHA256, Database, PreBaselineDatabase, require_baseline
 from bonafides.problems import Problem
 from bonafides.workflows import migrate
 
@@ -132,7 +134,7 @@ def test_migration_repeat_and_checksum_ledger(pg_context: PGContext) -> None:
                 ),
                 {"hash": "f" * 64, "version": version},
             )
-        with pytest.raises(RuntimeError, match="migration source checksum mismatch"):
+        with pytest.raises(PreBaselineDatabase, match="pre_baseline_database"):
             migrate(config)
     finally:
         with pg_context.migrator.begin() as conn:
@@ -142,6 +144,74 @@ def test_migration_repeat_and_checksum_ledger(pg_context: PGContext) -> None:
                 ),
                 {"hash": original_hash, "version": version},
             )
+
+
+def test_baseline_checksum_pins_the_committed_baseline_source() -> None:
+    source = Path(__file__).parents[1] / "migrations" / "sql" / "001_baseline.up.sql"
+
+    assert hashlib.sha256(source.read_bytes()).hexdigest() == BASELINE_SHA256
+    assert sorted(path.name for path in source.parent.iterdir()) == [source.name]
+
+
+@pytest.mark.parametrize(
+    "ledger",
+    [{2: BASELINE_SHA256}, {1: BASELINE_SHA256, 2: BASELINE_SHA256}, {1: "f" * 64}],
+)
+def test_only_the_exact_baseline_ledger_is_supported(ledger: dict[int, str]) -> None:
+    with pytest.raises(PreBaselineDatabase):
+        require_baseline(ledger)
+
+
+@pytest.mark.postgres
+def test_pre_baseline_ledger_is_refused_at_migrate_and_readiness_unchanged(
+    pg_context: PGContext,
+) -> None:
+    ledger = text("SELECT version,source_sha256 FROM bonafides.schema_migrations ORDER BY version")
+    alembic = text("SELECT version_num FROM bonafides_migrations.alembic_version")
+    config = MigrationSecret(str(pg_context.migrator.url.render_as_string(hide_password=False)))
+    runtime = Database(pg_context.runtime.url.render_as_string(hide_password=False))
+    try:
+        with pg_context.migrator.begin() as conn:
+            # The shape every database built by the replaced 30-migration chain has.
+            conn.execute(
+                text("UPDATE bonafides.schema_migrations SET source_sha256=repeat('a',64)")
+            )
+            conn.execute(
+                text("""INSERT INTO bonafides.schema_migrations(version,source_sha256)
+                SELECT version,repeat('b',64) FROM generate_series(2,30) version""")
+            )
+            conn.execute(
+                text(
+                    "UPDATE bonafides_migrations.alembic_version SET version_num='0027_stable_model_blocks'"
+                )
+            )
+            before = (conn.execute(ledger).all(), conn.execute(alembic).all())
+
+        with pytest.raises(PreBaselineDatabase) as refused:
+            migrate(config)
+        with pytest.raises(PreBaselineDatabase):
+            runtime.ready()
+
+        assert refused.value.code == "pre_baseline_database"
+        assert "export a bonafides-workspace/1 archive" in str(refused.value)
+        with pg_context.migrator.begin() as conn:
+            assert (conn.execute(ledger).all(), conn.execute(alembic).all()) == before
+    finally:
+        runtime.close()
+        with pg_context.migrator.begin() as conn:
+            conn.execute(text("DELETE FROM bonafides.schema_migrations WHERE version > 1"))
+            conn.execute(
+                text("UPDATE bonafides.schema_migrations SET source_sha256=:sha"),
+                {"sha": BASELINE_SHA256},
+            )
+            conn.execute(
+                text("UPDATE bonafides_migrations.alembic_version SET version_num='0001_baseline'")
+            )
+    restored = Database(pg_context.runtime.url.render_as_string(hide_password=False))
+    try:
+        assert restored.ready()
+    finally:
+        restored.close()
 
 
 @pytest.mark.postgres

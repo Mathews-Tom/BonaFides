@@ -12,8 +12,10 @@ from urllib.error import URLError
 from urllib.parse import urlsplit
 from urllib.request import ProxyHandler, Request, build_opener
 
+from bonafides import __version__
 from bonafides.backup_archive import BackupError
 from bonafides.config import ConfigurationError, MigrationSettings, Settings
+from bonafides.db import PRE_BASELINE_GUIDANCE, PreBaselineDatabase
 from bonafides.problems import Problem
 
 
@@ -90,6 +92,7 @@ def main(argv: list[str] | None = None) -> int:
             "maintenance-inspect",
             "maintenance-recover",
             "credential-rotate",
+            "version",
         ),
     )
     parser.add_argument(
@@ -98,6 +101,9 @@ def main(argv: list[str] | None = None) -> int:
         help="protected backup, credential or offline maintenance configuration",
     )
     arguments = parser.parse_args(arguments_list)
+    if arguments.command == "version":
+        print(__version__)
+        return 0
     try:
         if arguments.command == "credential-rotate":
             from bonafides.credential_rotation import run as rotation_run
@@ -202,12 +208,17 @@ def main(argv: list[str] | None = None) -> int:
         finally:
             db.close()
         return 0
+    except PreBaselineDatabase as exc:
+        print(f"Operation refused: {exc}", file=sys.stderr)
+        return 2
     except (ConfigurationError, ValueError, Problem) as exc:
         # Never print exception repr/causes, which may contain connection inputs.
         if isinstance(exc, Problem):
             print(f"Operation refused: {exc.code}", file=sys.stderr)
         elif isinstance(exc, BackupError):
             print(f"Operation refused: {exc}", file=sys.stderr)
+            if str(exc) == "pre_baseline_backup":
+                print(PRE_BASELINE_GUIDANCE, file=sys.stderr)
         elif isinstance(exc, ConfigurationError):
             print(str(exc), file=sys.stderr)
         else:

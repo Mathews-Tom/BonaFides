@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import logging
 import re
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
@@ -22,7 +23,7 @@ from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from bonafides import __version__, auth, installation_control, profiles
 from bonafides.config import Settings
-from bonafides.db import SCHEMA_VERSION, Database
+from bonafides.db import SCHEMA_VERSION, Database, PreBaselineDatabase
 from bonafides.import_parser import MAX_UPLOAD_BYTES
 from bonafides.maintenance import finish_activity, start_api_activity
 from bonafides.portable_archive import MAX_ARCHIVE_BYTES
@@ -455,15 +456,20 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.get("/health/ready")
     def ready() -> Response:
+        refusal: dict[str, str] = {}
         try:
             available = db.ready()
         except SQLAlchemyError:
             available = False
+        except PreBaselineDatabase as exc:
+            available, refusal = False, {"code": exc.code}
+            logging.getLogger(__name__).error("%s", exc)
         return JSONResponse(
             {
                 "status": "ready" if available else "unavailable",
                 "schema_version": SCHEMA_VERSION,
                 "version": __version__,
+                **refusal,
             },
             status_code=200 if available else 503,
         )

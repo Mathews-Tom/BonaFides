@@ -9,6 +9,7 @@ import struct
 import zipfile
 from collections.abc import Iterator, Mapping
 from datetime import UTC, datetime
+from typing import cast
 from uuid import uuid4
 
 import pytest
@@ -17,6 +18,7 @@ from bonafides.commands import canonical_json
 from bonafides.portable_archive import (
     EXCLUSIONS,
     MAX_BLOB_BYTES,
+    WORKSPACE_RECORD_SCHEMA,
     ArchiveError,
     BlobMember,
     Manifest,
@@ -25,28 +27,22 @@ from bonafides.portable_archive import (
     hash_stream,
     manifest_digest,
 )
+from bonafides.portable_columns import COLUMNS
 
 
 def sample() -> tuple[Manifest, dict[str, bytes]]:
     payload = b"Synthetic private attachment\n"
     digest = hashlib.sha256(payload).hexdigest()
     manifest = Manifest(
-        format="bonafides-portable",
-        format_version=2,
-        source_schema_version=13,
+        format="bonafides-workspace",
+        format_version=1,
+        source_schema_version=WORKSPACE_RECORD_SCHEMA,
         created_at=datetime(2026, 10, 25, tzinfo=UTC),
         source_namespace=uuid4(),
         source_owner_id=uuid4(),
         current_profile_revision_id=uuid4(),
         manifest_sha256="0" * 64,
-        records={
-            "document_revisions": [
-                {
-                    "body": {"text": "Unsupported Kubernetes claim"},
-                    "validation_issues": ["unsupported"],
-                }
-            ]
-        },
+        records={table: [] for table in COLUMNS},
         blob_manifest=[
             BlobMember(
                 blob_id=uuid4(),
@@ -61,6 +57,11 @@ def sample() -> tuple[Manifest, dict[str, bytes]]:
     return manifest.model_copy(update={"manifest_sha256": manifest_digest(manifest)}), {
         digest: payload
     }
+
+
+def _wire(manifest: Manifest, blobs: Mapping[str, bytes]) -> dict[str, object]:
+    with zipfile.ZipFile(io.BytesIO(_encoded(manifest, blobs))) as archive:
+        return cast(dict[str, object], json.loads(archive.read("manifest.json")))
 
 
 def _encoded(manifest: Manifest, blobs: Mapping[str, bytes]) -> bytes:
@@ -96,7 +97,7 @@ def repack(
     return target.getvalue()
 
 
-def test_private_archive_preserves_unsupported_draft_and_exact_attachment() -> None:
+def test_private_archive_round_trips_manifest_and_exact_attachment() -> None:
     manifest, blobs = sample()
     output = io.BytesIO()
     encode_archive(manifest, blobs, output)
@@ -105,11 +106,8 @@ def test_private_archive_preserves_unsupported_draft_and_exact_attachment() -> N
         assert decoded.manifest == manifest
         assert not isinstance(decoded.blobs, dict)
         assert decoded.blobs == blobs
-        assert decoded.manifest.records["document_revisions"][0]["validation_issues"] == [
-            "unsupported"
-        ]
     assert not output.closed
-    # V2 writes ZIP64 local size fields even for a small fixture.
+    # Workspace archives write ZIP64 local size fields even for a small fixture.
     assert struct.unpack_from("<2L", output.getvalue(), 18) == (0xFFFFFFFF, 0xFFFFFFFF)
 
 
@@ -157,7 +155,7 @@ def test_compressed_zip_bomb_is_rejected_before_decompression() -> None:
 )
 def test_incompatible_and_unknown_manifest_fields_fail(field: str, value: object) -> None:
     manifest, blobs = sample()
-    wire = manifest.model_dump(mode="json")
+    wire = _wire(manifest, blobs)
     wire[field] = value
     data = repack(_encoded(manifest, blobs), manifest=canonical_json(wire).encode())
     with pytest.raises(ArchiveError):
@@ -167,8 +165,8 @@ def test_incompatible_and_unknown_manifest_fields_fail(field: str, value: object
 def test_hash_mismatch_and_same_size_blob_corruption_fail() -> None:
     manifest, blobs = sample()
     data = _encoded(manifest, blobs)
-    wire = manifest.model_dump(mode="json")
-    wire["records"]["document_revisions"][0]["body"]["text"] = "Altered draft"
+    wire = _wire(manifest, blobs)
+    wire["source_namespace"] = str(uuid4())
     with pytest.raises(ArchiveError, match="manifest_hash_mismatch"):
         decode_archive(
             repack(data, manifest=canonical_json(wire).encode()),
@@ -182,8 +180,8 @@ def test_hash_mismatch_and_same_size_blob_corruption_fail() -> None:
 
 def test_duplicate_json_keys_do_not_use_last_key_wins() -> None:
     manifest, blobs = sample()
-    raw = canonical_json(manifest.model_dump(mode="json"))
-    duplicate = ('{"format_version":2,' + raw[1:]).encode()
+    raw = canonical_json(_wire(manifest, blobs))
+    duplicate = ('{"format_version":1,' + raw[1:]).encode()
     with pytest.raises(ArchiveError, match="duplicate_json_key"):
         decode_archive(
             repack(_encoded(manifest, blobs), manifest=duplicate),
@@ -196,7 +194,7 @@ def test_missing_or_duplicate_member_is_rejected() -> None:
     data = _encoded(manifest, blobs)
     target = io.BytesIO()
     with zipfile.ZipFile(target, "w") as output:
-        output.writestr("manifest.json", canonical_json(manifest.model_dump(mode="json")))
+        output.writestr("manifest.json", canonical_json(_wire(manifest, blobs)))
     with pytest.raises(ArchiveError, match="archive_member_set_mismatch"):
         decode_archive(target.getvalue(), expected_source_owner=manifest.source_owner_id)
     with pytest.warns(UserWarning, match="Duplicate name"):
@@ -222,8 +220,8 @@ def test_declared_oversize_member_and_unbounded_directory_fail_before_read() -> 
 
 def test_invalid_nonfinite_json_is_rejected() -> None:
     manifest, blobs = sample()
-    wire = manifest.model_dump(mode="json")
-    wire["records"]["document_revisions"][0]["body"]["text"] = float("nan")
+    wire = _wire(manifest, blobs)
+    wire["created_at"] = float("nan")
     raw = json.dumps(wire).encode()
     with pytest.raises(ArchiveError, match="nonfinite_json_number"):
         decode_archive(
@@ -242,8 +240,8 @@ def test_directory_cannot_hide_extra_entries_behind_a_forged_small_count() -> No
 
 def test_noncanonical_integer_is_a_bounded_archive_error() -> None:
     manifest, blobs = sample()
-    wire = manifest.model_dump(mode="json")
-    wire["records"]["document_revisions"][0]["untrusted_number"] = 2**100
+    wire = _wire(manifest, blobs)
+    wire["untrusted_number"] = 2**100
     raw = json.dumps(wire).encode()
     with pytest.raises(ArchiveError, match="invalid_portable_manifest"):
         decode_archive(
@@ -252,20 +250,18 @@ def test_noncanonical_integer_is_a_bounded_archive_error() -> None:
         )
 
 
-def test_independently_constructed_v1_archive_remains_readable() -> None:
+@pytest.mark.parametrize("version", [1, 2])
+def test_legacy_portable_archive_is_refused_with_its_own_code(version: int) -> None:
     manifest, blobs = sample()
-    legacy = manifest.model_copy(update={"format_version": 1})
-    legacy = legacy.model_copy(update={"manifest_sha256": manifest_digest(legacy)})
+    wire = {**_wire(manifest, blobs), "format": "bonafides-portable", "format_version": version}
     output = io.BytesIO()
-    # Deliberately do not use encode_archive: these are legacy ZIP32 wire bytes.
+    # Deliberately do not use encode_archive: legacy v1 archives were ZIP32.
     with zipfile.ZipFile(output, "w", compression=zipfile.ZIP_STORED, allowZip64=False) as archive:
-        archive.writestr("manifest.json", canonical_json(legacy.model_dump(mode="json")))
-        for blob in legacy.blob_manifest:
+        archive.writestr("manifest.json", canonical_json(wire))
+        for blob in manifest.blob_manifest:
             archive.writestr(blob.archive_member, blobs[blob.sha256])
-    with decode_archive(output.getvalue(), expected_source_owner=legacy.source_owner_id) as decoded:
-        assert decoded.manifest == legacy
-        assert dict(decoded.blobs) == blobs
-        assert decoded.manifest.records == manifest.records
+    with pytest.raises(ArchiveError, match="legacy_portable_format"):
+        decode_archive(output.getvalue(), expected_source_owner=manifest.source_owner_id)
 
 
 def test_decoder_hashes_all_blobs_before_returning_non_caching_mapping(

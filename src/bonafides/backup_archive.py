@@ -548,6 +548,9 @@ def recover_bundle(
             assert member_stream is not None
             with member_stream:
                 manifest = _read_manifest(member_stream)
+            # Every supported ledger starts with this baseline; a chain-built backup doesn't.
+            if manifest.schema_versions.get("1") != expected_schema["1"]:
+                raise BackupError("pre_baseline_backup")
             if manifest.schema_versions != expected_schema:
                 raise BackupError("incompatible_backup_schema")
             if manifest.image_sha256 != expected_image_sha256:

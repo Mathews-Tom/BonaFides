@@ -2,6 +2,27 @@
 
 The repository contains completed local private alpha engineering through encrypted backup and recovery and final privacy/profile/defaults acceptance on schema 25, targeting Linux arm64 containers hosted on macOS Apple Silicon. Scoped runtime, quality, browser and recovery results retain their original identities; source/commit/isolated-prefix attestations live in the existing ignored integration-owner checkpoint. Optional model routes remain disabled by default; current stage-specific schema qualification is recorded under the local-model route contract below, separately from the historical checkpoints. Genuine human factual review, owner walkthrough and human usability evaluation/refinement are deferred to human-review stage, not passed. Real-board qualification remains pending; optional hosted adapters are not implemented or qualified private alpha capabilities. This is not fully validated private alpha, public-distribution clearance or production readiness.
 
+## Schema baseline and migration policy
+
+BonaFides 0.1.0 starts from one baseline migration: `migrations/sql/001_baseline.up.sql`, applied by the single Alembic revision `0001_baseline`. It replaces the 30-migration development chain, including that chain's in-place data rewrites, which only applied to databases that already held data. A fresh install records exactly one ledger row (version 1 with the baseline file's SHA-256), and readiness reports `schema_version` 1.
+
+`tools/schema_equivalence.py` proves the baseline. It migrates an empty PostgreSQL 18 database, dumps its `bonafides` and `bonafides_migrations` schemas with the server's own `pg_dump`, normalises the dump and compares it with `migrations/reference/schema-030.sql`, a normalised dump of a fresh database built by the replaced chain. It exits 0 on equality and 1 with a unified diff otherwise. Its docstring lists every normalisation step; ownership, grants, constraints, defaults, triggers and function bodies are compared as dumped, and appended facts compare fresh-install row counts and the runtime role's database `TEMPORARY` privilege. The fast tier runs it in backend shard 1 and the full tier in its backend gate. To run it locally against a disposable database owned by `bonafides_migrator`:
+
+```bash
+uv run --frozen python -m tools.schema_equivalence check \
+  --migration-dsn-file <private migrator DSN file for the empty database> \
+  --container <PostgreSQL 18 container name> --database <empty database name>
+```
+
+Migration policy:
+
+- **Until the first release** the baseline may be regenerated (`schema_equivalence baseline`), and only together with a new reference and a passing equivalence check. This is the edit-in-place rule of [ADR-0003](../decisions/ADR-0003-bonafides-name.md), now limited to the single baseline.
+- **From the first release** migrations are append-only: a schema change adds `002_<name>.up.sql` and one Alembic revision that runs it and records its checksum. Released migration files never change, and `bonafides migrate` refuses a ledger whose recorded checksums differ from the files.
+
+The baseline is a breaking cut. Databases built by the replaced chain (schema 30 and earlier) are never upgraded: `bonafides migrate` and readiness refuse them as `pre_baseline_database` without changing them, and `backup-restore`/`backup-verify` refuse their encrypted backups as `pre_baseline_backup` before any restore work. Both refusals print the operator message: run the previous release against the old data, export a `bonafides-workspace/1` archive, then import that archive into a fresh install. Legacy `bonafides-portable` v1/v2 archives are refused as `legacy_portable_format` before any write; convert one by importing it into the previous release and exporting a `bonafides-workspace/1` archive there.
+
+`bonafides version` prints the release version, which `/health/live` and `/health/ready` also report.
+
 ## Workspace navigation and focused review
 
 The browser workspace uses dedicated hash routes rather than stacking every feature on one page. The persistent desktop navigation becomes a horizontally scrollable compact navigation on mobile; browser back/forward and direct route reloads are supported.
@@ -123,9 +144,7 @@ The contract has its own version axis and carries no database schema number; eac
 
 The schema and byte pin use Pydantic 2.12.5. If a Pydantic upgrade changes generated output without changing the models, regenerate and update the pin only after confirming the JSON Schema is semantically identical, with reviewer sign-off. A real contract change requires a new `format_version`, not a refreshed v1 pin.
 
-Import accepts exactly `bonafides-workspace` 1 and the legacy `bonafides-portable` 1 and 2; legacy formats stay importable until the migration baseline decides their fate. Any other `format` or `format_version` is refused as `incompatible_portable_format` before any database row or file is written, including staged files. The preview shows the archive's source format.
-
-Legacy model-history records are normalized through PostgreSQL's native row rendering before storage and hashing, so accepted legacy timestamp spellings remain exportable under the workspace contract. Archive-byte integrity still verifies the original input.
+Import accepts exactly `bonafides-workspace` 1, including archives exported before the schema baseline. A legacy `bonafides-portable` archive (any version) is refused as `legacy_portable_format`, and any other `format` or `format_version` as `incompatible_portable_format`, before any database row or file is written, including staged files. The preview shows the archive's source format.
 
 ## Encrypted installation backup and recovery
 

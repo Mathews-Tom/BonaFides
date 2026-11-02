@@ -14,10 +14,6 @@ from sqlalchemy import Connection, text
 from bonafides.commands import canonical_json
 from bonafides.config import Settings
 from bonafides.db import Database
-from bonafides.frozen_migrations.structured_claims_v1 import (
-    STRUCTURED_CLAIMS_SCHEMA,
-    restructure_free_text_claims,
-)
 from bonafides.installation_control import Control, assert_control
 from bonafides.portable_archive import (
     MAX_ARCHIVE_BYTES,
@@ -27,7 +23,7 @@ from bonafides.portable_archive import (
     hash_stream,
 )
 from bonafides.portable_columns import COLUMNS
-from bonafides.portable_data import portable_rows, quarantine_records
+from bonafides.portable_data import quarantine_records
 from bonafides.portable_erasure import assert_checkpoint, erase_scope, orphan_inventory, purge_scope
 from bonafides.storage import BlobStore
 
@@ -72,23 +68,10 @@ def _empty_target(conn: Connection, owner: UUID) -> None:
 
 def _persist_records(conn: Connection, owner: UUID, archive: PortableArchive) -> None:
     conn.execute(text("SET CONSTRAINTS ALL DEFERRED"))
-    history_fields = ",".join(COLUMNS["model_run_provenance"])
     for item in archive.manifest.records["model_run_provenance"]:
         record = cast(dict[str, JsonValue], item["record"])
-        if archive.manifest.format == "bonafides-portable":
-            # Legacy archives allow PostgreSQL timestamp spellings that the workspace
-            # contract does not. Persist the native rendering, not the archive text.
-            # Workspace records already satisfy the contract and are kept verbatim,
-            # so their hashes don't depend on this server's session time zone.
-            record = cast(
-                dict[str, JsonValue],
-                conn.execute(
-                    text(f"""SELECT to_jsonb(r) FROM (
-                    SELECT {history_fields} FROM jsonb_populate_record(
-                    NULL::bonafides.model_runs,CAST(:record AS jsonb))) r"""),
-                    {"record": canonical_json(record)},
-                ).scalar_one(),
-            )
+        # Workspace records satisfy the contract and are kept verbatim, so their
+        # hashes don't depend on this server's session time zone.
         encoded = canonical_json(record)
         conn.execute(
             text("""INSERT INTO bonafides.portable_model_history
@@ -121,7 +104,7 @@ def _persist_records(conn: Connection, owner: UUID, archive: PortableArchive) ->
         if name == "model_run_provenance":
             continue
         rows: list[dict[str, JsonValue]] = []
-        for original in portable_rows(archive.manifest, name):
+        for original in archive.manifest.records[name]:
             row = {**original, "owner_id": str(owner)}
             if "acknowledged_by_owner_id" in row:
                 row["acknowledged_by_owner_id"] = str(owner)
@@ -215,10 +198,6 @@ def import_controlled_owner_data(
             )
             _empty_target(conn, control.owner_id)
             _persist_records(conn, control.owner_id, archive)
-            # Claims written before the structured-claims schema are rewritten exactly as the
-            # schema upgrade rewrites them; the rest stay free text that needs attention.
-            if archive.manifest.source_schema_version < STRUCTURED_CLAIMS_SCHEMA:
-                restructure_free_text_claims(conn, control.owner_id)
             # The final guard also refuses a lease that elapsed during a large insert.
             _authorize(conn, control, digest)
         purge_scope(db, settings, control)

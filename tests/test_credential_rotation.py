@@ -672,7 +672,7 @@ def _manifest(case: RotationCase, keyring: Keyring) -> BackupManifest:
         },
         postgres_version="18.6",
         dump_tool_version="native rebinding boundary, not a full archive drill",
-        schema_versions={"25": "5" * 64},
+        schema_versions={"1": "5" * 64},
         table_counts={"encrypted_credentials": 3},
         table_sha256={"encrypted_credentials": "6" * 64},
         dump_sha256="7" * 64,

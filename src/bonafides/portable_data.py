@@ -19,13 +19,6 @@ from bonafides.config import Settings
 from bonafides.db import Database
 from bonafides.document_generation import revision_digest
 from bonafides.documents import parse_body
-from bonafides.frozen_migrations.evidence_provenance_v1 import (
-    CLASSIFICATION_COLUMNS,
-    EVIDENCE_PROVENANCE_SCHEMA,
-    PROVENANCE_COLUMNS,
-    legacy_classification,
-    legacy_provenance,
-)
 from bonafides.installation_control import Control
 from bonafides.portable_archive import (
     EXCLUSIONS,
@@ -48,7 +41,6 @@ from bonafides.storage import BlobStore
 
 JsonRow = dict[str, JsonValue]
 _BLOB_REFERENCES = ("evidence_revisions", "application_attachments", "document_artifacts")
-_SOURCE_SCHEMAS = frozenset(range(13, WORKSPACE_RECORD_SCHEMA + 1))
 
 
 class _CollectedBlobs(Mapping[str, bytes]):
@@ -71,38 +63,6 @@ class _CollectedBlobs(Mapping[str, bytes]):
             return self._store.read(self._owner_id, key, digest, size)
         except (OSError, ValueError) as exc:
             raise ArchiveError("portable_blob_unavailable") from exc
-
-
-def portable_rows(manifest: Manifest, name: str) -> list[JsonRow]:
-    """Archive rows in the current column shape, using frozen pre-schema-29 values."""
-    if manifest.source_schema_version >= EVIDENCE_PROVENANCE_SCHEMA:
-        return manifest.records[name]
-    if name == "evidence_classification_changes":
-        return [
-            {
-                "owner_id": row["owner_id"],
-                "evidence_id": row["id"],
-                "sequence": 1,
-                **legacy_classification(),
-                "changed_at": row["created_at"],
-            }
-            for row in portable_rows(manifest, "evidence_records")
-        ]
-    rows = manifest.records[name]
-    if name not in {"evidence_records", "evidence_revisions"}:
-        return rows
-    upgraded: list[JsonRow] = []
-    for row in rows:
-        if any(column in row for column in (*PROVENANCE_COLUMNS, *CLASSIFICATION_COLUMNS)):
-            raise ArchiveError("incompatible_portable_columns")
-        if name == "evidence_records":
-            upgraded.append({**row, **legacy_classification()})
-            continue
-        payload = row.get("payload")
-        if not isinstance(payload, dict):
-            raise ArchiveError("invalid_portable_records")
-        upgraded.append({**row, **legacy_provenance(payload)})
-    return upgraded
 
 
 def _relation(name: str) -> str:
@@ -184,7 +144,7 @@ def _collect_owner_data(conn: Connection, blob_root: Path, owner_id: UUID) -> Po
     for name, columns in COLUMNS.items():
         relation = _relation(name)
         fields = ",".join(columns)
-        if schema >= 18 and name in {
+        if name in {
             "match_assessments",
             "document_revisions",
             "document_regeneration_proposals",
@@ -236,34 +196,30 @@ def _collect_owner_data(conn: Connection, blob_root: Path, owner_id: UUID) -> Po
         finally:
             result.close()
         records[name] = rows
-    if schema >= 18:
-        result = conn.execute(
-            text("""SELECT CASE WHEN octet_length(record::text)<=:maximum
-            THEN jsonb_build_object('source_namespace',source_namespace,
-             'source_owner_id',source_owner_id,'record',record) ELSE NULL END,record_sha256
-            FROM bonafides.portable_model_history WHERE owner_id=:owner
-            ORDER BY id LIMIT :limit""").execution_options(stream_results=True),
-            {"owner": owner_id, "maximum": remaining, "limit": MAX_RECORDS - count + 1},
-        )
-        try:
-            for value, digest in result:
-                if value is None:
-                    raise ArchiveError("manifest_size_limit")
-                historical = cast(JsonRow, value)
-                if (
-                    hashlib.sha256(canonical_json(historical["record"]).encode()).hexdigest()
-                    != digest
-                ):
-                    raise ArchiveError("portable_model_history_hash_mismatch")
-                count += 1
-                remaining -= len(canonical_json(historical).encode())
-                if count > MAX_RECORDS:
-                    raise ArchiveError("portable_record_limit")
-                if remaining < 0:
-                    raise ArchiveError("manifest_size_limit")
-                records["model_run_provenance"].append(historical)
-        finally:
-            result.close()
+    result = conn.execute(
+        text("""SELECT CASE WHEN octet_length(record::text)<=:maximum
+        THEN jsonb_build_object('source_namespace',source_namespace,
+         'source_owner_id',source_owner_id,'record',record) ELSE NULL END,record_sha256
+        FROM bonafides.portable_model_history WHERE owner_id=:owner
+        ORDER BY id LIMIT :limit""").execution_options(stream_results=True),
+        {"owner": owner_id, "maximum": remaining, "limit": MAX_RECORDS - count + 1},
+    )
+    try:
+        for value, digest in result:
+            if value is None:
+                raise ArchiveError("manifest_size_limit")
+            historical = cast(JsonRow, value)
+            if hashlib.sha256(canonical_json(historical["record"]).encode()).hexdigest() != digest:
+                raise ArchiveError("portable_model_history_hash_mismatch")
+            count += 1
+            remaining -= len(canonical_json(historical).encode())
+            if count > MAX_RECORDS:
+                raise ArchiveError("portable_record_limit")
+            if remaining < 0:
+                raise ArchiveError("manifest_size_limit")
+            records["model_run_provenance"].append(historical)
+    finally:
+        result.close()
     blob_ids = {
         cast(str, row["blob_id"])
         for name in _BLOB_REFERENCES
@@ -429,12 +385,8 @@ def quarantine_records(conn: Connection, archive: PortableArchive) -> None:
     bonafides. Model provenance is historical data, never a fabricated ModelRun.
     """
     manifest = archive.manifest
-    expected_tables = set(COLUMNS)
-    if manifest.source_schema_version < EVIDENCE_PROVENANCE_SCHEMA:
-        expected_tables.remove("evidence_classification_changes")
-    if (
-        manifest.source_schema_version not in _SOURCE_SCHEMAS
-        or set(manifest.records) != expected_tables
+    if manifest.source_schema_version != WORKSPACE_RECORD_SCHEMA or set(manifest.records) != set(
+        COLUMNS
     ):
         raise ArchiveError("incompatible_portable_schema")
     source = str(manifest.source_owner_id)
@@ -516,7 +468,7 @@ def quarantine_records(conn: Connection, archive: PortableArchive) -> None:
                     )
                 )
                 fields = ",".join(columns)
-                for row in portable_rows(manifest, name):
+                for row in manifest.records[name]:
                     _row_shape(row, columns, types)
                     if row["owner_id"] != source or (
                         "acknowledged_by_owner_id" in row

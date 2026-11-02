@@ -56,7 +56,7 @@ with tempfile.TemporaryDirectory() as temporary:
  counts={name:len(rows) for name,rows in snapshot.items()}
  fingerprints={name:hashlib.sha256(json.dumps(rows,sort_keys=True,separators=(',',':')).encode()).hexdigest()
   for name,rows in snapshot.items()}
- schema={str(n):hashlib.sha256(f'synthetic schema {n}'.encode()).hexdigest() for n in range(1,30)}
+ schema={'1':hashlib.sha256(b'synthetic schema 1').hexdigest()}
  namespace=uuid4()
  def workspace_archive(source_owner):
   carried=Manifest(format='bonafides-workspace',format_version=1,source_schema_version=WORKSPACE_RECORD_SCHEMA,
@@ -164,7 +164,10 @@ with tempfile.TemporaryDirectory() as temporary:
     serialization.Encoding.PEM,serialization.PrivateFormat.PKCS8,serialization.NoEncryption()))
    wrong.chmod(0o600);arguments['private_key']=wrong;expected='backup_crypto_failed'
   elif case=='incompatible_schema':
-   arguments['expected_schema']={**schema,'30':'7'*64};expected='incompatible_backup_schema'
+   arguments['expected_schema']={**schema,'2':'7'*64};expected='incompatible_backup_schema'
+  elif case=='pre_baseline_schema':
+   # This install's baseline differs from the backup's first migration.
+   arguments['expected_schema']={'1':'8'*64};expected='pre_baseline_backup'
   elif case=='incompatible_image':
    arguments['expected_image_sha256']='0'*64;expected='incompatible_backup_image'
   elif case in ('tampered_ciphertext','truncated_ciphertext'):
@@ -277,6 +280,7 @@ with tempfile.TemporaryDirectory() as temporary:
         "wrong_digest",
         "wrong_private_key",
         "incompatible_schema",
+        "pre_baseline_schema",
         "incompatible_image",
         "tampered_ciphertext",
         "truncated_ciphertext",
