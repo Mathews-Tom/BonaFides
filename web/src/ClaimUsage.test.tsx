@@ -56,6 +56,8 @@ describe('ClaimUsedIn', () => {
     expect(await screen.findByText('Not used by any current document revision.')).toBeInTheDocument();
     await userEvent.click(screen.getByRole('button', { name: 'Refresh where skill entry 1 is used' }));
     expect(await screen.findByText(/Usage unavailable, not empty\./)).toBeInTheDocument();
+    expect(screen.queryByText('Not used by any current document revision.')).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Show where skill entry 1 is used' })).toBeEnabled();
   });
 });
 

@@ -36,7 +36,7 @@ function useLoader<T>() {
     const active = new AbortController(); controller.current = active;
     setLoading(true); setError('');
     try { const result = await read(active.signal); if (!active.signal.aborted) setValue(result); }
-    catch (failure) { if (!active.signal.aborted) setError(errorText(failure)); }
+    catch (failure) { if (!active.signal.aborted) { setValue(null); setError(errorText(failure)); } }
     finally { if (!active.signal.aborted) setLoading(false); }
   }
   return { value, error, loading, load };
