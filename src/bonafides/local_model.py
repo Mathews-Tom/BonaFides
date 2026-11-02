@@ -23,6 +23,7 @@ import time
 from collections.abc import Sequence
 from contextlib import suppress
 from dataclasses import dataclass, field
+from datetime import datetime
 from io import BufferedReader
 from pathlib import Path
 from threading import Event, Thread
@@ -510,6 +511,58 @@ def _integer(data: dict[str, object], key: str, minimum: int, maximum: int) -> i
     return value
 
 
+QUALIFICATION_STAGES = ("generate_documents", "regenerate_section")
+_QUALIFICATION_COUNTS = (
+    "valid_first",
+    "valid_after_correction",
+    "invalid_after_correction",
+    "failed_before_check",
+)
+
+
+def qualification_receipt(payload: dict[str, object]) -> dict[str, object]:
+    """Validate qualification measurements and bind all fields with canonical SHA-256."""
+    item = {key: value for key, value in payload.items() if key != "receipt_sha256"}
+    if set(item) != {
+        "status",
+        "capability_sha256",
+        "reviewed_by",
+        "reviewed_at",
+        "counts",
+        "valid_rate_per_mille",
+        "usable_statement_rate_per_mille",
+        "dataset_sha256",
+        "case_count",
+        "duration_ms",
+    } or item.get("status") not in {"passed", "failed"}:
+        raise ModelFailure("model_route_invalid")
+    for key in ("capability_sha256", "dataset_sha256"):
+        if not re.fullmatch(r"[0-9a-f]{64}", _text(item, key, 64)):
+            raise ModelFailure("model_route_invalid")
+    _text(item, "reviewed_by")
+    try:
+        reviewed = datetime.fromisoformat(_text(item, "reviewed_at"))
+        if reviewed.tzinfo is None:
+            raise ValueError
+    except ValueError:
+        raise ModelFailure("model_route_invalid") from None
+    counts = item["counts"]
+    if not isinstance(counts, dict) or set(counts) != set(_QUALIFICATION_COUNTS):
+        raise ModelFailure("model_route_invalid")
+    total = _integer(item, "case_count", 1, 2**63 - 1)
+    values = {key: _integer(counts, key, 0, total) for key in _QUALIFICATION_COUNTS}
+    valid = values["valid_first"] + values["valid_after_correction"]
+    if (
+        sum(values.values()) != total
+        or _integer(item, "valid_rate_per_mille", 0, 1000) != valid * 1000 // total
+        or (item["status"] == "passed") != (valid * 100 >= total * 95)
+    ):
+        raise ModelFailure("model_route_invalid")
+    _integer(item, "usable_statement_rate_per_mille", 0, 1000)
+    _integer(item, "duration_ms", 0, 2**63 - 1)
+    return {**item, "receipt_sha256": _sha(item)}
+
+
 @dataclass(frozen=True)
 class LocalRoute:
     endpoint: str
@@ -528,6 +581,7 @@ class LocalRoute:
     _qualified: frozenset[str] = field(repr=False)
     ca_file: Path | None = field(default=None, repr=False)
     ca_sha256: str | None = field(default=None, repr=False)
+    _receipts_json: bytes = field(default=b"{}", repr=False)
 
     def identity(self) -> dict[str, object]:
         return _decode(self._identity_json)
@@ -535,14 +589,28 @@ class LocalRoute:
     def qualified_for(self, stage: str) -> bool:
         return stage in self._qualified and stage in PROMPT_VERSIONS
 
+    def receipt_details(self) -> dict[str, dict[str, object]]:
+        receipts = _decode(self._receipts_json)
+        result: dict[str, dict[str, object]] = {}
+        for stage in QUALIFICATION_STAGES:
+            receipt = cast(dict[str, object], receipts.get(stage, {}))
+            matches = receipt.get("capability_sha256") == self.capability_sha256
+            result[stage] = {
+                "status": receipt["status"] if matches else "missing",
+                "valid_rate_per_mille": receipt["valid_rate_per_mille"] if matches else None,
+                "reviewed_at": receipt["reviewed_at"] if matches else None,
+                "qualified": self.qualified_for(stage),
+                "reason": "capability_changed" if receipt and not matches else None,
+            }
+        return result
+
 
 def load_route(path: Path | None) -> LocalRoute | None:
     """Load an explicit private route; absence is disabled, invalidity never falls back.
 
-    Required JSON fields are deliberately strict. qualification_receipts is a map
-    from task to {status, capability_sha256, receipt_sha256, reviewed_by, reviewed_at}.
-    The operator obtains capability_sha256 from identity() before adding a receipt;
-    editing any capability invalidates the receipt. No connection/probe is made here.
+    qualification_receipts binds measured counts, rates and dataset to the reviewed
+    capability. Editing any capability invalidates the receipt. No connection/probe
+    is made here.
     """
     if path is None:
         return None
@@ -706,19 +774,8 @@ def load_route(path: Path | None) -> LocalRoute | None:
             if not isinstance(receipt, dict):
                 raise ModelFailure("model_route_invalid")
             item = cast(dict[str, object], receipt)
-            if set(item) != {
-                "status",
-                "capability_sha256",
-                "receipt_sha256",
-                "reviewed_by",
-                "reviewed_at",
-            } or item.get("status") not in {"passed", "failed"}:
+            if item != qualification_receipt(item):
                 raise ModelFailure("model_route_invalid")
-            for key in ("capability_sha256", "receipt_sha256"):
-                if not re.fullmatch(r"[0-9a-f]{64}", _text(item, key, 64)):
-                    raise ModelFailure("model_route_invalid")
-            _text(item, "reviewed_by")
-            _text(item, "reviewed_at")
             if item["status"] == "passed" and item["capability_sha256"] == capability_sha:
                 qualified.add(str(stage))
         identity: dict[str, object] = {
@@ -752,6 +809,7 @@ def load_route(path: Path | None) -> LocalRoute | None:
             frozenset(qualified),
             ca_path,
             ca_digest,
+            _json(receipts),
         )
     except (ConfigurationError, OSError, ValueError, TypeError, RecursionError):
         raise ModelFailure("model_route_invalid") from None
@@ -916,9 +974,18 @@ def _verify_manifest(route: LocalRoute, tags: dict[str, object]) -> str:
 
 
 class OllamaClient:
-    def __init__(self, route: LocalRoute, lifecycle: InferenceLifecycle | None = None) -> None:
+    def __init__(
+        self,
+        route: LocalRoute,
+        lifecycle: InferenceLifecycle | None = None,
+        *,
+        qualification_stage: str | None = None,
+    ) -> None:
+        if qualification_stage is not None and qualification_stage not in QUALIFICATION_STAGES:
+            raise ModelFailure("model_route_unavailable")
         self.route = route
         self.lifecycle = lifecycle
+        self.qualification_stage = qualification_stage
 
     def call(
         self,
@@ -929,7 +996,7 @@ class OllamaClient:
         correction: Sequence[str] | None = None,
     ) -> ModelResult:
         route = self.route
-        if not route.qualified_for(stage):
+        if not route.qualified_for(stage) and stage != self.qualification_stage:
             raise ModelFailure("model_route_unavailable")
         if prompt_version != PROMPT_VERSIONS[stage]:
             raise ModelFailure("model_prompt_mismatch")

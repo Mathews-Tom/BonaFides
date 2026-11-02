@@ -54,6 +54,10 @@ def main(argv: list[str] | None = None) -> int:
         from bonafides.fabrication_benchmark import main as benchmark_main
 
         return benchmark_main(arguments_list[1:])
+    if arguments_list[:1] == ["models"]:
+        from bonafides.model_qualification import main as models_main
+
+        return models_main(arguments_list[1:])
     parser = argparse.ArgumentParser(
         prog="bonafides",
         epilog="bonafides claims coverage <file> reports the share of bullets in a local text "

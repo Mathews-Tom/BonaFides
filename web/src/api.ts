@@ -156,9 +156,14 @@ export interface GenerationRoute { status: 'disabled' | 'unqualified' | 'qualifi
 export interface ApplicationDocuments {
   application_id: string; version: number; items: DocumentRecord[]; generation_route: GenerationRoute; requirements_revision_id: string | null;
   claim_json_rates: Record<'generate_documents' | 'regenerate_section', ClaimJsonRate>;
+  receipt_details: Record<'generate_documents' | 'regenerate_section', QualificationReceiptDetails>;
 }
 export interface ClaimJsonRate {
   valid_first: number; valid_after_correction: number; invalid_after_correction: number; failed_before_check: number; rate_percent: number | null;
+}
+export interface QualificationReceiptDetails {
+  status: 'passed' | 'failed' | 'missing'; valid_rate_per_mille: number | null; reviewed_at: string | null;
+  qualified: boolean; reason: string | null;
 }
 export interface GenerationContext {
   application_id: string; application_version: number; profile_revision_id: string; profile_version: number;

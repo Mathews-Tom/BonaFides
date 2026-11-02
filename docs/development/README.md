@@ -1,6 +1,6 @@
 # Development, reviewed imports and job-source collection
 
-The repository contains completed local private alpha engineering through encrypted backup and recovery and final privacy/profile/defaults acceptance on schema 25, targeting Linux arm64 containers hosted on macOS Apple Silicon. Scoped runtime, quality, browser and recovery results retain their original identities; source/commit/isolated-prefix attestations live in the existing ignored integration-owner checkpoint. Model-dependent mechanisms remain **implemented / live-unqualified**, with optional routes disabled. Genuine human factual review, owner walkthrough and human usability evaluation/refinement are deferred to human-review stage, not passed. Actual-model and real-board qualification remain separate pending, disabled/unqualified limits; optional hosted adapters belong to live source and model qualification/public beta and are not implemented or qualified private alpha capabilities. This is not fully validated private alpha, public-distribution clearance or production readiness.
+The repository contains completed local private alpha engineering through encrypted backup and recovery and final privacy/profile/defaults acceptance on schema 25, targeting Linux arm64 containers hosted on macOS Apple Silicon. Scoped runtime, quality, browser and recovery results retain their original identities; source/commit/isolated-prefix attestations live in the existing ignored integration-owner checkpoint. Optional model routes remain disabled by default; current stage-specific schema qualification is recorded under the local-model route contract below, separately from the historical checkpoints. Genuine human factual review, owner walkthrough and human usability evaluation/refinement are deferred to human-review stage, not passed. Real-board qualification remains pending; optional hosted adapters are not implemented or qualified private alpha capabilities. This is not fully validated private alpha, public-distribution clearance or production readiness.
 
 ## Workspace navigation and focused review
 
@@ -918,7 +918,7 @@ Provision a route only after the owner authorizes the exact endpoint/model, synt
 | Identity | `version: 1`, exact `endpoint` origin, `approved_ips`, explicit tagged `model`, `model_sha256`, `runtime_version`, `model_license`. The digest is the Ollama **manifest SHA-256** returned by `/api/tags`, which pins referenced model/template layers; it is not an individual weight-layer file hash. Review the selected weights/quantization/license separately. |
 | Authority | `operator_controlled`, `authorized`, `cloud_disabled` and `metadata_authorized` must be explicitly true. `private_network_http_authorized` is separately required and normally false; nonloopback private-network HTTP requires explicit true acknowledging plaintext transport on that reviewed local network. Public, metadata/link-local and unpinned destinations remain forbidden. |
 | Bounds | `context_window`, `max_input_tokens`, `max_output_tokens`, `max_request_bytes`, `max_response_bytes`, `deadline_seconds`, and reviewed `framing_token_overhead`. The complete encoded inference projection plus reviewed framing supplies a conservative UTF-8-byte token bound, including instructions/schema. `max_request_bytes` also bounds the aggregate HTTP request-byte upper bound for all four requests, including 1,024 bytes of framing per request; this is checked before any network operation. Oversized input is refused, not silently truncated. |
-| Trust and qualification | `ca_file` is null or an explicitly mounted private HTTPS CA file. `qualification_receipts` maps each selected task to `status`, `capability_sha256`, `receipt_sha256`, `reviewed_by` and `reviewed_at`. Missing/failed/stale receipts leave that task unqualified. These are operator-supplied attestations to an actual external evaluation/review, not a qualification performed by reading the file. Never invent a passing receipt or reviewer. |
+| Trust and qualification | `ca_file` is null or an explicitly mounted private HTTPS CA file. `qualification_receipts` maps each selected task to a verified receipt (fields below). Missing/failed/stale receipts leave that task unqualified. A receipt records an actual evaluation, not a qualification performed by reading the file. Never invent a passing receipt or reviewer. |
 
 `load_route()` reads and validates this private configuration without a network call. Obtain its capability digest locally before attaching a genuine reviewed receipt:
 
@@ -927,6 +927,42 @@ uv run --frozen python -c 'from pathlib import Path; from bonafides.local_model 
 ```
 
 The capability digest binds the origin/IP policy, model/runtime/license, projection, prompts, schemas, trust, caps and transport policy. The current adapter is `ol-ollama-v5`, with `ol-local-pre-post-manifest-v1` transport policy; old receipts are invalid after that protocol change. Changing a bound field invalidates qualification; reading a digest is not consent to run a diagnostic or inference. Current stages are `extract_posting`, `match_requirements`, `generate_documents` and `regenerate_section`, with canonical versioned output envelopes and no AI percentage or legal eligibility output.
+
+For the two claim-structured stages, run the committed synthetic set against an already
+installed, owner-authorized local model (the command never pulls models):
+
+```sh
+uv run --frozen bonafides models qualify --route .secrets/local_model_route.json \
+  --stage generate_documents --dataset tests/fixtures/qualification --reviewed-by 'Operator name'
+# Repeat with --stage regenerate_section for that separately qualified stage.
+```
+
+The runner shares production's projection builders, strict candidate validation and
+one corrective retry. Truncation is a failure, never a correction opportunity. It
+prints canonical JSON counts (`valid_first`, `valid_after_correction`,
+`invalid_after_correction`, `failed_before_check`), rates and duration, then atomically
+replaces only the selected stage's receipt in a mode-0600 route file. Exit 0 means
+passed, 1 means a completed but failed qualification, and 2 means invalid input or
+publication failure. All cases, including pre-check failures, count in the denominator;
+at least 95% must validate after at most one correction. Every valid result also runs
+through the unchanged claim checker. The factual usable-statement rate excludes
+statements with blockers; it is informative, not a passing threshold or human approval.
+Existing permanent live-evaluation route blocks are not cleared by this command.
+
+Receipts require `status`, `capability_sha256`, `reviewed_by`, `reviewed_at`, `counts`,
+`valid_rate_per_mille`, `usable_statement_rate_per_mille`, `dataset_sha256`,
+`case_count`, `duration_ms` and `receipt_sha256`. The last field is SHA-256 of canonical
+JSON of all the other fields and is recomputed on load; corruption invalidates the route.
+Rates use integer per-mille, rounded down. The dataset digest uses the benchmark's
+path/length/byte framing over the selected stage file. Old five-field receipts must
+be replaced by a real run (synthetic stub fixtures retain their fixture-only reviewer).
+This unkeyed integrity digest is not an operator signature or third-party attestation.
+
+Application document responses expose `receipt_details` beside `claim_json_rates`, outside
+`generation_route` and the frozen context digest. Each stage shows passed/failed/missing,
+valid rate, reviewed date and effective qualification; stale capability receipts show
+missing with `capability_changed`. A passed receipt cannot override a live route block.
+Changing prompt version or text unqualifies the route without rewriting its receipt.
 
 After genuine authorization and qualification, make the source file private, stop application writers, materialize it and explicitly opt in using the container path:
 
@@ -943,6 +979,31 @@ Use the same explicit Compose project/environment options as the installation be
 Each explicit inference attempt permits at most **three metadata GETs and one inference POST**, ordered `/api/tags` → `/api/version` → `/api/chat` → `/api/tags`. All four require the reviewed authorization/caps and share one deadline, aggregate response-body allowance and aggregate request-byte bound. Preflight manifest/runtime and postflight manifest must match the configured pins before a candidate can return; mapping drift rejects the result and blocks the route. Every resolution remains within the approved local addresses, HTTPS verifies trust/hostname, and no request follows a redirect.
 
 Ollama's mutable model tag does not provide an immutable per-inference weight identity. Provenance therefore records `preflight_manifest_sha256` and `postflight_manifest_sha256`, with `inference_model_sha256: null` and `inference_identity_status: unknown_mutable_tag`; matching observations cannot exclude a change-and-restore (ABA) between them. Review the operator-controlled runtime and prevent model remapping during qualification/use; do not describe metadata observations as cryptographic inference attestation. Usage is actual counts or unknown, never fabricated zero. A transport fixture is not real-model qualification, human factual review, public-distribution rights approval or private alpha completion.
+
+### Observed local schema qualification — 2026-11-02
+
+Real runs used only the installed host Ollama `0.40.13` at `127.0.0.1:11434`, the
+committed `generate_documents.jsonl` (digest
+`ec097483f72417505f752a11d93932d1fdd09bdab746b215a683ad923755b7d9`),
+32,768-token context, 12,000 input / 6,000 output token caps and 300-second call
+deadlines. No model was pulled, no hosted model was called, and prompts/checker were unchanged.
+
+| Installed model | Valid first | Valid after correction | Invalid after correction | Failed before check | Valid | Usable factual statements | Duration |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| `qwen2.5:7b-instruct` | 20 | 0 | 0 | 0 | 100% — passed | 98.0% | 1,318.184 s |
+| `gemma4:12b-mlx` | 0 | 0 | 0 | 20 | 0% — failed | 0% (no valid outputs) | 6,000.418 s |
+
+Manifest pins were `845dbda0ea48ed749caafd9e6037047aa19acfcfd82e704d7ca97d631a0b697e`
+and `197a75677efb4b634352a8bdf24fd4781f1ea2c0b0c11f2b391ea7e0fcdcf01c`, respectively.
+These observations qualify Qwen's pair-generation schema on this route, not all models,
+installations or factual wording. Real `regenerate_section` runs were not performed;
+that stage remains unqualified without its own receipt.
+
+The disposable Compose browser proof showed Qwen's actual passed receipt as qualified,
+Gemma's actual failed receipt and missing receipts as unqualified, and the unchanged Qwen
+receipt as stale/unqualified after a proof-process-only system-prompt text change. No
+inference was sent from the browser proof. Both receipt files remained local, not committed.
+The project used ports 18441/18442 and `down -v` at start and finish.
 
 ### Deterministic stub route for tests and proofs
 

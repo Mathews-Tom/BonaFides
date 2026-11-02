@@ -30,6 +30,7 @@ from bonafides.local_model import (
     ModelFailure,
     OllamaClient,
     load_route,
+    qualification_receipt,
 )
 
 
@@ -66,19 +67,35 @@ def route_file(tmp_path: Path, data: dict[str, object]) -> Path:
     return path
 
 
+def fixture_receipt(capability_sha256: str, **overrides: object) -> dict[str, object]:
+    return qualification_receipt(
+        {
+            "status": "passed",
+            "capability_sha256": capability_sha256,
+            "reviewed_by": "synthetic-fixture-author",
+            "reviewed_at": "2026-10-25T00:00:00Z",
+            "counts": {
+                "valid_first": 20,
+                "valid_after_correction": 0,
+                "invalid_after_correction": 0,
+                "failed_before_check": 0,
+            },
+            "valid_rate_per_mille": 1000,
+            "usable_statement_rate_per_mille": 1000,
+            "dataset_sha256": hashlib.sha256(b"synthetic-test-only").hexdigest(),
+            "case_count": 20,
+            "duration_ms": 1,
+            **overrides,
+        }
+    )
+
+
 def qualified_route(tmp_path: Path, data: dict[str, object]) -> LocalRoute:
     # These synthetic receipts authorize fixture transport only, never production.
     initial = load_route(route_file(tmp_path, data))
     assert initial is not None
     data["qualification_receipts"] = {
-        stage: {
-            "status": "passed",
-            "capability_sha256": initial.capability_sha256,
-            "receipt_sha256": "b" * 64,
-            "reviewed_by": "synthetic-fixture-author",
-            "reviewed_at": "2026-10-25T00:00:00Z",
-        }
-        for stage in PROMPT_VERSIONS
+        stage: fixture_receipt(initial.capability_sha256) for stage in PROMPT_VERSIONS
     }
     result = load_route(route_file(tmp_path, data))
     assert result is not None
@@ -531,7 +548,17 @@ def test_failed_receipts_and_every_capability_change_invalidate_qualification(
         assert not next_route.qualified_for("extract_posting")
         assert next_route.identity()["sha256"] != original_identity["sha256"]
     receipts = cast(dict[str, dict[str, object]], data["qualification_receipts"])
-    receipts["extract_posting"]["status"] = "failed"
+    receipts["extract_posting"] = fixture_receipt(
+        route.capability_sha256,
+        status="failed",
+        valid_rate_per_mille=0,
+        counts={
+            "valid_first": 0,
+            "valid_after_correction": 0,
+            "invalid_after_correction": 20,
+            "failed_before_check": 0,
+        },
+    )
     failed = load_route(route_file(tmp_path, data))
     assert failed is not None and not failed.qualified_for("extract_posting")
     assert failed.qualified_for("match_requirements")
@@ -1110,13 +1137,9 @@ def test_section_qualification_is_separate_from_pair_and_prior_capability_receip
         previous = load_route(route_file(tmp_path, previous_data))
         assert previous is not None
         previous_data["qualification_receipts"] = {
-            stage: {
-                "status": "passed",
-                "capability_sha256": previous.capability_sha256,
-                "receipt_sha256": "b" * 64,
-                "reviewed_by": "synthetic-prior-protocol",
-                "reviewed_at": "2026-10-25T00:00:00Z",
-            }
+            stage: fixture_receipt(
+                previous.capability_sha256, reviewed_by="synthetic-prior-protocol"
+            )
             for stage in local_model.PROMPT_VERSIONS
         }
     current = load_route(route_file(tmp_path, previous_data))
@@ -1135,3 +1158,116 @@ def test_section_prompt_or_schema_change_invalidates_all_existing_receipts(
     changed = load_route(route_file(tmp_path, data))
     assert changed is not None and changed.capability_sha256 != original.capability_sha256
     assert all(not changed.qualified_for(stage) for stage in PROMPT_VERSIONS)
+
+
+def test_receipt_hash_binds_every_measurement(tmp_path: Path) -> None:
+    data = route_data("http://127.0.0.1:1")
+    route = qualified_route(tmp_path, data)
+    receipt = cast(dict[str, dict[str, object]], data["qualification_receipts"])[
+        "generate_documents"
+    ]
+    payload = {key: value for key, value in receipt.items() if key != "receipt_sha256"}
+    canonical = json.dumps(
+        payload, ensure_ascii=False, allow_nan=False, sort_keys=True, separators=(",", ":")
+    )
+    assert receipt["receipt_sha256"] == hashlib.sha256(canonical.encode()).hexdigest()
+    receipt["duration_ms"] = 2
+    with pytest.raises(ModelFailure, match="model_route_invalid"):
+        load_route(route_file(tmp_path, data))
+    assert route.receipt_details()["generate_documents"]["status"] == "passed"
+
+
+@pytest.mark.parametrize("valid,status", [(19, "passed"), (18, "failed")])
+def test_receipt_threshold_and_measurement_consistency(
+    tmp_path: Path, valid: int, status: str
+) -> None:
+    data = route_data("http://127.0.0.1:1")
+    initial = load_route(route_file(tmp_path, data))
+    assert initial is not None
+    receipt = fixture_receipt(
+        initial.capability_sha256,
+        status=status,
+        valid_rate_per_mille=valid * 50,
+        counts={
+            "valid_first": valid - 1,
+            "valid_after_correction": 1,
+            "invalid_after_correction": 19 - valid,
+            "failed_before_check": 1,
+        },
+    )
+    data["qualification_receipts"] = {"generate_documents": receipt}
+    route = load_route(route_file(tmp_path, data))
+    assert route is not None and route.qualified_for("generate_documents") == (status == "passed")
+    assert route.receipt_details()["generate_documents"]["status"] == status
+    for overrides in (
+        {"status": "failed" if status == "passed" else "passed"},
+        {"valid_rate_per_mille": 999},
+        {"case_count": 21},
+        {"duration_ms": -1},
+        {"dataset_sha256": "forged"},
+        {"usable_statement_rate_per_mille": 1001},
+        {"reviewed_at": "not-a-date"},
+        {"case_count": True},
+    ):
+        with pytest.raises(ModelFailure, match="model_route_invalid"):
+            qualification_receipt({**receipt, **overrides})
+
+
+def test_receipt_details_hide_stale_capability(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from bonafides import local_model
+
+    data = route_data("http://127.0.0.1:1")
+    original = qualified_route(tmp_path, data)
+    identity = original.identity()
+    details = original.receipt_details()
+    details["generate_documents"]["status"] = "mutated"
+    assert original.identity() == identity
+    assert original.receipt_details()["generate_documents"]["status"] == "passed"
+    monkeypatch.setattr(local_model, "_SYSTEM", local_model._SYSTEM + " changed")
+    stale = load_route(route_file(tmp_path, data))
+    assert stale is not None
+    assert stale.receipt_details()["generate_documents"] == {
+        "status": "missing",
+        "valid_rate_per_mille": None,
+        "reviewed_at": None,
+        "qualified": False,
+        "reason": "capability_changed",
+    }
+
+
+def test_qualification_execution_is_explicit_and_stage_scoped(tmp_path: Path) -> None:
+    output = {
+        "schema_version": "2",
+        "stage": "regenerate_section",
+        "blocks": [
+            {
+                "block_key": "b-1",
+                "kind": "factual",
+                "text": "Maintained Linux systems.",
+                "claim_id": "11111111-1111-4111-8111-111111111111",
+            },
+        ],
+        "warnings": [],
+    }
+    with fixture_server(
+        response_body(message={"role": "assistant", "content": json.dumps(output)})
+    ) as (endpoint, requests):
+        route = load_route(route_file(tmp_path, route_data(endpoint)))
+        assert route is not None
+        with pytest.raises(ModelFailure, match="model_route_unavailable"):
+            OllamaClient(route).call(
+                "regenerate_section", _section_context(), PROMPT_VERSIONS["regenerate_section"]
+            )
+        with pytest.raises(ModelFailure, match="model_route_unavailable"):
+            OllamaClient(route, qualification_stage="extract_posting")
+        client = OllamaClient(route, qualification_stage="regenerate_section")
+        with pytest.raises(ModelFailure, match="model_route_unavailable"):
+            client.call("generate_documents", {}, PROMPT_VERSIONS["generate_documents"])
+        assert requests == []
+        result = client.call(
+            "regenerate_section", _section_context(), PROMPT_VERSIONS["regenerate_section"]
+        )
+        assert result.output == output and len(requests) == 1
+        assert not route.qualified_for("regenerate_section")

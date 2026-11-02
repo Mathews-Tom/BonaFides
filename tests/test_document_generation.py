@@ -14,6 +14,7 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
 from pathlib import Path
 from threading import Event
+from types import SimpleNamespace
 from typing import Any, cast
 from uuid import UUID, uuid4
 
@@ -21,7 +22,14 @@ import pytest
 from sqlalchemy import text
 from sqlalchemy.exc import DBAPIError
 from test_identity import identity as identity
-from test_local_model import fixture_server, qualified_route, response_body, route_data, route_file
+from test_local_model import (
+    fixture_receipt,
+    fixture_server,
+    qualified_route,
+    response_body,
+    route_data,
+    route_file,
+)
 from test_sources import SourceContext
 from test_sources import catalog as catalog
 from test_suitability import (
@@ -1259,13 +1267,7 @@ def test_suitability_qualification_does_not_qualify_generation(tmp_path: Path) -
     initial = local_model.load_route(route_file(tmp_path, data))
     assert initial is not None
     data["qualification_receipts"] = {
-        stage: {
-            "status": "passed",
-            "capability_sha256": initial.capability_sha256,
-            "receipt_sha256": "b" * 64,
-            "reviewed_by": "synthetic-only",
-            "reviewed_at": "2026-10-25T00:00:00Z",
-        }
+        stage: fixture_receipt(initial.capability_sha256, reviewed_by="synthetic-only")
         for stage in ("extract_posting", "match_requirements")
     }
     route = local_model.load_route(route_file(tmp_path, data))
@@ -1462,3 +1464,38 @@ def test_contradicted_structured_claim_cannot_escape_review_and_render(
         headers=catalog.headers(blocked["version"]),
     )
     assert rendered.status_code == 409 and rendered.json()["code"] == "unsupported_claims"
+
+
+def test_receipt_details_preserve_route_context_and_live_blocks(tmp_path: Path) -> None:
+    data = route_data("http://127.0.0.1:1")
+    route = qualified_route(tmp_path, data)
+    settings = cast(Any, SimpleNamespace(local_model_route_file=tmp_path / "route.json"))
+    blocked: list[str] = []
+    result = SimpleNamespace(first=lambda: blocked[0] if blocked else None, scalars=lambda: blocked)
+    conn = cast(Any, SimpleNamespace(execute=lambda *_args, **_kwargs: result))
+    owner = uuid4()
+    before = generation.route_status(conn, owner, settings)
+    details = generation.receipt_details(conn, owner, settings, route.identity())
+    assert details["generate_documents"]["status"] == "passed"
+    assert details["generate_documents"]["qualified"] is True
+    assert generation.route_status(conn, owner, settings) == before
+    assert "receipt_details" not in before
+    blocked.append("generate_documents")
+    details = generation.receipt_details(conn, owner, settings, route.identity())
+    assert details["generate_documents"]["status"] == "passed"
+    assert details["generate_documents"]["qualified"] is False
+    assert details["generate_documents"]["reason"] == "model_route_failed_live_evaluation"
+    assert generation.route_status(conn, owner, settings)["status"] == "unqualified"
+    assert (
+        generation.receipt_details(conn, owner, settings, None)["generate_documents"]["status"]
+        == "missing"
+    )
+    data["runtime_version"] = "changed"
+    stale = local_model.load_route(route_file(tmp_path, data))
+    assert stale is not None
+    assert (
+        generation.receipt_details(conn, owner, settings, stale.identity())["generate_documents"][
+            "status"
+        ]
+        == "missing"
+    )

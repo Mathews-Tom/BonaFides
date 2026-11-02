@@ -19,7 +19,8 @@ const application: ApplicationSummary = { id: 'application-1', version: 7, attem
 const tailored: DocumentRecord = { ...saved, id: 'tailored-resume', scope: 'tailored', application_id: application.id };
 const route = { status: 'unqualified' as const, reason: 'generate_documents qualification has not been authorized', identity: { model: 'unqualified-local' } };
 const noGenerations = { valid_first: 0, valid_after_correction: 0, invalid_after_correction: 0, failed_before_check: 0, rate_percent: null };
-const pair: ApplicationDocuments = { application_id: application.id, version: 7, items: [tailored], generation_route: route, requirements_revision_id: 'requirements-1', claim_json_rates: { generate_documents: noGenerations, regenerate_section: noGenerations } };
+const missingReceipt = { status: 'missing' as const, valid_rate_per_mille: null, reviewed_at: null, qualified: false, reason: null };
+const pair: ApplicationDocuments = { application_id: application.id, version: 7, items: [tailored], generation_route: route, requirements_revision_id: 'requirements-1', claim_json_rates: { generate_documents: noGenerations, regenerate_section: noGenerations }, receipt_details: { generate_documents: missingReceipt, regenerate_section: missingReceipt } };
 const context: GenerationContext = { application_id: application.id, application_version: 7, profile_revision_id: 'profile-rev-3', profile_version: 3, requirements_revision_id: 'requirements-1', template_version: 'bonafides-evidence-v1', tone: 'professional', language: 'en', context_sha256: '1'.repeat(64), model_projection: { facts: [{ text: 'Maintained Linux service checks.' }], requirements: [{ text: 'Linux' }] }, frame: { display_name: 'Mira Vale', contact: { email: 'mira@example.test' } }, generation_route: route, withheld_evidence: [] };
 const workflow: Workflow = {
   id: 'compose-1', version: 1, state: 'pending', kind: 'document_generate', mode: 'deterministic_base', attempt: 0, max_attempts: 3, last_error_code: null, result: null,
@@ -617,6 +618,25 @@ describe('saved tailored section proposals', () => {
     expect(within(panel).getByText('Pair generation: 75% valid.')).toBeVisible();
     expect(within(panel).getByText(/2 valid on the first response, 1 valid after one correction, 1 invalid after correction; 1 ended before/)).toBeVisible();
     expect(within(panel).getByText('Section regeneration: no checked generations yet.')).toBeVisible();
+  });
+
+  it.each(['passed', 'failed', 'missing'] as const)('shows %s qualification receipts separately from live JSON rates', async status => {
+    const user = userEvent.setup();
+    const detail = { status, valid_rate_per_mille: status === 'missing' ? null : 950, reviewed_at: status === 'missing' ? null : '2026-11-02T00:00:00Z', qualified: status === 'passed', reason: status === 'missing' ? 'capability_changed' : null };
+    const { api } = fixture(saved, async path => {
+      if (path === '/applications') return { items: [application], next_cursor: null, query_elapsed_ms: 1, as_of: application.updated_at };
+      if (path === '/applications/application-1/documents') return { ...pair, receipt_details: { generate_documents: detail, regenerate_section: missingReceipt } };
+      throw new ApiError(404, 'not_found');
+    });
+    render(<Documents api={api} profile={profile} />); await openTailored(user);
+    const panel = screen.getByRole('region', { name: 'Local model qualification receipts' });
+    expect(within(panel).getByText(`Pair generation: receipt ${status}; ${status === 'passed' ? 'qualified' : 'unqualified'}.`)).toBeVisible();
+    if (status === 'missing') expect(within(panel).getByText(/receipt is stale/)).toBeVisible();
+    else {
+      expect(within(panel).getByText('95% valid claim JSON.')).toBeVisible();
+      expect(within(panel).getByText('2026-11-02T00:00:00Z')).toBeVisible();
+    }
+    expect(within(panel).getByText('Section regeneration: receipt missing; unqualified.')).toBeVisible();
   });
 
   it('exposes no model rewrite surface or model requests for a base document, including its dirty editor', async () => {
