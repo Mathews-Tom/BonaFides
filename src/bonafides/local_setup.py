@@ -95,7 +95,10 @@ def initialize(
     private_write(directory / "bootstrap_token", secrets.token_urlsafe(48))
     private_write(
         env_file,
-        _env_text(project, port, benchmark, (published or directory).resolve()),
+        # The host path is recorded exactly as given: it does not exist inside the container.
+        _env_text(
+            project, port, benchmark, directory.resolve() if published is None else published
+        ),
     )
 
 
