@@ -473,7 +473,7 @@
         "deploy/prepare.py",
         "deploy/init-db.sh",
         "src/bonafides/relay.py",
-        "tools/dev_setup.py",
+        "src/bonafides/local_setup.py",
         "tools/runtime_proof.py",
         ".github/backend_gate.py",
         ".github/compose.ci.yaml",

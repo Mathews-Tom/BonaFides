@@ -26,7 +26,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 from urllib.parse import urlsplit
 
-from tools.dev_setup import initialize, private_write
+from bonafides.local_setup import initialize, private_write
 
 if TYPE_CHECKING:
     from playwright.sync_api import Page
@@ -133,6 +133,21 @@ def run(
         # Child diagnostics may contain credentials/content. They are deliberately not echoed.
         raise ProbeFailure("subprocess_failed:" + arguments[0])
     return result.stdout
+
+
+def require_unused_namespace(project: str) -> None:
+    for kind in ("container", "volume", "network"):
+        existing = run(
+            [
+                "docker",
+                kind,
+                "ls",
+                "--filter",
+                f"label=com.docker.compose.project={project}",
+                "--quiet",
+            ]
+        )
+        require(not existing.strip(), "proof_namespace_already_exists")
 
 
 class API:
@@ -324,18 +339,7 @@ class Proof:
 
     def start(self, build: bool) -> None:
         require(not self.directory.exists(), "proof_directory_already_exists")
-        for kind in ("container", "volume", "network"):
-            existing = run(
-                [
-                    "docker",
-                    kind,
-                    "ls",
-                    "--filter",
-                    f"label=com.docker.compose.project={self.project}",
-                    "--quiet",
-                ]
-            )
-            require(not existing.strip(), "proof_namespace_already_exists")
+        require_unused_namespace(self.project)
         self.directory.mkdir(parents=True, mode=0o700)
         self.created = True
         initialize(self.directory / "secrets", self.env, self.project, self.port, True)
