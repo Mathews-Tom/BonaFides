@@ -9,6 +9,7 @@ from uuid import UUID
 
 from sqlalchemy import Connection, text
 
+from bonafides.commands import lock_installation
 from bonafides.config import ConfigurationError, Settings
 from bonafides.db import Database, PreBaselineDatabase
 from bonafides.model_context import lock_evidence_write
@@ -144,17 +145,32 @@ def _untouched(conn: Connection, owner_id: UUID, snapshot: dict[str, list[str]])
 def load_demo(db: Database) -> bool:
     """Seed into an empty owner installation; True when written, False for an identical rerun."""
     with db.transaction() as conn:
+        lock_installation(conn)
         owners = conn.execute(text("SELECT id FROM bonafides.owners")).scalars().all()
         if len(owners) != 1:
             raise Problem(409, "owner_setup_required")
         owner_id = owners[0]
+        conn.execute(
+            text("SELECT owner_id FROM bonafides.owner_settings WHERE owner_id=:o FOR UPDATE"),
+            {"o": owner_id},
+        ).one()
         lock_evidence_write(conn, owner_id)
+        conn.execute(
+            text("SELECT id FROM bonafides.profiles WHERE owner_id=:o FOR UPDATE"),
+            {"o": owner_id},
+        )
         state = _state(conn, owner_id)
         if state == "demo":
             return False
         if state != "empty":
             raise Problem(409, "demo_requires_empty_profile")
         seed_synthetic_profile(conn, owner_id, DEMO_REASON)
+        conn.execute(
+            text("""UPDATE bonafides.owner_settings
+            SET workspace_version=workspace_version+1,updated_at=clock_timestamp()
+            WHERE owner_id=:o"""),
+            {"o": owner_id},
+        )
         return True
 
 

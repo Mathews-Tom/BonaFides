@@ -385,6 +385,8 @@ docker image rm bonafides-proof-release:amd64 bonafides-proof-release:arm64
 
 `bonafides demo load` loads two synthetic skill claims with their evidence into an existing, empty owner profile, reusing the benchmark fixture's seeding code under the owner evidence write lock. It never creates an owner, and it takes no argument. Exit status 0 means loaded or already loaded unchanged; status 2 with `Operation refused: owner_setup_required` (no owner) or `Operation refused: demo_requires_empty_profile` (own, partial or changed data, including a later edit, reclassification or archive of the demo rows) means nothing was written. The benchmark HTTP route is unchanged and still answers 404 outside benchmark mode. In a development checkout run `docker compose exec api bonafides demo load`.
 
+The CLI participates in installation maintenance admission and serializes with ordinary workspace writers. A successful load advances the workspace revision once, invalidating earlier destructive previews and approvals; an unchanged rerun does not advance it. Active maintenance refuses the command with `installation_maintenance` and no data writes.
+
 `uv run --frozen python -m tools.core_loop_proof --project bonafides-proof-core --confirm-disposable bonafides-proof-core --platform linux/arm64 --port 18200 --image bonafides:local` installs the release image from outside the checkout in production mode, then:
 
 1. refuses `demo load` before owner setup, creates the owner, loads the demo, reruns it as a no-op and checks the benchmark route still answers 404;
