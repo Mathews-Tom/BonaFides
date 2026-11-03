@@ -38,4 +38,18 @@ The owner separately authorized the [identified source-only review PR](licensing
 - [ ] No unapproved strong-copyleft/custom/unknown component, missing attribution, expired review or unresolved independence concern remains.
 - [ ] Named release owner and independent reviewer sign the artifact-bound verdict; no version/tag/publication occurs without separate authorization.
 
+## Automated evidence versus human gates
+
+The full CI tier produces the evidence below for the exact checked-out revision and both native images; [development gates](../development/README.md#gate-controls-and-release-candidate-signature) give the commands. Observing it checks no box above and substitutes for no reviewer. Every checkbox stays unchecked until a named person records it for a specific release.
+
+| Requirement | Automated evidence observed in CI | Still human-pending |
+| --- | --- | --- |
+| Secret scanning and license/notice checks demonstrated failing on synthetic violations | `gate-controls.json`: `tools.compliance source` and the pinned Trivy secret scanner exit 1 on a synthetic credential, the source check exits 1 on a missing license header, and the release check exits 1 on an unapproved component; each clean baseline exits 0; findings are redacted | Review that the configured scanners and rules suffice for the release |
+| Vulnerability, secret and SBOM reports bound to exact final artifacts | The release candidate manifest records each platform's manifest and config digest and the hash of that platform's Trivy image vulnerability report and SBOM, which must name the same config digest | Review of findings, dispositions and unreviewed scope |
+| Checksums, signatures and verification instructions | A disposable-key cosign signature over the candidate manifest verifies against a caller-supplied public key; altered bytes, a wrong key and missing, altered, mismatched or changed-source inputs are rejected | Signing identity and trust policy; any production signature |
+| Reproducible build and provenance attestation | None | Entire item |
+| Rights, notices, contributor, independence and legal review; security reporting channel; privacy/a11y/restore/load gates; named owner and independent reviewer verdict | None | Entire item |
+
+The candidate manifest states `release_authorized: false`. A passing automated gate or proof-key verification never means a release is authorized.
+
 No generic waiver can grant missing rights. Legal ambiguity must be resolved or the component removed/replaced before distribution. Critical exploitable security findings require remediation or an evidence-backed non-applicability decision; operational convenience is insufficient. Reports must distinguish automated detection, human review, unreviewed scope, and qualified legal conclusions.
