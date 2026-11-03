@@ -179,11 +179,13 @@ class CoreLoopProof(InstallProof):
     def scenario(self, name: str) -> None:
         self.control.write_text(name + "\n")
 
-    def posting_application(self, suffix: str) -> dict[str, Any]:
+    def posting_application(
+        self, suffix: str, title: str = str(POSTING["title"])
+    ) -> dict[str, Any]:
         posting = self.mutate(
             "POST",
             "/api/v1/postings",
-            {**POSTING, "canonical_url": POSTING["canonical_url"] + suffix},
+            {**POSTING, "title": title, "canonical_url": POSTING["canonical_url"] + suffix},
             expected=(201,),
         )
         posting = self.mutate(
