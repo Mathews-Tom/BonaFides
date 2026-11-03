@@ -53,6 +53,7 @@ class CoreLoopProof(InstallProof):
         self.stub_name = f"{project}-stub"
         self.control = self.work / "stub-scenario"
         self.route_enabled = False
+        self.stub_started = False
         self.document_pdf = b""
 
     def environment(self, image: str) -> dict[str, str]:
@@ -151,6 +152,7 @@ class CoreLoopProof(InstallProof):
                 *("--control-file", "/scenario"),
             ]
         )
+        self.stub_started = True
         address = (
             run(
                 [
@@ -380,9 +382,10 @@ class CoreLoopProof(InstallProof):
         self.evidence["model"] = {"kind": "deterministic_fixture", "notice": FIXTURE_NOTICE}
 
     def teardown(self) -> None:
-        subprocess.run(
-            ["docker", "rm", "--force", self.stub_name], capture_output=True, check=False
-        )
+        if self.stub_started:
+            subprocess.run(
+                ["docker", "rm", "--force", self.stub_name], capture_output=True, check=False
+            )
         super().teardown()
 
 
