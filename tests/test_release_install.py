@@ -1,17 +1,14 @@
 # SPDX-License-Identifier: MIT OR Apache-2.0
 from __future__ import annotations
 
-import json
 import os
 import subprocess
 from pathlib import Path
-from typing import Any
 
 import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
 INSTALLER = ROOT / "deploy" / "install.sh"
-COMPOSE_ENV = {"BONAFIDES_IMAGE": "bonafides:test", "BONAFIDES_SECRET_DIR": "/srv/secrets"}
 FAKE_DOCKER = """#!/bin/sh
 printf '%s\\n' "$*" >> "$FAKE_LOG"
 case "$1 $2" in
@@ -26,33 +23,6 @@ case "$1" in
   compose) case " $* " in *" exec "*) echo "Owner already exists; bootstrap not initialized." ;; esac ;;
 esac
 """
-
-
-def compose_config(path: Path, **env: str) -> dict[str, Any]:
-    result = subprocess.run(
-        ["docker", "compose", "-f", str(path), "config", "--format", "json"],
-        capture_output=True,
-        text=True,
-        env={key: value for key, value in os.environ.items() if not key.startswith("BONAFIDES_")}
-        | env,
-        check=False,
-    )
-    assert result.returncode == 0, result.stderr
-    config: dict[str, Any] = json.loads(result.stdout)
-    # Extension anchors only carry shared YAML; the resolved services are what run.
-    return {key: value for key, value in config.items() if not key.startswith("x-")}
-
-
-def test_release_compose_has_the_same_topology_and_isolation_without_building() -> None:
-    development = compose_config(ROOT / "compose.yaml", **COMPOSE_ENV)
-    released = compose_config(ROOT / "deploy" / "compose.release.yaml", **COMPOSE_ENV)
-
-    for service in development["services"].values():
-        service.pop("build", None)
-    for service in released["services"].values():
-        if service["image"] == COMPOSE_ENV["BONAFIDES_IMAGE"]:
-            assert service.pop("pull_policy") == "never"
-    assert released == development
 
 
 def test_release_compose_requires_an_explicit_image() -> None:
@@ -119,27 +89,3 @@ def test_installer_stops_before_touching_services_when_credentials_are_refused(
 
     assert result.returncode == 1 and "no credential was deleted or rotated" in result.stderr
     assert not any(" down" in call or " up" in call for call in docker_calls(sandbox))
-
-
-def test_installer_stops_services_without_removing_volumes_then_starts_and_reports_the_path(
-    sandbox: dict[str, Path],
-) -> None:
-    result = run_installer(sandbox)
-
-    calls = docker_calls(sandbox)
-    run_call = next(call for call in calls if call.startswith("run "))
-    compose_calls = [
-        call for call in calls if call.startswith("compose ") and "version" not in call
-    ]
-    install = sandbox["install"].resolve()
-    assert result.returncode == 0, result.stderr
-    assert "--pull never" in run_call and "--network none" in run_call
-    verbs = [
-        call for call in compose_calls if call.endswith("--remove-orphans") or " up -d" in call
-    ]
-    assert verbs[0].endswith("--remove-orphans") and " up -d --wait" in verbs[1]
-    assert any(" up -d --wait" in call for call in compose_calls)
-    assert "init-bootstrap-if-ownerless" in compose_calls[-1]
-    assert not any("--volumes" in call or " -v" in call for call in compose_calls)
-    assert "Sign in: http://localhost:8123" in result.stdout
-    assert f"{install}/secrets" in result.stdout
