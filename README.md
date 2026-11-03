@@ -2,13 +2,51 @@
 
 **Your job search. Your data. Your AI.**
 
-BonaFides is a self-hosted career workspace in development. The implemented **Architecture proof** covers a single owner, immutable profile/evidence revisions, durable synthetic workflows, reviewed grounded documents and isolated PDF rendering. **Evidence-linked profiles** adds editable evidence-linked profiles, immutable history/restore and independent light/dark/system preferences. **Reviewed résumé import** adds reviewed local PDF/plaintext résumé import without AI, OCR or a provider. **Job sources** adds manual postings and a disabled-by-default, board-specific reviewed Greenhouse read mechanism. **Job catalog** adds full-text catalog search/filtering, signed cursor pagination, independent save/dismiss/archive decisions, nonmerging duplicate review and history-preserving source retirement. **Suitability review** adds source-pinned requirement review, evidence-linked coverage, independent met/not-met/unknown hard constraints, stale snapshots and an explicitly authorized local-model proposal adapter. **Application tracking** adds schema-10 manual application tracking: duplicate-safe saved-posting creation, explicit repeat attempts, immutable stage corrections, archive/counts, private notes/contacts, inert bounded attachments and timezone-aware local follow-ups/interviews. Tracking a stage never sends an application or proves delivery; no model, mail or calendar connection is required. Manual review works without a model; installing a runtime is not consent or route qualification. Real-board collection still requires specific terms review and owner authorization. Synthetic transport fixtures do not qualify a real board or model. Local-model schema qualification is reported separately below; this is not complete private alpha or a production-qualified release. See the [deployed contracts and observed checks](docs/development/README.md).
+BonaFides is a self-hosted tool that turns evidence you own into résumés and cover letters you can check, then tracks the application. Every factual sentence cites a claim from your profile. Wording the claims do not support blocks review and export, and nothing is ever sent for you.
+
+![A 30-second walk through BonaFides: demo profile, posting requirements, a checked résumé reviewed and exported as PDF, a blocked unsupported statement, and a tracked application](docs/assets/bonafides-workflow.gif)
+
+The recording is the real interface on a release-image installation with synthetic data and the deterministic fixture model described below. Captions are added over the live page.
+
+1. **Own your evidence.** Facts and their sources live in an immutable-revision profile on your machine.
+2. **Paste a posting.** Confirm the requirements it states; missing evidence is never read as a missing skill.
+3. **Generate a checked pair.** A résumé and letter are built only from linked claims. An unsupported or inflated statement is shown as a blocker.
+4. **Review the exact revision, export the PDF.** Review is bound to one revision and its digest; a changed revision needs a new review.
+5. **Track the application.** Stage changes, notes and follow-ups are manual records.
+
+## Try it in minutes
+
+An operator needs only a shell and Docker Compose v2: no checkout, Python or uv. Load the versioned application image locally (the installer never pulls it), then extract and run the installer from that same image:
+
+```sh
+docker load --input bonafides-0.1.0.tar   # or any other way of making the image local
+docker run --rm --pull never --network none --entrypoint cat bonafides:0.1.0 /app/deploy/install.sh > install.sh
+sh install.sh --dir ~/bonafides bonafides:0.1.0
+```
+
+Open the printed sign-in URL and create the owner with the token in `~/bonafides/secrets/bootstrap_token`. To see the workflow with synthetic data, load the demo profile into the new, empty owner profile:
+
+```sh
+BONAFIDES_IMAGE=bonafides:0.1.0 docker compose --project-directory ~/bonafides exec api bonafides demo load
+```
+
+`demo load` needs the owner to exist first and the profile, evidence and claims to be empty. It loads two synthetic claims with their evidence, repeats as a no-op, and refuses without writing anything when the profile holds your own data or any edit, reclassification or archive of the demo data. Ordinary startup never creates demo data, an owner or a model route.
+
+Tailored generation needs a model route that you authorize explicitly. Without one, the base résumé, review, PDF export and tracking all work. [`tools/core_loop_proof.py`](tools/core_loop_proof.py) runs this exact path on the release image in production mode with a deterministic fixture model; see the [development guide](docs/development/README.md#core-loop-proof-and-workflow-recording).
+
+## Measured results and limits
+
+- **Observed real-model qualification (stage `generate_documents` only).** On 2026-11-02 on macOS Apple Silicon, host Ollama `0.40.13` with `qwen2.5:7b-instruct` produced valid résumé/letter JSON on the first response for **20/20 cases (100%)**, with **98.0% usable factual statements**, in **1,318.184 seconds**; `gemma4:12b-mlx` failed 0/20. Real `regenerate_section` runs were not performed, so that stage is unqualified. This measures JSON shape and checker usability, not semantic correctness. Details: [observed local schema qualification](docs/development/README.md#observed-local-schema-qualification--2026-11-02).
+- **Deterministic fixture proof, not qualification.** The core-loop proof and its recording use `tools/stub_model.py`, whose qualification receipts are fixture-only. They show the workflow and the blocking behavior, and attest nothing about any real model.
+- **Checker benchmark on synthetic sets (deterministic, no model).** Checker `claim-evidence-v6` blocked all targeted inflation classes and every untargeted fabrication class except one, and falsely blocked 2 of 1,175 honest statements (0.2%). The `dropped_qualifier` class (a limiting trailing qualifier cut away) is **not caught: 0 of 12**, an accepted limitation. Strict claim coverage of the 305-bullet synthetic corpus is **90.1%**, below the 95% target. Details: [structured claim evidence matching](docs/development/README.md#structured-claim-evidence-matching).
+
+## Implemented scope
+
+BonaFides is a self-hosted career workspace in development. The implemented **Architecture proof** covers a single owner, immutable profile/evidence revisions, durable synthetic workflows, reviewed grounded documents and isolated PDF rendering. **Evidence-linked profiles** adds editable evidence-linked profiles, immutable history/restore and independent light/dark/system preferences. **Reviewed résumé import** adds reviewed local PDF/plaintext résumé import without AI, OCR or a provider. **Job sources** adds manual postings and a disabled-by-default, board-specific reviewed Greenhouse read mechanism. **Job catalog** adds full-text catalog search/filtering, signed cursor pagination, independent save/dismiss/archive decisions, nonmerging duplicate review and history-preserving source retirement. **Suitability review** adds source-pinned requirement review, evidence-linked coverage, independent met/not-met/unknown hard constraints, stale snapshots and an explicitly authorized local-model proposal adapter. **Application tracking** adds schema-10 manual application tracking: duplicate-safe saved-posting creation, explicit repeat attempts, immutable stage corrections, archive/counts, private notes/contacts, inert bounded attachments and timezone-aware local follow-ups/interviews. Tracking a stage never sends an application or proves delivery; no model, mail or calendar connection is required. Manual review works without a model; installing a runtime is not consent or route qualification. Real-board collection still requires specific terms review and owner authorization. Synthetic transport fixtures do not qualify a real board or model. Local-model schema qualification is reported separately above; this is not complete private alpha or a production-qualified release. See the [deployed contracts and observed checks](docs/development/README.md).
 
 **Document generation local implementation** adds a first-class model-free base résumé and one shared document workspace: fixed English templates, frozen printable contacts, evidence-linked review, saved-revision editing, immutable history/restore and explicit PDF export. Tailoring uses a separately qualified bounded local-provider route, freezes minimized context and publishes a résumé/letter pair atomically. Unsupported assertions remain visible export blockers; review cannot waive them. Every installation still needs its own route authorization and receipt; genuine human factual qualification remains outstanding. See the [document contract](docs/development/README.md#document-workspace-contract).
 
 **Document editing and export local implementation** adds saved-section regeneration proposals with separate route qualification, exact transmitted-context preview and explicit application to an unchanged target revision. Proposals never replace document text automatically. PDF requests bind the saved revision, content digest and explicit PDF format; rendering rejects missing painted glyphs or lost/reordered selectable text rather than publishing degraded artifacts. Section regeneration requires its own stage receipt; genuine human-review qualification remains outstanding.
-
-**Local-model schema qualification** runs the committed synthetic set through an installed, authorized route with `bonafides models qualify`. On 2026-11-02, host Ollama `qwen2.5:7b-instruct` produced valid résumé/letter JSON on the first response for **20/20 cases (100%)**, with **98.0% usable factual statements**, in **1,318.184 seconds**. A passed, capability-bound receipt enables only its stage; prompt changes unqualify it. This measures JSON shape and checker usability, not semantic correctness or human approval. See the [operator command and receipt contract](docs/development/README.md#optional-operator-controlled-local-model-route).
 
 **Task and approval control local implementation** adds one durable task workspace with bounded history, actual attempt/heartbeat observations, safe due retry, explicit local cancellation checkpoints and unknown usage/cost. Exact single-action approvals bind the reviewed owner, payload, destination, projection, revisions, budgets and expiry; changed or replayed intent cannot grant another execution. Hosted transmission controls reserve each attempt without enabling a hosted adapter. Approval is not delivery, factual review, blanket consent or permission to execute an unavailable capability.
 
@@ -43,17 +81,9 @@ Do not capture that command's output in CI, logs or screenshots. Setup creates p
 
 The benchmark button loads the synthetic **SYN-CORE** evidence fixture and enables normal/slow/poison/staging-pause workflows. These are deterministic architecture exercises, not an AI provider or measured model benchmark. Omit `--benchmark` for production-mode endpoint refusal; architecture proof still does not become a production-ready application.
 
-## Install a released image
+## Released-image installer details
 
-An operator needs only a shell and Docker Compose v2: no checkout, Python or uv. Load the versioned application image locally (the installer never pulls it), then extract and run the installer from that same image:
-
-```sh
-docker load --input bonafides-0.1.0.tar   # or any other way of making the image local
-docker run --rm --pull never --network none --entrypoint cat bonafides:0.1.0 /app/deploy/install.sh > install.sh
-sh install.sh --dir ~/bonafides bonafides:0.1.0
-```
-
-The command generates private host-owned credentials under `~/bonafides/secrets`, starts the stack, and prints the sign-in URL and the secret path, never the bootstrap token. Read the token locally from `~/bonafides/secrets/bootstrap_token` to create the owner. Rerun the same command to repair or restart; run it with a different local image of the same version to swap images. A complete credential set is reused unchanged, a partial or invalid one is refused with guidance and never deleted or rotated, volumes are kept, and bootstrap is initialized only while no owner exists. See [Release images](docs/development/README.md#release-images).
+The installer command in [Try it in minutes](#try-it-in-minutes) is the whole install. It generates private host-owned credentials under `~/bonafides/secrets`, starts the stack, and prints the sign-in URL and the secret path, never the bootstrap token. Read the token locally from `~/bonafides/secrets/bootstrap_token` to create the owner. Rerun the same command to repair or restart; run it with a different local image of the same version to swap images. A complete credential set is reused unchanged, a partial or invalid one is refused with guidance and never deleted or rotated, volumes are kept, and bootstrap is initialized only while no owner exists. See [Release images](docs/development/README.md#release-images).
 
 ## Boundaries and evidence
 
