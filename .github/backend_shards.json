@@ -66,9 +66,11 @@
     "tests/test_imports.py",
     "tests/test_inventory.py",
     "tests/test_local_model.py",
+    "tests/test_local_setup.py",
     "tests/test_maintenance_recovery.py",
     "tests/test_portable_workspace.py",
     "tests/test_relay.py",
+    "tests/test_release_install.py",
     "tests/test_spool_guard.py",
     "tests/test_task_retention.py",
     "tests/test_workflows.py"

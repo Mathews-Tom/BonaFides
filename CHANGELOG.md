@@ -4,6 +4,14 @@ All notable changes to BonaFides are recorded here. The format follows [Keep a C
 
 ## [Unreleased]
 
+### Added
+
+- `deploy/install.sh` installs the stack from a locally loaded application image with one command and no source checkout, generates private credentials without printing the bootstrap token, and safely reruns after a same-version image swap. `bonafides init-bootstrap-if-ownerless` renews the bootstrap verifier only while no owner exists.
+
+### Changed
+
+- Credential generation moved from `tools/dev_setup.py` to the image-shipped `python -m bonafides.local_setup`; the development commands use the new module path.
+
 ## [0.1.0]
 
 The first release line of the self-hosted, single-owner career workspace, in which every factual claim in a generated résumé or letter is backed by the owner's own evidence.

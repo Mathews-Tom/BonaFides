@@ -361,7 +361,8 @@ def require_readonly_owner(request: Request) -> Owner:
     return owner
 
 
-def init_bootstrap(db: Database, settings: Settings) -> None:
+def init_bootstrap(db: Database, settings: Settings, *, if_ownerless: bool = False) -> bool:
+    """Renew the host-local verifier; with `if_ownerless`, an existing owner is a no-op, not an error."""
     if settings.bootstrap_token_file is None:
         raise ValueError("Missing bootstrap_token_file")
     token = read_secret(settings.bootstrap_token_file, "bootstrap_token")
@@ -370,6 +371,8 @@ def init_bootstrap(db: Database, settings: Settings) -> None:
     with db.transaction() as conn:
         _lock_identity(conn)
         if conn.execute(text("SELECT id FROM bonafides.owners")).first() is not None:
+            if if_ownerless:
+                return False
             raise ValueError("Bootstrap unavailable: owner already exists")
         conn.execute(
             text(
@@ -377,6 +380,7 @@ def init_bootstrap(db: Database, settings: Settings) -> None:
             ),
             {"token": digest(token)},
         )
+    return True
 
 
 def recover_password(db: Database, password: str) -> None:

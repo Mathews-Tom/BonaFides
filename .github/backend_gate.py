@@ -47,7 +47,7 @@ def main() -> int:
         [
             sys.executable,
             "-m",
-            "tools.dev_setup",
+            "bonafides.local_setup",
             "--directory",
             str(secret_dir),
             "--env-file",

@@ -28,7 +28,7 @@ The runtime uses pinned Python 3.12.15 on supported Alpine 3.24. System libpq, P
 uv python install 3.12.15
 uv sync --frozen --python 3.12.15 --only-group build --no-build
 uv sync --frozen --python 3.12.15 --group build --no-build-isolation
-uv run --frozen python -m tools.dev_setup --benchmark
+uv run --frozen python -m bonafides.local_setup --benchmark
 docker compose up --build --detach --wait
 docker compose exec api python -m bonafides init-bootstrap
 ```
@@ -36,12 +36,24 @@ docker compose exec api python -m bonafides init-bootstrap
 Open **http://localhost:8000** (not a replacement remote host). Reveal the one-use token deliberately in a private local terminal, then enter it in the browser with a login name and a strong 15–128-character password:
 
 ```sh
-uv run --frozen python -m tools.dev_setup --show-bootstrap-token
+uv run --frozen python -m bonafides.local_setup --show-bootstrap-token
 ```
 
 Do not capture that command's output in CI, logs or screenshots. Setup creates private local credential files and `.env` containing configuration paths, not passwords. It refuses to overwrite existing credentials. The bootstrap verifier expires after 15 minutes; the host-local `init-bootstrap` command can renew setup while no owner exists. Ordinary startup does not seed any owner or profile.
 
 The benchmark button loads the synthetic **SYN-CORE** evidence fixture and enables normal/slow/poison/staging-pause workflows. These are deterministic architecture exercises, not an AI provider or measured model benchmark. Omit `--benchmark` for production-mode endpoint refusal; architecture proof still does not become a production-ready application.
+
+## Install a released image
+
+An operator needs only a shell and Docker Compose v2: no checkout, Python or uv. Load the versioned application image locally (the installer never pulls it), then extract and run the installer from that same image:
+
+```sh
+docker load --input bonafides-0.1.0.tar   # or any other way of making the image local
+docker run --rm --pull never --network none --entrypoint cat bonafides:0.1.0 /app/deploy/install.sh > install.sh
+sh install.sh --dir ~/bonafides bonafides:0.1.0
+```
+
+The command generates private host-owned credentials under `~/bonafides/secrets`, starts the stack, and prints the sign-in URL and the secret path, never the bootstrap token. Read the token locally from `~/bonafides/secrets/bootstrap_token` to create the owner. Rerun the same command to repair or restart; run it with a different local image of the same version to swap images. A complete credential set is reused unchanged, a partial or invalid one is refused with guidance and never deleted or rotated, volumes are kept, and bootstrap is initialized only while no owner exists. See [Release images](docs/development/README.md#release-images).
 
 ## Boundaries and evidence
 

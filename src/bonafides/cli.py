@@ -81,6 +81,7 @@ def main(argv: list[str] | None = None) -> int:
             "healthcheck",
             "config-check",
             "init-bootstrap",
+            "init-bootstrap-if-ownerless",
             "recover-password",
             "backup-create",
             "backup-status",
@@ -202,6 +203,13 @@ def main(argv: list[str] | None = None) -> int:
             if arguments.command == "init-bootstrap":
                 init_bootstrap(db, settings)
                 print("Bootstrap verifier initialized for 15 minutes; use the local secret file.")
+            elif arguments.command == "init-bootstrap-if-ownerless":
+                if init_bootstrap(db, settings, if_ownerless=True):
+                    print(
+                        "Bootstrap verifier initialized for 15 minutes; use the local secret file."
+                    )
+                else:
+                    print("Owner already exists; bootstrap not initialized.")
             else:
                 recover_password(db, _password())
                 print("Owner password recovered; existing sessions and approvals invalidated.")
