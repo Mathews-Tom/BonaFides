@@ -7,7 +7,7 @@ All notable changes to BonaFides are recorded here. The format follows [Keep a C
 ### Added
 
 - `bonafides demo load` loads synthetic profile, evidence and claims into an existing, empty owner profile; reruns are no-ops and any real or changed state is refused without writes.
-- `tools/core_loop_proof.py` proves posting, checked résumé and letter, exact-revision review, PDF export and saved tracking on the release image in production mode with the explicit fixture model, and the full tier runs it on both architectures. `tools/demo_capture.py` rebuilds the README workflow recording.
+- `tools/core_loop_proof.py` proves posting, checked résumé and letter, exact-revision review, PDF export and saved tracking on the release image in production mode with the explicit fixture model; unsupported and ownership-inflated output blocks review/export. The full tier runs it on both architectures. `tools/demo_capture.py` rebuilds the README workflow recording.
 - `deploy/install.sh` installs the stack from a locally loaded application image with one command and no source checkout, generates private credentials without printing the bootstrap token, and safely reruns after a same-version image swap. `bonafides init-bootstrap-if-ownerless` renews the bootstrap verifier only while no owner exists.
 
 ### Changed

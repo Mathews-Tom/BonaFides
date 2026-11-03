@@ -40,6 +40,7 @@ REQUIREMENTS = ("Linux required.", "SQL required.")
 BLOCKED_SCENARIOS = (
     ("posting-only-skill", "statement_not_in_claim"),
     ("absent-claim", "claim_not_in_profile"),
+    ("inflated", "statement_cut_inside_claim"),
 )
 FIXTURE_NOTICE = (
     "Model output is a deterministic fixture; its qualification receipts are fixture-only and "
@@ -354,6 +355,48 @@ class CoreLoopProof(InstallProof):
         self.checked("application_tracking_saved", stage="applied")
 
     def blocked_output(self) -> None:
+        text = "Assisted the team that led the Linux runbook migration"
+        profile, _, _ = self.api.request("GET", "/api/v1/profile")
+        evidence = self.mutate(
+            "POST",
+            "/api/v1/evidence",
+            {
+                "payload": {"text": text, "source": "Synthetic programme record"},
+                "provenance": {
+                    "source_type": "owner_statement",
+                    "privacy_class": "private",
+                    "employer_owned": False,
+                },
+            },
+            version=profile["version"],
+        )
+        revision = next(
+            item["revision"]["id"]
+            for item in evidence["evidence"]
+            if item["revision"]["payload"]["text"] == text
+        )
+        self.mutate(
+            "POST",
+            "/api/v1/claims",
+            {
+                "kind": "experience",
+                "payload": {
+                    "claim": {
+                        "schema_version": 1,
+                        "verb": "assisted",
+                        "subject": "the team that led the Linux runbook migration",
+                    }
+                },
+                "evidence_links": [
+                    {
+                        "evidence_revision_id": revision,
+                        "support_kind": "user_asserted",
+                        "excerpt": text,
+                    }
+                ],
+            },
+            version=evidence["version"],
+        )
         for index, (scenario, code) in enumerate(BLOCKED_SCENARIOS, 1):
             self.scenario(scenario)
             application = self.posting_application(f"-blocked-{index}")
