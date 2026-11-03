@@ -1326,9 +1326,6 @@ def collect_image(image: str, inventory: Inventory) -> None:
         key: metadata.get(key)
         for key in ("Id", "Descriptor", "RepoDigests", "Architecture", "Os", "RootFS")
     }
-    inventory.inputs.append(
-        {"kind": "docker-image-inspect", "reference": image, "metadata": safe_metadata}
-    )
     if object_value(metadata.get("Config", {}), "image Config").get("Volumes"):
         inventory.blockers.append(
             f"{image}: declared volumes are not inspected as live volume content; "
@@ -1351,6 +1348,42 @@ def collect_image(image: str, inventory: Inventory) -> None:
         if not re.fullmatch(r"[0-9a-f]{64}", container):
             raise CollectionError("docker create returned invalid container identity")
         try:
+            containers = array_value(
+                run_json(["docker", "container", "inspect", container]), "docker container inspect"
+            )
+            if len(containers) != 1:
+                raise CollectionError("expected one temporary inventory container")
+            selected = object_value(containers[0], "inventory container metadata")
+            if selected.get("Image") != identity:
+                raise CollectionError("temporary inventory container reports a different image")
+            # Classic stores use the config ID; containerd reports the selected manifest.
+            # Container inspection works without the newer image inspect --platform flag.
+            descriptor = selected.get("ImageManifestDescriptor")
+            platform_id = identity
+            if descriptor is not None:
+                manifest = object_value(descriptor, "container image manifest")
+                platform = object_value(manifest.get("platform"), "container image platform")
+                if platform.get("os") != metadata.get("Os") or platform.get(
+                    "architecture"
+                ) != metadata.get("Architecture"):
+                    raise CollectionError(
+                        "temporary inventory container reports a different platform"
+                    )
+                platform_id = text(manifest.get("digest"), "platform manifest digest")
+            elif metadata.get("Descriptor") is not None:
+                image_descriptor = object_value(metadata["Descriptor"], "image descriptor")
+                if image_descriptor.get("mediaType") in (
+                    "application/vnd.oci.image.index.v1+json",
+                    "application/vnd.docker.distribution.manifest.list.v2+json",
+                ):
+                    raise CollectionError(
+                        "inventory container does not report its platform manifest"
+                    )
+            exact_sha256(platform_id, "platform image identity")
+            safe_metadata["platform_id"] = platform_id
+            inventory.inputs.append(
+                {"kind": "docker-image-inspect", "reference": image, "metadata": safe_metadata}
+            )
             archive = Path(temporary) / "rootfs.tar"
             exported = subprocess.run(
                 ["docker", "export", "--output", str(archive), container],
