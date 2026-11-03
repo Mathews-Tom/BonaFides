@@ -21,6 +21,7 @@ from tools.core_loop_proof import CoreLoopProof
 from tools.runtime_proof import ProbeFailure, require_unused_namespace
 
 VIEWPORT: ViewportSize = {"width": 1280, "height": 800}
+RENDER_TIMEOUT_MS = 240_000
 VALID_TITLE = "Fictional operations analyst"
 BLOCKED_TITLE = "Fictional operations analyst (fabricated skill)"
 _CAPTION = """text => {
@@ -78,13 +79,14 @@ class DemoCapture(CoreLoopProof):
                 record_video_dir=str(directory),
                 record_video_size=VIEWPORT,
             )
+            context.set_default_timeout(RENDER_TIMEOUT_MS)
             page = context.new_page()
             page.goto(self.origin + "/")
             self.show(page, page.get_by_text("Your foundation"))
             self.scene(page, "Demo data loaded after owner setup: two evidence-backed facts", 3000)
             page.get_by_role("link", name="Profile").first.click()
             page.get_by_role("button", name=re.compile("^Skills")).click()
-            self.scene(page, "Every fact keeps its evidence; nothing is invented", 3000)
+            self.scene(page, "Every fact keeps the evidence it came from", 3000)
             page.get_by_role("link", name="Opportunities").first.click()
             page.get_by_role("button", name="Reload posting catalog").click()
             page.get_by_role("button", name=f"Read {VALID_TITLE} at Fictional Acme").click()
