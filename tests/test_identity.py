@@ -283,6 +283,36 @@ def test_bootstrap_is_atomic_single_use_with_empty_profile(identity: IdentityCon
         )
 
 
+def test_ownerless_bootstrap_renews_and_existing_owner_is_left_untouched(
+    identity: IdentityContext,
+) -> None:
+    state_query = text(
+        "SELECT bootstrap_token_sha256,bootstrap_expires_at,bootstrap_consumed_at "
+        "FROM bonafides.installation_state WHERE singleton"
+    )
+    with identity.admin.transaction() as conn:
+        conn.execute(
+            text(
+                "UPDATE bonafides.installation_state SET bootstrap_expires_at=now()-interval '1 hour'"
+            )
+        )
+    assert init_bootstrap(identity.admin, identity.settings, if_ownerless=True) is True
+    with identity.admin.transaction() as conn:
+        assert conn.execute(
+            text("SELECT bootstrap_expires_at>now() FROM bonafides.installation_state")
+        ).scalar_one()
+    with identity.client() as client:
+        assert _bootstrap(identity, client).status_code == 201
+    with identity.admin.transaction() as conn:
+        consumed = conn.execute(state_query).one()
+
+    assert init_bootstrap(identity.admin, identity.settings, if_ownerless=True) is False
+    with pytest.raises(ValueError, match="owner already exists"):
+        init_bootstrap(identity.admin, identity.settings)
+    with identity.admin.transaction() as conn:
+        assert conn.execute(state_query).one() == consumed
+
+
 @pytest.mark.postgres
 def test_actual_postgres_concurrent_bootstrap(identity: IdentityContext) -> None:
     with identity.client() as first, identity.client() as second:
