@@ -7,6 +7,7 @@ import base64
 import hashlib
 import io
 import json
+import subprocess
 import tarfile
 import tempfile
 import unittest
@@ -430,6 +431,107 @@ class WebInventoryTests(unittest.TestCase):
 
 
 class ImageInventoryTests(unittest.TestCase):
+    def test_image_identity_supports_classic_and_containerd_stores_and_rejects_mismatch(
+        self,
+    ) -> None:
+        config_id, index_id, manifest_id = ("sha256:" + digit * 64 for digit in "abd")
+        descriptor: inventory.Object = {
+            "digest": manifest_id,
+            "platform": {"os": "linux", "architecture": "arm64"},
+        }
+        cases: list[tuple[str, bool, inventory.Object, str | None]] = [
+            ("classic", False, {"Image": config_id}, None),
+            (
+                "containerd",
+                True,
+                {"Image": index_id, "ImageManifestDescriptor": descriptor},
+                None,
+            ),
+            ("foreign-container", False, {"Image": index_id}, "different image"),
+            ("unresolved-index", True, {"Image": index_id}, "platform manifest"),
+            (
+                "foreign-platform",
+                True,
+                {
+                    "Image": index_id,
+                    "ImageManifestDescriptor": {
+                        "digest": manifest_id,
+                        "platform": {"os": "linux", "architecture": "amd64"},
+                    },
+                },
+                "different platform",
+            ),
+        ]
+        payload = b"\x7fELFsynthetic-library"
+        for label, indexed, container_metadata, error in cases:
+            with self.subTest(store=label):
+                identity = index_id if indexed else config_id
+                metadata: inventory.Object = {
+                    "Id": identity,
+                    "Os": "linux",
+                    "Architecture": "arm64",
+                    "Config": {},
+                }
+                if indexed:
+                    metadata["Descriptor"] = {
+                        "mediaType": "application/vnd.oci.image.index.v1+json"
+                    }
+                removed: list[str] = []
+
+                def inspect(
+                    command: list[str],
+                    cwd: Path | None = None,
+                    *,
+                    image: inventory.Object = metadata,
+                    created_container: inventory.Object = container_metadata,
+                ) -> inventory.Json:
+                    if command == ["docker", "image", "inspect", "fixture:local"]:
+                        return [image]
+                    if command == ["docker", "container", "inspect", "c" * 64]:
+                        return [created_container]
+                    raise inventory.CollectionError("Docker CLI does not support these arguments")
+
+                def docker(
+                    command: list[str], *, cleanup: list[str] = removed, **kwargs: object
+                ) -> subprocess.CompletedProcess[str]:
+                    if command[:2] == ["docker", "export"]:
+                        write_tar(
+                            Path(command[3]),
+                            {
+                                "var/lib/dpkg/status": b"Package: libfixture\nStatus: install ok installed\nVersion: 1.0\nArchitecture: arm64\n\n",
+                                "usr/local/bin/fixture": payload,
+                            },
+                        )
+                    elif command[:2] == ["docker", "rm"]:
+                        cleanup.append(command[-1])
+                    elif command[:2] != ["docker", "create"]:
+                        raise AssertionError(command)
+                    return subprocess.CompletedProcess(command, 0, "c" * 64, "")
+
+                collected = inventory.Inventory()
+                with (
+                    patch.object(inventory, "run_json", side_effect=inspect),
+                    patch("tools.inventory.subprocess.run", side_effect=docker),
+                ):
+                    if error:
+                        with self.assertRaisesRegex(inventory.CollectionError, error):
+                            inventory.collect_image("fixture:local", collected)
+                        self.assertEqual(collected.components, {})
+                    else:
+                        inventory.collect_image("fixture:local", collected)
+                        asset = next(
+                            value
+                            for value in collected.components.values()
+                            if value.get("name") == "usr/local/bin/fixture"
+                        )
+                        self.assertEqual(asset["sha256"], hashlib.sha256(payload).hexdigest())
+                        self.assertFalse(
+                            compliance.check_inventory(collected.snapshot(False))[
+                                "release_eligible"
+                            ]
+                        )
+                self.assertEqual(removed, ["c" * 64])
+
     def test_actual_package_files_unknown_native_fonts_and_dictionaries_stay_blocked(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             archive = Path(directory) / "rootfs.tar"
