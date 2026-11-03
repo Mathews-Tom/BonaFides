@@ -116,6 +116,7 @@ jobs:
     env:
       DOCKER_DEFAULT_PLATFORM: ${{ matrix.platform }}
       BONAFIDES_IMAGE: bonafides:local
+      TRIVY_IMAGE: aquasec/trivy:0.69.3@sha256:bcc376de8d77cfe086a917230e818dc9f8528e3c852f7b1aff648949b6258d1c
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
@@ -187,12 +188,17 @@ jobs:
       - name: Pinned image vulnerability secret and SBOM tooling without Docker socket
         run: |
           docker save --output "$RUNNER_TEMP/bonafides-image.tar" bonafides:local
-          scanner='aquasec/trivy:0.69.3@sha256:bcc376de8d77cfe086a917230e818dc9f8528e3c852f7b1aff648949b6258d1c'
+          scanner="$TRIVY_IMAGE"
           status=0
           docker run --rm -v "$RUNNER_TEMP/bonafides-image.tar:/image.tar:ro" -v "$PWD/artifacts:/output" "$scanner" image --input /image.tar --scanners vuln,secret --severity HIGH,CRITICAL --exit-code 1 --format json --output /output/image-vulnerabilities.json || status=$?
           docker run --rm -v "$RUNNER_TEMP/bonafides-image.tar:/image.tar:ro" -v "$PWD/artifacts:/output" "$scanner" image --input /image.tar --format cyclonedx --output /output/image-sbom.json || status=$?
           docker run --rm -v "$PWD:/source:ro" -v "$PWD/artifacts:/output" "$scanner" fs --scanners secret --exit-code 1 --format json --output /output/source-secrets.json --skip-dirs /source/.docs,/source/.local,/source/.secrets,/source/.venv,/source/web/node_modules,/source/artifacts /source || status=$?
           exit "$status"
+      - name: Deliberate synthetic violations fail the actual secret and license gates
+        # Synthetic repositories and raw scanner output stay under RUNNER_TEMP, never an uploaded path.
+        run: |
+          uv run --frozen python -m tools.gate_controls --scratch "$RUNNER_TEMP/gate-controls" \
+            --scanner "$TRIVY_IMAGE" --output artifacts/gate-controls.json
       - name: Verify saved layers locally and export only manifest and config metadata
         run: |
           saved="$RUNNER_TEMP/release-saved"
@@ -275,6 +281,10 @@ jobs:
         with:
           pattern: release-platform-*
           path: ${{ runner.temp }}/release
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          pattern: gate-evidence-*
+          path: ${{ runner.temp }}/evidence
       - name: Assemble and inspect the two-platform index tagged with the version and commit
         run: |
           python3 -c 'import sys; assert sys.version_info[:2] == (3, 12), sys.version'
@@ -312,6 +322,54 @@ jobs:
           path: |
             ${{ runner.temp }}/release/bonafides-index.tar
             ${{ runner.temp }}/release/index-report.json
+          retention-days: 3
+          compression-level: 1
+          if-no-files-found: error
+      - name: Install pinned cosign with a verified checksum
+        run: |
+          version=3.1.4
+          sha256=424e2c97d0b45fd7a6b608a87f090f35633f4c23ece5f092d48bba11aaf4bbfa
+          bin="$RUNNER_TEMP/cosign-bin"
+          mkdir "$bin"
+          curl --fail --silent --show-error --location --output "$bin/cosign" \
+            "https://github.com/sigstore/cosign/releases/download/v$version/cosign-linux-amd64"
+          echo "$sha256  $bin/cosign" | sha256sum --check --strict
+          chmod 0755 "$bin/cosign"
+          test "$("$bin/cosign" version | awk '/GitVersion/ {print $2}')" = "v$version"
+          echo "$bin" >> "$GITHUB_PATH"
+      - name: Bind evidence to the exact images, sign with a disposable proof key and attempt tampering
+        # Private keys and tampered copies stay under RUNNER_TEMP/candidate-private, never uploaded.
+        # The proof key is non-production; verification below trusts only the public key passed in.
+        run: |
+          release="$RUNNER_TEMP/release"
+          evidence="$RUNNER_TEMP/evidence"
+          candidate="$RUNNER_TEMP/candidate"
+          inputs=(
+            --version "$(python3 -c 'import tomllib; print(tomllib.load(open("pyproject.toml", "rb"))["project"]["version"])')"
+            --revision "$(git rev-parse HEAD)"
+            --source "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY"
+            --index "$release/index"
+            --evidence "amd64=$evidence/gate-evidence-amd64" --evidence "arm64=$evidence/gate-evidence-arm64"
+          )
+          python3 -m tools.candidate_proof "${inputs[@]}" \
+            --private "$RUNNER_TEMP/candidate-private" --output "$candidate"
+          python3 -m tools.release_candidate verify "${inputs[@]}" \
+            --manifest "$candidate/release-candidate.json" \
+            --trusted-public-key "$candidate/proof-public-key.pub" \
+            --bundle "$candidate/release-candidate.sigstore.json"
+          {
+            echo '### Release candidate (disposable proof key; non-production; no release authorized)'
+            echo '| Tampered input | Result |'
+            echo '| --- | --- |'
+            jq -r '.negative_cases[] | "| \(.case) | \(.result) |"' "$candidate/candidate-proof.json"
+            echo
+            echo 'Signature made and verified locally with cosign; no certificate, timestamp or transparency-log service was contacted. Human approvals remain pending.'
+          } >> "$GITHUB_STEP_SUMMARY"
+      - name: Upload candidate manifest, signature bundle, proof public key and report only
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: release-candidate-proof
+          path: ${{ runner.temp }}/candidate
           retention-days: 3
           compression-level: 1
           if-no-files-found: error
