@@ -381,6 +381,24 @@ docker image rm bonafides-proof-release:amd64 bonafides-proof-release:arm64
 
 `uv run --frozen python -m tools.install_proof --project bonafides-proof-install --confirm-disposable bonafides-proof-install --platform linux/arm64 --image bonafides:local` proves this from a directory outside the checkout in production mode: it times install to sign-in (limit 600 s), creates an owner and profile data through the production API, reruns the installer, builds a second image of the same version with a different revision label, reruns the installer, and asserts the swapped image is the one running while credentials, owner data and the migration ledger are unchanged. The full-tier gate runs it on each native runner and uploads only `receipt.json`.
 
+### Core-loop proof and workflow recording
+
+`bonafides demo load` loads two synthetic skill claims with their evidence into an existing, empty owner profile, reusing the benchmark fixture's seeding code under the owner evidence write lock. It never creates an owner, and it takes no argument. Exit status 0 means loaded or already loaded unchanged; status 2 with `Operation refused: owner_setup_required` (no owner) or `Operation refused: demo_requires_empty_profile` (own, partial or changed data, including a later edit, reclassification or archive of the demo rows) means nothing was written. The benchmark HTTP route is unchanged and still answers 404 outside benchmark mode. In a development checkout run `docker compose exec api bonafides demo load`.
+
+The CLI participates in installation maintenance admission and serializes with ordinary workspace writers. A successful load advances the workspace revision once, invalidating earlier destructive previews and approvals; an unchanged rerun does not advance it. Active maintenance refuses the command with `installation_maintenance` and no data writes.
+
+`uv run --frozen python -m tools.core_loop_proof --project bonafides-proof-core --confirm-disposable bonafides-proof-core --platform linux/arm64 --port 18200 --image bonafides:local` installs the release image from outside the checkout in production mode, then:
+
+1. refuses `demo load` before owner setup, creates the owner, loads the demo, reruns it as a no-op and checks the benchmark route still answers 404;
+2. starts `tools/stub_model.py` from the checkout in a read-only, capability-free container on the project's internal `private` network (no published port, no application secret or volume), writes a fixture route for its address, and materializes it with the documented `prepare` step;
+3. pastes a posting through the API, confirms its requirements, saves it, tracks it, generates a résumé and letter, reviews the exact revisions, exports the PDF and checks its text against the claims;
+4. records the `applied` stage and a note;
+5. adds a synthetic assistance claim and its evidence through ordinary APIs, then checks the visible validation issue and 409 `unsupported_claims` refusal for review and PDF export in the `posting-only-skill`, `absent-claim` and `inflated` stub scenarios.
+
+The `inflated` fixture cuts “Assisted the team that led the Linux runbook migration” into “Led the Linux runbook migration”: the stronger ownership verb remains contained in the evidence but is blocked as `statement_cut_inside_claim`. The two original demo claims remain unchanged. The receipt (`.local/<project>/receipt.json`) holds check timings, image identity, the PDF digest and an explicit statement that the model is a deterministic fixture whose qualification receipts attest nothing about any real model. It holds no HTTP body, token or password. The full tier runs the proof natively on both architectures and uploads only that receipt.
+
+`uv run --frozen python -m tools.demo_capture --project bonafides-proof-gif --confirm-disposable bonafides-proof-gif --platform linux/arm64 --port 18420 --image bonafides:local --output docs/assets/bonafides-workflow.gif` rebuilds the README recording on a disposable installation with the pinned Playwright Chromium (`uv run --frozen python -m playwright install chromium`) and `ffmpeg`. Sign-in happens before recording starts. CI never runs or uploads it; `docs/assets/bonafides-workflow.gif` is the only committed capture.
+
 ## Local setup and lifecycle
 
 ```sh

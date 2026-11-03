@@ -50,6 +50,7 @@ class InstallProof:
         self.install_dir = self.work / "install"
         self.script = self.work / "install.sh"
         self.swap_image = f"{project}:swap"
+        self.swap_built = False
         self.login, self.password = "synthetic-owner", secrets.token_urlsafe(32)
         self.api = API(self.origin)
         self.evidence: dict[str, Any] = {"project": project, "platform": platform, "checks": {}}
@@ -173,7 +174,7 @@ class InstallProof:
         }
         return database
 
-    def create_owner_and_data(self) -> None:
+    def create_owner(self) -> None:
         challenge, _, _ = self.api.request("GET", "/api/v1/auth/challenge")
         self.api.csrf = challenge["csrf_token"]
         session, _, _ = self.api.request(
@@ -183,6 +184,9 @@ class InstallProof:
             expected=(201,),
         )
         self.api.csrf = session["csrf_token"]
+
+    def create_owner_and_data(self) -> None:
+        self.create_owner()
         profile, metadata, _ = self.api.request("GET", "/api/v1/profile")
         edited = dict(profile["current_revision"]["snapshot"], headline="Synthetic install owner")
         self.api.request(
@@ -241,6 +245,7 @@ class InstallProof:
             env=self.environment(self.swap_image),
             timeout=1800,
         )
+        self.swap_built = True
         swap = self.image_identity(self.swap_image)
         require(swap["version"] == first["version"], "swap_version_changed")
         require(swap["revision"] != first["revision"], "swap_revision_unchanged")
@@ -287,7 +292,10 @@ class InstallProof:
     def teardown(self) -> None:
         if (self.install_dir / "compose.yaml").exists():
             self.compose(self.swap_image, "down", "--volumes", "--remove-orphans")
-        subprocess.run(["docker", "image", "rm", self.swap_image], capture_output=True, check=False)
+        if self.swap_built:
+            subprocess.run(
+                ["docker", "image", "rm", self.swap_image], capture_output=True, check=False
+            )
         shutil.rmtree(self.work, ignore_errors=True)
 
 

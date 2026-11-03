@@ -232,6 +232,19 @@ jobs:
             echo '| --- | --- |'
             cat "$RUNNER_TEMP/install-seconds.md"
           } >> "$GITHUB_STEP_SUMMARY"
+      - name: Release-image core loop in production mode with the explicit fixture model
+        run: |
+          uv run --frozen python -m tools.core_loop_proof \
+            --project bonafides-proof-core-${{ matrix.architecture }} \
+            --confirm-disposable bonafides-proof-core-${{ matrix.architecture }} \
+            --platform '${{ matrix.platform }}' --port 18200 --image bonafides:local
+          {
+            echo '### Core-loop receipt (${{ matrix.platform }}, deterministic fixture model)'
+            echo '| Check | Seconds since start |'
+            echo '| --- | --- |'
+            jq -r '.checks | to_entries | sort_by(.value.elapsed_seconds)[] | "| \(.key) | \(.value.elapsed_seconds) |"' \
+              ".local/bonafides-proof-core-${{ matrix.architecture }}/receipt.json"
+          } >> "$GITHUB_STEP_SUMMARY"
       - name: Blocking release compliance only when deliberately requested
         if: github.event_name == 'workflow_dispatch' && inputs.release_compliance
         run: uv run --frozen python -m tools.compliance check --inventory artifacts/locked-components.json --output artifacts/release-compliance.json
@@ -244,6 +257,7 @@ jobs:
             artifacts/*.json
             .local/bonafides-proof-ci-${{ matrix.architecture }}/receipt.json
             .local/bonafides-proof-install-${{ matrix.architecture }}/receipt.json
+            .local/bonafides-proof-core-${{ matrix.architecture }}/receipt.json
           include-hidden-files: true
           if-no-files-found: error
   release-index:
