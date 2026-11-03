@@ -2,7 +2,7 @@
 
 **Your job search. Your data. Your AI.**
 
-BonaFides is a self-hosted tool that turns evidence you own into résumés and cover letters you can check, then tracks the application. Every factual sentence cites a claim from your profile. Wording the claims do not support blocks review and export, and nothing is ever sent for you.
+BonaFides is a self-hosted tool that turns evidence you own into résumés and cover letters you can check, then tracks the application. Every factual sentence cites a claim from your profile. Wording the claims do not support blocks review and export, except a dropped trailing qualifier, which the checker does not catch (see [measured results](#measured-results-and-limits)). Nothing is ever sent for you.
 
 ![A 30-second walk through BonaFides: demo profile, posting requirements, a checked résumé reviewed and exported as PDF, a blocked unsupported statement, and a tracked application](docs/assets/bonafides-workflow.gif)
 
@@ -30,7 +30,7 @@ Open the printed sign-in URL and create the owner with the token in `~/bonafides
 BONAFIDES_IMAGE=bonafides:0.1.0 docker compose --project-directory ~/bonafides exec api bonafides demo load
 ```
 
-`demo load` needs the owner to exist first and the profile, evidence and claims to be empty. It loads two synthetic claims with their evidence, repeats as a no-op, and refuses without writing anything when the profile holds your own data or any edit, reclassification or archive of the demo data. Ordinary startup never creates demo data, an owner or a model route.
+`demo load` ships in images built from this change onward (see Unreleased in the [changelog](CHANGELOG.md)); an older `0.1.0` image lacks it. It needs the owner to exist first and the profile, evidence and claims to be empty. It loads two synthetic claims with their evidence, repeats as a no-op, and refuses without writing anything when the profile holds your own data or any edit, reclassification or archive of the demo data. Ordinary startup never creates demo data, an owner or a model route.
 
 Tailored generation needs a model route that you authorize explicitly. Without one, the base résumé, review, PDF export and tracking all work. [`tools/core_loop_proof.py`](tools/core_loop_proof.py) runs this exact path on the release image in production mode with a deterministic fixture model; see the [development guide](docs/development/README.md#core-loop-proof-and-workflow-recording).
 
