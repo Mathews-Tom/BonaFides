@@ -13,6 +13,8 @@ All notable changes to BonaFides are recorded here. The format follows [Keep a C
 ### Changed
 
 - The README opens with the workflow, the committed workflow recording, the install and demo commands, and the measured results with their limits.
+- Demo loading honors installation maintenance and workspace mutation locks, and advances the workspace revision only when it seeds data so stale destructive approvals cannot authorize the new data.
+- Proof teardown removes a swap-image tag only when that run successfully built it, preserving unrelated tags during core-loop and recording cleanup.
 - Credential generation moved from `tools/dev_setup.py` to the image-shipped `python -m bonafides.local_setup`; the development commands use the new module path.
 
 ## [0.1.0]
