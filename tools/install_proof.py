@@ -173,7 +173,7 @@ class InstallProof:
         }
         return database
 
-    def create_owner_and_data(self) -> None:
+    def create_owner(self) -> None:
         challenge, _, _ = self.api.request("GET", "/api/v1/auth/challenge")
         self.api.csrf = challenge["csrf_token"]
         session, _, _ = self.api.request(
@@ -183,6 +183,9 @@ class InstallProof:
             expected=(201,),
         )
         self.api.csrf = session["csrf_token"]
+
+    def create_owner_and_data(self) -> None:
+        self.create_owner()
         profile, metadata, _ = self.api.request("GET", "/api/v1/profile")
         edited = dict(profile["current_revision"]["snapshot"], headline="Synthetic install owner")
         self.api.request(
