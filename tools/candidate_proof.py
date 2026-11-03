@@ -23,6 +23,7 @@ from pathlib import Path
 from tools.release_candidate import (
     IMAGE_VULNERABILITIES,
     CandidateError,
+    CosignError,
     build_manifest,
     evidence_names,
     file_record,
@@ -120,7 +121,8 @@ def prove(
     )
     expect_rejected(cases, "scanner report for a different image", lambda: verify(inputs=foreign))
 
-    other = Release(release.version, "f" * 40, release.source)
+    other_revision = ("0" if release.revision[0] != "0" else "1") + release.revision[1:]
+    other = Release(release.version, other_revision, release.source)
     expect_rejected(cases, "different source revision", lambda: verify(identity=other))
 
     report: dict[str, object] = {
@@ -151,6 +153,8 @@ def main(argv: list[str] | None = None) -> int:
     arguments = parser.parse_args(argv)
     try:
         evidence = dict(arguments.evidence)
+        if len(evidence) != len(arguments.evidence):
+            raise CandidateError("each architecture may be given once")
         if sorted(evidence) != sorted(ARCHITECTURES):
             raise CandidateError(
                 f"expected one evidence directory per architecture {ARCHITECTURES}"
@@ -164,7 +168,7 @@ def main(argv: list[str] | None = None) -> int:
             arguments.output,
             arguments.cosign,
         )
-    except (LayoutError, OSError, json.JSONDecodeError) as error:
+    except (CosignError, LayoutError, OSError, json.JSONDecodeError) as error:
         print(f"candidate proof: {error}", file=sys.stderr)
         return 1
     print(json.dumps(report, indent=2, sort_keys=True))

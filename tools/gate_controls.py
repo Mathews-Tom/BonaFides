@@ -49,14 +49,17 @@ def source_gate(root: Path) -> tuple[int, list[str]]:
     return result.returncode, [str(item) for item in report["blockers"]]
 
 
-def source_control(scratch: Path, name: str, violation: dict[str, str]) -> dict[str, object]:
+def source_control(scratch: Path, name: str, violation: dict[str, str | None]) -> dict[str, object]:
     root = scratch / name
     baseline_repository(root)
     clean, blockers = source_gate(root)
     if clean != 0 or blockers:
         raise ControlError(f"{name}: clean synthetic repository was rejected: {blockers}")
     for filename, text in violation.items():
-        (root / filename).write_text(text)
+        if text is None:
+            (root / filename).unlink()
+        else:
+            (root / filename).write_text(text)
     status, blockers = source_gate(root)
     if status != 1 or not blockers:
         raise ControlError(f"{name}: source gate exited {status} on a deliberate violation")
@@ -70,33 +73,68 @@ def source_control(scratch: Path, name: str, violation: dict[str, str]) -> dict[
 
 
 def rights_control(scratch: Path) -> dict[str, object]:
-    inventory, output = scratch / "pending-inventory.json", scratch / "pending-check.json"
-    pending = {
-        "schema_version": 1,
-        "components": [{"id": "synthetic-pending", "status": "pending"}],
+    inventory, output = scratch / "rights-inventory.json", scratch / "rights-check.json"
+    # This assertion is synthetic checker input, never approval of an actual dependency.
+    component = {
+        "id": "synthetic-fixture",
+        "name": "synthetic-fixture",
+        "purl": "pkg:pypi/synthetic-fixture@1.0",
+        "version": "1.0",
+        "sha256": "a" * 64,
+        "upstream_url": "https://example.invalid/source",
+        "license_url": "https://example.invalid/LICENSE",
+        "detected_license": "MIT",
+        "concluded_license": "MIT",
+        "selected_license": None,
+        "copyright": "Synthetic test author",
+        "notices": [],
+        "scope": "test fixture only",
+        "dependencies": [],
+        "modifications": "none",
+        "obligations": [
+            {"description": "retain notice", "status": "satisfied", "evidence": "fixture assertion"}
+        ],
+        "evidence": [{"url": "https://example.invalid/LICENSE", "date": "2026-11-03"}],
+        "reviewer": "synthetic test role",
+        "review_date": "2026-11-03",
+        "status": "approved",
+        "rights_confirmed": True,
     }
-    inventory.write_text(json.dumps(pending))
-    result = run(
-        [
-            sys.executable,
-            "-m",
-            "tools.compliance",
-            "check",
-            "--inventory",
-            str(inventory),
-            "--output",
-            str(output),
-        ]
-    )
-    report = json.loads(output.read_text())
-    if result.returncode != 1 or report["release_eligible"] is not False:
-        raise ControlError(f"release check exited {result.returncode} for an unapproved component")
+    exits: list[int] = []
+    report: dict[str, object] = {}
+    for status in ("approved", "pending"):
+        component["status"] = status
+        inventory.write_text(json.dumps({"schema_version": 1, "components": [component]}))
+        result = run(
+            [
+                sys.executable,
+                "-m",
+                "tools.compliance",
+                "check",
+                "--inventory",
+                str(inventory),
+                "--output",
+                str(output),
+            ]
+        )
+        report = json.loads(output.read_text())
+        eligible = status == "approved"
+        if (
+            result.returncode != (0 if eligible else 1)
+            or report["release_eligible"] is not eligible
+        ):
+            raise ControlError(f"release check exited {result.returncode} for {status} fixture")
+        exits.append(result.returncode)
+    blockers = report["blockers"]
+    if not isinstance(blockers, list):
+        raise ControlError("release check returned invalid blockers")
     return {
         "gate": "tools.compliance check",
         "violation": "unapproved synthetic component",
-        "violation_exit": result.returncode,
+        "clean_exit": exits[0],
+        "violation_exit": exits[1],
         "release_eligible": False,
-        "blocker_count": len(report["blockers"]),
+        "blocker_count": len(blockers),
     }
 
 
@@ -177,6 +215,7 @@ def main(argv: list[str] | None = None) -> int:
                 "missing original-source license header",
                 {"app.py": "print('no header')\n"},
             ),
+            source_control(arguments.scratch, "missing NOTICE", {"NOTICE": None}),
             rights_control(arguments.scratch),
             scanner_control(arguments.scratch, arguments.scanner),
         ]

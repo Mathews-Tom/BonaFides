@@ -59,6 +59,15 @@ class CandidateError(LayoutError):
     """Candidate inputs are missing, altered, mismatched or not signed by the trusted key."""
 
 
+class CosignError(RuntimeError):
+    """The signing tool failed, rather than rejecting a candidate."""
+
+    def __init__(self, message: str, returncode: int | None = None, detail: str = "") -> None:
+        super().__init__(message)
+        self.returncode = returncode
+        self.detail = detail
+
+
 def evidence_names(architecture: str) -> tuple[str, ...]:
     """Relative paths required inside one platform's downloaded gate-evidence artifact."""
     receipts = tuple(
@@ -111,8 +120,11 @@ def reported_image(name: str, document: object, context: str) -> object:
     return found[0]
 
 
-def evidence_records(architecture: str, root: Path, config_digest: str) -> dict[str, object]:
+def evidence_records(
+    architecture: str, root: Path, release: Release, manifest_digest: str, config_digest: str
+) -> dict[str, object]:
     records: dict[str, object] = {}
+    documents: dict[str, object] = {}
     for name in evidence_names(architecture):
         path = root / name
         if path.is_symlink() or not path.is_file():
@@ -122,6 +134,7 @@ def evidence_records(architecture: str, root: Path, config_digest: str) -> dict[
             document: object = json.loads(content)
         except json.JSONDecodeError as error:
             raise CandidateError(f"{architecture}: {name} is not JSON: {error}") from error
+        documents[name] = document
         if name in (IMAGE_VULNERABILITIES, IMAGE_SBOM):
             subject = reported_image(name, document, f"{architecture}: {name}")
             if subject != config_digest:
@@ -130,6 +143,59 @@ def evidence_records(architecture: str, root: Path, config_digest: str) -> dict[
                     f"expected config {config_digest}"
                 )
         records[name] = file_record(path)
+    context = f"{architecture}: inventory"
+    inventory = json_object(documents["artifacts/locked-components.json"], context)
+    inspected, components = inventory.get("artifacts_inspected"), inventory.get("components")
+    if not isinstance(inspected, list) or not isinstance(components, list):
+        raise CandidateError(f"{context}: missing inspected artifacts or components")
+    images = [
+        item.get("metadata")
+        for item in inspected
+        if isinstance(item, dict) and item.get("kind") == "docker-image-inspect"
+    ]
+    if len(images) != 1:
+        raise CandidateError(f"{context}: expected one inspected image")
+    metadata = json_object(images[0], context)
+    image_id = metadata.get("Id")
+    if (
+        metadata.get("platform_id") not in (manifest_digest, config_digest)
+        or metadata.get("Architecture") != architecture
+        or metadata.get("Os") != "linux"
+        or not isinstance(image_id, str)
+        or not re.fullmatch(r"sha256:[0-9a-f]{64}", image_id)
+    ):
+        raise CandidateError(f"{context}: reports a different image or platform")
+    component_images = [
+        item["docker_image_id"]
+        for item in components
+        if isinstance(item, dict) and "docker_image_id" in item
+    ]
+    if component_images != [image_id]:
+        raise CandidateError(f"{context}: component image differs from inspected image")
+    for kind in ("ci", "install", "core"):
+        name = f".local/bonafides-proof-{kind}-{architecture}/receipt.json"
+        receipt = json_object(documents[name], name)
+        if receipt.get("platform") != f"linux/{architecture}":
+            raise CandidateError(f"{name}: reports a different platform")
+        if kind == "ci":
+            containers = json_object(receipt.get("containers"), name)
+            for role in ("api", "worker", "renderer", "parser", "ingress", "source-egress"):
+                container = json_object(containers.get(role), f"{name}: {role}")
+                if container.get("image") != image_id:
+                    raise CandidateError(f"{name}: {role} reports a different image")
+        else:
+            subject = receipt.get("image")
+            if kind == "install":
+                subject = json_object(receipt.get("images"), name).get("first")
+            identity = json_object(subject, name)
+            expected = {
+                "id": image_id,
+                "architecture": f"linux/{architecture}",
+                "version": release.version,
+                "revision": release.revision,
+            }
+            if any(identity.get(key) != value for key, value in expected.items()):
+                raise CandidateError(f"{name}: reports a different image, platform or release")
     return records
 
 
@@ -165,6 +231,8 @@ def build_manifest(release: Release, index: Path, evidence: dict[str, Path]) -> 
             architecture: evidence_records(
                 architecture,
                 evidence[architecture],
+                release,
+                str(json_object(platforms[architecture], architecture)["manifest_digest"]),
                 str(json_object(platforms[architecture], architecture)["config_digest"]),
             )
             for architecture in ARCHITECTURES
@@ -178,23 +246,9 @@ def render(manifest: dict[str, object]) -> str:
     return json.dumps(manifest, indent=2, sort_keys=True) + "\n"
 
 
-def leaves(value: object, prefix: str = "") -> dict[str, object]:
-    if isinstance(value, dict):
-        found: dict[str, object] = {}
-        for key, item in value.items():
-            found.update(leaves(item, f"{prefix}/{key}"))
-        return found
-    return {prefix: value}
-
-
 def require_same(recorded: dict[str, object], expected: dict[str, object]) -> None:
-    left, right = leaves(recorded), leaves(expected)
-    changed = sorted(key for key in left.keys() | right.keys() if left.get(key) != right.get(key))
-    if changed:
-        raise CandidateError(
-            f"manifest differs from current inputs at {len(changed)} field(s): "
-            + ", ".join(changed[:8])
-        )
+    if render(recorded) != render(expected):
+        raise CandidateError("manifest differs from current inputs")
 
 
 def run_cosign(cosign: str, arguments: list[str]) -> str:
@@ -207,10 +261,14 @@ def run_cosign(cosign: str, arguments: list[str]) -> str:
             check=False,
         )
     except OSError as error:
-        raise CandidateError(f"cannot run {cosign}: {error}") from error
+        raise CosignError(f"cannot run {cosign}: {error}") from error
     if result.returncode != 0:
         detail = result.stderr.strip().splitlines()[-1:] or ["no error output"]
-        raise CandidateError(f"cosign {arguments[0]} exited {result.returncode}: {detail[0]}")
+        raise CosignError(
+            f"cosign {arguments[0]} exited {result.returncode}: {detail[0]}",
+            result.returncode,
+            detail[0],
+        )
     return result.stdout
 
 
@@ -218,7 +276,7 @@ def require_cosign(cosign: str) -> None:
     match = re.search(r"GitVersion:\s+v?(\S+)", run_cosign(cosign, ["version"]))
     if match is None or match.group(1) != COSIGN_VERSION:
         found = match.group(1) if match else "unknown"
-        raise CandidateError(f"cosign {found} found, expected pinned {COSIGN_VERSION}")
+        raise CosignError(f"cosign {found} found, expected pinned {COSIGN_VERSION}")
 
 
 def sign(manifest: Path, private_key: Path, bundle: Path, cosign: str = "cosign") -> None:
@@ -257,18 +315,25 @@ def verify_signature(
         if not path.is_file():
             raise CandidateError(f"{path} is not a file")
     require_cosign(cosign)
-    run_cosign(
-        cosign,
-        [
-            "verify-blob",
-            "--key",
-            str(public_key),
-            "--bundle",
-            str(bundle),
-            "--insecure-ignore-tlog",
-            str(manifest),
-        ],
-    )
+    try:
+        run_cosign(
+            cosign,
+            [
+                "verify-blob",
+                "--key",
+                str(public_key),
+                "--bundle",
+                str(bundle),
+                "--insecure-ignore-tlog",
+                str(manifest),
+            ],
+        )
+    except CosignError as error:
+        if error.returncode == 1 and error.detail.endswith(
+            "invalid signature when validating ASN.1 encoded signature"
+        ):
+            raise CandidateError(str(error)) from error
+        raise
 
 
 def verify_candidate(
@@ -338,7 +403,7 @@ def main(argv: list[str] | None = None) -> int:
                 arguments.cosign,
             )
             print("release candidate verified; no release is authorized")
-    except (LayoutError, OSError, json.JSONDecodeError) as error:
+    except (CosignError, LayoutError, OSError, json.JSONDecodeError) as error:
         print(f"release candidate: {error}", file=sys.stderr)
         return 1
     return 0

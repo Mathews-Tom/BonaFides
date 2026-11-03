@@ -1326,6 +1326,27 @@ def collect_image(image: str, inventory: Inventory) -> None:
         key: metadata.get(key)
         for key in ("Id", "Descriptor", "RepoDigests", "Architecture", "Os", "RootFS")
     }
+    platform = (
+        f"{text(metadata.get('Os'), 'image OS')}/"
+        f"{text(metadata.get('Architecture'), 'image architecture')}"
+    )
+    platform_id = text(
+        run_json(
+            [
+                "docker",
+                "image",
+                "inspect",
+                "--platform",
+                platform,
+                "--format",
+                "{{json .Id}}",
+                identity,
+            ]
+        ),
+        "platform image identity",
+    )
+    exact_sha256(platform_id, "platform image identity")
+    safe_metadata["platform_id"] = platform_id
     inventory.inputs.append(
         {"kind": "docker-image-inspect", "reference": image, "metadata": safe_metadata}
     )

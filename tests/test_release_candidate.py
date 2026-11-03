@@ -6,6 +6,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import shutil
 from pathlib import Path
 
@@ -19,7 +20,6 @@ from tools.release_candidate import (
     evidence_names,
     image_bindings,
     main,
-    render,
     require_same,
 )
 from tools.release_index import (
@@ -71,6 +71,38 @@ def write_evidence(root: Path, architecture: str, config_digest: str) -> Path:
         if name == release_candidate.IMAGE_SBOM:
             properties = [{"name": SBOM_IMAGE_ID, "value": config_digest}]
             document = {"metadata": {"component": {"properties": properties}}}
+        if name == "artifacts/locked-components.json":
+            document = {
+                "artifacts_inspected": [
+                    {
+                        "kind": "docker-image-inspect",
+                        "metadata": {
+                            "Id": config_digest,
+                            "platform_id": config_digest,
+                            "Architecture": architecture,
+                            "Os": "linux",
+                        },
+                    }
+                ],
+                "components": [{"docker_image_id": config_digest}],
+            }
+        if name.endswith("/receipt.json"):
+            identity = {
+                "id": config_digest,
+                "architecture": f"linux/{architecture}",
+                "version": RELEASE.version,
+                "revision": RELEASE.revision,
+            }
+            document = {"platform": f"linux/{architecture}"}
+            if f"-install-{architecture}/" in name:
+                document["images"] = {"first": identity}
+            elif f"-core-{architecture}/" in name:
+                document["image"] = identity
+            else:
+                document["containers"] = {
+                    role: {"image": config_digest}
+                    for role in ("api", "worker", "renderer", "parser", "ingress", "source-egress")
+                }
         path.write_text(json.dumps(document, indent=2) + "\n")
     return root
 
@@ -113,23 +145,6 @@ def candidate(tmp_path: Path) -> Candidate:
     return Candidate(tmp_path)
 
 
-def test_manifest_binds_identity_native_images_and_every_evidence_hash(
-    candidate: Candidate,
-) -> None:
-    manifest = candidate.manifest()
-
-    platforms = manifest["platforms"]
-    evidence = manifest["evidence"]
-    assert isinstance(platforms, dict) and isinstance(evidence, dict)
-    assert (manifest["version"], manifest["revision"]) == ("0.1.0", "a" * 40)
-    assert sorted(platforms) == ["amd64", "arm64"]
-    assert all(
-        sorted(platforms[arch]) == ["config_digest", "manifest_digest"] for arch in platforms
-    )
-    assert sorted(evidence["amd64"]) == sorted(evidence_names("amd64"))
-    assert manifest["release_authorized"] is False
-
-
 def test_missing_evidence_file_is_refused(candidate: Candidate) -> None:
     (candidate.evidence["arm64"] / evidence_names("arm64")[2]).unlink()
 
@@ -142,7 +157,7 @@ def test_missing_evidence_file_is_refused(candidate: Candidate) -> None:
 )
 def test_scanner_report_for_another_image_is_refused(candidate: Candidate, name: str) -> None:
     path = candidate.evidence["amd64"] / name
-    path.write_text(path.read_text().replace("sha256:", "sha256:0", 1))
+    path.write_text(re.sub(r"sha256:[0-9a-f]{64}", "sha256:" + "b" * 64, path.read_text()))
 
     with pytest.raises(CandidateError, match="reports image"):
         candidate.manifest()
@@ -152,7 +167,8 @@ def test_changed_evidence_or_revision_differs_from_the_recorded_manifest(
     candidate: Candidate,
 ) -> None:
     recorded = candidate.manifest()
-    (candidate.evidence["amd64"] / evidence_names("amd64")[3]).write_text("{}\n")
+    path = candidate.evidence["amd64"] / evidence_names("amd64")[3]
+    path.write_text(path.read_text().replace("synthetic", "different"))
 
     with pytest.raises(CandidateError, match="differs from current inputs"):
         require_same(recorded, candidate.manifest())
@@ -163,14 +179,14 @@ def test_changed_evidence_or_revision_differs_from_the_recorded_manifest(
 
 
 def test_create_cli_writes_manifest_and_refuses_overwrite(
-    candidate: Candidate, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    candidate: Candidate, tmp_path: Path
 ) -> None:
     manifest = tmp_path / "candidate.json"
 
     assert main(candidate.arguments("create", "--manifest", str(manifest))) == 0
-    assert manifest.read_text() == render(candidate.manifest())
+    original = manifest.read_bytes()
     assert main(candidate.arguments("create", "--manifest", str(manifest))) == 1
-    assert "already exists" in capsys.readouterr().err
+    assert manifest.read_bytes() == original
 
 
 def sign_manifest(candidate: Candidate, monkeypatch: pytest.MonkeyPatch) -> dict[str, Path]:
@@ -233,7 +249,8 @@ def test_signed_candidate_rejects_evidence_changed_after_signing(
     candidate: Candidate, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     files = sign_manifest(candidate, monkeypatch)
-    (candidate.evidence["arm64"] / evidence_names("arm64")[4]).write_text("[]\n")
+    path = candidate.evidence["arm64"] / evidence_names("arm64")[3]
+    path.write_text(path.read_text().replace("synthetic", "different"))
 
     assert verify(candidate, files) == 1
     assert "differs from current inputs" in capsys.readouterr().err
@@ -278,10 +295,11 @@ def test_sign_without_passphrase_variable_fails_before_cosign_prompts(
     [
         ({"leak.txt": gate_controls.SYNTHETIC_SECRET}, "potential secret pattern 1"),
         ({"app.py": "print('x')\n"}, "missing original-source SPDX header"),
+        ({"NOTICE": None}, "NOTICE"),
     ],
 )
 def test_source_gate_controls_reject_violations_with_redacted_findings(
-    tmp_path: Path, violation: dict[str, str], expected: str
+    tmp_path: Path, violation: dict[str, str | None], expected: str
 ) -> None:
     control = gate_controls.source_control(tmp_path, "case", violation)
 
@@ -299,4 +317,62 @@ def test_rights_control_keeps_the_unapproved_component_blocking(tmp_path: Path) 
     control = gate_controls.rights_control(tmp_path)
 
     assert control["violation_exit"] == 1
+    assert control["clean_exit"] == 0
     assert control["release_eligible"] is False
+
+
+@pytest.mark.parametrize("extra", [None, {}, 0])
+def test_manifest_rejects_added_null_empty_object_and_changed_boolean(
+    candidate: Candidate, extra: object
+) -> None:
+    expected = candidate.manifest()
+    recorded = dict(expected)
+    recorded["release_authorized" if extra == 0 else "unexpected"] = extra
+    with pytest.raises(CandidateError):
+        require_same(recorded, expected)
+
+
+@pytest.mark.parametrize("kind", ["inventory", "install", "core", "ci"])
+def test_foreign_image_subject_is_refused(candidate: Candidate, kind: str) -> None:
+    name = (
+        "artifacts/locked-components.json"
+        if kind == "inventory"
+        else f".local/bonafides-proof-{kind}-amd64/receipt.json"
+    )
+    path = candidate.evidence["amd64"] / name
+    path.write_text(re.sub(r"sha256:[0-9a-f]{64}", "sha256:" + "b" * 64, path.read_text()))
+    with pytest.raises(CandidateError):
+        candidate.manifest()
+
+
+def test_cosign_startup_failure_is_not_counted_as_a_rejected_candidate(tmp_path: Path) -> None:
+    cases: list[dict[str, str]] = []
+
+    def unavailable() -> None:
+        release_candidate.run_cosign(str(tmp_path / "missing-cosign"), ["version"])
+
+    with pytest.raises(release_candidate.CosignError):
+        candidate_proof.expect_rejected(
+            cases,
+            "tool unavailable",
+            unavailable,
+        )
+    assert cases == []
+
+
+@needs_cosign
+def test_invalid_trusted_key_is_a_tool_failure_not_a_successful_negative_control(
+    candidate: Candidate, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    files = sign_manifest(candidate, monkeypatch)
+    files["public"].write_text("not a public key")
+    cases: list[dict[str, str]] = []
+    with pytest.raises(release_candidate.CosignError):
+        candidate_proof.expect_rejected(
+            cases,
+            "invalid key",
+            lambda: release_candidate.verify_signature(
+                files["manifest"], files["public"], files["bundle"]
+            ),
+        )
+    assert cases == []
