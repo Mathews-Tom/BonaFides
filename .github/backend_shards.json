@@ -53,6 +53,7 @@
     "tests/test_portable_import.py",
     "tests/test_portable_quotas.py",
     "tests/test_reauthentication.py",
+    "tests/test_release_candidate.py",
     "tests/test_release_index.py",
     "tests/test_schema_equivalence.py",
     "tests/test_section_regeneration.py",
