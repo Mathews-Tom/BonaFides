@@ -35,6 +35,11 @@ RUN uv sync --frozen --only-group build --no-build \
  && uv cache clean \
  && chmod -R a-w /app
 COPY --from=web /build/web/dist /app/web/dist
+# Last so a new commit never invalidates the dependency layers. CI passes the package version,
+# built commit and repository URL; local builds leave them empty.
+ARG VERSION REVISION SOURCE
+LABEL org.opencontainers.image.version="${VERSION}" org.opencontainers.image.revision="${REVISION}" \
+      org.opencontainers.image.source="${SOURCE}"
 USER 10001:10001
 EXPOSE 8000
 ENTRYPOINT ["python", "-m", "bonafides"]
