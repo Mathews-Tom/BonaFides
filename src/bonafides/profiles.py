@@ -21,6 +21,12 @@ from bonafides.model_context import lock_evidence_write
 from bonafides.problems import Problem
 
 MAX_HEADLINE_LENGTH = 300
+SYNTHETIC_FACTS = (
+    "Maintained Linux batch processing runbooks",
+    "Wrote SQL queries for incident analysis",
+)
+SYNTHETIC_DISPLAY_NAME = "Mira Vale"
+SYNTHETIC_HEADLINE = "Operations Analyst · Linux and SQL"
 
 
 class ProfileSnapshot(StrictModel):
@@ -239,15 +245,12 @@ def _save(
     return get_profile(conn, owner_id)
 
 
-def _seed(conn: Connection, owner_id: UUID) -> dict[str, object]:
+def seed_synthetic_profile(conn: Connection, owner_id: UUID, reason: str) -> dict[str, object]:
     profile_id = conn.execute(
         text("SELECT id FROM bonafides.profiles WHERE owner_id=:owner"), {"owner": owner_id}
     ).scalar_one()
     claims: list[UUID] = []
-    for fact in (
-        "Maintained Linux batch processing runbooks",
-        "Wrote SQL queries for incident analysis",
-    ):
+    for fact in SYNTHETIC_FACTS:
         claim_id, claim_revision, evidence_id, evidence_revision = (
             uuid4(),
             uuid4(),
@@ -314,11 +317,11 @@ def _seed(conn: Connection, owner_id: UUID) -> dict[str, object]:
         conn,
         owner_id,
         ProfileSnapshot(
-            display_name="Mira Vale",
-            headline="Operations Analyst · Linux and SQL",
+            display_name=SYNTHETIC_DISPLAY_NAME,
+            headline=SYNTHETIC_HEADLINE,
             claim_revision_ids=claims,
         ),
-        "benchmark_SYN-CORE",
+        reason,
     )
 
 
@@ -405,7 +408,7 @@ def build_router(db: Database, settings: Settings) -> APIRouter:
             ).scalar_one()
 
             def effect(connection: Connection) -> tuple[int, dict[str, object]]:
-                return 200, _seed(connection, owner.id)
+                return 200, seed_synthetic_profile(connection, owner.id, "benchmark_SYN-CORE")
 
             status, result = command(
                 conn,

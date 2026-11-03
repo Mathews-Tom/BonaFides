@@ -52,6 +52,10 @@ def main(argv: list[str] | None = None) -> int:
         from bonafides.claim_coverage import main as claims_main
 
         return claims_main(arguments_list[1:])
+    if arguments_list[:1] == ["demo"]:
+        from bonafides.demo import main as demo_main
+
+        return demo_main(arguments_list[1:])
     if arguments_list[:1] == ["benchmark"]:
         from bonafides.fabrication_benchmark import main as benchmark_main
 
@@ -66,7 +70,9 @@ def main(argv: list[str] | None = None) -> int:
         "file that structured claims represent; bonafides claims inflation-report <dir> reports "
         "the inflation rules' false-block and per-kind block rates on synthetic case sets; "
         "bonafides benchmark run <dir> [--output <file>] reports checker and lexical-baseline "
-        "block rates per fabrication temptation class with the dataset digest",
+        "block rates per fabrication temptation class with the dataset digest; "
+        "bonafides demo load loads synthetic profile, evidence and claims into an existing, "
+        "empty owner profile",
     )
     parser.add_argument(
         "command",
