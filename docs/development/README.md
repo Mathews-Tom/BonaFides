@@ -370,13 +370,24 @@ docker image rm bonafides-proof-release:amd64 bonafides-proof-release:arm64
 
 **Scheduled audit.** `.github/workflows/scheduled-audit.yaml` runs weekly (Monday 05:23 UTC) and on `workflow_dispatch`, read-only (`contents: read`). On amd64 with the pinned toolchain it runs `pip-audit --local`, `pnpm audit --audit-level high`, builds the labelled image, and scans it with the Trivy pin from `deploy/images.json` (HIGH/CRITICAL vulnerabilities). The job summary lists each result with the reports; any finding fails that run and uploads `scheduled-audit` (kept 30 days). It never runs on pull requests, so a new advisory never gates a contribution; the full tier still runs the same scanners on every `main` push and `full-ci` run.
 
+### Install from a local image
+
+`deploy/install.sh IMAGE` installs or updates from an application image that is already loaded locally; it never pulls that image (`docker run --pull never`, Compose `pull_policy: never`). The script ships in the image at `/app/deploy/install.sh` beside `compose.release.yaml` (installed as `compose.yaml`; images only, the same topology and isolation as `compose.yaml`, with the pinned database image) and `init-db.sh`. The host needs only a shell and Docker Compose.
+
+1. The image's own `bonafides.local_setup` module (stdlib only, the single credential generator shared with development and the runtime proofs) runs once as the invoking user with the install directory mounted. It creates `secrets/` (0700) and `.env` with exclusive creation, preserving the absolute host secret path in `BONAFIDES_SECRET_DIR`, and replaces `compose.yaml` and `init-db.sh` atomically from the image.
+2. A complete, private, consistent credential set is reused unchanged. Any other state (a missing file, a loose mode, a mismatched DSN, a different project or port, only one of directory and `.env`) is refused with guidance naming files, before any service is touched; nothing is deleted or rotated.
+3. `docker compose down` (never `--volumes`) then `up --wait` runs the one-shot prepare and migrate services fresh, so stale one-shot containers and an image swap are handled the same way. Migrations are idempotent and the ledger is unchanged by a rerun.
+4. `bonafides init-bootstrap-if-ownerless` renews the 15-minute bootstrap verifier only while no owner exists; with an owner it changes nothing. The installer prints the secret path and sign-in URL, never the token.
+
+`python -m tools.install_proof --project bonafides-proof-install --confirm-disposable bonafides-proof-install --platform linux/arm64 --image bonafides:local` proves this from a directory outside the checkout in production mode: it times install to sign-in (limit 600 s), creates an owner and profile data through the production API, reruns the installer, builds a second image of the same version with a different revision label, reruns the installer, and asserts the swapped image is the one running while credentials, owner data and the migration ledger are unchanged. The full-tier gate runs it on each native runner and uploads only `receipt.json`.
+
 ## Local setup and lifecycle
 
 ```sh
-uv run --frozen python -m tools.dev_setup --benchmark
+uv run --frozen python -m bonafides.local_setup --benchmark
 docker compose up --build --detach --wait
 docker compose exec api python -m bonafides init-bootstrap
-uv run --frozen python -m tools.dev_setup --show-bootstrap-token
+uv run --frozen python -m bonafides.local_setup --show-bootstrap-token
 ```
 
 The last command is an **intentional local secret reveal**: do not capture it in CI/logs, paste it into a command argument, or include it in support evidence. Open **http://localhost:8000** and create the sole owner. Choose a strong 15–128-character password. Secure `__Host-` cookies are never downgraded; Chromium treats localhost as a trustworthy context, which the real browser probe must exercise. This is not remote-HTTP support. Ordinary Compose publishes the API on 127.0.0.1 only and never publishes PostgreSQL. Use localhost in the browser to match the configured exact Origin.
@@ -399,7 +410,7 @@ docker compose exec api python -m bonafides config-check
 
 `migrate` uses a separate DDL secret and applies tracked checksum-verified migrations before API/worker startup. It must run from the repository root (or `/app` in the image), where `alembic.ini` and `migrations/sql` are present. No runtime or CI path consumes `.docs/`. A failed migration/readiness check is not bypassed by running the API manually. Do not add `down --volumes` to ordinary restart/upgrade instructions.
 
-Benchmark mode is explicit and local. The UI can load SYN-CORE, save profile revisions, start normal/slow/poison/staging-pause tasks, inspect durable state, accept an exact document revision and render/download a PDF. These operations use real HTTP/SQL/filesystem/renderer paths with deterministic synthetic input, not a fake production provider. Default `tools.dev_setup` without `--benchmark` sets production mode and benchmark routes return 404. No external integrations are shipped in architecture proof.
+Benchmark mode is explicit and local. The UI can load SYN-CORE, save profile revisions, start normal/slow/poison/staging-pause tasks, inspect durable state, accept an exact document revision and render/download a PDF. These operations use real HTTP/SQL/filesystem/renderer paths with deterministic synthetic input, not a fake production provider. Default `bonafides.local_setup` without `--benchmark` sets production mode and benchmark routes return 404. No external integrations are shipped in architecture proof.
 
 ## Evidence-linked profile contract
 
