@@ -16,7 +16,7 @@ fail() {
 }
 
 image=${BONAFIDES_IMAGE:-}
-dir=${BONAFIDES_INSTALL_DIR:-$HOME/bonafides}
+dir=${BONAFIDES_INSTALL_DIR:-}
 port=8000
 project=bonafides
 while [ $# -gt 0 ]; do
@@ -29,6 +29,7 @@ while [ $# -gt 0 ]; do
   esac
 done
 [ -n "$image" ] || usage
+[ -n "$dir" ] || dir=${HOME:?set HOME or pass --dir}/bonafides
 # Ambient settings must not override the installed configuration.
 for name in $(env | sed -n 's/=.*//p' | grep -E '^(BONAFIDES|COMPOSE)_' || true); do
   unset "$name"
@@ -63,9 +64,14 @@ compose() {
 
 # Stopping first keeps the one-shot prepare and migrate services fresh and never races a running
 # database; named volumes (database, blobs, secrets) are kept.
+api=$(compose ps -q api 2>/dev/null | head -n 1 || true)
+previous=
+[ -z "$api" ] || previous=$(docker inspect --format '{{.Image}}' "$api" 2>/dev/null || true)
 compose down --remove-orphans
-compose up -d --wait --wait-timeout 420 ||
+compose up -d --wait --wait-timeout 420 || {
+  [ -z "$previous" ] || echo "previous image id (to return to it, rerun with it as IMAGE): $previous" >&2
   fail "services did not become healthy; inspect: BONAFIDES_IMAGE=$image docker compose --project-directory $dir logs"
+}
 bootstrap=$(compose exec -T api python -m bonafides init-bootstrap-if-ownerless) ||
   fail "bootstrap initialization failed; the installation is running but sign-in is not set up"
 

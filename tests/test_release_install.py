@@ -134,7 +134,10 @@ def test_installer_stops_services_without_removing_volumes_then_starts_and_repor
     install = sandbox["install"].resolve()
     assert result.returncode == 0, result.stderr
     assert "--pull never" in run_call and "--network none" in run_call
-    assert [call.split(" ")[-1] for call in compose_calls][:1] == ["--remove-orphans"]
+    verbs = [
+        call for call in compose_calls if call.endswith("--remove-orphans") or " up -d" in call
+    ]
+    assert verbs[0].endswith("--remove-orphans") and " up -d --wait" in verbs[1]
     assert any(" up -d --wait" in call for call in compose_calls)
     assert "init-bootstrap-if-ownerless" in compose_calls[-1]
     assert not any("--volumes" in call or " -v" in call for call in compose_calls)

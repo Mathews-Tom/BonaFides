@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: MIT OR Apache-2.0
 from __future__ import annotations
 
+import json
 import stat
 from pathlib import Path
 
@@ -69,7 +70,7 @@ def test_release_install_creates_private_files_and_keeps_the_host_secret_path(
         stat.S_IMODE((root / "secrets" / name).stat().st_mode) == 0o600 for name in SECRET_NAMES
     )
     environment = (root / ".env").read_text()
-    assert f"BONAFIDES_SECRET_DIR={HOST_ROOT / 'secrets'}\n" in environment
+    assert f"BONAFIDES_SECRET_DIR='{HOST_ROOT / 'secrets'}'\n" in environment
     assert "BONAFIDES_MODE=production" in environment
     assert (root / "compose.yaml").read_text().endswith("# build one\n")
     assert stat.S_IMODE((root / "init-db.sh").stat().st_mode) == 0o755
@@ -134,3 +135,42 @@ def test_release_refuses_a_different_project_or_port_than_the_installed_state(
 
     assert "differs from the requested project, port" in capsys.readouterr().err
     assert snapshot(root) == before
+
+
+def test_release_refuses_a_keyring_with_any_invalid_key_without_changing_state(
+    root: Path, assets: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    install(root, assets)
+    keyring = root / "secrets" / "keyring"
+    document = json.loads(keyring.read_text())
+    document["keys"]["bad key!"] = document["keys"]["local-1"]
+    keyring.write_text(json.dumps(document) + "\n")
+    capsys.readouterr()
+    before = snapshot(root)
+
+    assert install(root, assets) == 1
+
+    assert "keyring" in capsys.readouterr().err
+    assert snapshot(root) == before
+
+
+def test_release_refuses_an_install_path_containing_a_single_quote(
+    root: Path, assets: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    code = main(["--release-root", str(root), "--host-root", "/srv/it's", "--assets", str(assets)])
+
+    assert code == 1 and "single quote" in capsys.readouterr().err
+    assert not (root / "secrets").exists() or not (root / ".env").exists()
+
+
+def test_release_publish_never_follows_a_planted_link_at_the_temporary_path(
+    root: Path, assets: Path, tmp_path: Path
+) -> None:
+    victim = tmp_path / "victim"
+    victim.write_text("keep")
+    (root / ".compose.yaml.new").symlink_to(victim)
+
+    assert install(root, assets) == 0
+
+    assert victim.read_text() == "keep"
+    assert (root / "compose.yaml").read_text().endswith("# build one\n")

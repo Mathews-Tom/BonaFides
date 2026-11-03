@@ -36,6 +36,7 @@ ASSETS = {
 IMAGE_ASSET_ROOT = Path("/app/deploy")
 _PROJECT = re.compile(r"[a-z][a-z0-9-]{2,47}")
 _HEX_64 = re.compile(r"[0-9a-f]{64}")
+_KEY_ID = re.compile(r"[A-Za-z0-9_-]{1,64}")
 _TOKEN = re.compile(r"[A-Za-z0-9_-]{43,128}")
 
 
@@ -59,8 +60,11 @@ def _check_request(project: str, port: int) -> None:
 
 def _env_text(project: str, port: int, benchmark: bool, published: Path) -> str:
     # No credential values belong in Compose interpolation or a process environment.
+    if "'" in str(published):
+        raise SetupError("the install path must not contain a single quote")
+    # Single quotes make Compose read the host path literally (no $ interpolation).
     return (
-        f"COMPOSE_PROJECT_NAME={project}\nBONAFIDES_SECRET_DIR={published}\n"
+        f"COMPOSE_PROJECT_NAME={project}\nBONAFIDES_SECRET_DIR='{published}'\n"
         f"BONAFIDES_PORT={port}\nBONAFIDES_ORIGIN=http://localhost:{port}\n"
         f"BONAFIDES_MODE={'benchmark' if benchmark else 'production'}"
     )
@@ -81,6 +85,11 @@ def initialize(
         raise SetupError(
             "setup refuses existing secret directory or environment file; preserve your keys"
         )
+    # The host path is recorded exactly as given: it does not exist inside the container.
+    # Rendering first refuses a bad path before anything is created.
+    environment = _env_text(
+        project, port, benchmark, directory.resolve() if published is None else published
+    )
     directory.mkdir(mode=0o700, parents=True)
     credentials = {name: secrets.token_hex(32) for name in ("admin", "migrator", "runtime")}
     for name, value in credentials.items():
@@ -93,13 +102,7 @@ def initialize(
     }
     private_write(directory / "keyring", json.dumps(keyring))
     private_write(directory / "bootstrap_token", secrets.token_urlsafe(48))
-    private_write(
-        env_file,
-        # The host path is recorded exactly as given: it does not exist inside the container.
-        _env_text(
-            project, port, benchmark, directory.resolve() if published is None else published
-        ),
-    )
+    private_write(env_file, environment)
 
 
 def _dsn(role: str, password: str) -> str:
@@ -126,11 +129,17 @@ def _verify_secret_formats(values: dict[str, str]) -> None:
             raise SetupError(f"{role}_dsn does not match {role}_password")
     try:
         keyring = json.loads(values["keyring"])
-        material = base64.b64decode(keyring["keys"][keyring["active_key_id"]], validate=True)
-    except (ValueError, KeyError, TypeError, binascii.Error):
-        raise SetupError("keyring is not a valid active-key document") from None
-    if len(material) != 32:
-        raise SetupError("keyring active key must be 32 bytes")
+        if (
+            set(keyring) != {"active_key_id", "keys"}
+            or keyring["active_key_id"] not in keyring["keys"]
+        ):
+            raise ValueError
+        # Mirror the runtime keyring rules for every key: a bad entry would stop the stack.
+        for key_id, encoded in keyring["keys"].items():
+            if not _KEY_ID.fullmatch(key_id) or len(base64.b64decode(encoded, validate=True)) != 32:
+                raise ValueError
+    except (ValueError, KeyError, TypeError, AttributeError, binascii.Error):
+        raise SetupError("keyring is not a valid keyring document of 32-byte keys") from None
     if not _TOKEN.fullmatch(values["bootstrap_token"]):
         raise SetupError("bootstrap_token has an invalid shape")
 
@@ -183,8 +192,12 @@ def publish_assets(source: Path, root: Path) -> None:
     """Replace image-owned Compose assets atomically; credentials and volumes are untouched."""
     for name, (target, mode) in ASSETS.items():
         temporary = root / f".{target}.new"
-        shutil.copyfile(source / name, temporary)
-        temporary.chmod(mode)
+        temporary.unlink(missing_ok=True)
+        # Exclusive creation: a pre-planted link at this path is never followed.
+        descriptor = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        with os.fdopen(descriptor, "wb") as stream, (source / name).open("rb") as asset:
+            os.fchmod(stream.fileno(), mode)
+            shutil.copyfileobj(asset, stream)
         temporary.replace(root / target)
 
 
