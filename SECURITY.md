@@ -1,21 +1,73 @@
 # Security policy
 
-## Current support boundary
+BonaFides holds some of the most personal information people have: their work history, contact details, job applications and private notes. This page explains how to report a security problem, which versions get fixes, what BonaFides protects against and what it doesn't, and how to keep your own installation safe.
 
-This repository currently contains a proposed design, not a supported production application or a security-certified release. No application version is declared supported. Before any public implementation release, maintainers must publish an actual supported-version table, monitored private reporting channel, response owner, and incident process. Their absence blocks public release; this document does not invent an email address, reporting service, or response SLA.
+## Reporting a vulnerability
 
-## Reporting a concern now
+**Report security problems privately, not in a public issue.**
 
-Do not publish credentials, personal profiles, exploit chains against a live installation, restricted materials, or backup contents in an issue. If this repository's hosting page offers a private vulnerability-reporting feature, use that channel only after confirming it is enabled. Otherwise contact a maintainer through an existing verified private channel and ask for a secure transfer method; there is no guaranteed monitored security inbox at design stage. Public design concerns may be reported with a minimal synthetic description that cannot expose an installation. Do not upload suspected secrets to scanners or third-party services to validate them.
+Use GitHub's private reporting form: open the repository's **Security** tab and select **Report a vulnerability**, or go straight to <https://github.com/Mathews-Tom/BonaFides/security/advisories/new>. Only you and the repository's maintainers can see the report.
 
-Include affected revision/component, deployment assumptions, a minimal synthetic reproduction, expected/observed behavior, impact, and whether any real data was accessed. Share sensitive details only after a private channel exists. Do not test third-party accounts, perform denial of service, incur provider costs, or send applications/mail to demonstrate a report. This policy is not authorization to access systems or a legal safe-harbor promise.
+Please include:
 
-## Proposed implementation response contract
+- the commit or version you tested, and how it was installed (`install.sh`, the developer setup, or something else),
+- which part is affected, for example sign-in, résumé import, PDF rendering, job-board reads, the AI model connection or backups,
+- the steps to reproduce it, using made-up data,
+- what you expected and what happened, and what an attacker could gain,
+- whether any real person's data was involved.
 
-At public beta readiness, designate a primary and backup responder and aim to acknowledge privately within three working days, triage within seven, and agree a disclosure schedule with the reporter based on exploitability. These are proposed operating targets, not a presently staffed guarantee. Protect reporter contact data, restrict incident artifacts, and disclose affected/safe versions and mitigations without user data. Active exploitation can justify early advisories. Dependency findings require exact shipped image/package evidence, not merely a CVE name.
+Please don't:
 
-For an exposed deployment: restrict access, pause source/model/integration egress and worker claims, preserve redacted evidence, revoke sessions and provider credentials as appropriate, rotate keys using the documented procedure, and restore only from a verified known-good backup if integrity is doubtful. Do not delete the only evidence or silently reinstall over potentially compromised data. Reviewed incident, credential/key-rotation and recovery runbooks must accompany an implemented deployment; private planning documents are not a shipped operator interface.
+- include real personal data, passwords, setup codes, keys, backups or anything from a `secrets` folder in your report;
+- test against an installation that isn't yours, or against job boards, model services or other third-party systems;
+- attempt denial of service, send applications or email, or run up costs on anyone's services to demonstrate a problem.
 
-## Scope of assurances
+### What happens next
 
-Owner authentication, SSRF containment, parser isolation, evidence-grounded generation, encrypted credentials, backup recovery, and supply-chain review are design requirements. None is asserted implemented or penetration-tested here. Root and container-host compromise remains an operator risk; encryption keys mounted in a compromised process do not protect against that process. Hosted inference is opt-in and creates provider-side retention/jurisdiction risks. Qualified legal and security review remains required before relevant release claims.
+Maintainer time is limited, so reports are handled on a **best-effort basis, with no guaranteed response time**. Every report is read and dealt with as soon as practical. You'll get a reply through the private report, where we can discuss the problem, agree on a fix and choose a disclosure date together. Once a fix is available, the advisory is published with the affected versions and what to do. If you'd like to be credited, say so in your report.
+
+This policy doesn't authorize access to any system and isn't a legal safe-harbor promise.
+
+## Supported versions
+
+There are no published releases yet. Security fixes go to the latest commit on the `main` branch only. To get them, [update your installation](docs/user-guide/manage-installation.md#update-to-a-newer-version).
+
+## What BonaFides protects against
+
+BonaFides is a single-person application that runs on your own computer and is reached only through `http://localhost`. Its defenses are built around that setup:
+
+- **Access to your workspace.** There is exactly one account per installation, created with a one-time setup code that only someone with access to the computer can read. Passwords are 15 to 128 characters and stored as Argon2id hashes. Repeated failed sign-ins are throttled. Sessions use `__Host-` cookies with exact Origin and CSRF checks. Deleting or replacing data needs a recent password confirmation, a preview and a typed confirmation, and each approval covers only that exact action.
+- **Reaching BonaFides from elsewhere.** The web interface is published only on `127.0.0.1`. The database is never published to the host.
+- **Untrusted files.** Uploaded résumés are read, and PDFs are produced, in separate containers with no network, no database access, no keys and read-only file systems. Attachments are stored without being opened or previewed.
+- **Unwanted outbound connections.** The main services have no general internet access. Job-board reads go through a separate relay that can make only the official Greenhouse job-list request, for boards the owner has reviewed and enabled. An AI model can be used only after the operator has configured and qualified it; public internet addresses are refused and there is no fallback to a hosted service. Sources marked confidential or employer-owned are never sent to the model.
+- **Made-up or inflated document content.** Every factual statement in a generated document must match one of the owner's evidence-backed profile entries, or review and export are blocked. See the [known gap](docs/user-guide/ai-tailoring.md#how-bonafides-keeps-the-ai-honest).
+- **Stored secrets and backups.** Internal credentials are generated per installation and kept in private files and volumes. Installation backups are encrypted with AES-256-GCM, with keys wrapped for RSA-OAEP-SHA256 recipients.
+
+The [architecture overview](docs/architecture/README.md) describes these boundaries in detail.
+
+## What BonaFides does not protect against
+
+- **Anyone who controls your computer account or Docker.** They can read the `secrets` folder, the database and every container. Keys loaded into a running process don't protect against that process being compromised.
+- **Network exposure.** BonaFides is not designed to be reached from other computers. Publishing its port on your network, or putting it behind a reverse proxy or tunnel, is unsupported and removes the protections above.
+- **Files you take out of BonaFides.** Data exports are unencrypted ZIP files, and downloaded PDFs contain your personal details. Once saved elsewhere, they're your responsibility.
+- **The AI model you choose.** A model on your own computer or private network sees everything in the preview you approve. Its operator controls what it keeps.
+- **The truth of your profile.** BonaFides checks that documents match your entries; it doesn't verify that the entries are true.
+
+**These protections have not been independently audited or penetration-tested.** The [ASVS register](docs/compliance/asvs-register.md) tracks requirements against the OWASP Application Security Verification Standard; its rows are still pending assessment, and it is not a certification.
+
+## Keeping your installation safe
+
+- Open BonaFides only at the `http://localhost` address that `start.sh` prints, and don't expose its port to other devices.
+- Keep the installation's `secrets` folder private. Store a copy of `secrets/keyring` somewhere safe, away from the computer. See [Your data and privacy](docs/user-guide/your-data.md#the-secrets-folder).
+- Never share the one-time setup code, your password or anything from `secrets`, including in screenshots and support requests.
+- Use a long, unique password.
+- Store data exports and PDFs somewhere private, and delete copies you no longer need.
+- Keep BonaFides and Docker up to date.
+
+## If you think your installation has been compromised
+
+1. Stop it with `sh stop.sh`. Don't uninstall, purge or reinstall over it; that destroys the evidence and possibly your only copy of the data.
+2. Deal with the cause on your computer first, for example malware or an account someone else has access to.
+3. Start BonaFides again and set a new password with the [password recovery command](docs/user-guide/account-and-settings.md#forgotten-your-password). This signs out every session and cancels pending approvals. Then disable any job-board sources (**Disable … board**) and, if an AI model is connected, remove its route as described in the [developer guide](docs/development/README.md#optional-operator-controlled-local-model-route).
+4. If you doubt the data is intact, restore from a backup you've verified, using [encrypted installation backup and recovery](docs/development/README.md#encrypted-installation-backup-and-recovery). Rotate keys with the documented [offline credential-key rotation](docs/development/README.md#offline-credential-key-rotation).
+5. If the cause may be a flaw in BonaFides, [report it privately](#reporting-a-vulnerability).

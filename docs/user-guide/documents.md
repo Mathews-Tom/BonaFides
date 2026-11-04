@@ -1,0 +1,126 @@
+# Create résumés and cover letters
+
+The **Documents** page has two workspaces, chosen with the buttons at the top:
+
+- **Base résumé**: a general résumé built from your profile. No AI needed.
+- **Tracked application documents**: a résumé and cover letter written for one job you're tracking. This needs an AI model to be set up; see [Optional AI tailoring](ai-tailoring.md).
+
+Both kinds go through the same steps: create, check, approve the exact version, then export a PDF.
+
+## Create a base résumé
+
+You need a profile with at least one supported entry: an entry whose wording is found in its source (see [The one rule that matters most](profile.md#the-one-rule-that-matters-most)). Entries that aren't supported are left out of the résumé.
+
+1. Open **Documents** and choose **Base résumé**.
+2. Under **Saved profile revision**, keep the current revision (or choose an earlier one).
+3. Under **Built-in presentation**, choose a layout:
+   - **Evidence · English · A4** or **Evidence · English · Letter**
+   - **Compact · English · A4** or **Compact · English · Letter**
+
+   A4 is the usual paper size outside North America; Letter is the usual size in the US and Canada. All layouts are in English.
+4. Select **Create base résumé**.
+
+The résumé is made directly from your entries; no AI is involved.
+
+Your saved résumé doesn't change when you edit your profile later. If the profile has moved on, the résumé shows that its inputs are out of date. To pick up the changes, select **Rebuild base from selected profile**.
+
+## Check every statement
+
+Every factual statement in a document is linked to one profile entry. Under each statement you'll see **Linked claim** (the entry it comes from) and, when expanded, **Statement sources**, the evidence behind it.
+
+BonaFides checks each statement automatically. A statement is accepted only when:
+
+- it cites exactly one entry from your profile,
+- its wording is that entry's wording, or the entry's wording cut short at a natural break, and
+- the entry's wording appears in the entry's own source.
+
+Anything that fails is listed under **Export blocked: unresolved factual or source issues**. Select an issue to jump to it. You can't approve or export the document until every issue is fixed, and **approving a document can't override an issue**.
+
+| Message | What it means | How to fix it |
+|---|---|---|
+| It cites a claim that is not in your profile. | The entry was removed or never existed. | Remove the statement, or add the entry and rebuild. |
+| Its claim's text is not contained in the claim's own evidence. | The entry's wording isn't in its source. | On the Profile page, make the source excerpt contain the entry's exact wording, then rebuild. |
+| Not part of its claim: its wording is not contained in its claim's text. | The statement says something its entry doesn't. | Change the wording back, or change the entry (and its source) and rebuild. |
+| Cuts into the middle of its claim | The statement uses part of an entry, but cut mid-phrase. | Use the entry's full wording or cut it at a natural break. |
+| It states a fact without citing a claim. | A sentence with no entry behind it. | Remove it, or add an entry with evidence and rebuild. |
+| It cites more than one claim. | One sentence mixes two entries. | Remove the statement, or rebuild or regenerate the document. |
+| Its evidence is not its claim's own evidence. | The statement points to a source that belongs to another entry. | Rebuild a base résumé, or generate a tailored pair again. |
+| It is not one of the declared non-factual phrases, so it counts as an unsupported fact. | Linking wording, such as a greeting, that BonaFides doesn't recognize. | Remove or simplify it. |
+| It is not one of the fixed document headings. | A heading BonaFides didn't create. | Use the original heading. |
+| It still contains a placeholder marker. | Something was left unfinished. | Fill it in or remove it. |
+| It contains disallowed control characters. | Invisible characters, often from copy and paste. | Retype the text. |
+
+The checker confirms that each statement matches your entries and sources. It doesn't judge whether the statement is true, or whether shortening it changed its meaning: cutting "Reduced support costs by 20% in the pilot team" to "Reduced support costs by 20%" passes, even though it drops a limit. Read every statement yourself before you approve.
+
+## Edit a document
+
+Change the **Document title**, any **Section heading** or any **Block text**, or select **Remove block** to drop a statement. Then select **Save document revision**. Each save creates a new revision, and the checks run again.
+
+Editing is best for trimming and reordering. To say something new, add or change the entry in your profile, then rebuild. Text that isn't backed by an entry is blocked.
+
+To abandon your edits, select **Discard document changes**.
+
+## Approve the exact version
+
+Once there are no issues:
+
+1. Read each factual statement and its sources.
+2. Tick **I checked block … against its frozen sources for this exact saved revision** for each one. Greetings and statements of intent don't need a tick.
+3. Select **Accept this exact revision**. The button changes to **Exact revision reviewed**.
+
+Your approval covers that exact saved version. If you change anything afterwards, you'll need to check and approve the new version.
+
+## Export a PDF
+
+1. Select **Render reviewed PDF**. This is available only for an approved version with no issues and no unsaved changes.
+2. When it's ready, select **Download rendered PDF for revision *N***.
+
+The PDF stays downloadable from that saved version until you delete the document's data. It contains your personal details, so store any copy you save carefully. Nothing is sent anywhere.
+
+If rendering fails with a message about glyphs or text the renderer can't preserve, the document contains characters the built-in fonts can't print, for example emoji or Chinese, Japanese or Korean characters. Edit those characters out, save, approve again and retry.
+
+## Look back or restore an earlier version
+
+Select **Load document history**, then choose a version to preview it. Previewing changes nothing; select **Return to current saved revision** to go back. To bring an old version back, tick **Restore this historical revision as a new current revision, retaining displaced history** and select **Restore historical revision**. Nothing is deleted.
+
+## Tailored résumé and cover letter
+
+A tailored pair is a résumé and cover letter written by an AI model for one specific job. The model works from the posting, its reviewed requirements and your profile entries, and every factual sentence must come from your entries. Every sentence goes through the same checks as above.
+
+### Before you start
+
+You need all four:
+
+1. **An AI model set up for this installation.** This is a one-off technical setup; see [Optional AI tailoring](ai-tailoring.md#setting-it-up). Under **Tracked application documents**, the line **Generation route: …** shows its status. Without a model it reads "Generation route: disabled"; generation is available only once the route is qualified.
+2. **A saved posting.** See [Find and review jobs](opportunities.md#add-a-job-posting).
+3. **Reviewed requirements for that posting.** See [Review what the job requires](opportunities.md#review-what-the-job-requires).
+4. **A tracked application for it.** Generating documents never creates one; see [Track your applications](applications.md#start-tracking-an-application).
+
+### Generate the pair
+
+1. Open **Documents** and choose **Tracked application documents**.
+2. Select **Reload tracked applications** and choose one under **Tracked application**.
+3. Choose a **Writing tone**: **Professional** or **Concise**.
+4. Select **Preview reviewed generation context**. BonaFides shows exactly what it will send to the model, where it will send it, and what it leaves out. See [what the model receives](ai-tailoring.md#what-the-model-receives).
+5. If you're happy with it, tick **I reviewed this exact projection, route, frozen inputs and privacy limitation for this one task**.
+6. Select **Generate résumé and cover letter pair**.
+
+Generation runs in the background; a status line shows progress, and you can select **Cancel document task**. When it finishes, check, approve and export each document as described above.
+
+If generation fails, nothing is created and your existing documents are untouched. The message explains why. For example, if your profile, the posting or your settings changed after you previewed, preview and generate again.
+
+### Rewrite one section
+
+For a tailored document, you can ask the model to rewrite a single section:
+
+1. Under **Saved section regeneration**, choose the **Section to regenerate** and a **Section writing tone**.
+2. Select **Preview selected-section model projection** to see exactly what will be sent.
+3. Tick the confirmation and select **Request section proposal**.
+4. When the proposal is ready, select it to compare the original and the proposed section side by side.
+5. To use it, tick **I compared the original and proposal and explicitly choose to apply only this section as a new draft revision** and select **Apply proposal as new draft revision**.
+
+A proposal never replaces your text by itself. If the document has changed since you asked, the proposal can't be applied; request a new one.
+
+## Remembered defaults
+
+Under **Remembered defaults and retention**, select **Save remembered defaults** to remember your preferred layout and tone for next time. Defaults only fill in future choices; they never change existing documents.
