@@ -32,6 +32,10 @@ SECRET_NAMES = (
 ASSETS = {
     "compose.release.yaml": ("compose.yaml", 0o644),
     "init-db.sh": ("init-db.sh", 0o755),
+    "start.sh": ("start.sh", 0o755),
+    "stop.sh": ("stop.sh", 0o755),
+    "uninstall.sh": ("uninstall.sh", 0o755),
+    "lifecycle.sh": ("lifecycle.sh", 0o755),
 }
 IMAGE_ASSET_ROOT = Path("/app/deploy")
 _PROJECT = re.compile(r"[a-z][a-z0-9-]{2,47}")
@@ -192,7 +196,6 @@ def publish_assets(source: Path, root: Path) -> None:
     """Replace image-owned Compose assets atomically; credentials and volumes are untouched."""
     for name, (target, mode) in ASSETS.items():
         temporary = root / f".{target}.new"
-        temporary.unlink(missing_ok=True)
         # Exclusive creation: a pre-planted link at this path is never followed.
         descriptor = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
         with os.fdopen(descriptor, "wb") as stream, (source / name).open("rb") as asset:
@@ -201,10 +204,99 @@ def publish_assets(source: Path, root: Path) -> None:
         temporary.replace(root / target)
 
 
-def _release(arguments: argparse.Namespace) -> str:
+def _release_preflight(arguments: argparse.Namespace) -> tuple[str, bool]:
     root: Path = arguments.release_root
-    if arguments.host_root is None or not arguments.host_root.is_absolute():
+    host: Path | None = arguments.host_root
+    if host is None or not host.is_absolute():
         raise SetupError("--host-root must be the absolute host path of the install directory")
+    _check_request(arguments.project, arguments.port)
+    if any(character in str(host) for character in ("'", ",", "|", "\n")):
+        raise SetupError("the install path cannot contain quotes, commas, pipes or newlines")
+    if not arguments.image or not re.fullmatch(r"[A-Za-z0-9_./:@-]+", arguments.image):
+        raise SetupError("--image must name the deliberately selected local image")
+    expected_resources = "\n".join(
+        f"{kind} {name} {arguments.project}_{name}"
+        for kind, names in (
+            (
+                "volume",
+                (
+                    "app-secrets",
+                    "blobs",
+                    "db-secrets",
+                    "import-spool",
+                    "migration-secrets",
+                    "pg",
+                    "spool",
+                ),
+            ),
+            ("network", ("ingress", "private", "source-outbound", "sources")),
+        )
+        for name in names
+    )
+    if arguments.resource_map is not None and arguments.resource_map != expected_resources:
+        raise SetupError("image resource names differ from the managed lifecycle contract")
+    metadata = f"bonafides-lifecycle-1\n{arguments.project}\n{host}\n{expected_resources}"
+    metadata_file = root / ".installer-state"
+    existing = os.path.lexists(metadata_file)
+    if existing:
+        if _private_regular(metadata_file, str(metadata_file)) != metadata:
+            raise SetupError("lifecycle metadata belongs to another installation or resource set")
+        saved_image = _private_regular(root / ".installer-image", "saved image identity")
+        if not re.fullmatch(r"[A-Za-z0-9_./:@-]+", saved_image):
+            raise SetupError("saved image identity is invalid")
+        verify(
+            root / "secrets",
+            root / ".env",
+            arguments.project,
+            arguments.port,
+            False,
+            host / "secrets",
+        )
+    elif any(os.path.lexists(root / name) for name in ("secrets", ".env", ".installer-image")):
+        raise SetupError(
+            "existing configuration has no lifecycle ownership metadata; preserve it and use "
+            "its original management procedure or choose a separate empty installation"
+        )
+    if os.path.lexists(root / ".installer-image.new"):
+        raise SetupError("saved-image temporary path already exists; nothing was changed")
+    # Validate all source/destination assets before creating credentials or replacing anything.
+    for name, (target, mode) in ASSETS.items():
+        source = arguments.assets / name
+        if not source.is_file() or source.is_symlink():
+            raise SetupError(f"image lifecycle asset is missing or linked: {name}")
+        destination = root / target
+        if os.path.lexists(destination):
+            if (
+                not existing
+                or not destination.is_file()
+                or destination.is_symlink()
+                or destination.stat().st_uid != os.getuid()
+            ):
+                raise SetupError(f"refusing unmanaged or linked asset: {target}")
+            if arguments.validate_installed and (
+                destination.read_bytes() != source.read_bytes()
+                or stat.S_IMODE(destination.stat().st_mode) != mode
+            ):
+                raise SetupError(
+                    f"managed asset differs from the saved image: {target}; install while stopped"
+                )
+        elif arguments.validate_installed:
+            raise SetupError(f"managed asset is missing: {target}; install while stopped")
+        temporary = root / f".{target}.new"
+        if os.path.lexists(temporary):
+            raise SetupError(f"asset temporary path already exists: {temporary.name}")
+    return metadata, existing
+
+
+def _release(arguments: argparse.Namespace) -> str:
+    metadata, existing = _release_preflight(arguments)
+    if arguments.validate_installed and (not arguments.check or not existing):
+        raise SetupError(
+            "--validate-installed requires --check and an existing managed installation"
+        )
+    if arguments.check:
+        return "reused" if existing else "available"
+    root: Path = arguments.release_root
     state = ensure(
         root / "secrets",
         root / ".env",
@@ -213,6 +305,11 @@ def _release(arguments: argparse.Namespace) -> str:
         False,
         published=arguments.host_root / "secrets",
     )
+    if not existing:
+        private_write(root / ".installer-state", metadata)
+    temporary = root / ".installer-image.new"
+    private_write(temporary, arguments.image)
+    temporary.replace(root / ".installer-image")
     publish_assets(arguments.assets, root)
     return state
 
@@ -240,6 +337,14 @@ def _parse(argv: list[str]) -> argparse.Namespace:
     )
     parser.add_argument("--host-root", type=Path, help="the same directory's absolute host path")
     parser.add_argument("--assets", type=Path, default=IMAGE_ASSET_ROOT)
+    parser.add_argument("--image", help="resolved local image identity for installed start.sh")
+    parser.add_argument("--resource-map", help="resolved physical resource map from Compose")
+    parser.add_argument("--check", action="store_true", help="read-only release preflight")
+    parser.add_argument(
+        "--validate-installed",
+        action="store_true",
+        help="with --check, require installed assets to match the saved image",
+    )
     return parser.parse_args(argv)
 
 

@@ -1,9 +1,10 @@
 # SPDX-License-Identifier: MIT OR Apache-2.0
 """Prove the core loop on the release image in production mode with an explicit fixture model.
 
-The installer runs from outside the checkout. After owner setup the shipped `bonafides demo load`
-seeds synthetic profile data, then ordinary APIs take a pasted posting to a checked résumé and
-cover letter, exact-revision review, PDF export and saved tracking. The deterministic stub
+The installer runs install-only from outside the checkout, then the installed start script starts
+the target. After owner setup the shipped `bonafides demo load` seeds synthetic profile data, then
+ordinary APIs take a pasted posting to a checked résumé and cover letter, exact-revision review,
+PDF export and saved tracking. The deterministic stub
 (`tools.stub_model`, outside the image) answers on an isolated proof-private route; fabricated
 output must block review and export. Its qualification receipts are fixture-only: this proof
 attests nothing about any real model. Evidence is a redacted receipt with no HTTP bodies, token
@@ -412,11 +413,14 @@ class CoreLoopProof(InstallProof):
 
     def prove(self) -> None:
         require_unused_namespace(self.project)
-        self.extract_script(self.image)
+        self.extract_scripts(self.image)
         identity = self.image_identity(self.image)
-        self.install(self.image)
+        seconds = self.install_and_start(self.image)
         require(self.require_running(self.image) == identity, "image_not_running")
-        self.checked("release_image_installed_in_production_mode")
+        self.checked(
+            "release_image_installed_and_started_in_production_mode",
+            install_and_start_to_setup_page_seconds=seconds,
+        )
         self.seed_demo()
         self.start_stub()
         self.checked_pair_to_pdf_and_tracking()

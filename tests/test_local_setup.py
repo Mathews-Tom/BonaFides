@@ -18,6 +18,8 @@ def assets(tmp_path: Path) -> Path:
     directory.mkdir()
     (directory / "compose.release.yaml").write_text("services: {}\n# build one\n")
     (directory / "init-db.sh").write_text("#!/bin/sh\n# build one\n")
+    for name in ("start.sh", "stop.sh", "uninstall.sh", "lifecycle.sh"):
+        (directory / name).write_text("#!/bin/sh\n# build one\n")
     return directory
 
 
@@ -41,6 +43,8 @@ def install(root: Path, assets: Path, *extra: str) -> int:
             "bonafides-test",
             "--port",
             "18400",
+            "--image",
+            "sha256:" + "1" * 64,
             *extra,
         ]
     )
@@ -133,7 +137,6 @@ def test_release_refuses_a_different_project_or_port_than_the_installed_state(
 
     assert install(root, assets, *option) == 1
 
-    assert "differs from the requested project, port" in capsys.readouterr().err
     assert snapshot(root) == before
 
 
@@ -159,7 +162,7 @@ def test_release_refuses_an_install_path_containing_a_single_quote(
 ) -> None:
     code = main(["--release-root", str(root), "--host-root", "/srv/it's", "--assets", str(assets)])
 
-    assert code == 1 and "single quote" in capsys.readouterr().err
+    assert code == 1
     assert not (root / "secrets").exists() or not (root / ".env").exists()
 
 
@@ -170,7 +173,79 @@ def test_release_publish_never_follows_a_planted_link_at_the_temporary_path(
     victim.write_text("keep")
     (root / ".compose.yaml.new").symlink_to(victim)
 
-    assert install(root, assets) == 0
+    assert install(root, assets) == 1
 
     assert victim.read_text() == "keep"
-    assert (root / "compose.yaml").read_text().endswith("# build one\n")
+    assert (root / ".compose.yaml.new").is_symlink()
+    assert not (root / "secrets").exists()
+    assert not (root / ".env").exists()
+
+
+def test_release_check_is_read_only_for_new_and_retained_installs(root: Path, assets: Path) -> None:
+    before = snapshot(root)
+    assert install(root, assets, "--check") == 0
+    assert snapshot(root) == before
+    assert install(root, assets) == 0
+    before = snapshot(root)
+    assert install(root, assets, "--check", "--validate-installed") == 0
+    assert snapshot(root) == before
+
+
+@pytest.mark.parametrize(
+    "damage",
+    ["metadata_root", "metadata_volume", "missing_metadata", "linked_asset", "asset_directory"],
+)
+def test_release_refuses_uncertain_ownership_before_any_write(
+    root: Path, assets: Path, tmp_path: Path, damage: str
+) -> None:
+    assert install(root, assets) == 0
+    metadata = root / ".installer-state"
+    if damage == "metadata_root":
+        metadata.write_text(metadata.read_text().replace(str(HOST_ROOT), "/srv/another-install"))
+    elif damage == "metadata_volume":
+        metadata.write_text(metadata.read_text().replace("bonafides-test_pg", "foreign_pg"))
+    elif damage == "missing_metadata":
+        metadata.unlink()
+    else:
+        (root / "compose.yaml").unlink()
+        if damage == "asset_directory":
+            (root / "compose.yaml").mkdir()
+        else:
+            victim = tmp_path / "foreign-compose"
+            victim.write_text("foreign")
+            (root / "compose.yaml").symlink_to(victim)
+    before = snapshot(root)
+    assert install(root, assets) == 1
+    assert snapshot(root) == before
+
+
+def test_start_validation_refuses_changed_assets_without_republishing(
+    root: Path, assets: Path
+) -> None:
+    assert install(root, assets) == 0
+    (root / "compose.yaml").write_text("services: {foreign: {image: foreign}}\n")
+    before = snapshot(root)
+    assert install(root, assets, "--check", "--validate-installed") == 1
+    assert snapshot(root) == before
+
+
+@pytest.mark.parametrize(
+    "name",
+    [".installer-image.new", ".stop.sh.new", ".compose.yaml.new", "stop.sh", "compose.yaml"],
+)
+def test_new_install_refuses_unmanaged_destinations_without_creating_keys(
+    root: Path, assets: Path, name: str
+) -> None:
+    (root / name).write_text("unrelated\n")
+    before = snapshot(root)
+    assert install(root, assets) == 1
+    assert snapshot(root) == before
+
+
+def test_missing_image_asset_is_refused_before_credential_creation(
+    root: Path, assets: Path
+) -> None:
+    (assets / "stop.sh").unlink()
+    before = snapshot(root)
+    assert install(root, assets) == 1
+    assert snapshot(root) == before

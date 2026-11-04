@@ -1,10 +1,11 @@
 # SPDX-License-Identifier: MIT OR Apache-2.0
-"""Prove the standalone installer on a disposable bonafides-proof-* namespace.
+"""Prove the standalone lifecycle on a disposable bonafides-proof-* namespace.
 
-The installer script is extracted from the application image and run from a directory outside the
-checkout in production mode. The proof times install to sign-in, creates an owner and synthetic data
-through the production API, then reruns the installer unchanged and again after a same-version
-image swap. Evidence is a redacted receipt: no token, password, secret digest or image layer.
+The installer and its helper are extracted from the application image and run outside the
+checkout in production mode. The proof times install plus an explicit start to the setup page,
+creates an owner and synthetic data through the production API, then stops, reinstalls and starts
+again with both the original image and a same-version image swap. Builds are outside the timer.
+Evidence is a redacted receipt: no token, password, secret digest or image layer.
 """
 
 from __future__ import annotations
@@ -24,7 +25,7 @@ from typing import Any
 
 from tools.runtime_proof import API, ProbeFailure, require, require_unused_namespace, run
 
-SIGN_IN_LIMIT_SECONDS = 600
+SETUP_PAGE_LIMIT_SECONDS = 600
 _LABEL = "org.opencontainers.image.{}"
 _STATE_SQL = """
 SELECT json_build_object(
@@ -93,27 +94,29 @@ class InstallProof:
         identity.update({key: labels[_LABEL.format(key)] for key in ("version", "revision")})
         return identity
 
-    def extract_script(self, image: str) -> None:
-        script = run(
-            [
-                "docker",
-                "run",
-                "--rm",
-                "--pull",
-                "never",
-                "--network",
-                "none",
-                "--entrypoint",
-                "cat",
-                image,
-                "/app/deploy/install.sh",
-            ]
-        )
-        self.script.write_bytes(script)
-        self.script.chmod(0o755)
+    def extract_scripts(self, image: str) -> None:
+        for name in ("install.sh", "lifecycle.sh"):
+            script = run(
+                [
+                    "docker",
+                    "run",
+                    "--rm",
+                    "--pull",
+                    "never",
+                    "--network",
+                    "none",
+                    "--entrypoint",
+                    "cat",
+                    image,
+                    f"/app/deploy/{name}",
+                ]
+            )
+            destination = self.work / name
+            destination.write_bytes(script)
+            destination.chmod(0o755)
 
-    def install(self, image: str) -> float:
-        """Run the installer from outside the checkout; return seconds until sign-in is served."""
+    def install_and_start(self, image: str) -> float:
+        """Time install-only plus installed start until the setup/sign-in app is served."""
         begun = time.monotonic()
         result = subprocess.run(
             [
@@ -135,17 +138,47 @@ class InstallProof:
             check=False,
         )
         if result.returncode:
-            raise ProbeFailure(
-                "installer_failed:" + (result.stderr.strip().splitlines() or ["?"])[-1]
-            )
+            raise ProbeFailure("installer_failed")
         secret_dir = (self.install_dir / "secrets").resolve()
         self.token = (secret_dir / "bootstrap_token").read_text().strip()
         require(self.token not in result.stdout + result.stderr, "installer_printed_token")
         require(str(secret_dir) in result.stdout, "installer_omitted_secret_path")
+        require(
+            not self.compose(image, "ps", "--status", "running", "-q").strip(),
+            "install_started_services",
+        )
+        started = subprocess.run(
+            ["/bin/sh", str(self.install_dir / "start.sh")],
+            cwd=self.work,
+            env=self.environment(image),
+            capture_output=True,
+            text=True,
+            timeout=900,
+            check=False,
+        )
+        require(self.token not in started.stdout + started.stderr, "start_printed_token")
+        require(started.returncode == 0, "start_failed")
         _, _, page = self.api.request("GET", "/")
-        require(b'<div id="root">' in page, "sign_in_page_not_served")
+        require(b'<div id="root">' in page, "setup_or_sign_in_page_not_served")
         elapsed = time.monotonic() - begun
         return round(elapsed, 3)
+
+    def stop(self, image: str) -> None:
+        result = subprocess.run(
+            ["/bin/sh", str(self.install_dir / "stop.sh")],
+            cwd=self.work,
+            env=self.environment(image),
+            capture_output=True,
+            text=True,
+            timeout=120,
+            check=False,
+        )
+        require(self.token not in result.stdout + result.stderr, "stop_printed_token")
+        require(result.returncode == 0, "stop_failed")
+        require(
+            not self.compose(image, "ps", "--status", "running", "-q").strip(),
+            "stop_left_services_running",
+        )
 
     def state(self) -> dict[str, Any]:
         database: dict[str, Any] = json.loads(
@@ -254,34 +287,42 @@ class InstallProof:
 
     def prove(self) -> None:
         require_unused_namespace(self.project)
-        self.extract_script(self.image)
+        self.extract_scripts(self.image)
         first = self.image_identity(self.image)
-        first_seconds = self.install(self.image)
-        require(first_seconds < SIGN_IN_LIMIT_SECONDS, "install_to_sign_in_over_limit")
+        first_seconds = self.install_and_start(self.image)
+        require(
+            first_seconds < SETUP_PAGE_LIMIT_SECONDS,
+            "install_and_start_to_setup_page_over_limit",
+        )
         require(self.require_running(self.image) == first, "first_image_not_running")
         before_owner = self.state()
         require(before_owner["owners"] == [] and len(before_owner["ledger"]) == 1, "fresh_state")
         self.checked(
-            "fresh_install_reaches_sign_in",
-            install_to_sign_in_seconds=first_seconds,
-            limit_seconds=SIGN_IN_LIMIT_SECONDS,
+            "fresh_install_and_start_reaches_setup_page",
+            install_and_start_to_setup_page_seconds=first_seconds,
+            limit_seconds=SETUP_PAGE_LIMIT_SECONDS,
         )
         self.create_owner_and_data()
         seeded = self.state()
         require(len(seeded["owners"]) == 1 and seeded["profile_revisions"], "owner_not_seeded")
-        rerun_seconds = self.install(self.image)
+        self.stop(self.image)
+        rerun_seconds = self.install_and_start(self.image)
         require(self.state() == seeded, "rerun_changed_credentials_data_or_ledger")
         self.require_owner_intact()
-        self.checked("rerun_preserves_credentials_owner_data_ledger", seconds=rerun_seconds)
+        self.checked(
+            "stopped_reinstall_and_start_preserves_credentials_owner_data_ledger",
+            install_and_start_seconds=rerun_seconds,
+        )
         swap = self.build_swap(first)
-        self.extract_script(self.swap_image)
-        swap_seconds = self.install(self.swap_image)
+        self.stop(self.image)
+        self.extract_scripts(self.swap_image)
+        swap_seconds = self.install_and_start(self.swap_image)
         require(self.require_running(self.swap_image) == swap, "swapped_image_not_running")
         require(self.state() == seeded, "swap_changed_credentials_data_or_ledger")
         self.require_owner_intact()
         self.checked(
-            "same_version_image_swap_preserves_owner_data_ledger",
-            seconds=swap_seconds,
+            "stopped_image_swap_and_start_preserves_credentials_owner_data_ledger",
+            install_and_start_seconds=swap_seconds,
             previous_revision=first["revision"],
             running_revision=swap["revision"],
         )
