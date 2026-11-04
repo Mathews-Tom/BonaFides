@@ -2,9 +2,9 @@
 """Prove the standalone lifecycle on a disposable bonafides-proof-* namespace.
 
 The installer and its helper are extracted from the application image and run outside the
-checkout in production mode. The proof times install plus an explicit start to the setup page,
-creates an owner and synthetic data through the production API, then stops, reinstalls and starts
-again with both the original image and a same-version image swap. Builds are outside the timer.
+checkout in production mode. The proof times install plus an explicit start until the SPA shell,
+not the rendered owner form, is served. It creates an owner and synthetic data through the API,
+then stops, reinstalls and starts with the original image and an image swap. Builds are untimed.
 Evidence is a redacted receipt: no token, password, secret digest or image layer.
 """
 
@@ -25,7 +25,7 @@ from typing import Any
 
 from tools.runtime_proof import API, ProbeFailure, require, require_unused_namespace, run
 
-SETUP_PAGE_LIMIT_SECONDS = 600
+SPA_SHELL_LIMIT_SECONDS = 600
 _LABEL = "org.opencontainers.image.{}"
 _STATE_SQL = """
 SELECT json_build_object(
@@ -116,7 +116,7 @@ class InstallProof:
             destination.chmod(0o755)
 
     def install_and_start(self, image: str) -> float:
-        """Time install-only plus installed start until the setup/sign-in app is served."""
+        """Time install-only plus installed start until the static SPA shell is served."""
         begun = time.monotonic()
         result = subprocess.run(
             [
@@ -159,7 +159,7 @@ class InstallProof:
         require(self.token not in started.stdout + started.stderr, "start_printed_token")
         require(started.returncode == 0, "start_failed")
         _, _, page = self.api.request("GET", "/")
-        require(b'<div id="root">' in page, "setup_or_sign_in_page_not_served")
+        require(b'<div id="root">' in page, "spa_shell_not_served")
         elapsed = time.monotonic() - begun
         return round(elapsed, 3)
 
@@ -170,7 +170,7 @@ class InstallProof:
             env=self.environment(image),
             capture_output=True,
             text=True,
-            timeout=120,
+            timeout=360,
             check=False,
         )
         require(self.token not in result.stdout + result.stderr, "stop_printed_token")
@@ -291,16 +291,16 @@ class InstallProof:
         first = self.image_identity(self.image)
         first_seconds = self.install_and_start(self.image)
         require(
-            first_seconds < SETUP_PAGE_LIMIT_SECONDS,
-            "install_and_start_to_setup_page_over_limit",
+            first_seconds < SPA_SHELL_LIMIT_SECONDS,
+            "install_and_start_to_spa_shell_over_limit",
         )
         require(self.require_running(self.image) == first, "first_image_not_running")
         before_owner = self.state()
         require(before_owner["owners"] == [] and len(before_owner["ledger"]) == 1, "fresh_state")
         self.checked(
-            "fresh_install_and_start_reaches_setup_page",
-            install_and_start_to_setup_page_seconds=first_seconds,
-            limit_seconds=SETUP_PAGE_LIMIT_SECONDS,
+            "fresh_install_and_start_serves_spa_shell",
+            install_and_start_to_spa_shell_seconds=first_seconds,
+            limit_seconds=SPA_SHELL_LIMIT_SECONDS,
         )
         self.create_owner_and_data()
         seeded = self.state()

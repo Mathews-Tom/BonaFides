@@ -27,6 +27,9 @@ All notable changes to BonaFides are recorded here. The format follows [Keep a C
 ### Fixed
 
 - Lifecycle commands report a missing managed installation with setup instructions instead of presenting the missing `.installer-state` as a file-type or symlink problem.
+- Equivalent decimal port parameters reuse the saved installation rather than being rejected before normalization; explicit-directory lifecycle wrappers also work without `HOME`.
+- Failed asset publication removes only its own temporary file before propagating the I/O error, so retry is not blocked by that partial copy; pre-planted files and links remain untouched.
+- Installation proof receipts identify the served static SPA shell rather than claiming browser setup rendering, and the stop deadline accommodates sequential service grace periods.
 
 ## [0.1.0]
 

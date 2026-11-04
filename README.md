@@ -16,7 +16,7 @@ The recording is the real interface on a release-image installation with synthet
 
 ## Install from source
 
-Start with **Git and a working Docker runtime**: Docker Desktop on macOS, or Docker Engine on Linux, with Compose v2 and Buildx. Start Docker before running setup. The installer uses the Docker server's native Linux arm64 or amd64 platform; it does not install Docker or change its context. No host Python, uv or Node installation is needed.
+Start with **Git and a working local Docker runtime**: Docker Desktop on macOS, or Docker Engine on Linux, with Compose v2 and Buildx. Run Docker on the same machine as the checkout and browser; remote Docker contexts are unsupported because bind-mounted paths, port checks and `localhost` URLs refer to the daemon host. Start Docker before running setup. The installer uses the Docker server's native Linux arm64 or amd64 platform; it does not install Docker or change its context. No host Python, uv or Node installation is needed.
 
 ```sh
 git clone https://github.com/Mathews-Tom/BonaFides.git

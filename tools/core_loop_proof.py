@@ -419,7 +419,7 @@ class CoreLoopProof(InstallProof):
         require(self.require_running(self.image) == identity, "image_not_running")
         self.checked(
             "release_image_installed_and_started_in_production_mode",
-            install_and_start_to_setup_page_seconds=seconds,
+            install_and_start_to_spa_shell_seconds=seconds,
         )
         self.seed_demo()
         self.start_stub()

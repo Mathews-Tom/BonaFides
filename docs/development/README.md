@@ -295,6 +295,8 @@ Install and start never prompt, whether or not a terminal is attached. A fresh i
 
 Installation prepares private host-owned credentials and assets, saves the immutable local image identity in `.installer-image`, and ends **prepared, not running**. It requires the target to be stopped and never stops or restarts it implicitly. The saved `.env` supplies project and port. A complete credential set is reused unchanged; a partial or invalid set is refused, not deleted or rotated. Keep `secrets/` private and escrow the keyring separately.
 
+Interrupted or partial lifecycle state is also refused: missing `.installer-state` or `.installer-image`, or an unexpected asset staging file, is not authority to adopt an installation or regenerate credentials. Preserve the failed directory and any data; do not forge metadata, replace keys or force cleanup. For an interrupted first installation, retry in a separate empty directory with a free port and unique project. If the installation already contains owner data, use a validated backup and the documented isolated-target recovery flow rather than reconstructing ownership from incomplete files.
+
 `sh start.sh` uses the saved settings and image, runs preparation and migrations, initializes bootstrap only while no owner exists, and waits for service health. It neither rebuilds source nor resets credentials; an already healthy installation is handled non-destructively. Start prints `http://localhost:<port>` and a command to retrieve the private `secrets/bootstrap_token`, never the token itself. By default it does not open a browser; `sh start.sh --open-browser` explicitly requests browser opening without a prompt.
 
 Run the printed retrieval command deliberately in a private local terminal; for the default installation it is:
@@ -354,7 +356,7 @@ sh install.sh --dir "$HOME/bonafides-other" --port 8001 --project bonafides-othe
 sh start.sh --dir "$HOME/bonafides-other"
 ```
 
-A separate installation needs its own directory, free port and unique project. No published application-image archive is currently available: acquiring the source and building its image are prerequisites, not part of the timed loaded-image proof below. That proof times **install plus start with the application image already local**; do not interpret its 600-second limit as a measured clean-machine or source-build setup time. Historical guided-lifecycle receipts do not verify this noninteractive revision; new native smoke and repository validation are pending.
+A separate installation needs its own directory, free port and unique project. No published application-image archive is currently available: acquiring the source and building its image are prerequisites, not part of the timed loaded-image proof below. That proof times **install plus start until the static SPA shell is served, with the application image already local**. Its receipt key is `fresh_install_and_start_serves_spa_shell`; it does not verify that the browser rendered the owner form or measure human interaction. Do not interpret its 600-second limit as a measured clean-machine or source-build setup time or completed human acceptance. Historical guided-lifecycle receipts do not verify this noninteractive revision; require source-bound native CI evidence and a separately recorded owner walkthrough before claiming installation acceptance.
 
 ## Requirements and frozen installs
 
