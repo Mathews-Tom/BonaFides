@@ -31,7 +31,7 @@ The `secrets` folder inside your installation folder holds the passwords BonaFid
 
 ## Export your data
 
-You can download all your saved data as a single ZIP file at any time. Use it as a personal copy of your records.
+You can download all your saved data as a single ZIP file. Use it as a personal copy of your records.
 
 1. Open **Settings** and expand **Privacy, backup and portable data**, then **Owner-data portability**.
 2. Select **Create owner-data export**.
@@ -42,7 +42,7 @@ The export contains your profile and evidence history, postings, applications, n
 Keep in mind:
 
 - **The ZIP isn't encrypted.** Anyone who has it can read your data. Store it somewhere private.
-- Each download link expires after 24 hours, and BonaFides keeps at most two recent exports.
+- Each download link expires after 24 hours. You can have at most two unexpired exports, and only one being prepared at a time. While that limit is reached, **Create owner-data export** fails with `portable_export_limit`; wait for an export to expire, or for the one in progress to finish.
 - It's a copy of your data, not a full backup of the installation (see [Installation backups](#installation-backups)).
 
 ## Delete data

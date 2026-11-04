@@ -20,7 +20,7 @@ Every suggestion is shown to you before it's used, and every factual sentence it
 
 ## What the model receives
 
-Before each task, select **Preview reviewed generation context** on the Documents page to see the exact content. In general:
+Before each task, preview the exact content on the Documents page: **Preview reviewed generation context** for a tailored pair, or **Preview selected-section model projection** for a single-section rewrite. In general:
 
 **Sent:** the posting's title, employer and text; its reviewed requirements; your profile entries and their details; the text of their sources (except as noted below); the tone and language you chose.
 

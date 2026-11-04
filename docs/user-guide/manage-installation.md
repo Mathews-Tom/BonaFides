@@ -32,7 +32,7 @@ Stopping keeps all your data, settings and keys. `sh start.sh --open-browser` al
 
 Updating replaces the BonaFides software and keeps your data, account and password.
 
-1. **Export your data first**, as a safety copy: see [Export your data](your-data.md#export-your-data).
+1. **Export your data first**, as a safety copy of your records: see [Export your data](your-data.md#export-your-data). An export isn't a full backup and can't undo an update. If the [changelog](../../CHANGELOG.md) says the new version changes how data is stored, also make an [encrypted installation backup](../development/README.md#encrypted-installation-backup-and-recovery) before updating; that's currently a technical task.
 2. In a terminal, go to the downloaded folder and run these commands one at a time:
 
    ```sh
@@ -47,7 +47,7 @@ Updating replaces the BonaFides software and keeps your data, account and passwo
 
 If `cd BonaFides` says there's no such folder, use the path to wherever you downloaded it.
 
-Any changes the new version needs to make to stored data happen automatically while BonaFides starts.
+Any changes the new version needs to make to stored data happen automatically while BonaFides starts. They can't be undone by going back to the older version.
 
 ## Run a second, separate installation
 

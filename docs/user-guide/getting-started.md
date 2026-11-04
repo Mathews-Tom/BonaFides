@@ -91,7 +91,7 @@ Each installation has exactly one account, and it's yours. Creating it needs a o
    ```
 
    Treat this code like a password: don't paste it into chats, screenshots or support requests.
-2. Open **http://localhost:8000** in your browser. Use `localhost` exactly as written, not `127.0.0.1` or your computer's name.
+2. Open the address `start.sh` printed in your browser: **http://localhost:8000** for the default installation, or `http://localhost:8001` if you installed with `--port 8001`. Use `localhost` exactly as written, not `127.0.0.1` or your computer's name.
 3. On **Create your account**, fill in:
    - **One-time setup code**: the code from step 1.
    - **Login name**: any name you'll remember.

@@ -1,6 +1,6 @@
 # Troubleshooting
 
-BonaFides explains what went wrong rather than guessing. When a command refuses to do something, it changes nothing, so it's always safe to fix the cause and run it again.
+BonaFides explains what went wrong rather than guessing. Most refused commands stop before changing anything, so you can fix the cause and run them again. The exception is a start that fails while services are already starting (`installation is not healthy` or `services did not become healthy`): run `sh stop.sh` before trying again, as the table below says.
 
 ## Installing
 
