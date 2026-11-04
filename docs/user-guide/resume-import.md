@@ -1,0 +1,79 @@
+# Import an existing résumé
+
+If you already have a résumé, BonaFides can read it and propose profile entries from it. You check the proposals, fix anything that was misread, and approve the result. Nothing reaches your profile until you approve it.
+
+## What it can read
+
+- A **PDF with selectable text** (if you can highlight words in it, it has selectable text), or a **plain-text file**: up to 10 MiB, 50 pages and about 80,000 characters of text. Password-protected PDFs aren't accepted.
+- Or text you paste in directly, with the same text limit.
+
+Reading happens entirely on your computer, in a sealed-off part of BonaFides with no network access. There's no AI and no OCR (text recognition), so a scanned résumé saved as a picture won't work. Paste its text in instead.
+
+Recognizable contact details (email addresses, phone numbers and similar) are left out of the review. Add them under [Personal details](profile.md#personal-details) yourself.
+
+Imported entries are *your* statements. Each one keeps the résumé text it came from as its source, recorded as your own assertion, not independent verification.
+
+## Import step by step
+
+The progress bar along the top shows where you are: **Choose source → Extract → Review → Complete**.
+
+1. Open **Profile** and choose the **Résumé imports** tab.
+2. Under **Choose a local source**, either pick a file under **Résumé PDF or text file**, or paste into **Or paste résumé text**. Use one or the other, not both.
+3. Select **Upload for local extraction**.
+4. Wait while BonaFides reads it. You can leave the page and come back; nothing has been added to your profile yet.
+5. When reading finishes, **Complete profile preview** appears. Go through the proposed entries (see below), selecting **Edit** on any entry you want to open.
+6. Under **Approve assembled profile**, choose an **Import mode**:
+   - **Merge only selected facts; keep unrelated profile facts** (the default) adds to your existing profile.
+   - **Replace all non-identity profile facts with selected facts** swaps your current entries for the imported ones. Choosing this also asks you to tick **I separately confirm replacing all non-identity facts and archiving displaced sources**.
+7. Tick **I approve this assembled profile and confirm its values are accurate owner assertions, not independent verification**.
+8. Select **Save profile**.
+
+When it's done you'll see "Complete. The updated profile is loaded; earlier history is retained."
+
+If every entry turned out to be unchanged from what's already in your profile, select **Complete import without profile changes** instead.
+
+## Reviewing the proposed entries
+
+Each proposal in the list shows its status:
+
+| Status | Meaning |
+|---|---|
+| **New entry** | Will be added as a new entry. You don't have to open it. |
+| **Ready to update** | Will replace or add evidence to an existing entry you chose. |
+| **Unchanged** | Already in your profile exactly as written. Nothing will change. |
+| **Needs attention** | Something needs your decision: an unclear line, an invalid date, a missing destination, or a possible match with an existing entry. |
+| **Excluded** | Won't be imported. |
+
+Inside an open entry, the same status reads **Ready for batch approval**, **Unchanged · no profile changes**, **Needs attention before saving** or **Excluded**.
+
+Select **Next entry needing attention** to jump to the ones that need you. In each entry you can:
+
+- Choose where it goes with **Save to**, for example **Work experience**, **Education** or **Skills**. **Personal details · Full name** and **Personal details · Highlight / tagline** update your personal details instead.
+- If it resembles something already in your profile, choose under **Existing profile entry** whether to **Add a new entry; keep existing entries** or **Replace an existing entry / attach this source evidence** (then choose which one under **Replacement target**).
+- Compare individual fields and choose **Keep current …** or **Use imported**.
+- Fix the text if it was misread.
+- Select **Combine with previous entry** or **Combine with next entry** if one item was split across lines, or **Split into original source parts** to undo a combination.
+- Select **Confirm extraction** when it's right, or **Exclude entry** to leave it out.
+
+**Save profile** becomes available once at least one entry is ready, no entry still needs attention, and you've ticked the approval box.
+
+Lines BonaFides couldn't fully understand stay as free text marked **Needs attention**. After importing, you can turn them into structured entries on the [Profile](profile.md#writing-the-fact) page.
+
+## Coming back to an import later
+
+The uploaded résumé and its proposed entries are saved, so you can come back to them. To pick one up again, select **Load saved imports**, choose it under **Saved import**, then select **Open import**. **Your review choices** (destinations, edits, combinations and exclusions) **aren't saved**: they're kept only in the open tab, and reopening the import or reloading the page starts the review again. Finish a review in one sitting where you can.
+
+To abandon an import, select **Cancel import**. Cancelling changes nothing in your profile.
+
+You can have up to four imports in progress at once.
+
+## If something goes wrong
+
+| Message | What to do |
+|---|---|
+| "Choose a PDF or UTF-8 plain text file. No other file types are accepted." | Save your résumé as PDF or plain text first, or paste its text. |
+| "Import a non-empty source no larger than 10 MiB…" | The file is empty or too big. Paste the text instead. |
+| "No entries were extracted. Nothing can be saved…" | BonaFides found no readable text, which is usual for scanned PDFs. Cancel the import and paste the text instead. |
+| "A newer profile needs comparison…" | Your profile changed while you were reviewing. Select **Load current profile for comparison**, then **Use latest profile and retain review**. Your review choices are kept. |
+| "Save or discard changes in the other profile editor before uploading or approving an import." | You have unsaved changes on the **Profile details** tab. Save or discard them first. |
+| "Import stopped (…). A failed import does not partially update your profile." | Nothing was changed. Try again, or paste the text instead of uploading. |

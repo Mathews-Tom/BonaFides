@@ -15,7 +15,8 @@ All notable changes to BonaFides are recorded here. The format follows [Keep a C
 
 ### Changed
 
-- The README opens with the workflow, the committed workflow recording, the install and demo commands, and the measured results with their limits.
+- The README is written for people who use BonaFides: what it does and won't do, its current readiness, installation and first sign-in, and the measured checker results in plain language. Developer material moved behind links.
+- A new [user guide](docs/user-guide/README.md) covers every page of the workspace step by step: installation, profile and sources, résumé import, postings and requirements, documents and PDF export, application tracking, background tasks, account settings, data export and deletion, optional AI tailoring, installation management and troubleshooting. A [documentation index](docs/README.md) separates user and developer material.
 - Installation ends prepared, not running, and refuses running targets instead of restarting them. Normal uninstall confirms runtime removal while retaining data, configuration and keys; purge requires separate exact-project consent and removes only owned managed resources.
 - Install and start are noninteractive: fresh installs use defaults or explicit `--dir`, `--port` and `--project` settings, while reinstalls reuse saved settings and image unless `--image` or `--build` is supplied. Conflicts fail rather than prompting or stopping/adopting resources; existing project and port settings remain fixed.
 - Start opens a browser only with `--open-browser` and prints a private-terminal token retrieval command, never the token. It explains the 15-minute ownerless setup window and renewal by rerunning start without reinstalling or losing data; after bootstrap, the owner uses normal password sign-in. The obsolete install consent and start browser-suppression flags are removed; uninstall consent and purge rules are unchanged.
