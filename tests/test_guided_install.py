@@ -51,7 +51,21 @@ def test_stopped_docker_is_not_replaced_or_started(environment: dict[str, str]) 
     assert not (Path(environment["HOME"]) / "bonafides").exists()
 
 
-@pytest.mark.parametrize("port", ["0", "80", "65536", "8000\n9999", "$(touch marker)"])
+@pytest.mark.parametrize(
+    "port",
+    [
+        "0",
+        "80",
+        "65536",
+        "0008000",
+        "00000",
+        "+8000",
+        " 8000",
+        "08000x",
+        "8000\n9999",
+        "$(touch marker)",
+    ],
+)
 def test_invalid_ports_refuse_before_installation(environment: dict[str, str], port: str) -> None:
     result = invoke(environment, "--port", port)
     assert result.returncode == 1

@@ -56,6 +56,10 @@ valid_project() {
   [ "${#project}" -ge 3 ] && [ "${#project}" -le 48 ]
 }
 
+# Validate the raw decimal spelling before stripping zeros, including its length bound.
+valid_port || fail "port must be an integer from 1024 through 65535"
+port=$(printf '%s' "$port" | sed 's/^0*//')
+
 command -v docker >/dev/null 2>&1 || fail "install Docker Desktop (macOS) or Docker Engine with Compose v2 (Linux), start it, then rerun"
 docker compose version >/dev/null 2>&1 || fail "Docker Compose v2 is required; enable it in your existing Docker runtime"
 platform=$(docker version --format '{{.Server.Os}}/{{.Server.Arch}}') ||
@@ -84,8 +88,6 @@ if [ -e "$dir/.env" ] || [ -L "$dir/.env" ]; then
 fi
 valid_port || fail "port must be an integer from 1024 through 65535"
 valid_project || fail "project must be 3–48 lowercase letters/digits/hyphens, starting with a letter"
-# Normalize decimal ports, including input such as 08000, before comparing saved bindings.
-port=$(printf '%s' "$port" | sed 's/^0*//')
 
 directories=$(docker ps -a --filter "label=com.docker.compose.project=$project" \
   --format 'directory={{.Label "com.docker.compose.project.working_dir"}}') || fail "cannot inspect existing Compose projects"

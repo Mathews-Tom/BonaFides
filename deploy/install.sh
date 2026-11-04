@@ -27,6 +27,9 @@ done
 valid_image || usage
 requested_image=$image
 [ -n "$dir" ] || dir=${HOME:?set HOME or pass --dir}/bonafides
+valid_port || fail "port must be an integer from 1024 through 65535"
+# Normalize only validated input, before load_saved replaces the requested port.
+port=$(printf '%s' "$port" | sed 's/^0*//')
 requested_project=$project
 requested_port=$port
 clean_environment
@@ -43,7 +46,6 @@ fi
 image=$requested_image
 valid_project || fail "project must be 3–48 lowercase letters/digits/hyphens, starting with a letter"
 valid_port || fail "port must be an integer from 1024 through 65535"
-port=$(printf '%s' "$port" | sed 's/^0*//')
 docker_ready
 docker compose version >/dev/null 2>&1 || fail "Docker Compose v2 is required"
 image=$(docker image inspect --format '{{.Id}}' "$image") || fail "application image is not loaded; load it with docker load (this installer never pulls it)"
