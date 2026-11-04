@@ -17,6 +17,7 @@ import secrets
 import shutil
 import stat
 import sys
+from contextlib import suppress
 from pathlib import Path
 
 SECRET_NAMES = (
@@ -198,10 +199,16 @@ def publish_assets(source: Path, root: Path) -> None:
         temporary = root / f".{target}.new"
         # Exclusive creation: a pre-planted link at this path is never followed.
         descriptor = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-        with os.fdopen(descriptor, "wb") as stream, (source / name).open("rb") as asset:
-            os.fchmod(stream.fileno(), mode)
-            shutil.copyfileobj(asset, stream)
-        temporary.replace(root / target)
+        try:
+            with os.fdopen(descriptor, "wb") as stream, (source / name).open("rb") as asset:
+                os.fchmod(stream.fileno(), mode)
+                shutil.copyfileobj(asset, stream)
+            temporary.replace(root / target)
+        except BaseException:
+            # Cleanup must not replace the original publication failure.
+            with suppress(OSError):
+                temporary.unlink(missing_ok=True)
+            raise
 
 
 def _release_preflight(arguments: argparse.Namespace) -> tuple[str, bool]:

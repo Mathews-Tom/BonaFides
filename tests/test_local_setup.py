@@ -1,12 +1,17 @@
 # SPDX-License-Identifier: MIT OR Apache-2.0
 from __future__ import annotations
 
+import errno
 import json
+import os
+import shutil
 import stat
 from pathlib import Path
+from typing import BinaryIO
 
 import pytest
 
+from bonafides import local_setup
 from bonafides.local_setup import SECRET_NAMES, main
 
 HOST_ROOT = Path("/srv/host/bonafides")
@@ -95,6 +100,59 @@ def test_release_rerun_reuses_credentials_and_replaces_only_image_owned_assets(
     assert (root / "compose.yaml").read_text().endswith("# build two\n")
 
 
+@pytest.mark.parametrize("operation", ["copy", "chmod", "replace"])
+def test_release_publication_failure_preserves_install_and_allows_retry(
+    root: Path,
+    assets: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    operation: str,
+) -> None:
+    assert install(root, assets) == 0
+    before = snapshot(root)
+    credentials = snapshot(root / "secrets")
+    environment = (root / ".env").read_bytes()
+    (assets / "compose.release.yaml").write_text("services: {}\n# build two\n")
+    failure = OSError(errno.ENOSPC, "publication storage exhausted")
+
+    with monkeypatch.context() as patch:
+        if operation == "copy":
+
+            def fail_copy(asset: BinaryIO, stream: BinaryIO) -> None:
+                stream.write(asset.read(8))
+                stream.flush()
+                raise failure
+
+            patch.setattr(shutil, "copyfileobj", fail_copy)
+        elif operation == "chmod":
+
+            def fail_chmod(descriptor: int, mode: int) -> None:
+                raise failure
+
+            patch.setattr(os, "fchmod", fail_chmod)
+        else:
+            replace = Path.replace
+
+            def fail_replace(path: Path, target: Path) -> Path:
+                if path == root / ".compose.yaml.new":
+                    raise failure
+                return replace(path, target)
+
+            patch.setattr(Path, "replace", fail_replace)
+
+        with pytest.raises(OSError) as raised:
+            local_setup.publish_assets(assets, root)
+        assert raised.value is failure
+
+    assert snapshot(root) == before
+    assert not (root / ".compose.yaml.new").exists()
+
+    assert install(root, assets) == 0
+    assert (root / "compose.yaml").read_bytes() == (assets / "compose.release.yaml").read_bytes()
+    assert snapshot(root / "secrets") == credentials
+    assert (root / ".env").read_bytes() == environment
+    assert install(root, assets, "--check", "--validate-installed") == 0
+
+
 @pytest.mark.parametrize(
     "damage", ["missing_secret", "missing_environment", "loose_mode", "wrong_dsn"]
 )
@@ -179,6 +237,27 @@ def test_release_publish_never_follows_a_planted_link_at_the_temporary_path(
     assert (root / ".compose.yaml.new").is_symlink()
     assert not (root / "secrets").exists()
     assert not (root / ".env").exists()
+
+
+@pytest.mark.parametrize("linked", [False, True])
+def test_asset_publication_preserves_a_preplanted_temporary_path_on_exclusive_open_failure(
+    root: Path, assets: Path, tmp_path: Path, linked: bool
+) -> None:
+    victim = tmp_path / "victim"
+    victim.write_text("keep")
+    temporary = root / ".compose.yaml.new"
+    if linked:
+        temporary.symlink_to(victim)
+    else:
+        temporary.write_text("unrelated")
+    before = snapshot(root)
+
+    with pytest.raises(FileExistsError):
+        local_setup.publish_assets(assets, root)
+
+    assert snapshot(root) == before
+    assert temporary.is_symlink() is linked
+    assert victim.read_text() == "keep"
 
 
 def test_release_check_is_read_only_for_new_and_retained_installs(root: Path, assets: Path) -> None:
