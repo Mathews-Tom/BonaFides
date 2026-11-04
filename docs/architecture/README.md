@@ -2,6 +2,23 @@
 
 BonaFides's current implementation is an architecture proof, not the planned private alpha product. Its public runtime inputs are tracked source, locks, reviewed migrations and synthetic fixtures; ignored `.docs/` material is neither a build input nor an operational prerequisite.
 
+## In plain terms
+
+BonaFides runs on one computer as a small group of Docker containers that share one application image but have very different permissions:
+
+| Container | Job | Can reach |
+|---|---|---|
+| `ingress` | Passes browser traffic from `127.0.0.1` to the API, unchanged. | The API only. |
+| `api` | Serves the web interface and handles every request. | The database. |
+| `worker` | Runs durable background tasks: imports, generation, PDF publication, job-board reads. | The database and the `source-egress` relay. |
+| `lifecycle` | Runs owner-data exports, replacement and erasure. | The database. |
+| `parser` | Reads uploaded résumés. | Nothing: no network, database, keys or stored files. |
+| `renderer` | Turns approved documents into PDFs. | Nothing: no network, database, keys or stored files. |
+| `source-egress` | Makes the single allowed Greenhouse job-list request. | The internet, but no database, keys or files. |
+| `db` | PostgreSQL 18, holding all state and the durable task queue. | Nothing outside its private network. |
+
+One-shot `prepare` and `migrate` helpers set up secrets and apply database migrations before the long-running services start. The rest of this document records the decisions and limits behind these boundaries. The [user guide](../user-guide/README.md) explains the same system from a user's point of view, and the [developer guide](../development/README.md) holds the operating and verification commands.
+
 ## Components and persistence
 
 - Python **3.12.15**, FastAPI/Pydantic, synchronous SQLAlchemy Core connections, psycopg using **system libpq**, Alembic and PostgreSQL **18.6**. No Redis or external broker.
