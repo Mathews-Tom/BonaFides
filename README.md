@@ -14,23 +14,48 @@ The recording is the real interface on a release-image installation with synthet
 4. **Review the exact revision, export the PDF.** Review is bound to one revision and its digest; a changed revision needs a new review.
 5. **Track the application.** Stage changes, notes and follow-ups are manual records.
 
-## Try it in minutes
+## Install from source
 
-An operator needs only a shell and Docker Compose v2: no checkout, Python or uv. Load the versioned application image locally (the installer never pulls it), then extract and run the installer from that same image:
-
-```sh
-docker load --input bonafides-0.1.0.tar   # or any other way of making the image local
-docker run --rm --pull never --network none --entrypoint cat bonafides:0.1.0 /app/deploy/install.sh > install.sh
-sh install.sh --dir ~/bonafides bonafides:0.1.0
-```
-
-Open the printed sign-in URL and create the owner with the token in `~/bonafides/secrets/bootstrap_token`. To see the workflow with synthetic data, load the demo profile into the new, empty owner profile:
+Start with **Git and a working local Docker runtime**: Docker Desktop on macOS, or Docker Engine on Linux, with Compose v2 and Buildx. Run Docker on the same machine as the checkout and browser; remote Docker contexts are unsupported because bind-mounted paths, port checks and `localhost` URLs refer to the daemon host. Start Docker before running setup. The installer uses the Docker server's native Linux arm64 or amd64 platform; it does not install Docker or change its context. No host Python, uv or Node installation is needed.
 
 ```sh
-BONAFIDES_IMAGE=bonafides:0.1.0 docker compose --project-directory ~/bonafides exec api bonafides demo load
+git clone https://github.com/Mathews-Tom/BonaFides.git
+cd BonaFides
+sh install.sh
+sh start.sh
 ```
 
-`demo load` ships in images built from this change onward (see Unreleased in the [changelog](CHANGELOG.md)); an older `0.1.0` image lacks it. It needs the owner to exist first and the profile, evidence and claims to be empty. It loads two synthetic claims with their evidence, repeats as a no-op, and refuses without writing anything when the profile holds your own data or any edit, reclassification or archive of the demo data. Ordinary startup never creates demo data, an owner or a model route.
+Already have the checkout? Run `sh install.sh`, then `sh start.sh` from its root. Install and start never prompt. A fresh installation defaults to `~/bonafides`, loopback port `8000` and Compose project `bonafides`; reinstall uses the saved settings and image. Installation builds the application image locally when needed and prepares private credentials and management files, ending **prepared, not running**. Start uses the saved settings, runs preparation and migrations, and waits for healthy services before printing the sign-in URL. It does not open a browser unless you run `sh start.sh --open-browser`. Start, stop and uninstall require a successfully completed installation.
+
+For a separate fresh installation, explicitly choose its directory, free port and unique project:
+
+```sh
+sh install.sh --dir "$HOME/bonafides-other" --port 8001 --project bonafides-other
+sh start.sh --dir "$HOME/bonafides-other"
+```
+
+`--image IMAGE` selects an already-loaded native application image; `--build` rebuilds the current checkout instead of reusing a saved image. These two flags cannot be combined. An existing installation's project and port cannot be changed with flags. Conflicts fail with guidance to choose settings using `--dir`, `--port` and `--project`; other installations and occupied ports are never stopped or adopted.
+
+Source acquisition and the first build are preparation, not a measured “under ten minutes” install. Docker may download pinned base images and dependencies; the application image is never pulled or published. There is currently no published application-image archive to download.
+
+After start, create the owner at the printed URL using the bootstrap token, a login name and a strong 15–128-character password. Start prints a retrieval command, never the token itself. Run that command only in a private local terminal; for the default directory it is:
+
+```sh
+cat "$HOME/bonafides/secrets/bootstrap_token"
+```
+
+Use your chosen directory instead if it differs. Never capture the token in logs, CI or screenshots. The ownerless setup window expires after 15 minutes; run `sh start.sh` again (with `--dir` for a custom directory) to renew it without reinstalling or losing data. Once the owner is created, sign in normally with the owner's password; the bootstrap token is no longer used. Installation and startup never create an owner, demo profile or model route automatically.
+
+To see the workflow with synthetic data, load the demo profile after creating the owner. For the default installation directory, use the saved local image identity:
+
+```sh
+BONAFIDES_IMAGE="$(cat "$HOME/bonafides/.installer-image")" \
+  docker compose --project-directory "$HOME/bonafides" \
+  --env-file "$HOME/bonafides/.env" -f "$HOME/bonafides/compose.yaml" \
+  exec api bonafides demo load
+```
+
+Use your chosen directory in all paths if it differs. `demo load` needs the owner to exist first and the profile, evidence and claims to be empty. It loads two synthetic claims with their evidence, repeats as a no-op, and refuses without writing anything when the profile holds your own data or any edit, reclassification or archive of the demo data. Ordinary startup never creates demo data, an owner or a model route.
 
 Tailored generation needs a model route that you authorize explicitly. Without one, the base résumé, review, PDF export and tracking all work. [`tools/core_loop_proof.py`](tools/core_loop_proof.py) runs this exact path on the release image in production mode with a deterministic fixture model; see the [development guide](docs/development/README.md#core-loop-proof-and-workflow-recording).
 
@@ -81,9 +106,49 @@ Do not capture that command's output in CI, logs or screenshots. Setup creates p
 
 The benchmark button loads the synthetic **SYN-CORE** evidence fixture and enables normal/slow/poison/staging-pause workflows. These are deterministic architecture exercises, not an AI provider or measured model benchmark. Omit `--benchmark` for production-mode endpoint refusal; architecture proof still does not become a production-ready application.
 
-## Released-image installer details
+## Start, stop, reinstall and uninstall
 
-The installer command in [Try it in minutes](#try-it-in-minutes) is the whole install. It generates private host-owned credentials under `~/bonafides/secrets`, starts the stack, and prints the sign-in URL and the secret path, never the bootstrap token. Read the token locally from `~/bonafides/secrets/bootstrap_token` to create the owner. Rerun the same command to repair or restart; run it with a different local image of the same version to swap images. A complete credential set is reused unchanged, a partial or invalid one is refused with guidance and never deleted or rotated, volumes are kept, and bootstrap is initialized only while no owner exists. See [Release images](docs/development/README.md#release-images).
+From the checkout, management commands use the saved installation settings:
+
+```sh
+sh start.sh
+sh stop.sh
+sh uninstall.sh
+```
+
+`start.sh` uses the saved local image without rebuilding or resetting credentials. `stop.sh` stops only this installation's containers and preserves containers, volumes, configuration and keys. Use `--dir "/your/custom/path"` on each command only if you chose a nondefault installation directory; project and port come from saved settings.
+
+Copies of `start.sh`, `stop.sh`, `uninstall.sh` and their shared helper are also installed in the installation directory. They default to that directory, so you can manage an installation without the source checkout:
+
+```sh
+sh "$HOME/bonafides/start.sh"
+sh "$HOME/bonafides/stop.sh"
+sh "$HOME/bonafides/uninstall.sh"
+```
+
+Normal uninstall asks for confirmation before removing only the target installation's containers and networks. It **keeps data volumes, configuration, keys and management scripts**. Reinstall, then start, to use the retained data with the same owner. `--yes` skips only the normal uninstall confirmation. Purge requires separate consent and deletes only owned managed volumes and files:
+
+```sh
+# Prompts you to type the saved project name.
+sh uninstall.sh --purge
+# Unattended: both normal removal and purge consent are explicit.
+sh uninstall.sh --yes --purge --confirm-purge bonafides
+```
+
+Replace `bonafides` with the exact saved project name. `--yes` alone never authorizes purge. Neither uninstall mode removes shared images, Docker, the source checkout, unrelated files or external backups.
+
+Installation requires a stopped target: it never stops or implicitly restarts a running installation. To reinstall the default installation with its saved image, run `sh stop.sh`, `sh install.sh`, then `sh start.sh`. Reruns reuse the saved project, port and immutable local image identity; they do not rebuild just because the checkout changed. Choose `sh install.sh --build` to build and install the current checkout deliberately, or `sh install.sh --image bonafides:local` for an already-loaded native application image. These options are mutually exclusive. No application image is pulled.
+
+Installation and startup also run unattended with the same defaults and no consent flag:
+
+```sh
+sh install.sh
+sh start.sh
+```
+
+A separate installation needs a different directory, free port and unique project; an existing installation's saved project and port cannot be changed by rerunning installation. Conflicts fail with flag guidance rather than prompting or stopping/adopting resources. A complete credential set is reused unchanged; a partial or invalid set is refused and never deleted or rotated. Keep `secrets/` private and escrow the keyring separately.
+
+Advanced operators with an already-loaded image can use the image-only [`deploy/install.sh` path](docs/development/README.md#install-from-a-local-image), followed by the installed `start.sh`; it is not a published-image download service. See the [noninteractive installation details](docs/development/README.md#noninteractive-application-installation) for build identity and timing boundaries.
 
 ## Boundaries and evidence
 

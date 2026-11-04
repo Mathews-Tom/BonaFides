@@ -1,83 +1,107 @@
 #!/bin/sh
 # SPDX-License-Identifier: MIT OR Apache-2.0
-# Install or update BonaFides from an application image that is already loaded locally.
-# Needs only a shell and Docker Compose: no source checkout, Python or uv on the host.
-# The application image is never pulled; credentials and volumes are never deleted or rotated.
+# Prepare an installation from a locally loaded image. Never start or stop application services.
 set -eu
-
-usage() {
-  echo "usage: install.sh [--dir DIR] [--port PORT] [--project NAME] IMAGE" >&2
-  echo "       IMAGE must already be loaded (docker load); BONAFIDES_IMAGE may supply it." >&2
-  exit 2
-}
-fail() {
-  echo "install refused: $*" >&2
-  exit 1
-}
-
+action=install
+script_dir=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd -P)
+. "$script_dir/lifecycle.sh"
+usage() { fail "usage: install.sh [--check] [--dir DIR] [--port PORT] [--project NAME] IMAGE | --contract"; }
 image=${BONAFIDES_IMAGE:-}
 dir=${BONAFIDES_INSTALL_DIR:-}
 port=8000
 project=bonafides
+port_set=no
+project_set=no
+check=no
 while [ $# -gt 0 ]; do
   case $1 in
+    --contract) printf 'bonafides-lifecycle-1\n'; exit 0 ;;
+    --check) check=yes; shift ;;
     --dir) [ $# -ge 2 ] || usage; dir=$2; shift 2 ;;
-    --port) [ $# -ge 2 ] || usage; port=$2; shift 2 ;;
-    --project) [ $# -ge 2 ] || usage; project=$2; shift 2 ;;
+    --port) [ $# -ge 2 ] || usage; port=$2; port_set=yes; shift 2 ;;
+    --project) [ $# -ge 2 ] || usage; project=$2; project_set=yes; shift 2 ;;
     -*) usage ;;
-    *) image=$1; shift ;;
+    *) [ -z "${image_argument:-}" ] || usage; image=$1; image_argument=yes; shift ;;
   esac
 done
-[ -n "$image" ] || usage
+valid_image || usage
+requested_image=$image
 [ -n "$dir" ] || dir=${HOME:?set HOME or pass --dir}/bonafides
-# Ambient settings must not override the installed configuration.
-for name in $(env | sed -n 's/=.*//p' | grep -E '^(BONAFIDES|COMPOSE)_' || true); do
-  unset "$name"
-done
-
-command -v docker >/dev/null 2>&1 || fail "docker is required"
+valid_port || fail "port must be an integer from 1024 through 65535"
+# Normalize only validated input, before load_saved replaces the requested port.
+port=$(printf '%s' "$port" | sed 's/^0*//')
+requested_project=$project
+requested_port=$port
+clean_environment
+dir=$(canonical_directory "$dir")
+managed=no
+if [ -e "$dir/.installer-state" ] || [ -L "$dir/.installer-state" ]; then
+  load_saved
+  [ "$project_set" = no ] || [ "$project" = "$requested_project" ] || fail "saved project differs; use the original project"
+  [ "$port_set" = no ] || [ "$port" = "$requested_port" ] || fail "saved port differs; use the original port"
+  managed=yes
+elif [ -e "$dir/.env" ] || [ -L "$dir/.env" ] || [ -e "$dir/secrets" ] || [ -L "$dir/secrets" ]; then
+  fail "existing configuration has no lifecycle ownership metadata; preserve it and use its original management procedure, or choose a separate empty installation"
+fi
+image=$requested_image
+valid_project || fail "project must be 3–48 lowercase letters/digits/hyphens, starting with a letter"
+valid_port || fail "port must be an integer from 1024 through 65535"
+docker_ready
 docker compose version >/dev/null 2>&1 || fail "Docker Compose v2 is required"
-docker image inspect "$image" >/dev/null 2>&1 ||
-  fail "image $image is not loaded locally; load it with docker load (this installer never pulls it)"
-
-started=$(date +%s)
-case $dir in /*) ;; *) dir=$(pwd)/$dir ;; esac
-# Directories on the path must stay traversable: the database container reads init-db.sh from here.
-[ -d "$dir" ] || { mkdir -p "$dir" && chmod 755 "$dir"; }
-dir=$(cd "$dir" && pwd -P)
-
-# Credentials and assets are written by the image's own module as the invoking user, so every file
-# is host-owned and private. A partial or invalid state is refused with guidance and left untouched.
-state=$(docker run --rm --pull never --network none --read-only --cap-drop ALL \
-  --security-opt no-new-privileges:true --user "$(id -u):$(id -g)" \
-  --mount "type=bind,source=$dir,target=/install" --entrypoint python "$image" \
-  -m bonafides.local_setup --release-root /install --host-root "$dir" \
-  --project "$project" --port "$port") ||
-  fail "credential setup was refused above; no credential was deleted or rotated"
-
-port=$(sed -n 's/^BONAFIDES_PORT=//p' "$dir/.env")
-BONAFIDES_IMAGE=$image
-export BONAFIDES_IMAGE
-compose() {
-  docker compose --project-directory "$dir" --env-file "$dir/.env" -f "$dir/compose.yaml" "$@"
+image=$(docker image inspect --format '{{.Id}}' "$image") || fail "application image is not loaded; load it with docker load (this installer never pulls it)"
+valid_image || fail "Docker returned an invalid image identity"
+work=$(mktemp -d)
+trap 'rm -rf -- "$work"' EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM HUP
+docker run --rm --pull never --network none --read-only --cap-drop ALL \
+  --security-opt no-new-privileges:true --entrypoint cat "$image" \
+  /app/deploy/compose.release.yaml > "$work/compose.yaml" || fail "image has no release Compose asset"
+# Resolve the image's actual physical resource names without reading or writing target config.
+resources=$(BONAFIDES_IMAGE=$image BONAFIDES_SECRET_DIR=$dir/secrets docker compose \
+  --project-name "$project" --project-directory "$work" --env-file /dev/null \
+  -f "$work/compose.yaml" config --format json | \
+  docker run --rm --pull never --interactive --network none --read-only --cap-drop ALL \
+    --security-opt no-new-privileges:true --entrypoint python "$image" -c '
+import json, sys
+config = json.load(sys.stdin)
+for kind, key in (("volume", "volumes"), ("network", "networks")):
+    for logical, resource in sorted(config[key].items()):
+        if resource.get("external"):
+            raise SystemExit("external resources cannot be managed by this installer")
+        print(kind, logical, resource["name"])
+') || fail "cannot resolve managed resources from the image"
+validate_resources
+# Retained metadata must still describe this image's exact managed resource set.
+if [ "$managed" = yes ]; then
+  saved_resources=$(sed '1,3d' "$dir/.installer-state")
+  [ "$resources" = "$saved_resources" ] || fail "image changes the managed resource contract; no installation state was changed"
+fi
+check_ownership
+[ "$running" = no ] || fail "target is running; use its stop.sh before installing (install never stops it)"
+setup() {
+  docker run --rm --pull never --network none --read-only --cap-drop ALL \
+    --security-opt no-new-privileges:true --user "$(id -u):$(id -g)" \
+    "$@" --entrypoint python "$image" -m bonafides.local_setup \
+    --release-root /install --host-root "$dir" --project "$project" --port "$port" \
+    --image "$image" --resource-map "$resources" ${setup_check:+--check}
 }
-
-# Stopping first keeps the one-shot prepare and migrate services fresh and never races a running
-# database; named volumes (database, blobs, secrets) are kept.
-api=$(compose ps -q api 2>/dev/null | head -n 1 || true)
-previous=
-[ -z "$api" ] || previous=$(docker inspect --format '{{.Image}}' "$api" 2>/dev/null || true)
-compose down --remove-orphans
-compose up -d --wait --wait-timeout 420 || {
-  [ -z "$previous" ] || echo "previous image id (to return to it, rerun with it as IMAGE): $previous" >&2
-  fail "services did not become healthy; inspect: BONAFIDES_IMAGE=$image docker compose --project-directory $dir logs"
-}
-bootstrap=$(compose exec -T api python -m bonafides init-bootstrap-if-ownerless) ||
-  fail "bootstrap initialization failed; the installation is running but sign-in is not set up"
-
-echo "BonaFides is ready in $(($(date +%s) - started)) s (credentials $state)."
-echo "Sign in: http://localhost:$port"
-echo "$bootstrap"
-echo "Secrets (keep private; escrow the keyring separately): $dir/secrets"
-echo "Creating the owner (only while none exists) needs the token in: $dir/secrets/bootstrap_token"
-echo "To manage later: BONAFIDES_IMAGE=$image docker compose --project-directory $dir ..."
+setup_check=yes
+if [ -d "$dir" ]; then
+  setup --mount "type=bind,source=$dir,target=/install,readonly" >/dev/null || fail "configuration preflight was refused; nothing was changed"
+else
+  setup >/dev/null || fail "configuration preflight was refused; nothing was changed"
+fi
+if [ "$check" = yes ]; then
+  printf 'Installation preflight passed for %s in %s.\n' "$project" "$dir"
+  exit 0
+fi
+[ -d "$dir" ] || { mkdir -p -- "$dir" && chmod 755 "$dir"; }
+# Recheck after read-only preflight, before creating credentials or replacing assets.
+check_ownership
+[ "$running" = no ] || fail "target started during preflight; stop it deliberately before installing"
+setup_check=
+state=$(setup --mount "type=bind,source=$dir,target=/install") || fail "credential or asset setup was refused; no credential was deleted or rotated"
+printf 'BonaFides installed in %s (credentials %s). No application service was started.\n' "$dir" "$state"
+printf 'Secrets (keep private; escrow the keyring separately): %s/secrets\n' "$dir"
+printf 'Start: %s/start.sh\nStop: %s/stop.sh\nUninstall (retains data): %s/uninstall.sh\n' "$dir" "$dir" "$dir"

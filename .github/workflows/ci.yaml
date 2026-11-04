@@ -224,17 +224,17 @@ jobs:
             --project bonafides-proof-ci-${{ matrix.architecture }} \
             --confirm-disposable bonafides-proof-ci-${{ matrix.architecture }} \
             --platform '${{ matrix.platform }}' --port 18000 --skip-build
-      - name: Standalone install to sign-in, rerun and same-version image swap
+      - name: Separate install and start to SPA shell, stopped reinstall and image swap
         run: |
           uv run --frozen python -m tools.install_proof \
             --project bonafides-proof-install-${{ matrix.architecture }} \
             --confirm-disposable bonafides-proof-install-${{ matrix.architecture }} \
             --platform '${{ matrix.platform }}' --port 18100 --image bonafides:local
-          jq -r '.checks | to_entries[] | "| \(.key) | \(.value.seconds // .value.install_to_sign_in_seconds) s |"' \
+          jq -r '.checks | to_entries[] | "| \(.key) | \(.value.install_and_start_seconds // .value.install_and_start_to_spa_shell_seconds) s |"' \
             ".local/bonafides-proof-install-${{ matrix.architecture }}/receipt.json" > "$RUNNER_TEMP/install-seconds.md"
           {
-            echo '### Installer receipt (${{ matrix.platform }}, limit 600 s)'
-            echo '| Check | Install to sign-in |'
+            echo '### Install and start receipt (${{ matrix.platform }}, limit 600 s)'
+            echo '| Check | Install and start to served SPA shell |'
             echo '| --- | --- |'
             cat "$RUNNER_TEMP/install-seconds.md"
           } >> "$GITHUB_STEP_SUMMARY"

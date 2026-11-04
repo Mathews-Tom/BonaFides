@@ -65,6 +65,7 @@
     "tests/test_claim_coverage.py",
     "tests/test_config.py",
     "tests/test_document_generation.py",
+    "tests/test_guided_install.py",
     "tests/test_imports.py",
     "tests/test_inventory.py",
     "tests/test_local_model.py",

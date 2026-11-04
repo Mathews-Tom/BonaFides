@@ -1,9 +1,9 @@
 # SPDX-License-Identifier: MIT OR Apache-2.0
 """Record the README workflow GIF from the real UI on a disposable release-image installation.
 
-The installation is built exactly as in `tools.core_loop_proof` (production mode, owner setup,
-`bonafides demo load`, explicit fixture model). Sign-in happens before recording so no credential
-reaches a frame. Captions are an overlay on the live page; every frame is the served application
+The installation is prepared then explicitly started as in `tools.core_loop_proof` (production mode,
+owner setup, `bonafides demo load`, explicit fixture model). Sign-in happens before recording so no
+credential reaches a frame. Captions are an overlay on the live page; every frame is the served application
 with synthetic data. The recording is a development asset: CI never runs this and never uploads it.
 """
 
@@ -130,8 +130,8 @@ class DemoCapture(CoreLoopProof):
 
     def run_capture(self, work: Path, output: Path) -> None:
         require_unused_namespace(self.project)
-        self.extract_script(self.image)
-        self.install(self.image)
+        self.extract_scripts(self.image)
+        self.install_and_start(self.image)
         self.seed_demo()
         self.start_stub()
         self.scenario("valid")

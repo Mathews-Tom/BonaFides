@@ -278,6 +278,86 @@ A committed purge journal resumes only its remaining verified filesystem removal
 Current schema-23 verification comprises 56 execution-guard/process-death/recovery/database/control/generation cases and 218 additional authentication, workflow, portable-data, provider, worker, spool and encrypted-archive consumer cases. Actual subprocess death and the actual maintenance CLI, PostgreSQL 18 role boundaries and both sealed daemons are exercised; this is not full current-image browser, clean-deployment disaster recovery, off-host custody or human acceptance. Earlier failed migration and test-isolation receipts remain retained alongside the repaired runs.
 
 
+## Noninteractive application installation
+
+For an application installation, use the four root scripts from a complete Git source checkout:
+
+```sh
+git clone https://github.com/Mathews-Tom/BonaFides.git
+cd BonaFides
+sh install.sh
+sh start.sh
+```
+
+This path needs a shell, Git for source/build identity, and an already-running Docker runtime with Compose v2 and Buildx. Docker Desktop on macOS or Docker Engine on Linux must be able to build images and create private named volumes. The installer uses the Docker server's native `linux/arm64` or `linux/amd64` platform, not cross-platform emulation; platform support is not a claim that every platform's qualification has passed. It never installs Docker, changes Docker contexts or requires host Python, uv, Node or pnpm. The frozen host toolchain in the next section is for contributors and proof commands, not ordinary application setup.
+
+Install and start never prompt, whether or not a terminal is attached. A fresh installation defaults to `~/bonafides`, port `8000` and project `bonafides`; an existing installation reuses its saved settings and image. Use `--dir`, `--port` and `--project` to select a separate fresh installation. A conflicting project, occupied port or running target fails with flag guidance; setup never automatically stops or adopts resources or asks for a replacement value. Installation builds a native local application image when needed, then extracts that image's `deploy/install.sh` and sibling `deploy/lifecycle.sh` into one private working directory. The image installer must report `bonafides-lifecycle-1` via `--contract`; older combined install-and-start images are refused, not run as a fallback. Its read-only `--check` validates the target, project and physical-volume ownership before installation. Docker may download pinned base images and dependencies, but the application image is never pulled or published by setup. Git supplies the revision label, with `-dirty` appended for checkout changes. No image tag or revision argument is required from the operator.
+
+Installation prepares private host-owned credentials and assets, saves the immutable local image identity in `.installer-image`, and ends **prepared, not running**. It requires the target to be stopped and never stops or restarts it implicitly. The saved `.env` supplies project and port. A complete credential set is reused unchanged; a partial or invalid set is refused, not deleted or rotated. Keep `secrets/` private and escrow the keyring separately.
+
+Interrupted or partial lifecycle state is also refused: missing `.installer-state` or `.installer-image`, or an unexpected asset staging file, is not authority to adopt an installation or regenerate credentials. Preserve the failed directory and any data; do not forge metadata, replace keys or force cleanup. For an interrupted first installation, retry in a separate empty directory with a free port and unique project. If the installation already contains owner data, use a validated backup and the documented isolated-target recovery flow rather than reconstructing ownership from incomplete files.
+
+`sh start.sh` uses the saved settings and image, runs preparation and migrations, initializes bootstrap only while no owner exists, and waits for service health. It neither rebuilds source nor resets credentials; an already healthy installation is handled non-destructively. Start prints `http://localhost:<port>` and a command to retrieve the private `secrets/bootstrap_token`, never the token itself. By default it does not open a browser; `sh start.sh --open-browser` explicitly requests browser opening without a prompt.
+
+Run the printed retrieval command deliberately in a private local terminal; for the default installation it is:
+
+```sh
+cat "$HOME/bonafides/secrets/bootstrap_token"
+```
+
+Use your chosen directory instead if it differs. Enter the token with a login name and a strong 15–128-character password to create the owner. Never capture the token in logs, CI or screenshots. The ownerless setup window lasts 15 minutes; run `sh start.sh` again (with `--dir` for a custom directory) after expiry to renew it without reinstalling or losing data. Once the owner exists, sign in normally with the owner's password instead of the bootstrap token. Installation and startup never seed an owner, demo profile or model route.
+
+Manage the default installation from the checkout without repeating its settings:
+
+```sh
+sh stop.sh
+sh start.sh
+sh uninstall.sh
+```
+
+Use `--dir "/your/custom/path"` only for a nondefault installation directory. Start, stop and uninstall read project and port from saved settings. Installation also places `start.sh`, `stop.sh`, `uninstall.sh` and their shared `lifecycle.sh` helper inside the installation directory. Those copies default to their own directory and work without the source checkout, for example `sh "$HOME/bonafides/stop.sh"`. Stop affects only the target containers and preserves the containers, volumes, configuration and keys.
+
+Normal uninstall confirms removal of the target containers and networks, retaining data volumes, configuration, keys and management scripts. Reinstall and start with the retained settings to resume with the same owner. `--yes` supplies only normal runtime-removal consent. Purge additionally requires the exact saved project, either typed at its separate prompt or supplied with `--confirm-purge PROJECT`:
+
+```sh
+# Interactive: normal removal confirmation, then type the saved project.
+sh uninstall.sh --purge
+# Unattended: two separate consents; use your exact saved project.
+sh uninstall.sh --yes --purge --confirm-purge bonafides
+```
+
+`--yes` alone is never purge consent. All ownership checks, including physical-volume collisions and container working-directory binding, happen before destructive action. Purge removes only owned managed volumes and files, never arbitrary installation-directory contents. Neither uninstall mode deletes shared images, Docker, the source checkout, unrelated files or external backups. Stop and uninstall retain enough management metadata to operate even if the saved application image has been removed.
+
+To reinstall with the saved image, explicitly stop, install and start:
+
+```sh
+sh stop.sh
+sh install.sh
+sh start.sh
+```
+
+The default reinstall reuses `.installer-image` even if source changed. If the saved image was removed, deliberately rebuild or choose an already-loaded image while the target is stopped:
+
+```sh
+# Build and install the current checkout; still does not start services.
+sh install.sh --build
+# Instead, install an already-loaded native application image.
+sh install.sh --image bonafides:local
+# After either installation:
+sh start.sh
+```
+
+`--build` and `--image` cannot be combined. `--image` needs the root script but does not require Git or Buildx for a build. An existing installation's project and port cannot be changed by supplying different flags.
+
+No consent flag is needed for installation. To select nondefault settings for a fresh installation, keep startup separate and use the same directory:
+
+```sh
+sh install.sh --dir "$HOME/bonafides-other" --port 8001 --project bonafides-other
+sh start.sh --dir "$HOME/bonafides-other"
+```
+
+A separate installation needs its own directory, free port and unique project. No published application-image archive is currently available: acquiring the source and building its image are prerequisites, not part of the timed loaded-image proof below. That proof times **install plus start until the static SPA shell is served, with the application image already local**. Its receipt key is `fresh_install_and_start_serves_spa_shell`; it does not verify that the browser rendered the owner form or measure human interaction. Do not interpret its 600-second limit as a measured clean-machine or source-build setup time or completed human acceptance. Historical guided-lifecycle receipts do not verify this noninteractive revision; require source-bound native CI evidence and a separately recorded owner walkthrough before claiming installation acceptance.
+
 ## Requirements and frozen installs
 
 Use Python **3.12.15**, uv **0.13.0**, Node **22.23.4**, pnpm **10.33.3**, Docker Engine/Desktop with Compose v2, and a current Chromium-capable Linux/macOS development host. The application images pin official multi-platform digests. Docker must be able to build/pull images and create ordinary private named volumes. No privileged container or Docker socket mount is needed by application services.
@@ -328,7 +408,7 @@ CI extracts the native Linux uv binary from `ghcr.io/astral-sh/uv:0.13.0@sha256:
 
 Public distribution of the application image remains blocked pending rights review. GitHub Actions artifacts in this public repository are publicly downloadable, so release artifacts upload only manifests, configs and index metadata: no image layers. Image layer bytes and the complete `docker save` archive never leave their native runner. No workflow logs in to a registry, pushes an image, or creates a tag or release, and no workflow holds the `packages` permission. The release candidate manifest and its non-production proof signature are described under [Gate controls and release candidate signature](#gate-controls-and-release-candidate-signature); production signing and attestations remain owner-pending.
 
-**Labels.** The `app` stage takes `VERSION`, `REVISION` and `SOURCE` build arguments and records them as `org.opencontainers.image.version`, `.revision` and `.source`, in the stage's last layer so a new commit never invalidates the dependency layers. CI passes `bonafides.__version__`, the built commit (`git rev-parse HEAD`; on a pull request that is GitHub's merge commit) and the repository URL. Local `docker build` and Compose builds leave them empty. Each full-tier arch asserts the three labels with `docker image inspect`, checks the version against the image's own `bonafides version`, and lists them in the job summary.
+**Labels.** The `app` stage takes `VERSION`, `REVISION` and `SOURCE` build arguments and records them as `org.opencontainers.image.version`, `.revision` and `.source`, in the stage's last layer so a new commit never invalidates the dependency layers. CI passes `bonafides.__version__`, the built commit (`git rev-parse HEAD`; on a pull request that is GitHub's merge commit) and the repository URL. Root `sh install.sh` builds supply the project version, Git revision (with `-dirty` for checkout changes) and repository URL automatically; plain `docker build` and Compose builds leave them empty unless supplied explicitly. Each full-tier arch asserts the three labels with `docker image inspect`, checks the version against the image's own `bonafides version`, and lists them in the job summary.
 
 **Two-platform index (dry run).** Each native full-tier runner extracts the exact image it scanned (`docker save`, an OCI image layout) and runs `python -m tools.release_index strip`: every layer's sha256 and size, the manifest/config, the image's `linux/<arch>` platform and release labels must verify before a metadata-only layout is written. Only `oci-layout`, `index.json`, the platform manifest and config are uploaded as `release-platform-<arch>` (kept three days). Docker attestation manifests and all layer blobs are excluded. An upload guard rejects layer blobs, unexpected files and layouts larger than 1 MiB.
 
@@ -372,14 +452,38 @@ docker image rm bonafides-proof-release:amd64 bonafides-proof-release:arm64
 
 ### Install from a local image
 
-`deploy/install.sh IMAGE` installs or updates from an application image that is already loaded locally; it never pulls that image (`docker run --pull never`, Compose `pull_policy: never`). The script ships in the image at `/app/deploy/install.sh` beside `compose.release.yaml` (installed as `compose.yaml`; images only, the same topology and isolation as `compose.yaml`, with the pinned database image) and `init-db.sh`. The host needs only a shell and Docker Compose.
+This is the **advanced, local-image-only path**; normal source-checkout setup uses [the noninteractive root scripts](#noninteractive-application-installation). `deploy/install.sh IMAGE` prepares or updates a stopped installation from an application image that is already loaded locally; it never starts services or pulls that image (`docker run --pull never`, Compose `pull_policy: never`). The image ships `/app/deploy/install.sh` and its required sibling `/app/deploy/lifecycle.sh`, the management scripts, `compose.release.yaml` (installed as `compose.yaml`; images only, the same topology and isolation as `compose.yaml`, with the pinned database image) and `init-db.sh`. The host needs only a shell and a working Docker runtime with Compose v2.
 
-1. The image's own `bonafides.local_setup` module (stdlib only, the single credential generator shared with development and the runtime proofs) runs once as the invoking user with the install directory mounted. It creates `secrets/` (0700) and `.env` with exclusive creation, preserving the absolute host secret path in `BONAFIDES_SECRET_DIR`, and replaces `compose.yaml` and `init-db.sh` atomically from the image.
-2. A complete, private, consistent credential set is reused unchanged. Any other state (a missing file, a loose mode, a mismatched DSN, a different project or port, only one of directory and `.env`) is refused with guidance naming files, before any service is touched; nothing is deleted or rotated.
-3. `docker compose down` (never `--volumes`) then `up --wait` runs the one-shot prepare and migrate services fresh, so stale one-shot containers and an image swap are handled the same way. Migrations are idempotent and the ledger is unchanged by a rerun.
-4. `bonafides init-bootstrap-if-ownerless` renews the 15-minute bootstrap verifier only while no owner exists; with an owner it changes nothing. The installer prints the secret path and sign-in URL, never the token.
+If you already have a trusted native application image tagged `bonafides:local`, extract both installer files into the same private directory without a source checkout:
 
-`uv run --frozen python -m tools.install_proof --project bonafides-proof-install --confirm-disposable bonafides-proof-install --platform linux/arm64 --image bonafides:local` proves this from a directory outside the checkout in production mode: it times install to sign-in (limit 600 s), creates an owner and profile data through the production API, reruns the installer, builds a second image of the same version with a different revision label, reruns the installer, and asserts the swapped image is the one running while credentials, owner data and the migration ledger are unchanged. The full-tier gate runs it on each native runner and uploads only `receipt.json`.
+```sh
+umask 077
+installer_dir="$(mktemp -d)"
+docker run --rm --pull never --network none --entrypoint cat bonafides:local \
+  /app/deploy/install.sh > "$installer_dir/install.sh"
+docker run --rm --pull never --network none --entrypoint cat bonafides:local \
+  /app/deploy/lifecycle.sh > "$installer_dir/lifecycle.sh"
+sh "$installer_dir/install.sh" --contract
+```
+
+Require exactly `bonafides-lifecycle-1` before proceeding; refuse an older image with no lifecycle contract rather than invoking its combined installer. Then preflight, install, and explicitly start:
+
+```sh
+sh "$installer_dir/install.sh" --check \
+  --dir "$HOME/bonafides" --port 8000 --project bonafides bonafides:local
+sh "$installer_dir/install.sh" \
+  --dir "$HOME/bonafides" --port 8000 --project bonafides bonafides:local
+sh "$HOME/bonafides/start.sh"
+```
+
+`--check` validates the target, project and physical-volume ownership without writing credentials or assets or starting services; a running target is refused. The tag above names your local image, not a registry download. A trusted archive you produced can be loaded with `docker load --input <local-archive>` first; no published downloadable archive is assumed. For reinstall, stop first, rerun the image installer with the same directory, project and port and the chosen local image, then start separately. Like the root entrypoint, this lower-level installer never prompts; unlike the root entrypoint, it requires the image argument instead of selecting an image from `.installer-image`.
+
+1. The image's own `bonafides.local_setup` module (stdlib only, the credential generator shared with development and runtime proofs) runs as the invoking user with the install directory mounted. It creates private `secrets/` and `.env`, preserving the absolute host secret path in `BONAFIDES_SECRET_DIR`, and installs the Compose, initialization and management assets. Installation saves `.installer-image` and managed-volume metadata but never starts application services.
+2. A complete, private, consistent credential set is reused unchanged. Invalid or partial credentials, mismatched saved project or port, foreign containers, and physically colliding foreign volumes are refused before changing runtime state; nothing is deleted or rotated.
+3. The installed `start.sh` uses the saved settings and local image for preparation, migrations, service startup and readiness. Migrations are idempotent; starting an already healthy target does not destructively reinstall it. The installed `stop.sh` stops only the target containers, keeping their state and all data.
+4. Start runs `bonafides init-bootstrap-if-ownerless`, renewing the 15-minute verifier only while no owner exists; with an owner it changes nothing. Start prints the sign-in URL, a private-terminal token retrieval command and expiry/renewal instructions, never the token. Rerunning start after ownerless setup expires needs no reinstall and loses no data; after owner creation, use normal password sign-in. Browser opening requires explicit `--open-browser`. Installed uninstall follows the retention and separately confirmed purge rules above, with no source checkout required.
+
+`uv run --frozen python -m tools.install_proof --project bonafides-proof-install --confirm-disposable bonafides-proof-install --platform linux/arm64 --image bonafides:local` exercises this from a directory outside the checkout in production mode: it times **install plus separate start after the application image is already loaded** (limit 600 s), creates an owner and profile data through the production API, stops before reinstalling, and starts explicitly after reinstall and a same-version image swap. It checks that the selected image runs while credentials, owner data and the migration ledger remain unchanged. Source acquisition and application-image builds are outside that timer; this is not a guided-source-build timing result. The full-tier gate runs it on each native runner and uploads only `receipt.json`.
 
 ### Core-loop proof and workflow recording
 
