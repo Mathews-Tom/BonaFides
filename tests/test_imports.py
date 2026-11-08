@@ -1855,6 +1855,34 @@ def test_undated_entries_are_counted_once_however_many_lines_they_hold() -> None
 
 
 @pytest.mark.postgres
+def test_split_import_keeps_grounded_statements_across_excluded_contact_lines(
+    importing: ImportContext,
+) -> None:
+    source = (
+        "Experience\nPlatform Engineer | Fictional Freight | 2021 – 2023\n"
+        "mira@example.invalid\n- Maintained Linux services\n"
+    )
+    batch = importing.staged(source)
+    approved = importing.approve(batch)
+    assert approved.status_code == 202, approved.text
+    importing.run()
+    assert importing.batch(batch["id"])["state"] == "succeeded"
+    original = importing.profile()
+    claims = original["current_revision"]["claims"]
+    assert [item["rendering"] for item in claims] == [
+        "Platform Engineer | Fictional Freight | 2021 – 2023",
+        "Maintained Linux services",
+    ]
+    assert all(item["grounding_issue"] is None for item in claims)
+    repeated = importing.staged(source)
+    unchanged = importing.approve(repeated, _unchanged_review(repeated))
+    assert unchanged.status_code == 202, unchanged.text
+    importing.run()
+    assert importing.batch(repeated["id"])["state"] == "succeeded"
+    assert importing.profile() == original
+
+
+@pytest.mark.postgres
 def test_reviewed_literal_import_refuses_inner_word_claim_without_publishing(
     importing: ImportContext,
 ) -> None:

@@ -87,6 +87,8 @@ At least one supporting link must use **Direct source (owner supplied)** or **Ow
 
 An unsupported single-statement entry is refused when you select **Save entry revision** or approve it in a résumé import. The error names the entry, and a refusal does not replace your saved profile.
 
+Unedited Work experience and Projects imports are checked statement by statement. Excluded contact details between source statements do not prevent importing the supported statements.
+
 If you're backing a fact with your own word, write an owner-attestation source that includes the wording. For the entry "Maintained Linux batch processing runbooks", a source reading "Maintained Linux batch processing runbooks for the operations team, 2020–2023." works. A source reading "I looked after our Linux runbooks" doesn't, even though it means something similar.
 
 ### An older entry needs attention

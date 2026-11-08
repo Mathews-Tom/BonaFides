@@ -755,10 +755,27 @@ def _validate_review(
                 raise Problem(422, "import_identity_overwrite_required")
             identity_fields.add(field)
             continue
-        if not (
-            literal_grounded(decision.payload.text, original, original)
-            and contains_statement(decision.payload.text, batch["parsed_text"])
-        ):
+        entry = by_sources.get(frozenset(decision.source_ids))
+        split = (
+            _saved_statements(entry, decision.kind, decision.payload, saved)
+            if decision.action == "unchanged"
+            else []
+        )
+        statements = (
+            _statement_claims(entry, decision.kind, decision.payload)
+            if decision.action == "add" or split
+            else []
+        )
+        if statements:
+            grounded = all(
+                literal_grounded(excerpt, excerpt, batch["parsed_text"])
+                for _, excerpt in statements
+            )
+        else:
+            grounded = literal_grounded(
+                decision.payload.text, original, original
+            ) and contains_statement(decision.payload.text, batch["parsed_text"])
+        if not grounded:
             raise Problem(
                 422,
                 "literal_claim_not_grounded",
@@ -778,12 +795,6 @@ def _validate_review(
                 if claim.kind == decision.kind and claim.payload == decision.payload
             ]
             # An entry approved earlier as one claim per line is unchanged as that whole set.
-            split = _saved_statements(
-                by_sources.get(frozenset(decision.source_ids)),
-                decision.kind,
-                decision.payload,
-                saved,
-            )
             if exact != [decision.claim_id]:
                 targets = split
             if targets[:1] != [decision.claim_id]:

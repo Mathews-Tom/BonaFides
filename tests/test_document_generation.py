@@ -1877,6 +1877,38 @@ def test_base_rebuild_names_only_ungrounded_literals_without_mutating_history(
 
 
 @pytest.mark.postgres
+@pytest.mark.parametrize("has_omissions", [False, True])
+def test_queued_base_without_omission_metadata_preserves_grounding_boundary(
+    catalog: SourceContext, has_omissions: bool
+) -> None:
+    profile = _profile(catalog)
+    if has_omissions:
+        profile = _legacy_literal_profile(catalog, profile)
+    task = _queue_base(catalog, profile)
+    task = replace(
+        task, input={key: value for key, value in task.input.items() if key != "omitted_claims"}
+    )
+    Worker(catalog.runtime, replace(catalog.identity.settings, mode="production"))._execute(
+        task, Event()
+    )
+    workflow = catalog.workflow(task.id)
+    if has_omissions:
+        assert workflow["state"] == "permanent_failure"
+        assert workflow["last_error_code"] == "stale_document_context"
+        assert catalog.client.get("/api/v1/profile/base-resume").status_code == 404
+    else:
+        assert workflow["state"] == "succeeded", workflow
+        document = _document(catalog, workflow["result"]["document_id"])
+        assert document["current_revision"]["provenance_snapshot"]["omitted_claims"] == []
+        assert {
+            block["text"]
+            for section in document["current_revision"]["body"]["sections"]
+            for block in section["blocks"]
+        } == {item["printable_text"] for item in cast(list[dict[str, Any]], task.input["facts"])}
+    assert catalog.client.get("/api/v1/profile").json() == profile
+
+
+@pytest.mark.postgres
 def test_base_all_invalid_literals_fail_with_entry_names(catalog: SourceContext) -> None:
     empty = catalog.client.get("/api/v1/profile").json()
     profile = _legacy_literal_profile(catalog, empty)

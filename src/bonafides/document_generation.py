@@ -549,7 +549,10 @@ def check_context(conn: Connection, task: Claim, settings: Settings) -> None:
             UUID(str(task.input["profile_revision_id"])),
             str(task.input["template_version"]),
         )
-        if plan != {key: task.input.get(key) for key in plan}:
+        expected = {key: task.input.get(key) for key in plan}
+        if "omitted_claims" not in task.input and not plan["omitted_claims"]:
+            expected["omitted_claims"] = []
+        if plan != expected:
             raise Problem(409, "stale_document_context")
         return
     plan = generation_plan(

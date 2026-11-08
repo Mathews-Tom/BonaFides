@@ -150,7 +150,7 @@ def test_citation_does_not_support_invented_kubernetes_metric() -> None:
 @pytest.mark.postgres
 @pytest.mark.parametrize("publication", ["synthetic_stored_revision", "benchmark"])
 def test_stored_base_checker_blocks_literal_claim_substrings(
-    catalog: SourceContext, publication: str
+    catalog: SourceContext, publication: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Persist legacy inputs below admission so the later checker remains independently tested."""
     document = (
@@ -232,7 +232,8 @@ def test_stored_base_checker_blocks_literal_claim_substrings(
             ],
         },
     }
-    with catalog.runtime.transaction() as conn:
+    with monkeypatch.context() as patch, catalog.runtime.transaction() as conn:
+        patch.setattr(document_generation, "validation_issues", lambda *_args: [])
         document_generation.append_revision(
             conn,
             catalog.owner_id,
