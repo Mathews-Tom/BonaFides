@@ -78,16 +78,28 @@ BonaFides turns these into one English sentence and shows it under **Rendering (
 
 ### The one rule that matters most
 
-**An entry only counts as supported when its exact wording can be found in its source.** The source excerpt is how you show BonaFides where:
+**A single-statement entry must appear as a whole phrase in its pinned supporting source and excerpt.** The source excerpt shows BonaFides where:
 
-- **Most kinds** (skills, education, languages and so on): the source excerpt must be *exactly* the entry statement, and the source text must contain it word for word. For the entry `SQL`, the excerpt is `SQL`, and the source must include `SQL` somewhere in its text.
+- **Most kinds** (skills, education, languages and so on): copy a genuine passage from the selected source revision into **Source excerpt**. The passage and the full source must both contain the complete **Entry statement** as a whole phrase. The excerpt may include surrounding words. For example, `SQL` is supported by `Used SQL for reporting`, but not by `PostgreSQL` alone: part of a longer word is not a whole phrase.
 - **Work experience and Projects**: copy a passage word for word from the source text. It must contain the whole sentence shown under **Rendering (English)**.
 
-The link's support type must be **Direct source** or **Owner attestation**.
+At least one supporting link must use **Direct source (owner supplied)** or **Owner attestation (unverified)**. **Context only** never establishes support.
 
-This is how BonaFides keeps your documents honest. An entry that isn't supported this way is left out of your base résumé, and a tailored document that states it is flagged and can't be exported.
+An unsupported single-statement entry is refused when you select **Save entry revision** or approve it in a résumé import. The error names the entry, and a refusal does not replace your saved profile.
+
+Unedited Work experience and Projects imports are checked statement by statement. Excluded contact details between source statements do not prevent importing the supported statements.
 
 If you're backing a fact with your own word, write an owner-attestation source that includes the wording. For the entry "Maintained Linux batch processing runbooks", a source reading "Maintained Linux batch processing runbooks for the operations team, 2020–2023." works. A source reading "I looked after our Linux runbooks" doesn't, even though it means something similar.
+
+### An older entry needs attention
+
+An older unsupported single-statement entry shows **Needs attention: this statement is not present as a whole phrase in a pinned supporting source and excerpt.** The warning also says **The original saved entry is unchanged.** Opening the profile does not rewrite or delete it.
+
+Use **Edit … entry *N*** to correct the statement or choose a supporting **Evidence revision** and genuine **Source excerpt**, then select **Save entry revision**. Merely editing a source creates a new source revision; it does not update the entry's existing pin. Archiving a source does not repair that pin either.
+
+This warning differs from **Needs attention: this statement is still free text. Edit the entry to restructure it as a claim.** That separate message applies to older Work experience or Projects entries that need structured fields, not to every single-statement entry.
+
+A new base résumé may leave out unsupported single-statement entries and names each one under **Entries omitted from this saved revision**. A build with no usable entries is refused and names the unsupported entries instead of creating an empty résumé. Tailored generation refuses unsupported entries rather than silently leaving them out. After saving a supported entry revision, choose the updated **Saved profile revision** and select **Rebuild base from selected profile** to update the document; existing document words and omission lists do not change by themselves.
 
 ## Change, reorder or archive entries
 
@@ -111,7 +123,7 @@ BonaFides keeps every saved version of your profile.
 2. Select a version to preview it. Previewing changes nothing.
 3. To bring it back, tick **Restore this exact saved profile and source state as a new revision; retain displaced history**, then select **Restore as new profile revision**.
 
-Restoring saves the old version as a *new* revision. Nothing in between is deleted.
+Restoring saves the old version as a *new* revision. Nothing in between is deleted. It restores that version's source pins, not the newest source text, and does not silently repair unsupported entries or rebuild documents.
 
 ## If you have BonaFides open in two tabs
 

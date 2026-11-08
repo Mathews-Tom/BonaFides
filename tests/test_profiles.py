@@ -403,7 +403,7 @@ def test_history_restore_preserves_displaced_revisions_exact_pins_and_authorship
         changed_body = _claim_body(
             initial["evidence"][0]["revision"]["id"],
             "experience",
-            text="Wrote SQL runbooks",
+            text="Linux services",
             start_date="2024-02-29",
         )
         changed = _mutate(
@@ -466,7 +466,7 @@ def test_history_restore_preserves_displaced_revisions_exact_pins_and_authorship
             == immutable_claim
         )
         displaced = client.get(f"/api/v1/profile/revisions/{displaced_id}")
-        assert _json(displaced)["claims"][0]["revision"]["payload"]["text"] == "Wrote SQL runbooks"
+        assert _json(displaced)["claims"][0]["revision"]["payload"]["text"] == "Linux services"
 
 
 @pytest.mark.postgres
@@ -545,6 +545,22 @@ def test_evidence_isolation_archive_and_exact_revision_attribution(
         assert edit.status_code == 200
         pinned = _json(edit)["current_revision"]["claims"][0]["revision"]["evidence_links"][0]
         assert pinned["evidence"] == original_evidence
+        assert _json(edit)["current_revision"]["claims"][0]["grounding_issue"] is None
+        before_refusal = _json(client.get("/api/v1/profile"))
+        repinned = _claim_body(_json(edit)["evidence"][0]["revision"]["id"])
+        refused = _mutate(
+            client,
+            profile_owner,
+            csrf,
+            "PUT",
+            f"/claims/{claim['id']}",
+            _json(edit)["version"],
+            repinned,
+        )
+        assert refused.status_code == 422
+        assert _json(refused)["code"] == "literal_claim_not_grounded"
+        assert "Maintained Linux services" in _json(refused)["detail"]
+        assert _json(client.get("/api/v1/profile")) == before_refusal
         deleted = _mutate(
             client,
             profile_owner,
@@ -632,6 +648,7 @@ def test_evidence_isolation_archive_and_exact_revision_attribution(
             ]
             == original_evidence
         )
+        assert _json(restore)["current_revision"]["claims"][0]["grounding_issue"] is None
 
 
 @pytest.mark.postgres
@@ -915,3 +932,75 @@ def test_project_link_is_syntactic_and_pinned_without_loading_its_target(
         assert claim["revision"]["payload"]["project_url"] == "https://127.0.0.1:1/private-project"
         reloaded = _json(client.get("/api/v1/profile"))
         assert reloaded["current_revision"] == profile["current_revision"]
+
+
+@pytest.mark.postgres
+@pytest.mark.parametrize(
+    ("source", "statement", "excerpt", "support_kind", "accepted"),
+    [
+        ("PostgreSQL", "SQL", "PostgreSQL", "direct", False),
+        ("PostgreSQL", "SQL", "SQL", "user_asserted", False),
+        ("SQL and Linux", "SQL", "Linux", "direct", False),
+        ("SQL", "SQL", "SQL", "context", False),
+        ("Built ＳＱＬ — reporting.", "sql - reporting.", "ＳＱＬ — reporting.", "direct", True),
+        ("SQL", "SQL", "SQL", "user_asserted", True),
+    ],
+)
+def test_literal_save_requires_whole_phrase_in_genuine_supporting_quote(
+    profile_owner: IdentityContext,
+    source: str,
+    statement: str,
+    excerpt: str,
+    support_kind: str,
+    accepted: bool,
+) -> None:
+    with profile_owner.client() as client:
+        boot = _json(_bootstrap(profile_owner, client))
+        csrf = str(boot["csrf_token"])
+        evidence = _mutate(
+            client,
+            profile_owner,
+            csrf,
+            "POST",
+            "/evidence",
+            1,
+            {
+                "payload": {"text": source, "source": "Synthetic literal source"},
+                "provenance": {
+                    "source_type": "owner_statement",
+                    "privacy_class": "private",
+                    "employer_owned": False,
+                },
+            },
+        )
+        assert evidence.status_code == 200, evidence.text
+        profile = _json(client.get("/api/v1/profile"))
+        response = _mutate(
+            client,
+            profile_owner,
+            csrf,
+            "POST",
+            "/claims",
+            profile["version"],
+            {
+                "kind": "skill",
+                "payload": {"text": statement},
+                "evidence_links": [
+                    {
+                        "evidence_revision_id": profile["evidence"][0]["revision"]["id"],
+                        "support_kind": support_kind,
+                        "excerpt": excerpt,
+                    }
+                ],
+            },
+        )
+        assert response.status_code == (200 if accepted else 422), response.text
+        if accepted:
+            claim = _json(response)["current_revision"]["claims"][0]
+            assert claim["revision"]["payload"]["text"] == statement
+            assert claim["grounding_issue"] is None
+            assert claim["needs_attention"] is False
+        else:
+            assert _json(response)["code"] == "literal_claim_not_grounded"
+            assert statement in _json(response)["detail"]
+            assert _json(client.get("/api/v1/profile")) == profile

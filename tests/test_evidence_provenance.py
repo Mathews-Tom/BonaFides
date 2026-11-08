@@ -19,7 +19,7 @@ def _evidence(
     source_type: str = "document", privacy_class: str = "private", employer_owned: bool = False
 ) -> dict[str, object]:
     return {
-        "payload": {"text": "Synthetic quarterly review excerpt", "source": "Synthetic review"},
+        "payload": {"text": "Maintained Linux services", "source": "Synthetic review"},
         "provenance": {
             "source_type": source_type,
             "privacy_class": privacy_class,

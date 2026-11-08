@@ -49,9 +49,16 @@ Messages from `sh start.sh` start with `start refused:`.
 
 **I can't add a profile entry.** Every entry needs a source. Add one under **Profile → Sources** first. See [Add a source](profile.md#add-a-source).
 
+**Saving or importing `SQL` is refused, but my source says `PostgreSQL`.** `SQL` inside a longer word is not a whole phrase. The refusal names the entry and leaves the saved profile unchanged. Use wording actually supported by the source, or supply a genuine source containing the complete statement. In the entry editor, choose a supporting **Evidence revision**, use **Direct source (owner supplied)** or **Owner attestation (unverified)**, and copy a genuine **Source excerpt** containing the whole statement. **Context only** cannot support it. Select **Save entry revision**; for an import, correct the reviewed entry before approving again.
+
+**An older entry says "Needs attention: this statement is not present as a whole phrase in a pinned supporting source and excerpt."** The original saved entry is unchanged. Use **Edit … entry *N*** to correct its statement or source link, then **Save entry revision**. Editing a source alone creates a new source revision and does not change the entry's pin; choose the intended **Evidence revision** explicitly. Archiving or restoring history does not silently repair unsupported entries. The separate warning **Needs attention: this statement is still free text. Edit the entry to restructure it as a claim.** concerns older Work experience or Projects entries, not all single-statement entries.
+
+
 **My document can't be approved or exported.** It has unresolved issues, listed under "Export blocked". See [Check every statement](documents.md#check-every-statement).
 
-**An entry is missing from my base résumé.** Its wording isn't found in its source, or its only evidence link is **Context only**. See [The one rule that matters most](profile.md#the-one-rule-that-matters-most), fix the entry or its source, then select **Rebuild base from selected profile**.
+**An entry is missing from my base résumé.** Check **Entries omitted from this saved revision** for the exact entry statement and **Claim revision** identifier. Unsupported older single-statement entries may be omitted while supported entries remain. Fix and save the entry's pinned support on **Profile**, select the updated **Saved profile revision** on **Documents**, then choose **Rebuild base from selected profile**. The saved omission warning persists until an explicit rebuild creates a different revision; source edits do not change saved document words, pins or omission lists. Historical previews show their own omissions, and restoring one retains its historical pins and omissions. Older saved documents may have no omission list.
+
+**The base build is refused and names entries.** None of the selected input is usable, so no empty résumé is created and any existing document is unchanged. Save a supported entry revision and explicitly select its updated **Saved profile revision** before rebuilding. Tailored generation also names unsupported entries but refuses the request instead of silently omitting them.
 
 **My job isn't listed when I try to track it.** Only saved postings can be tracked. Open the posting under **Opportunities** and select **Save opportunity**.
 

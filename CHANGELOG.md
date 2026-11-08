@@ -30,6 +30,7 @@ All notable changes to BonaFides are recorded here. The format follows [Keep a C
 
 ### Fixed
 
+- Literal profile saves and reviewed résumé imports require whole-phrase source grounding, so `SQL` cannot be accepted from `PostgreSQL` alone; refusals name the entry. Unsupported saved entries show **Needs attention**, and base résumés retain supported entries while persistently naming omissions without rewriting profile or document history. Source edits never silently repin entries. Unedited grouped imports validate each emitted statement, including across excluded contact lines; compatible queued base tasks remain usable when no omissions are required.
 - Lifecycle commands report a missing managed installation with setup instructions instead of presenting the missing `.installer-state` as a file-type or symlink problem.
 - Equivalent decimal port parameters reuse the saved installation rather than being rejected before normalization; explicit-directory lifecycle wrappers also work without `HOME`.
 - Failed asset publication removes only its own temporary file before propagating the I/O error, so retry is not blocked by that partial copy; pre-planted files and links remain untouched.

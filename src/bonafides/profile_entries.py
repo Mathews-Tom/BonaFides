@@ -20,6 +20,7 @@ from bonafides.claims import (
     StructuredClaim,
     claim_text,
     date_bounds,
+    literal_grounded,
     needs_attention,
     render_claim,
     vocabulary,
@@ -244,8 +245,10 @@ def hydrate_claim(
         raise Problem(404, "claim_revision_not_found")
     links = (
         conn.execute(
-            text("""SELECT evidence_revision_id,support_kind,excerpt FROM bonafides.claim_evidence_links
-        WHERE owner_id=:owner AND claim_revision_id=:id ORDER BY evidence_revision_id"""),
+            text("""SELECT l.evidence_revision_id,l.support_kind,l.excerpt,r.payload
+        FROM bonafides.claim_evidence_links l JOIN bonafides.evidence_revisions r
+        ON r.owner_id=l.owner_id AND r.id=l.evidence_revision_id
+        WHERE l.owner_id=:owner AND l.claim_revision_id=:id ORDER BY l.evidence_revision_id"""),
             {"owner": owner_id, "id": revision_id},
         )
         .mappings()
@@ -262,12 +265,26 @@ def hydrate_claim(
         for link in links
     ]
     payload = cast(dict[str, object], row["payload"])
+    grounding_issue = (
+        "literal_claim_not_grounded"
+        if payload.get("claim") is None
+        and not any(
+            link["support_kind"] in ("direct", "user_asserted")
+            and literal_grounded(
+                claim_text(payload), link["excerpt"], link["payload"].get("text", "")
+            )
+            for link in links
+        )
+        else None
+    )
     result: dict[str, object] = {
         "id": str(row["entity_id"]),
         "kind": row["kind"],
         "revision": revision,
         "rendering": claim_text(payload),
-        "needs_attention": needs_attention(str(row["kind"]), payload),
+        "grounding_issue": grounding_issue,
+        "needs_attention": needs_attention(str(row["kind"]), payload)
+        or grounding_issue is not None,
     }
     if not historical:
         result.update(
@@ -490,14 +507,28 @@ def write_claim(
     evidence_ids = [link.evidence_revision_id for link in body.evidence_links]
     if len(set(evidence_ids)) != len(evidence_ids):
         raise Problem(422, "duplicate_evidence_revision")
+    grounded_literal = False
     for link in body.evidence_links:
         valid = conn.execute(
-            text("""SELECT r.id FROM bonafides.evidence_revisions r JOIN bonafides.evidence_records e
+            text("""SELECT r.payload FROM bonafides.evidence_revisions r JOIN bonafides.evidence_records e
             ON e.owner_id=r.owner_id AND e.id=r.evidence_id WHERE r.owner_id=:owner AND r.id=:id AND e.archived_at IS NULL"""),
             {"owner": owner_id, "id": link.evidence_revision_id},
         ).scalar_one_or_none()
         if valid is None:
             raise Problem(422, "invalid_evidence_revision")
+        if isinstance(body.payload, ClaimPayload) and link.support_kind in (
+            "direct",
+            "user_asserted",
+        ):
+            grounded_literal = grounded_literal or literal_grounded(
+                body.payload.text, link.excerpt, valid.get("text", "")
+            )
+    if isinstance(body.payload, ClaimPayload) and not grounded_literal:
+        raise Problem(
+            422,
+            "literal_claim_not_grounded",
+            f"Literal entry is not grounded in its source: {body.payload.text}",
+        )
     previous = None
     if entity_id is None:
         count = conn.execute(

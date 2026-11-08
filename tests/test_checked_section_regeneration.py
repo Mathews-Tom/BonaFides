@@ -557,6 +557,9 @@ def _profile_with_fields(context: SourceContext) -> dict[str, Any]:
     )
     assert evidence.status_code == 200, evidence.text
     saved = evidence.json()
+    saved_evidence = next(
+        row for row in saved["evidence"] if row["id"] == saved["changed_evidence_id"]
+    )
     claim = context.client.post(
         "/api/v1/claims",
         json={
@@ -570,7 +573,7 @@ def _profile_with_fields(context: SourceContext) -> dict[str, Any]:
             },
             "evidence_links": [
                 {
-                    "evidence_revision_id": saved["evidence"][0]["revision"]["id"],
+                    "evidence_revision_id": saved_evidence["revision"]["id"],
                     "support_kind": "user_asserted",
                     "excerpt": "Maintained Linux batch runbooks",
                 }

@@ -20,7 +20,7 @@ from starlette.concurrency import run_in_threadpool
 
 from bonafides.auth import Owner, StrictModel, require_owner
 from bonafides.claim_mapping import UnparsedPart, map_line, statement_text
-from bonafides.claims import STRUCTURED_KINDS, StructuredClaim
+from bonafides.claims import STRUCTURED_KINDS, StructuredClaim, contains_statement, literal_grounded
 from bonafides.commands import append_outbox, canonical_json, command, lock_installation
 from bonafides.config import Settings
 from bonafides.db import Database
@@ -755,6 +755,32 @@ def _validate_review(
                 raise Problem(422, "import_identity_overwrite_required")
             identity_fields.add(field)
             continue
+        entry = by_sources.get(frozenset(decision.source_ids))
+        split = (
+            _saved_statements(entry, decision.kind, decision.payload, saved)
+            if decision.action == "unchanged"
+            else []
+        )
+        statements = (
+            _statement_claims(entry, decision.kind, decision.payload)
+            if decision.action == "add" or split
+            else []
+        )
+        if statements:
+            grounded = all(
+                literal_grounded(excerpt, excerpt, batch["parsed_text"])
+                for _, excerpt in statements
+            )
+        else:
+            grounded = literal_grounded(
+                decision.payload.text, original, original
+            ) and contains_statement(decision.payload.text, batch["parsed_text"])
+        if not grounded:
+            raise Problem(
+                422,
+                "literal_claim_not_grounded",
+                f"Literal entry is not grounded in its source: {decision.payload.text}",
+            )
         if decision.action not in {"replace", "unchanged"}:
             if decision.claim_id is not None:
                 raise Problem(422, "import_target_invalid")
@@ -769,12 +795,6 @@ def _validate_review(
                 if claim.kind == decision.kind and claim.payload == decision.payload
             ]
             # An entry approved earlier as one claim per line is unchanged as that whole set.
-            split = _saved_statements(
-                by_sources.get(frozenset(decision.source_ids)),
-                decision.kind,
-                decision.payload,
-                saved,
-            )
             if exact != [decision.claim_id]:
                 targets = split
             if targets[:1] != [decision.claim_id]:

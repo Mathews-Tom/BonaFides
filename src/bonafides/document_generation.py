@@ -31,6 +31,7 @@ from bonafides import (
     suitability,
 )
 from bonafides.auth import Owner, require_owner
+from bonafides.claims import claim_text
 from bonafides.commands import append_outbox, canonical_json, command, lock_installation
 from bonafides.config import Settings
 from bonafides.db import Database
@@ -75,14 +76,15 @@ def revision_digest(
 ) -> str:
     if provenance.get("schema_version") != PROTOCOL:
         return documents.body_digest(body)
-    return sha(
-        {
-            "body": body.model_dump(mode="json"),
-            "template_version": template,
-            "template_sha256": provenance["template_sha256"],
-            "frame": provenance["frame"],
-        }
-    )
+    content: dict[str, object] = {
+        "body": body.model_dump(mode="json"),
+        "template_version": template,
+        "template_sha256": provenance["template_sha256"],
+        "frame": provenance["frame"],
+    }
+    if "omitted_claims" in provenance:
+        content["omitted_claims"] = provenance["omitted_claims"]
+    return sha(content)
 
 
 def _profile(conn: Connection, owner: UUID, revision: UUID) -> RowMapping:
@@ -103,7 +105,13 @@ def _profile(conn: Connection, owner: UUID, revision: UUID) -> RowMapping:
     return row
 
 
-def _fact_data(conn: Connection, owner: UUID, revision: UUID) -> list[dict[str, object]]:
+def _fact_data(
+    conn: Connection,
+    owner: UUID,
+    revision: UUID,
+    *,
+    omitted_claims: list[dict[str, str]] | None = None,
+) -> list[dict[str, object]]:
     facts = documents._facts(conn, owner, revision)
     profile = conn.execute(
         text("SELECT snapshot FROM bonafides.profile_revisions WHERE owner_id=:owner AND id=:id"),
@@ -175,10 +183,52 @@ def _fact_data(conn: Connection, owner: UUID, revision: UUID) -> list[dict[str, 
                 "printable_text": printable,
             }
         )
-    if set(selected) - {str(item["claim_revision_id"]) for item in accepted}:
-        raise Problem(409, "profile_claim_not_supported")
+    supported = {str(item["claim_revision_id"]) for item in accepted}
+    missing = [identifier for identifier in selected if identifier not in supported]
+    omitted: list[dict[str, str]] = []
+    unsupported: list[str] = []
+    for identifier in missing:
+        # An invalid literal may be omitted, but never by bypassing withdrawal fences.
+        links = conn.execute(
+            text("""SELECT l.evidence_revision_id,e.archived_at,e.current_revision_id
+            FROM bonafides.claim_evidence_links l JOIN bonafides.evidence_revisions r
+            ON r.owner_id=l.owner_id AND r.id=l.evidence_revision_id
+            JOIN bonafides.evidence_records e ON e.owner_id=r.owner_id AND e.id=r.evidence_id
+            WHERE l.owner_id=:owner AND l.claim_revision_id=:claim FOR SHARE OF e"""),
+            {"owner": owner, "claim": UUID(identifier)},
+        ).mappings()
+        for link in links:
+            evidence = str(link["evidence_revision_id"])
+            if (
+                evidence not in profile.get("evidence_revision_ids", [])
+                or evidence not in current.get("evidence_revision_ids", [])
+                or link["archived_at"] is not None
+                or link["current_revision_id"] != link["evidence_revision_id"]
+            ):
+                raise Problem(409, "profile_evidence_unavailable")
+        payload = cast(dict[str, object], claims[identifier]["payload"])
+        statement = claim_text(payload)
+        if omitted_claims is not None and payload.get("claim") is None:
+            omitted.append(
+                {
+                    "claim_revision_id": identifier,
+                    "claim_text": statement,
+                    "code": "literal_claim_not_grounded",
+                }
+            )
+        else:
+            unsupported.append(statement)
+    if unsupported or (omitted and not accepted):
+        names = [claim_text(cast(dict[str, object], claims[item]["payload"])) for item in missing]
+        raise Problem(
+            409,
+            "profile_claim_not_supported",
+            "Profile entries are not supported by their sources: " + "; ".join(names),
+        )
     if len(canonical_json(accepted).encode()) > 262144:
         raise Problem(409, "document_context_too_large")
+    if omitted_claims is not None:
+        omitted_claims.extend(omitted)
     return accepted
 
 
@@ -372,7 +422,8 @@ def base_plan(conn: Connection, owner: UUID, revision: UUID, template: str) -> d
     lock_workspace(conn, owner)
     require_template(template)
     profile = _profile(conn, owner, revision)
-    facts = _fact_data(conn, owner, revision)
+    omitted: list[dict[str, str]] = []
+    facts = _fact_data(conn, owner, revision, omitted_claims=omitted)
     if not facts:
         raise Problem(409, "profile_content_required")
     targets = _targets(conn, owner, None)
@@ -387,6 +438,7 @@ def base_plan(conn: Connection, owner: UUID, revision: UUID, template: str) -> d
         "template_version": template,
         "template_sha256": template_digest(template),
         "facts": facts,
+        "omitted_claims": omitted,
         "frame": _frame(profile["snapshot"]),
         "targets": targets,
         "policy_version": POLICY,
@@ -497,7 +549,10 @@ def check_context(conn: Connection, task: Claim, settings: Settings) -> None:
             UUID(str(task.input["profile_revision_id"])),
             str(task.input["template_version"]),
         )
-        if plan != {key: task.input.get(key) for key in plan}:
+        expected = {key: task.input.get(key) for key in plan}
+        if "omitted_claims" not in task.input and not plan["omitted_claims"]:
+            expected["omitted_claims"] = []
+        if plan != expected:
             raise Problem(409, "stale_document_context")
         return
     plan = generation_plan(
@@ -727,6 +782,7 @@ def _provenance(
         "assembly_version": "ol-profile-copy-v1" if plan["mode"] == "deterministic_base" else None,
         "settings_version": plan.get("settings_version"),
         "facts": plan["facts"],
+        "omitted_claims": plan.get("omitted_claims", []),
         "frame": plan["frame"],
         "policy_version": POLICY,
         "review_limits": LIMITS,

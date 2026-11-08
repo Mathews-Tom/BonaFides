@@ -960,7 +960,7 @@ def test_task_detail_polling_serializes_before_profile_fact_edits(
     selected = profile["current_revision"]["claims"][0]
     original_revision = selected["revision"]
     original_text = original_revision["payload"]["text"]
-    replacement_text = original_text + " Synthetic reviewed correction."
+    replacement_text = "Linux batch processing runbooks"
     body = {
         "kind": selected["kind"],
         "payload": {**original_revision["payload"], "text": replacement_text},

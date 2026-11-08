@@ -9,7 +9,7 @@ Both kinds go through the same steps: create, check, approve the exact version, 
 
 ## Create a base résumé
 
-You need a profile with at least one supported entry: an entry whose wording is found in its source (see [The one rule that matters most](profile.md#the-one-rule-that-matters-most)). Entries that aren't supported are left out of the résumé.
+You need a profile with at least one supported entry (see [The one rule that matters most](profile.md#the-one-rule-that-matters-most)). An older single-statement entry whose complete phrase is not supported by its pinned source and excerpt may be left out; supported entries remain. If no usable entries remain, the build is refused and names the unsupported entries. It does not create an empty résumé or replace an existing document.
 
 1. Open **Documents** and choose **Base résumé**.
 2. Under **Saved profile revision**, keep the current revision (or choose an earlier one).
@@ -23,6 +23,15 @@ You need a profile with at least one supported entry: an entry whose wording is 
 The résumé is made directly from your entries; no AI is involved.
 
 Your saved résumé doesn't change when you edit your profile later. If the profile has moved on, the résumé shows that its inputs are out of date. To pick up the changes, select **Rebuild base from selected profile**.
+
+### Entries left out of a base résumé
+
+**Entries omitted from this saved revision** is a persistent warning above the document when a build left out unsupported single-statement entries. It lists each exact entry statement and its **Claim revision** identifier. The omission list belongs to that saved document revision, not to your current profile.
+
+To fix an omission, open **Profile**, use **Edit … entry *N***, and save a supported new entry revision with **Save entry revision**. The whole statement must appear in both a genuine **Source excerpt** and its selected supporting **Evidence revision**. `SQL` cannot be supported by `PostgreSQL` alone. Editing a source creates a new revision but never updates an entry's existing source pin; select the intended revision explicitly when saving the entry.
+
+Return to **Documents**, select the updated **Saved profile revision**, then choose **Rebuild base from selected profile**. Existing wording, source pins, omission lists, approvals and PDFs remain tied to their saved revisions; neither a source edit nor opening an old document rebuilds it. Documents saved before omission lists were recorded do not gain a retroactive list.
+
 
 ## Check every statement
 
@@ -39,7 +48,7 @@ Anything that fails is listed under **Export blocked: unresolved factual or sour
 | Message | What it means | How to fix it |
 |---|---|---|
 | It cites a claim that is not in your profile. | The entry was removed or never existed. | Remove the statement, or add the entry and rebuild. |
-| Its claim's text is not contained in the claim's own evidence. | The entry's wording isn't in its source. | On the Profile page, make the source excerpt contain the entry's exact wording, then rebuild. |
+| Its claim's text is not contained in the claim's own evidence. | The entry's wording isn't in its pinned source. | On the Profile page, save a supported entry revision whose genuine source excerpt and selected source contain the statement, then explicitly rebuild. Changing source text alone does not update the entry's pin. |
 | Not part of its claim: its wording is not contained in its claim's text. | The statement says something its entry doesn't. | Change the wording back, or change the entry (and its source) and rebuild. |
 | Cuts into the middle of its claim | The statement uses part of an entry, but cut mid-phrase. | Use the entry's full wording or cut it at a natural break. |
 | It states a fact without citing a claim. | A sentence with no entry behind it. | Remove it, or add an entry with evidence and rebuild. |
@@ -83,6 +92,9 @@ If rendering fails with a message about glyphs or text the renderer can't preser
 
 Select **Load document history**, then choose a version to preview it. Previewing changes nothing; select **Return to current saved revision** to go back. To bring an old version back, tick **Restore this historical revision as a new current revision, retaining displaced history** and select **Restore historical revision**. Nothing is deleted.
 
+The historical preview shows that revision's own **Entries omitted from this saved revision** list, if it has one, not the current document's omissions. Restoring copies the historical wording, source pins and omission list into a new revision; it does not pick up current profile or source edits. Use **Rebuild base from selected profile** explicitly to build from an updated profile.
+
+
 ## Tailored résumé and cover letter
 
 A tailored pair is a résumé and cover letter written by an AI model for one specific job. The model works from the posting, its reviewed requirements and your profile entries, and every factual sentence must come from your entries. Every sentence goes through the same checks as above.
@@ -107,7 +119,7 @@ You need all four:
 
 Generation runs in the background; a status line shows progress, and you can select **Cancel document task**. When it finishes, check, approve and export each document as described above.
 
-If generation fails, nothing is created and your existing documents are untouched. The message explains why. For example, if your profile, the posting or your settings changed after you previewed, preview and generate again.
+If generation fails, nothing is created and your existing documents are untouched. The message explains why. Unsupported profile entries are named and refuse tailored generation; they are not silently omitted as they may be in a base build. Save supported entry revisions before previewing again. If your profile, the posting or your settings changed after you previewed, preview and generate again.
 
 ### Rewrite one section
 

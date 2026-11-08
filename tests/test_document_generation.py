@@ -54,6 +54,8 @@ from bonafides.commands import canonical_json
 from bonafides.document_frame import PrintableFrame, ProfileContact, template_digest
 from bonafides.local_model import load_route
 from bonafides.problems import Problem
+from bonafides.profile_entries import EvidenceLink, _snapshot, append_claim_revision
+from bonafides.profiles import _save as save_profile
 from bonafides.render_service import render_html
 from bonafides.storage import BlobStore
 from bonafides.worker import Worker
@@ -918,6 +920,28 @@ def test_new_template_frame_digest_and_html_are_literal_and_legacy_hash_stays_bo
         "template_sha256": template_digest("bonafides-evidence-v1"),
     }
     first = generation.revision_digest(body, "bonafides-evidence-v1", provenance)
+    assert first == generation.sha(
+        {
+            "body": body.model_dump(mode="json"),
+            "template_version": "bonafides-evidence-v1",
+            "template_sha256": provenance["template_sha256"],
+            "frame": provenance["frame"],
+        }
+    )
+    omissions = [
+        {
+            "claim_revision_id": str(uuid4()),
+            "claim_text": "SQL",
+            "code": "literal_claim_not_grounded",
+        }
+    ]
+    with_omissions = {**provenance, "omitted_claims": omissions}
+    assert generation.revision_digest(body, "bonafides-evidence-v1", with_omissions) != first
+    assert generation.revision_digest(
+        body, "bonafides-evidence-v1", with_omissions
+    ) != generation.revision_digest(
+        body, "bonafides-evidence-v1", {**provenance, "omitted_claims": []}
+    )
     assert first != generation.revision_digest(body, "bonafides-compact-v1", provenance)
     other = {
         **provenance,
@@ -1760,3 +1784,222 @@ def test_unmapped_suitability_block_uses_only_unchanged_legacy_identity(
                 suitability._route(
                     conn, catalog.owner_id, catalog.identity.settings, "extract_posting"
                 )
+
+
+def _legacy_literal_profile(
+    context: SourceContext, profile: dict[str, Any], statement: str = "SQL"
+) -> dict[str, Any]:
+    evidence = context.client.post(
+        "/api/v1/evidence",
+        json={
+            "payload": {"text": "PostgreSQL", "source": "Synthetic legacy source"},
+            "provenance": {
+                "source_type": "owner_statement",
+                "privacy_class": "private",
+                "employer_owned": False,
+            },
+        },
+        headers=context.headers(profile["version"]),
+    )
+    assert evidence.status_code == 200, evidence.text
+    evidence_id = UUID(evidence.json()["evidence"][-1]["revision"]["id"])
+    # Older writers permitted inner-word matches; append a legacy row, not an invalid API save.
+    with context.runtime.transaction() as conn:
+        snapshot = _snapshot(conn, context.owner_id)
+        identifier = uuid4()
+        conn.execute(
+            text("""INSERT INTO bonafides.professional_claims(owner_id,id,profile_id,kind)
+            SELECT :owner,:id,id,'skill' FROM bonafides.profiles WHERE owner_id=:owner"""),
+            {"owner": context.owner_id, "id": identifier},
+        )
+        revision = append_claim_revision(
+            conn,
+            context.owner_id,
+            identifier,
+            {"text": statement},
+            [
+                EvidenceLink(
+                    evidence_revision_id=evidence_id,
+                    support_kind="direct",
+                    excerpt=statement,
+                )
+            ],
+            increment=0,
+        )
+        save_profile(
+            conn,
+            context.owner_id,
+            snapshot.model_copy(
+                update={"claim_revision_ids": [*snapshot.claim_revision_ids, revision]}
+            ),
+            "claim_saved",
+        )
+    return cast(dict[str, Any], context.client.get("/api/v1/profile").json())
+
+
+@pytest.mark.postgres
+def test_base_rebuild_names_only_ungrounded_literals_without_mutating_history(
+    catalog: SourceContext,
+) -> None:
+    supported = _profile(catalog)
+    existing = _base(catalog, supported)
+    original = copy.deepcopy(existing["current_revision"])
+    profile = _legacy_literal_profile(catalog, supported)
+    invalid = profile["current_revision"]["claims"][-1]
+    omission = {
+        "claim_revision_id": invalid["revision"]["id"],
+        "claim_text": "SQL",
+        "code": "literal_claim_not_grounded",
+    }
+    assert invalid["needs_attention"] is True
+    assert invalid["grounding_issue"] == "literal_claim_not_grounded"
+    assert all(
+        item["grounding_issue"] is None for item in profile["current_revision"]["claims"][:-1]
+    )
+    task = _queue_base(catalog, profile)
+    assert task.input["omitted_claims"] == [omission]
+    assert invalid["revision"]["id"] not in {
+        item["claim_revision_id"] for item in cast(list[dict[str, Any]], task.input["facts"])
+    }
+    Worker(catalog.runtime, replace(catalog.identity.settings, mode="production"))._execute(
+        task, Event()
+    )
+    workflow = catalog.workflow(task.id)
+    assert workflow["state"] == "succeeded", workflow
+    rebuilt = _document(catalog, workflow["result"]["document_id"])
+    revision = rebuilt["current_revision"]
+    assert revision["provenance_snapshot"]["omitted_claims"] == [omission]
+    assert revision["body"] == original["body"]
+    assert revision["content_sha256"] != original["content_sha256"]
+    history = catalog.client.get(f"/api/v1/documents/{rebuilt['id']}/revisions").json()
+    assert next(item for item in history["items"] if item["id"] == original["id"]) == original
+    assert catalog.client.get("/api/v1/profile").json() == profile
+
+
+@pytest.mark.postgres
+@pytest.mark.parametrize("has_omissions", [False, True])
+def test_queued_base_without_omission_metadata_preserves_grounding_boundary(
+    catalog: SourceContext, has_omissions: bool
+) -> None:
+    profile = _profile(catalog)
+    if has_omissions:
+        profile = _legacy_literal_profile(catalog, profile)
+    task = _queue_base(catalog, profile)
+    task = replace(
+        task, input={key: value for key, value in task.input.items() if key != "omitted_claims"}
+    )
+    Worker(catalog.runtime, replace(catalog.identity.settings, mode="production"))._execute(
+        task, Event()
+    )
+    workflow = catalog.workflow(task.id)
+    if has_omissions:
+        assert workflow["state"] == "permanent_failure"
+        assert workflow["last_error_code"] == "stale_document_context"
+        assert catalog.client.get("/api/v1/profile/base-resume").status_code == 404
+    else:
+        assert workflow["state"] == "succeeded", workflow
+        document = _document(catalog, workflow["result"]["document_id"])
+        assert document["current_revision"]["provenance_snapshot"]["omitted_claims"] == []
+        assert {
+            block["text"]
+            for section in document["current_revision"]["body"]["sections"]
+            for block in section["blocks"]
+        } == {item["printable_text"] for item in cast(list[dict[str, Any]], task.input["facts"])}
+    assert catalog.client.get("/api/v1/profile").json() == profile
+
+
+@pytest.mark.postgres
+def test_base_all_invalid_literals_fail_with_entry_names(catalog: SourceContext) -> None:
+    empty = catalog.client.get("/api/v1/profile").json()
+    profile = _legacy_literal_profile(catalog, empty)
+    profile = _legacy_literal_profile(catalog, profile, "NoSQL")
+    refused = catalog.client.post(
+        "/api/v1/profile/base-resume",
+        json={
+            "profile_revision_id": profile["current_revision"]["id"],
+            "template_version": "bonafides-evidence-v1",
+        },
+        headers=catalog.headers(profile["version"]),
+    )
+    assert refused.status_code == 409, refused.text
+    assert refused.json()["code"] == "profile_claim_not_supported"
+    assert "SQL" in refused.json()["detail"]
+    assert "NoSQL" in refused.json()["detail"]
+    assert catalog.client.get("/api/v1/profile").json() == profile
+    assert catalog.client.get("/api/v1/profile/base-resume").status_code == 404
+
+
+@pytest.mark.postgres
+def test_tailored_context_refuses_and_names_legacy_ungrounded_literals(
+    catalog: SourceContext,
+) -> None:
+    profile, application = _setup_pair(catalog)
+    profile = _legacy_literal_profile(catalog, profile)
+    refused = catalog.client.get(
+        f"/api/v1/applications/{application['id']}/generation-context",
+        params={
+            "profile_revision_id": profile["current_revision"]["id"],
+            "template_version": "bonafides-evidence-v1",
+            "tone": "professional",
+            "language": "en",
+        },
+    )
+    assert refused.status_code == 409, refused.text
+    assert refused.json()["code"] == "profile_claim_not_supported"
+    assert "SQL" in refused.json()["detail"]
+
+
+@pytest.mark.postgres
+@pytest.mark.parametrize("change", ["edit", "archive"])
+def test_literal_omission_never_bypasses_evidence_withdrawal_or_repins_on_restore(
+    catalog: SourceContext, change: str
+) -> None:
+    profile = _legacy_literal_profile(catalog, _profile(catalog))
+    invalid = profile["current_revision"]["claims"][-1]
+    pinned = invalid["revision"]["evidence_links"][0]["evidence_revision_id"]
+    evidence = next(item for item in profile["evidence"] if item["revision"]["id"] == pinned)
+    if change == "edit":
+        changed = catalog.client.put(
+            f"/api/v1/evidence/{evidence['id']}",
+            json={
+                "payload": {"text": "SQL", "source": "Synthetic revised source"},
+                "provenance": {"source_type": "owner_statement"},
+            },
+            headers=catalog.headers(profile["version"]),
+        )
+    else:
+        changed = catalog.client.delete(
+            f"/api/v1/evidence/{evidence['id']}", headers=catalog.headers(profile["version"])
+        )
+    assert changed.status_code == 200, changed.text
+    current = changed.json()
+    assert current["current_revision"]["claims"][-1]["grounding_issue"] == (
+        "literal_claim_not_grounded"
+    )
+    refused = catalog.client.post(
+        "/api/v1/profile/base-resume",
+        json={
+            "profile_revision_id": current["current_revision"]["id"],
+            "template_version": "bonafides-evidence-v1",
+        },
+        headers=catalog.headers(current["version"]),
+    )
+    assert refused.status_code == 409, refused.text
+    assert refused.json()["code"] == "profile_evidence_unavailable"
+    restored = catalog.client.post(
+        "/api/v1/profile/restore",
+        json={"revision_id": profile["current_revision"]["id"]},
+        headers=catalog.headers(current["version"]),
+    )
+    assert restored.status_code == 200, restored.text
+    restored_claim = restored.json()["current_revision"]["claims"][-1]
+    assert restored_claim["revision"] == invalid["revision"]
+    assert restored_claim["grounding_issue"] == "literal_claim_not_grounded"
+    rebuilt = _base(catalog, restored.json())
+    assert rebuilt["current_revision"]["provenance_snapshot"]["omitted_claims"] == [
+        {
+            "claim_revision_id": invalid["revision"]["id"],
+            "claim_text": "SQL",
+            "code": "literal_claim_not_grounded",
+        }
+    ]
