@@ -86,9 +86,13 @@ Every save is kept. **Inspect immutable requirement history** shows earlier vers
 3. Tick **I reviewed every coverage row and the actual cited content; references alone do not establish semantic support**.
 4. Select **Save owner-reviewed assessment**.
 
-**"Not evidenced" doesn't mean you lack the skill.** It means your profile doesn't yet contain an entry showing it. BonaFides never adds skills to your profile from a job posting. If you do have the skill, [add an entry with its evidence](profile.md#add-an-entry), then select **Reload profile citations**.
+The saved assessment shows **Saved evidence fit score** alongside its coverage counts and **Hard eligibility**. Each supported requirement earns 1 point, partial earns ½, and not evidenced or conflicting earns 0. All requirements have equal weight, including required and preferred ones. The total is converted to a percentage and rounded down: one supported, one partial and one not evidenced gives **50/100**. An empty review has no score.
 
-If your profile or the posting changes after you save an assessment, it's marked as a stale historical snapshot so you know to review it again.
+This is a summary of your reviewed evidence, not a hiring probability or independent verification of your qualifications. A high score never overrides a hard constraint that is not met or is unknown. Open **Inspect saved rows, citations and provenance** to read the explanations and exact claim/source revisions behind the result.
+
+**"Not evidenced" doesn't mean you lack the skill.** It means your profile doesn't yet contain an entry showing it. BonaFides never adds skills to your profile from a job posting. If you do have the skill, explicitly [save an entry with genuine supporting evidence](profile.md#add-an-entry), then return here and select **Reload profile citations**. That reload does not change the saved coverage or score. Select **Review evidence coverage manually** to start a fresh review: review every row again, set its coverage, choose its claim and source citations and explain the support or gap. Confirm the review and select **Save owner-reviewed assessment** to create the updated result.
+
+If your saved profile, reviewed requirements or the posting's source details change after you save an assessment, it's marked as a stale historical snapshot so you know to review it again. Changing only the posting's disposition does not make it stale. Its saved rows, score and reasons remain unchanged; unsaved edits and AI proposals do not replace them. Existing documents also remain unchanged until you explicitly edit or rebuild them.
 
 ### AI suggestions (optional)
 

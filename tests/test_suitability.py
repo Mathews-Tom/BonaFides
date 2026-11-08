@@ -484,6 +484,47 @@ def test_requirement_false_spans_and_invented_technology_block(
 
 
 @pytest.mark.postgres
+@pytest.mark.parametrize(
+    ("states", "expected_score"),
+    [
+        (("supported", "partial", "not_evidenced"), 50),
+        (("partial", "not_evidenced", "conflicting"), 16),
+        (("supported", "supported"), 100),
+        (("conflicting", "not_evidenced"), 0),
+    ],
+)
+def test_saved_evidence_fit_uses_equal_weights_half_partial_and_rounds_down(
+    catalog: SourceContext, states: tuple[str, ...], expected_score: int
+) -> None:
+    profile = _profile(catalog)
+    posting = _posting(catalog)
+    requirements = [
+        _requirement(1, "Linux required."),
+        _requirement(2, "SQL required."),
+        {**_requirement(3, "Kubernetes preferred."), "importance": "preferred"},
+    ][: len(states)]
+    view = _write(catalog, posting, requirements)
+    technologies = ("Linux", "SQL", None)
+    items = [
+        {
+            **_coverage(
+                index + 1,
+                profile,
+                technologies[index] if state in {"supported", "partial"} else None,
+            ),
+            "coverage": state,
+        }
+        for index, state in enumerate(states)
+    ]
+    saved = _save(catalog, view, _body(view, profile, items))
+    assert saved.status_code == 200, saved.text
+    assessment = saved.json()["latest_assessment"]
+    assert assessment["fit_score"] == expected_score
+    assert _view(catalog, posting["id"])["latest_assessment"] == assessment
+    assert catalog.client.get("/api/v1/profile").json() == profile
+
+
+@pytest.mark.postgres
 def test_linux_sql_links_missing_kubernetes_and_no_profile_mutation(catalog: SourceContext) -> None:
     profile = _profile(catalog)
     posting = _posting(catalog)
@@ -505,6 +546,7 @@ def test_linux_sql_links_missing_kubernetes_and_no_profile_mutation(catalog: Sou
         "total": 3,
     }
     assert assessment["hard_eligibility"] == "unknown"
+    assert assessment["fit_score"] == 66
     assert assessment["hard_constraints"][0]["reason"] == "no_reviewed_constraints"
     assert assessment["provenance"]["origin"] == "owner_reviewed_manual" and not assessment["stale"]
     assert catalog.client.get("/api/v1/profile").json() == profile
@@ -669,6 +711,7 @@ def test_hard_restrictions_independent_unknown_authorization_and_salary_units(
     assert saved.status_code == 200, saved.text
     result = saved.json()["latest_assessment"]
     assert result["hard_eligibility"] == "not_met"  # Supported Linux does not override location.
+    assert result["fit_score"] == 25
     assert [item["state"] for item in result["hard_constraints"]] == [
         "unknown",
         "not_met",
@@ -690,6 +733,7 @@ def test_hard_restrictions_independent_unknown_authorization_and_salary_units(
         checked.status_code == 200
         and checked.json()["latest_assessment"]["hard_eligibility"] == "met"
     )
+    assert checked.json()["latest_assessment"]["fit_score"] == 0
 
 
 @pytest.mark.parametrize(
@@ -783,6 +827,7 @@ def test_stale_pins_preserve_historical_assessment_disposition_does_not_invent_s
     assert edit.status_code == 200, edit.text
     stale = _view(catalog, posting["id"])["latest_assessment"]
     assert stale["id"] == original["id"] and stale["assessments"] == original["assessments"]
+    assert stale["fit_score"] == original["fit_score"] == 100
     assert "profile_changed" in stale["stale_reasons"]
     rejected = _save(catalog, after, _body(after, profile, [_coverage(1, profile, "Linux")]))
     assert rejected.status_code == 409 and rejected.json()["code"] == "stale_profile_revision"
