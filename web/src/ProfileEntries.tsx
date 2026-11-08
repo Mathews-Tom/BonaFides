@@ -98,6 +98,47 @@ function ClaimWords({ claim }: { claim: PinnedClaim }) {
     </details></>;
 }
 
+function InterviewPreparation({ claim, profile, label, disabled }: { claim: PinnedClaim; profile: Profile; label: string; disabled: boolean }) {
+  const [open, setOpen] = useState(false);
+  const regionId = `interview-${claim.revision.id}`;
+  const links = open ? claim.revision.evidence_links.map(link => {
+    const current = profile.evidence.find(item => !item.archived && item.current_revision_id === link.evidence_revision_id && item.revision.id === link.evidence_revision_id);
+    const reason = link.support_kind === 'context' ? 'Context-only links are not supporting evidence.'
+      : !current ? 'This source revision is no longer current and selected. Review and explicitly re-link the entry.'
+      : current.revision.provenance.privacy_class === 'confidential' || current.revision.provenance.employer_owned ? 'Confidential or employer-owned content is withheld from interview questions.'
+      : null;
+    return { link, current, reason };
+  }) : [];
+  const available = !claim.grounding_issue && links.some(item => item.reason === null);
+  return <div>
+    <button className="secondary" disabled={disabled} aria-expanded={open} aria-controls={regionId} onClick={() => setOpen(!open)}>Interview preparation for {label}</button>
+    {open && <section id={regionId} aria-label={`Interview preparation for ${label}`}>
+      <h4>Source-specific interview questions</h4>
+      <p>Model-free, for this saved entry only. Questions are not answers or verified facts. Nothing is saved or sent to a model.</p>
+      <p>Claim revision {claim.revision.id} · Profile revision {profile.current_revision.id}</p>
+      {!available && <p role="status">Interview preparation unavailable. {claim.grounding_issue
+        ? 'This saved statement is not grounded as a whole phrase. Review and save a supported entry first.'
+        : 'No eligible supporting source is available. Review the source links below; no substitute questions are generated.'}</p>}
+      {!claim.grounding_issue && links.map(({ link, current, reason }, index) => {
+        const citationId = `${regionId}-source-${index + 1}`;
+        return reason ? <p key={link.evidence_revision_id}>Source revision {link.evidence_revision_id}: {reason}</p>
+          : current && <section key={link.evidence_revision_id} aria-labelledby={citationId}>
+            <h5 id={citationId}>Source {index + 1}: {current.revision.payload.source}</h5>
+            <EvidenceProvenanceSummary provenance={current.revision.provenance} />
+            <p>{link.support_kind === 'user_asserted' ? 'Owner-asserted support; not independently verified.' : 'Direct supporting link; not independent verification.'}</p>
+            <p>Evidence revision {link.evidence_revision_id} · SHA-256 {current.revision.content_sha256}</p>
+            <ol>
+              <li>What was your personal contribution to “{link.excerpt}”, and what was contributed by others?</li>
+              <li>In source {index + 1} above, which words support this entry, and what does the excerpt not establish?</li>
+              <li>Does the excerpt in source {index + 1} above substantiate an outcome or measurement? Explain the method and uncertainty without inventing numbers.</li>
+            </ol>
+          </section>;
+      })}
+      {!claim.grounding_issue && links.length === 0 && <p>No supporting source links are saved for this entry.</p>}
+    </section>}
+  </div>;
+}
+
 export function ProfileEntries({ api, profile, disabled, onProfile, onDirtyChange, onBusyChange }: {
   api: Api; profile: Profile; disabled: boolean; onProfile: (value: Profile) => void;
   onDirtyChange: (value: boolean) => void; onBusyChange: (value: boolean) => void;
@@ -272,6 +313,7 @@ export function ProfileEntries({ api, profile, disabled, onProfile, onDirtyChang
               <button className="secondary" disabled={locked || dirty || index === entries.length - 1} onClick={() => move(item, entries[index + 1])}>Move {kind.label.toLowerCase()} entry {index + 1} down</button>
               <button className="secondary" disabled={locked || dirty} onClick={() => setArchive({ kind: 'claim', id: item.id, text: item.rendering })}>Archive {kind.label.toLowerCase()} entry {index + 1}</button></div>
             <ClaimUsedIn key={item.revision.id} api={api} claimId={item.id} label={`${kind.label.toLowerCase()} entry ${index + 1}`} />
+            <InterviewPreparation key={`${profile.version}:${profile.current_revision.id}:${item.revision.id}`} claim={item} profile={profile} label={`${kind.label.toLowerCase()} entry ${index + 1}`} disabled={locked || dirty} />
           </li>)}</ol>}
           <button className="secondary" disabled={locked || dirty || profile.evidence.length === 0} onClick={() => { setError(''); setClaim({ kind: kind.value, payload: { text: '' }, structured: structuredKinds.has(kind.value) ? { ...emptyStructured } : null, legacyText: '', evidence_links: [], pinnedEvidence: [] }); }}>Add {kind.label.toLowerCase()} entry</button>
         </section>;
