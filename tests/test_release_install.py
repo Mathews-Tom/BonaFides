@@ -600,3 +600,59 @@ def test_environment_configuration_is_not_executed(sandbox: dict[str, Path]) -> 
     assert not marker.exists()
     assert sandbox["state"].read_text() == before
     assert files(directory) == saved_files
+
+
+@pytest.mark.parametrize("missing", [True, False])
+def test_route_file_damage_does_not_prevent_stop_or_managed_removal(
+    sandbox: dict[str, Path], missing: bool
+) -> None:
+    state = populate(sandbox)
+    directory = sandbox["install"]
+    environment = directory / ".env"
+    base = environment.read_bytes()
+    environment.write_bytes(
+        base + b"BONAFIDES_LOCAL_MODEL_ROUTE_FILE=/run/bonafides/local_model_route.json\n"
+    )
+    route = directory / "secrets/local_model_route.json"
+    if not missing:
+        route.write_text("{}")
+        route.chmod(0o644)
+    assert run(sandbox, "stop.sh").returncode == 0
+    result = run(sandbox, "models.sh", "remove", "--dir", str(directory), explicit_directory=False)
+    assert result.returncode == 0, result.stderr
+    assert not route.exists()
+    assert environment.read_bytes() == base
+    after = json.loads(sandbox["state"].read_text())
+    assert after["volumes"] == state["volumes"]
+    assert after["containers"]["owner-api"] == state["containers"]["owner-api"]
+
+
+def test_busy_qualification_is_infrastructure_failure_without_a_saved_receipt(
+    sandbox: dict[str, Path],
+) -> None:
+    populate(sandbox)
+    directory = sandbox["install"]
+    environment = directory / ".env"
+    environment.write_bytes(
+        environment.read_bytes()
+        + b"BONAFIDES_LOCAL_MODEL_ROUTE_FILE=/run/bonafides/local_model_route.json\n"
+    )
+    route = directory / "secrets/local_model_route.json"
+    route.write_text("{}")
+    route.chmod(0o600)
+    (directory / ".model-route-lock").mkdir()
+    before = files(directory)
+    result = run(
+        sandbox,
+        "models.sh",
+        "qualify",
+        "--dir",
+        str(directory),
+        "--stage",
+        "generate_documents",
+        "--reviewed-by",
+        "Synthetic fixture",
+        explicit_directory=False,
+    )
+    assert result.returncode == 2
+    assert files(directory) == before

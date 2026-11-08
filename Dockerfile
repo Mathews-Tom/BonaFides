@@ -29,6 +29,7 @@ COPY pyproject.toml uv.lock .python-version alembic.ini README.md LICENSE-MIT LI
 COPY src/ src/
 COPY migrations/ migrations/
 COPY deploy/ deploy/
+COPY tests/fixtures/qualification/ qualification/
 RUN uv sync --frozen --only-group build --no-build \
  && uv sync --frozen --no-dev --group build --no-editable --no-build-isolation \
  && UV_NO_BUILD_ISOLATION=false uv sync --frozen --no-dev --no-group build --no-editable --no-build \

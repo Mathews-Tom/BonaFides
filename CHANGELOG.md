@@ -6,6 +6,7 @@ All notable changes to BonaFides are recorded here. The format follows [Keep a C
 
 ### Added
 
+- Installed `models.sh attach|qualify|remove` manages an explicitly authorized, pinned local Ollama route without host Python/uv, runs both document-stage qualifications on bundled synthetic examples and applies real passed or failed receipts. Removal disables the route while retaining owner data and model weights; strict managed configuration and internal application networks are preserved.
 - Pull requests start with a template containing Summary, Evidence and Checks sections and the existing exact contribution licensing statement; per-commit sign-offs remain required.
 - Settings shows the signed-in owner's account ID with a copy control and manual selection when clipboard access fails; cross-installation import guidance explains how to use the original installation's ID.
 - Root `install.sh`, `start.sh`, `stop.sh` and `uninstall.sh` separate source-checkout preparation from runtime management; installed management copies work without the checkout using saved settings.

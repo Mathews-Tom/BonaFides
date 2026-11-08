@@ -72,7 +72,7 @@ BonaFides's honesty checks have been measured on made-up test data:
 
 - **Unsupported statements:** the checker caught every kind of exaggeration it was built to catch, and wrongly flagged 2 of 1,175 honest statements.
 - **One known gap:** a sentence cut short so that it drops a limiting phrase at the end ("in the pilot team") isn't caught. Always read what you approve.
-- **AI writing:** on a Mac, the local model `qwen2.5:7b-instruct` produced correctly structured documents for all 20 test cases, and 98% of its factual statements passed the checks. Rewriting single sections hasn't yet been tested with a real model.
+- **AI writing:** on a Mac, `qwen2.5:7b-instruct` passed all 20 format tests for both document pairs and single-section rewrites through the installed commands. Its factual statements passed the wording checks at rates of 98% and 100%, respectively. This is not a human review of accuracy or writing quality.
 
 These tests check structure and wording against your profile, not writing quality. Details are in the [developer guide](docs/development/README.md#structured-claim-evidence-matching).
 

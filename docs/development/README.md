@@ -1107,6 +1107,13 @@ The optional local AI route that tailoring needs, and the deterministic checker 
 
 Model routes are absent by default. `BONAFIDES_LOCAL_MODEL_ROUTE_FILE` defaults to an empty value; merely installing Ollama, retaining a model manifest or having a reachable endpoint does not authorize inference. Manual requirement review and owner-reviewed coverage do not require a provider. The built-in adapter does not download models, invoke tools, use cloud model aliases, follow redirects, honor proxy environment variables or fall back to hosted inference.
 
+Managed installations use the image-owned `models.sh attach|qualify|remove` commands documented in [Setting it up](../user-guide/ai-tailoring.md#setting-it-up), without host Python/uv. `attach` reads actual metadata through the secret-free source-egress role at `http://source-egress:11434`, pins its resolved private sources-network addresses, the installed manifest digest and runtime, and starts with no receipts. Explicit authorization covers local plaintext HTTP and metadata, not future task consent. The fixed-host gateway permits only metadata GET and nonstreaming chat POST to host Ollama; it exposes no model downloads, arbitrary upstream, cloud models or application credentials. API/worker networks remain internal.
+
+The command runs the saved image as the installing UID/GID with read-only root, dropped capabilities, bounded resources and only its private temporary working directory mounted on the internal sources network. Canonical synthetic qualification datasets are bundled at `/app/qualification`. A completed test (exit 0 or 1) publishes its truthful receipt only if the managed environment and original route are unchanged, then uses stop/prepare/start to apply it. A process exit alone is insufficient: the new validated receipt must match the reported pass/fail status. Prepublication infrastructure refusal (exit 2) preserves prior receipts; postpublication restart failure reports exit 2 with an explicit saved-configuration warning. Concurrent model commands are refused. Strict managed `.env` validation permits only the original five lines or those lines plus the exact fixed `BONAFIDES_LOCAL_MODEL_ROUTE_FILE=/run/bonafides/local_model_route.json`; reinstalls preserve this opt-in. Removal also handles a missing or non-private owned regular route, revoking the opt-in and source/materialized route without deleting credentials, owner data or model weights. Route-file damage does not prevent stopping the installation.
+
+Installed defaults are 32,768 context tokens, 12,000 input / 6,000 output tokens, 131,072 aggregate request bytes, 262,144 aggregate response bytes, 2,048 framing tokens and a 300-second per-call deadline. The advanced source-checkout procedure below remains separate from managed installations; do not edit a managed `.env` into an arbitrary route configuration.
+
+
 Provision a route only after the owner authorizes the exact endpoint/model, synthetic data projection, metadata reads, context/output/request/deadline/resource limits and relevant model license. Store the reviewed JSON in the private `.secrets/local_model_route.json`, never the repository. Its strict fields are:
 
 | Field group | Required fields and meaning |
@@ -1215,6 +1222,17 @@ Gemma's actual failed receipt and missing receipts as unqualified, and the uncha
 receipt as stale/unqualified after a proof-process-only system-prompt text change. No
 inference was sent from the browser proof. Both receipt files remained local, not committed.
 The project used ports 18441/18442 and `down -v` at start and finish.
+
+#### Observed installed qualification — 2026-11-08
+
+On a fresh disposable `linux/arm64` installation on Apple silicon, the installed `models.sh` shell/Docker commands qualified the already-installed `qwen2.5:7b-instruct` manifest above through the fixed private gateway to host Ollama `0.40.13`. No host Python/uv was invoked; the sanitized PATH excluded `python` and `uv`, although `/usr/bin/python3` was present. No model was pulled, no hosted call was made, and prompts, checker, datasets and the ≥95% schema threshold were unchanged.
+
+| Stage | Valid first / cases | Corrected / invalid / before-check failures | Usable factual statements | Qualification duration | Result |
+| --- | ---: | --- | ---: | ---: | --- |
+| `generate_documents` | 20 / 20 | 0 / 0 / 0 | 98% | 1,527.701 s | Passed |
+| `regenerate_section` | 20 / 20 | 0 / 0 / 0 | 100% | 277.283 s | Passed |
+
+The pair dataset digest was unchanged from 2 November; the section dataset SHA-256 was `c1ae6e903ab8f9a199d84802d57294a7cce5ee329eb5adc3e97fec9c76609dd4`. Applied receipt digests were `2eed26f598ee8d0c7c80e9eeaebacc38a98d88f2e2aa317f5b761f5cb2aa6282` and `00d82589ec7d81acb4feb128f77ec33e49ebcc04176140aad1e3f49b5b74b198`, respectively. Documents displayed both genuine passed/qualified receipts. These are synthetic schema and wording measurements, not human accuracy review or immutable weight attestation.
 
 #### Deterministic stub route for tests and proofs
 

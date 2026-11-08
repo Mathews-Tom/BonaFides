@@ -27,6 +27,8 @@ from bonafides.greenhouse import (
     serialize_board,
     validate_board_token,
 )
+from bonafides.model_gateway import GATEWAY_PORT as MODEL_GATEWAY_PORT
+from bonafides.model_gateway import ModelGatewayServer
 
 GATEWAY_PORT = 8766
 MAX_IN_FLIGHT = 4
@@ -217,8 +219,21 @@ def serve(
 ) -> None:
     if port != GATEWAY_PORT or host not in {"0.0.0.0", "127.0.0.1"}:
         raise ValueError("source_gateway_address_denied")
-    with SourceGatewayServer((host, port), client or GreenhouseClient()) as server:
-        server.serve_forever(poll_interval=0.1)
+    # Bind both roles before accepting anything. One accept loop also means an
+    # unexpected listener failure cannot silently leave the other role running.
+    with (
+        SourceGatewayServer((host, port), client or GreenhouseClient()) as source,
+        ModelGatewayServer((host, MODEL_GATEWAY_PORT)) as model,
+    ):
+        servers = (source, model)
+        for server in servers:
+            server.socket.setblocking(False)
+            server.timeout = 0
+        while True:
+            readable, _, _ = select.select([server.socket for server in servers], [], [])
+            for server in servers:
+                if server.socket in readable:
+                    server.handle_request()
 
 
 if __name__ == "__main__":

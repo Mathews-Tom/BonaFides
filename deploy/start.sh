@@ -16,17 +16,13 @@ done
 clean_environment
 dir=$(canonical_directory "$dir")
 load_saved
+[ "$model_route_enabled" = no ] || private_file "$dir/secrets/local_model_route.json"
 docker_ready
 docker compose version >/dev/null 2>&1 || fail "Docker Compose v2 is required"
 check_ownership
 docker image inspect "$image" >/dev/null 2>&1 || fail "saved application image is not loaded; load it or run install with a deliberately selected local image"
 [ -f "$dir/compose.yaml" ] && [ ! -L "$dir/compose.yaml" ] || fail "managed Compose asset is missing or linked; run install while stopped"
-docker run --rm --pull never --network none --read-only --cap-drop ALL \
-  --security-opt no-new-privileges:true --user "$(id -u):$(id -g)" \
-  --mount "type=bind,source=$dir,target=/install,readonly" --entrypoint python "$image" \
-  -m bonafides.local_setup --release-root /install --host-root "$dir" \
-  --project "$project" --port "$port" --image "$image" --resource-map "$resources" \
-  --check --validate-installed >/dev/null || fail "saved credentials or assets were refused; nothing was started"
+check_install
 if [ "$running" = yes ]; then
   # A healthy installation is not recreated and its one-shot jobs are not rerun.
   for service in db api worker ingress lifecycle source-egress renderer parser; do

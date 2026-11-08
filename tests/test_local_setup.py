@@ -23,7 +23,7 @@ def assets(tmp_path: Path) -> Path:
     directory.mkdir()
     (directory / "compose.release.yaml").write_text("services: {}\n# build one\n")
     (directory / "init-db.sh").write_text("#!/bin/sh\n# build one\n")
-    for name in ("start.sh", "stop.sh", "uninstall.sh", "lifecycle.sh"):
+    for name in ("start.sh", "stop.sh", "uninstall.sh", "lifecycle.sh", "models.sh"):
         (directory / name).write_text("#!/bin/sh\n# build one\n")
     return directory
 
@@ -327,4 +327,41 @@ def test_missing_image_asset_is_refused_before_credential_creation(
     (assets / "stop.sh").unlink()
     before = snapshot(root)
     assert install(root, assets) == 1
+    assert snapshot(root) == before
+
+
+def test_reinstall_preserves_explicit_model_opt_in_and_credentials(
+    root: Path, assets: Path
+) -> None:
+    assert install(root, assets) == 0
+    environment = root / ".env"
+    environment.write_text(environment.read_text() + local_setup.MODEL_ROUTE_ENV + "\n")
+    before = snapshot(root / "secrets")
+    expected = environment.read_bytes()
+
+    assert install(root, assets) == 0
+
+    assert environment.read_bytes() == expected
+    assert snapshot(root / "secrets") == before
+
+
+@pytest.mark.parametrize(
+    "extra",
+    [
+        "BONAFIDES_LOCAL_MODEL_ROUTE_FILE=/tmp/other.json",
+        "BONAFIDES_LOCAL_MODEL_ROUTE_FILE=",
+        f"{local_setup.MODEL_ROUTE_ENV}\nBONAFIDES_DATABASE_URL=foreign",
+        f"{local_setup.MODEL_ROUTE_ENV}\n{local_setup.MODEL_ROUTE_ENV}",
+    ],
+)
+def test_reinstall_refuses_unmanaged_route_environment(
+    root: Path, assets: Path, extra: str
+) -> None:
+    assert install(root, assets) == 0
+    environment = root / ".env"
+    environment.write_text(environment.read_text() + extra + "\n")
+    before = snapshot(root)
+
+    assert install(root, assets) == 1
+
     assert snapshot(root) == before
