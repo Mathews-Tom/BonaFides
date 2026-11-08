@@ -43,7 +43,11 @@ route="$dir/secrets/local_model_route.json"
 if [ "$operation" = attach ]; then
   [ ! -e "$route" ] && [ ! -L "$route" ] || fail "a route already exists; remove it deliberately before attaching another"
 else
-  [ "$model_route_enabled" = yes ] || fail "no managed model route is attached"
+  if [ "$model_route_enabled" != yes ]; then
+    [ "$operation" = remove ] && [ -e "$route" ] || fail "no managed model route is attached"
+    # First attach can publish the route before its opt-in; recover only a private owned file.
+    private_file "$route"
+  fi
   if [ "$operation" = qualify ]; then private_file "$route"; fi
   if [ -e "$route" ] || [ -L "$route" ]; then
     [ -f "$route" ] && [ ! -L "$route" ] || fail "route must be a regular file, not a link"
@@ -51,8 +55,8 @@ else
     route_existed=yes
   fi
 fi
-# Serialize model commands, but also compare snapshots before copy-back: manual edits or
-# removal during a long qualification must never be replaced by its stale result.
+# Serialize supported model commands. Snapshots reject observed external changes, but
+# installation files must not be edited manually while a model command is running.
 umask 077
 lock="$dir/.model-route-lock"
 mkdir "$lock" 2>/dev/null || fail "another model command is active; do not remove its lock while it runs"

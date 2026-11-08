@@ -707,7 +707,7 @@ def load_route(path: Path | None) -> LocalRoute | None:
         if (
             not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]*:[A-Za-z0-9_.-]+", model)
             or "cloud" in model.lower()
-            or model.endswith(":latest")
+            or model.lower().endswith(":latest")
         ):
             raise ModelFailure("model_route_invalid")
         digest = _text(data, "model_sha256", 64)

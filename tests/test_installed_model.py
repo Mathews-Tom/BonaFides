@@ -162,9 +162,17 @@ def test_process_exit_without_new_receipt_is_not_a_completed_result(
         installed_model.verify_result(path, original, "generate_documents", result)
 
 
-@pytest.mark.parametrize("status,result", [("passed", 0), ("failed", 1)])
-def test_completed_result_must_match_new_validated_receipt(
-    tmp_path: Path, metadata: Metadata, status: str, result: int
+@pytest.mark.parametrize(
+    "stage,status,result,publication",
+    [
+        ("generate_documents", "passed", 0, "first"),
+        ("regenerate_section", "failed", 1, "replacement"),
+        ("regenerate_section", "failed", 1, "formatting"),
+        ("generate_documents", "passed", 0, "other_stage"),
+    ],
+)
+def test_result_requires_changed_selected_stage_receipt(
+    tmp_path: Path, metadata: Metadata, stage: str, status: str, result: int, publication: str
 ) -> None:
     path, original = tmp_path / "route.json", tmp_path / "original"
     assert invoke(path) == 0
@@ -172,7 +180,7 @@ def test_completed_result_must_match_new_validated_receipt(
     route = load_route(path)
     assert route is not None
     data = json.loads(path.read_text())
-    data["qualification_receipts"]["generate_documents"] = qualification_receipt(
+    data["qualification_receipts"][stage] = qualification_receipt(
         {
             "status": status,
             "capability_sha256": route.capability_sha256,
@@ -191,7 +199,26 @@ def test_completed_result_must_match_new_validated_receipt(
             "duration_ms": 1000,
         }
     )
-    path.write_text(json.dumps(data))
-    installed_model.verify_result(path, original, "generate_documents", result)
+    if publication != "first":
+        original.write_text(json.dumps(data))
+        if publication == "replacement":
+            receipt = data["qualification_receipts"][stage]
+            data["qualification_receipts"][stage] = qualification_receipt(
+                {**receipt, "reviewed_at": "2026-11-08T00:00:01+00:00"}
+            )
+        elif publication == "other_stage":
+            other_stage = (
+                "regenerate_section" if stage == "generate_documents" else "generate_documents"
+            )
+            data["qualification_receipts"][other_stage] = dict(
+                data["qualification_receipts"][stage]
+            )
+    path.write_text(json.dumps(data, indent=2, sort_keys=True))
+    assert path.read_bytes() != original.read_bytes()
+    if publication in {"formatting", "other_stage"}:
+        with pytest.raises(ModelFailure, match="qualification_result_not_published"):
+            installed_model.verify_result(path, original, stage, result)
+        return
+    installed_model.verify_result(path, original, stage, result)
     with pytest.raises(ModelFailure, match="qualification_result_mismatch"):
-        installed_model.verify_result(path, original, "generate_documents", 1 - result)
+        installed_model.verify_result(path, original, stage, 1 - result)

@@ -166,13 +166,18 @@ def attach(route_path: Path, model: str, model_license: str, *, authorized: bool
 
 
 def verify_result(route_path: Path, original: Path, stage: str, result: int) -> None:
-    """A process exit is not evidence that a new qualification receipt was published."""
+    """Require a semantically new selected-stage receipt matching the process exit."""
     route = load_route(route_path)
-    if route is None or route_path.read_bytes() == original.read_bytes():
+    if route is None:
         raise ModelFailure("qualification_result_not_published")
     data = _decode(route_path.read_bytes())
     receipts = data.get("qualification_receipts")
     receipt = receipts.get(stage) if isinstance(receipts, dict) else None
+    original_data = _decode(original.read_bytes())
+    original_receipts = original_data.get("qualification_receipts")
+    original_receipt = original_receipts.get(stage) if isinstance(original_receipts, dict) else None
+    if receipt == original_receipt:
+        raise ModelFailure("qualification_result_not_published")
     expected = "passed" if result == 0 else "failed"
     if result not in {0, 1} or not isinstance(receipt, dict) or receipt.get("status") != expected:
         raise ModelFailure("qualification_result_mismatch")

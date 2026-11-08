@@ -58,6 +58,10 @@ Neither model's writing has been reviewed by people for accuracy. Your installat
 
 Use the installed management scripts in your installation folder (normally `~/bonafides`). Docker and an already-running local [Ollama](https://ollama.com) with `qwen2.5:7b-instruct` are prerequisites. Check `ollama list` first. If the model is missing, install it yourself after reviewing its license; BonaFides never downloads it. No host Python or uv is needed.
 
+Before attaching, disable Ollama cloud with `OLLAMA_NO_CLOUD=1` or `{"disable_ollama_cloud": true}` in `~/.ollama/server.json`, restart Ollama and confirm its startup log reports `Ollama cloud disabled: true` ([Ollama instructions](https://github.com/ollama/ollama/blob/main/docs/faq.mdx)). Keep cloud disabled and model tags unchanged throughout qualification and use. BonaFides does not attest these host settings or contain a runtime that ignores them.
+
+On native Linux, Ollama's default `127.0.0.1:11434` listener is not reachable through Docker's host gateway. Arrange a Docker-reachable private listener or forwarder and restrict its firewall to the installation's Docker traffic before attaching. Do not expose port 11434 publicly. BonaFides does not reconfigure the host listener or firewall.
+
 ```sh
 cd ~/bonafides
 sh models.sh attach --model qwen2.5:7b-instruct --model-license Apache-2.0 --authorize-local-model
@@ -69,6 +73,8 @@ Replace `Local owner` with the name to record as the reviewer. Attaching authori
 
 Each completed test saves its real result and restarts this installation to apply it. Exit status 0 means passed and applied; 1 means failed and applied, with its failed receipt saved; 2 means a setup, connection or application problem. Failures before publication leave earlier receipts unchanged. If configuration was saved but restarting failed, the error says so: resolve the reported problem and run `sh start.sh`. A failed test is not permission to use that stage. Only one model command can run at a time.
 
+If an interrupted first attach leaves a disabled managed route, run `sh models.sh remove` before attaching again. A lock left by an interrupted command requires [safe manual recovery](../development/README.md#optional-operator-controlled-local-model-route); do not force-unlock a running command.
+
 Open **Documents** for an application. **Generation route:** and the qualification receipts show each stage's real status. Writing a pair and rewriting a section qualify separately; a passed receipt cannot override a block caused by a malformed live answer. No model task runs until you preview its input and explicitly approve that task.
 
 To disable AI and remove its managed route:
@@ -78,6 +84,8 @@ sh models.sh remove
 ```
 
 Removal restarts this installation and returns the route to disabled. Your profile, documents, credentials and Ollama model weights are retained. Already transmitted input cannot be recalled. For a nondefault installation, add `--dir /absolute/path/to/installation` to each command. See the [developer contract](../development/README.md#optional-operator-controlled-local-model-route) for the pinned identity, limits and advanced source-checkout setup.
+
+If the gateway's Docker address changes after network/container recreation, remove the route, attach it again and rerun both qualifications. Existing address pins deliberately fail closed; restarting retained containers does not require requalification.
 
 ## If an AI task fails
 
