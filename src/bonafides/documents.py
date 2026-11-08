@@ -14,7 +14,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_valida
 from sqlalchemy import Connection, text
 
 from bonafides.auth import Owner, require_owner
-from bonafides.claims import grounded, render_claim, structured_claim
+from bonafides.claims import grounded, literal_grounded, render_claim, structured_claim
 from bonafides.config import Settings
 from bonafides.db import Database
 from bonafides.document_frame import PrintableFrame, template_digest
@@ -175,12 +175,11 @@ def _facts(conn: Connection, owner_id: UUID, profile_revision_id: UUID) -> tuple
             or hashlib.sha256(canonical(evidence).encode()).hexdigest() != row["evidence_sha256"]
         ):
             raise Problem(409, "evidence_integrity_failed")
-        # Structured claims require their complete rendering within a verbatim evidence
-        # quote; literal claims still require an exact quote of the entire stored text.
+        # Both claim forms require a genuine quote; literals use the shared whole-phrase rule.
         quoted = (
             row["excerpt"] in evidence_text and grounded(structured, row["excerpt"])
             if structured
-            else row["excerpt"] == claim_text and claim_text in evidence_text
+            else literal_grounded(claim_text, row["excerpt"], evidence_text)
         )
         if row["support_kind"] not in ("direct", "user_asserted") or not quoted:
             continue
@@ -252,8 +251,6 @@ def publish_document(
         }
         for fact in facts
     ]
-    if facts != prepared.facts:
-        raise Problem(409, "unsupported_claims")
     issues = check_statements(prepared.body, pinned, {}, "base")
     if issues:
         raise Problem(
@@ -262,6 +259,8 @@ def publish_document(
             "Unsupported statements: "
             + "; ".join(f"{issue['statement']} ({issue['code']})" for issue in issues),
         )
+    if facts != prepared.facts:
+        raise Problem(409, "unsupported_claims")
     revision_id = uuid5(workflow_id, "document-revision")
     existing = conn.execute(
         text(

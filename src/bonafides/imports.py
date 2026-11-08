@@ -20,7 +20,7 @@ from starlette.concurrency import run_in_threadpool
 
 from bonafides.auth import Owner, StrictModel, require_owner
 from bonafides.claim_mapping import UnparsedPart, map_line, statement_text
-from bonafides.claims import STRUCTURED_KINDS, StructuredClaim
+from bonafides.claims import STRUCTURED_KINDS, StructuredClaim, contains_statement, literal_grounded
 from bonafides.commands import append_outbox, canonical_json, command, lock_installation
 from bonafides.config import Settings
 from bonafides.db import Database
@@ -755,6 +755,15 @@ def _validate_review(
                 raise Problem(422, "import_identity_overwrite_required")
             identity_fields.add(field)
             continue
+        if not (
+            literal_grounded(decision.payload.text, original, original)
+            and contains_statement(decision.payload.text, batch["parsed_text"])
+        ):
+            raise Problem(
+                422,
+                "literal_claim_not_grounded",
+                f"Literal entry is not grounded in its source: {decision.payload.text}",
+            )
         if decision.action not in {"replace", "unchanged"}:
             if decision.claim_id is not None:
                 raise Problem(422, "import_target_invalid")

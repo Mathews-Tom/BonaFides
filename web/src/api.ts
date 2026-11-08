@@ -37,7 +37,7 @@ export const evidencePrivacyClasses: Record<EvidencePrivacyClass, string> = { pu
 export interface EvidenceRevision extends RevisionMetadata { payload: { text: string; source: string }; provenance: EvidenceProvenance }
 export interface EvidenceLink { evidence_revision_id: string; support_kind: 'direct' | 'user_asserted' | 'context'; excerpt: string }
 export interface ClaimRevision extends RevisionMetadata { payload: ProfileClaimPayload; evidence_links: (EvidenceLink & { evidence: EvidenceRevision })[] }
-export interface PinnedClaim { id: string; kind: ClaimKind; revision: ClaimRevision; rendering: string; needs_attention: boolean }
+export interface PinnedClaim { id: string; kind: ClaimKind; revision: ClaimRevision; rendering: string; needs_attention: boolean; grounding_issue?: 'literal_claim_not_grounded' | null }
 export interface ClaimRecord extends PinnedClaim { version: number; archived: boolean; current_revision_id: string }
 export interface ClaimUsageItem {
   scope: 'base' | 'tailored'; application: { id: string; title: string; company: string; attempt_no: number; archived: boolean } | null;
@@ -138,6 +138,7 @@ export interface DocumentFact {
 }
 export interface DocumentProvenance {
   facts?: DocumentFact[]; frame?: Record<string, unknown>; mode?: string; schema_version?: number | string;
+  omitted_claims?: { claim_revision_id: string; claim_text: string; code: 'literal_claim_not_grounded' }[];
   model_run?: Record<string, unknown> | null; [key: string]: unknown;
 }
 export interface DocumentIssue { path: string; code: string; statement?: string }
@@ -284,7 +285,7 @@ export interface RequirementsView {
 }
 export interface SuitabilityAccepted { workflow_id: string; posting_id: string }
 export class ApiError extends Error {
-  constructor(readonly status: number, readonly code: string, readonly fields: FieldError[] = [], readonly retryAfterSeconds?: number) { super(code); }
+  constructor(readonly status: number, readonly code: string, readonly fields: FieldError[] = [], readonly retryAfterSeconds?: number, readonly detail?: string) { super(code); }
 }
 export class Api {
   csrf = '';
@@ -311,11 +312,12 @@ export class Api {
     if (!response.ok) {
       let code = `http_${response.status}`;
       let fields: FieldError[] = [];
-      try { const problem = await response.json() as { code?: string; fields?: FieldError[] }; code = problem.code ?? code; fields = problem.fields ?? []; } catch { /* A non-JSON upstream error is still a failure. */ }
+      let detail: string | undefined;
+      try { const problem = await response.json() as { code?: string; fields?: FieldError[]; detail?: unknown }; code = problem.code ?? code; fields = problem.fields ?? []; detail = typeof problem.detail === 'string' ? problem.detail : undefined; } catch { /* A non-JSON upstream error is still a failure. */ }
       const retryAfter = response.headers.get('Retry-After');
       const parsedRetryAfter = retryAfter && /^\d+$/.test(retryAfter) ? Number(retryAfter) : NaN;
       const retryAfterSeconds = Number.isFinite(parsedRetryAfter) ? parsedRetryAfter : undefined;
-      const failure = new ApiError(response.status, code, fields, retryAfterSeconds);
+      const failure = new ApiError(response.status, code, fields, retryAfterSeconds, detail);
       if (response.status === 401 || response.status === 503) this.onUnavailable?.(failure);
       throw failure;
     }
@@ -346,6 +348,7 @@ export function errorText(error: unknown): string {
     if (error.code === 'workspace_reconnect_required') return 'Writes are paused. Reconnect and review the current workspace before saving. Your editor text remains here.';
     if (error.status === 412) return 'A newer revision exists. Your text remains here. Load the current revision for comparison before saving again.';
     if (error.status === 401) return 'Your session is unavailable or expired. Sign in again. Unsaved text remains here for this visit.';
+    if (error.detail && (error.code === 'literal_claim_not_grounded' || error.code === 'profile_claim_not_supported')) return `The operation was not completed (${error.code}). ${error.detail} Your existing work has not been replaced.`;
     if (error.status === 422 && error.fields.length) return error.fields.map(field => `${field.loc.filter(part => part !== 'body').join('.') || 'Request'}: ${field.message}`).join(' ');
     return `The operation was not completed (${error.code}). Your existing work has not been replaced.`;
   }

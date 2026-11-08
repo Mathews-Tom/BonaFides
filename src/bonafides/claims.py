@@ -478,3 +478,13 @@ def contains_statement(statement: str, excerpt: str) -> bool:
         rf"(?![^\W_]|(?<=\d)[%×]|[.,]\d{currency_boundary})"
     )
     return re.search(pattern, quoted) is not None
+
+
+def literal_grounded(statement: str, excerpt: str, evidence: str) -> bool:
+    """Require a genuine source quote and the whole statement in both quote and source."""
+    return (
+        bool(excerpt)
+        and excerpt in evidence
+        and contains_statement(statement, excerpt)
+        and contains_statement(statement, evidence)
+    )

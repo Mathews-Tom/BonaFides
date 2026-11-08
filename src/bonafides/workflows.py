@@ -318,7 +318,12 @@ def source_block_reason(conn: Connection, row: Mapping[str, object]) -> str | No
         from bonafides.document_generation import _fact_data
 
         try:
-            _fact_data(conn, cast(UUID, owner_id), UUID(str(snapshot["profile_revision_id"])))
+            _fact_data(
+                conn,
+                cast(UUID, owner_id),
+                UUID(str(snapshot["profile_revision_id"])),
+                omitted_claims=[] if snapshot.get("mode") == "deterministic_base" else None,
+            )
         except Problem:
             return "source_withdrawn"
     if row["kind"] == "pdf_render":

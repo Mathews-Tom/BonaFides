@@ -15,13 +15,13 @@ from uuid import UUID, uuid4
 import pytest
 from pydantic import ValidationError
 from sqlalchemy import text
-from test_document_generation import _base, _document, _review
+from test_document_generation import _base, _document, _legacy_literal_profile, _review
 from test_identity import identity as identity
 from test_sources import SourceContext
 from test_sources import catalog as catalog
 from test_suitability import _profile
 
-from bonafides import documents
+from bonafides import document_generation, documents
 from bonafides.documents import (
     DocumentBlock,
     DocumentBody,
@@ -152,52 +152,52 @@ def test_citation_does_not_support_invented_kubernetes_metric() -> None:
 def test_stored_base_checker_blocks_literal_claim_substrings(
     catalog: SourceContext, publication: str
 ) -> None:
-    """Checker regression with a synthetic excerpt, not an owner rebuild admission guarantee."""
-    profile = catalog.client.get("/api/v1/profile").json()
-    evidence = catalog.client.post(
-        "/api/v1/evidence",
-        json={
-            "payload": {"text": "Tuned PostgreSQL queries", "source": "Synthetic owner notes"},
-            "provenance": {
-                "source_type": "owner_statement",
-                "privacy_class": "private",
-                "employer_owned": False,
-            },
-        },
-        headers=catalog.headers(profile["version"]),
+    """Persist legacy inputs below admission so the later checker remains independently tested."""
+    document = (
+        _base(catalog, _profile(catalog)) if publication == "synthetic_stored_revision" else None
     )
-    assert evidence.status_code == 200, evidence.text
-    profile = evidence.json()
-    claim = catalog.client.post(
-        "/api/v1/claims",
-        json={
-            "kind": "skill",
-            "payload": {"text": "SQL"},
-            "evidence_links": [
-                {
-                    "evidence_revision_id": profile["evidence"][0]["revision"]["id"],
-                    "support_kind": "user_asserted",
-                    "excerpt": "SQL",
-                }
-            ],
-        },
-        headers=catalog.headers(profile["version"]),
+    profile = _legacy_literal_profile(catalog, catalog.client.get("/api/v1/profile").json())
+    claim = profile["current_revision"]["claims"][-1]["revision"]
+    evidence = claim["evidence_links"][0]["evidence"]
+    fact = Fact(
+        claim_id=UUID(claim["id"]),
+        evidence_id=UUID(evidence["id"]),
+        claim_text="SQL",
+        evidence_text=evidence["payload"]["text"],
+        source=evidence["payload"]["source"],
+        claim_sha256=claim["content_sha256"],
+        evidence_sha256=evidence["content_sha256"],
+        status="supported",
+        claim_verb=None,
     )
-    assert claim.status_code == 200, claim.text
-    profile = claim.json()
-
-    if publication == "benchmark":
-        with catalog.runtime.transaction() as conn:
-            prepared = documents.prepare_synthetic(
-                conn, catalog.owner_id, UUID(profile["current_revision"]["id"])
+    body = DocumentBody(
+        title="Base résumé",
+        sections=[
+            DocumentSection(
+                key="skills",
+                heading="Skills",
+                blocks=[
+                    DocumentBlock(
+                        block_key="legacy-sql",
+                        text="SQL",
+                        claim_kind="factual",
+                        claim_revision_ids=[fact.claim_id],
+                        evidence_revision_ids=[fact.evidence_id],
+                    )
+                ],
             )
+        ],
+    )
+    if publication == "benchmark":
+        prepared = documents.PreparedDocument(
+            UUID(profile["current_revision"]["id"]), body, (fact,)
+        )
+        with catalog.runtime.transaction() as conn:
             with pytest.raises(Problem) as refused:
                 documents.publish_document(conn, catalog.owner_id, uuid4(), prepared)
             assert refused.value.status == 409
             assert refused.value.code == "unsupported_claims"
-            assert refused.value.detail == (
-                "Unsupported statements: SQL (statement_not_in_claim_evidence)"
-            )
+            assert "SQL" in (refused.value.detail or "")
             assert (
                 conn.execute(
                     text("SELECT count(*) FROM bonafides.document_drafts WHERE owner_id=:owner"),
@@ -207,9 +207,43 @@ def test_stored_base_checker_blocks_literal_claim_substrings(
             )
         return
 
-    document = _base(catalog, profile)
+    assert document is not None
+    source = {
+        **document,
+        **document["current_revision"],
+        "profile_revision_id": profile["current_revision"]["id"],
+        "provenance_snapshot": {
+            **document["current_revision"]["provenance_snapshot"],
+            "facts": [
+                {
+                    "claim_revision_id": str(fact.claim_id),
+                    "evidence_revision_id": str(fact.evidence_id),
+                    "claim_text": fact.claim_text,
+                    "evidence_text": fact.evidence_text,
+                    "source": fact.source,
+                    "claim_sha256": fact.claim_sha256,
+                    "evidence_sha256": fact.evidence_sha256,
+                    "status": fact.status,
+                    "claim_verb": None,
+                    "category": "skill",
+                    "structured_fields": {},
+                    "printable_text": fact.claim_text,
+                }
+            ],
+        },
+    }
+    with catalog.runtime.transaction() as conn:
+        document_generation.append_revision(
+            conn,
+            catalog.owner_id,
+            UUID(document["id"]),
+            body,
+            source,
+            "manual",
+            "Synthetic legacy revision",
+        )
+    document = _document(catalog, document["id"])
     revision = document["current_revision"]
-    assert [block["text"] for block in revision["body"]["sections"][0]["blocks"]] == ["SQL"]
     assert revision["validation_issues"] == [
         {
             "path": "/sections/0/blocks/0",

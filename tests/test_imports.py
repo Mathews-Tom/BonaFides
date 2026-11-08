@@ -833,7 +833,8 @@ def test_upload_stages_without_canonical_mutation_and_atomic_review_is_idempoten
         )
     key = uuid4().hex
     reviewed = _review(batch)
-    _decisions(reviewed)[0]["payload"]["text"] = "Owner edited the literal assertion"
+    edited = "fictional Linux services"
+    _decisions(reviewed)[0]["payload"]["text"] = edited
     accepted = importing.approve(batch, reviewed, key=key)
     assert accepted.status_code == 202, accepted.text
     assert importing.profile() == original
@@ -843,7 +844,7 @@ def test_upload_stages_without_canonical_mutation_and_atomic_review_is_idempoten
     assert profile["version"] == original["version"] + 1
     assert _counts(importing) == (before[0] + 1, 2, 2, 2)
     claims = profile["current_revision"]["claims"]
-    assert claims[0]["revision"]["payload"]["text"] == "Owner edited the literal assertion"
+    assert claims[0]["revision"]["payload"]["text"] == edited
     for index, claim_row in enumerate(claims):
         link = claim_row["revision"]["evidence_links"][0]
         source = link["evidence"]["payload"]
@@ -873,7 +874,7 @@ def test_upload_stages_without_canonical_mutation_and_atomic_review_is_idempoten
             .scalars()
             .all()
         )
-        assert "Owner edited" not in metadata and "Maintained fictional" not in metadata
+        assert edited not in metadata and "Maintained fictional" not in metadata
 
 
 @pytest.mark.postgres
@@ -1510,13 +1511,13 @@ def test_staged_projection_is_read_only_and_user_grouping_and_splitting_keep_all
                 "source_ids": [work["sources"][0]["source_id"]],
                 "action": "add",
                 "kind": "experience",
-                "payload": {"text": "Owner-reviewed employment header"},
+                "payload": {"text": work["sources"][0]["quote"]},
             },
             {
                 "source_ids": [part["source_id"] for part in work["sources"][1:]],
                 "action": "add",
                 "kind": "experience",
-                "payload": {"text": "Owner combined responsibilities"},
+                "payload": {"text": work["sources"][1]["quote"]},
             },
             {
                 "source_ids": [
@@ -1525,7 +1526,7 @@ def test_staged_projection_is_read_only_and_user_grouping_and_splitting_keep_all
                 ],
                 "action": "add",
                 "kind": "skill",
-                "payload": {"text": "Owner combined two skills"},
+                "payload": {"text": first_skill["sources"][0]["quote"]},
             },
             {
                 "source_ids": [repeated_skill["sources"][0]["source_id"]],
@@ -1851,3 +1852,75 @@ def test_undated_entries_are_counted_once_however_many_lines_they_hold() -> None
 
     claims = [line("a", "Fictional Freight"), line("b", "Fictional Freight"), line("c", "Other")]
     assert experience_coverage(claims)["undated_or_open_entries"] == 2
+
+
+@pytest.mark.postgres
+def test_reviewed_literal_import_refuses_inner_word_claim_without_publishing(
+    importing: ImportContext,
+) -> None:
+    batch = importing.staged("Skills\nPostgreSQL\n")
+    before = importing.profile()
+    counts = _counts(importing)
+    review = _review(batch)
+    _decisions(review)[0]["payload"] = {"text": "SQL"}
+    refused = importing.approve(batch, review)
+    assert refused.status_code == 422, refused.text
+    assert refused.json()["code"] == "literal_claim_not_grounded"
+    assert "SQL" in refused.json()["detail"]
+    assert importing.batch(batch["id"])["state"] == "waiting_for_approval"
+    assert importing.profile() == before
+    assert _counts(importing) == counts
+
+
+@pytest.mark.postgres
+def test_reviewed_literal_import_accepts_normalized_whole_phrase_without_rewriting(
+    importing: ImportContext,
+) -> None:
+    batch = importing.staged("Skills\nＳＱＬ — reporting\n")
+    review = _review(batch)
+    _decisions(review)[0]["payload"] = {"text": "sql - reporting."}
+    approved = importing.approve(batch, review)
+    assert approved.status_code == 202, approved.text
+    importing.run()
+    assert importing.batch(batch["id"])["state"] == "succeeded"
+    claim = importing.profile()["current_revision"]["claims"][0]
+    assert claim["revision"]["payload"]["text"] == "sql - reporting."
+    assert claim["grounding_issue"] is None
+    assert claim["revision"]["evidence_links"][0]["excerpt"] == "ＳＱＬ — reporting"
+
+
+@pytest.mark.postgres
+def test_import_worker_revalidates_legacy_approval_against_immutable_source(
+    importing: ImportContext,
+) -> None:
+    batch = importing.staged("Skills\nPostgreSQL\n")
+    before = importing.profile()
+    counts = _counts(importing)
+    review = _review(batch)
+    _decisions(review)[0]["payload"] = {"text": "SQL"}
+    # Seed the stored approval an earlier writer could accept; do not bypass worker checks.
+    with importing.identity.admin.transaction() as conn:
+        conn.execute(
+            text("""UPDATE bonafides.import_batches SET review=CAST(:review AS jsonb),
+            reviewed_at=clock_timestamp(),profile_version=:version
+            WHERE owner_id=:owner AND id=:id"""),
+            {
+                "review": canonical_json(review),
+                "version": before["version"],
+                "owner": importing.owner_id,
+                "id": UUID(batch["id"]),
+            },
+        )
+        conn.execute(
+            text("""UPDATE bonafides.workflow_runs SET state='pending',
+            deadline_at=clock_timestamp()+interval '60 seconds',next_attempt_at=clock_timestamp(),
+            version=version+1,updated_at=clock_timestamp(),last_error_code=NULL
+            WHERE owner_id=:owner AND id=:id"""),
+            {"owner": importing.owner_id, "id": UUID(batch["workflow_id"])},
+        )
+    importing.run()
+    failed = importing.batch(batch["id"])
+    assert failed["state"] == "permanent_failure"
+    assert failed["error_code"] == "literal_claim_not_grounded"
+    assert importing.profile() == before
+    assert _counts(importing) == counts

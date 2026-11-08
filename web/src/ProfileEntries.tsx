@@ -82,7 +82,10 @@ interface ClassificationDraft { id: string; privacy_class: EvidencePrivacyClass;
 
 function ClaimWords({ claim }: { claim: PinnedClaim }) {
   const payload = claim.revision.payload;
-  return <><p>{claim.rendering}</p>{claim.needs_attention && <p className="hint">Needs attention: this statement is still free text. Edit the entry to restructure it as a claim.</p>}{(payload.organization || payload.role) && <p>{[payload.role, payload.organization].filter(Boolean).join(' · ')}</p>}
+  return <><p>{claim.rendering}</p>
+    {claim.grounding_issue === 'literal_claim_not_grounded' && <p className="hint">Needs attention: this statement is not present as a whole phrase in a pinned supporting source and excerpt. The original saved entry is unchanged. Edit the entry and save a supported new revision.</p>}
+    {claim.needs_attention && structuredKinds.has(claim.kind) && !('claim' in payload) && <p className="hint">Needs attention: this statement is still free text. Edit the entry to restructure it as a claim.</p>}
+    {(payload.organization || payload.role) && <p>{[payload.role, payload.organization].filter(Boolean).join(' · ')}</p>}
     {(payload.start_date || payload.end_date) && <p>{payload.start_date || 'Start not supplied'} — {payload.end_date || 'End not supplied'}</p>}
     {payload.proficiency && <p>Proficiency: {payload.proficiency}</p>}
     {payload.project_url && <p>Project reference (not fetched): <code>{payload.project_url}</code></p>}
@@ -180,7 +183,7 @@ export function ProfileEntries({ api, profile, disabled, onProfile, onDirtyChang
   function editClaim(value: ClaimRecord) {
     const saved = value.revision.payload;
     const structured = 'claim' in saved ? draftOf(saved.claim) : structuredKinds.has(value.kind) ? { ...emptyStructured } : null;
-    setError(''); setNotice(''); setClaim({ id: value.id, kind: value.kind, payload: literalClaimPayload(value), structured, legacyText: value.needs_attention ? value.rendering : '',
+    setError(''); setNotice(''); setClaim({ id: value.id, kind: value.kind, payload: literalClaimPayload(value), structured, legacyText: value.needs_attention && structuredKinds.has(value.kind) && !('claim' in saved) ? value.rendering : '',
       evidence_links: value.revision.evidence_links.map(({ evidence_revision_id, support_kind, excerpt }) => ({ evidence_revision_id, support_kind, excerpt })),
       pinnedEvidence: value.revision.evidence_links.map(link => link.evidence) });
   }

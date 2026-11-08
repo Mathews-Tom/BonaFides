@@ -26,6 +26,8 @@ from bonafides.commands import canonical_json
 from bonafides.db import Database
 from bonafides.local_model import LocalRoute, ModelFailure, ModelResult
 from bonafides.problems import Problem
+from bonafides.profile_entries import EvidenceLink, _snapshot, append_claim_revision
+from bonafides.profiles import _save as save_profile
 from bonafides.worker import Worker
 from bonafides.workflows import Claim, cancel_workflow, claim, reap
 
@@ -206,26 +208,63 @@ def test_coverage_projection_requires_quoted_rendering_for_structured_claims(
         if structured
         else {"text": rendering}
     )
-    saved = catalog.client.post(
-        "/api/v1/claims",
-        json={
-            "kind": "experience",
-            "payload": payload,
-            "evidence_links": [
-                {
-                    "evidence_revision_id": evidence_id,
-                    "support_kind": support_kind,
-                    "excerpt": excerpt,
-                }
-            ],
-        },
-        headers=catalog.headers(evidence.json()["version"]),
-    )
-    assert saved.status_code == 200, saved.text
-    profile = saved.json()["current_revision"]
-    claim = next(
-        item for item in profile["claims"] if item["id"] == saved.json()["changed_claim_id"]
-    )
+    if structured:
+        saved = catalog.client.post(
+            "/api/v1/claims",
+            json={
+                "kind": "experience",
+                "payload": payload,
+                "evidence_links": [
+                    {
+                        "evidence_revision_id": evidence_id,
+                        "support_kind": support_kind,
+                        "excerpt": excerpt,
+                    }
+                ],
+            },
+            headers=catalog.headers(evidence.json()["version"]),
+        )
+        assert saved.status_code == 200, saved.text
+        profile = saved.json()["current_revision"]
+        identifier = saved.json()["changed_claim_id"]
+    else:
+        # This projection deliberately examines legacy unsupported literal rows.
+        identifier = str(uuid4())
+        with catalog.runtime.transaction() as conn:
+            snapshot = _snapshot(conn, catalog.owner_id)
+            conn.execute(
+                text("""INSERT INTO bonafides.professional_claims(owner_id,id,profile_id,kind)
+                SELECT :owner,:id,id,'experience' FROM bonafides.profiles WHERE owner_id=:owner"""),
+                {"owner": catalog.owner_id, "id": UUID(identifier)},
+            )
+            revision = append_claim_revision(
+                conn,
+                catalog.owner_id,
+                UUID(identifier),
+                payload,
+                [
+                    EvidenceLink.model_validate_json(
+                        canonical_json(
+                            {
+                                "evidence_revision_id": evidence_id,
+                                "support_kind": support_kind,
+                                "excerpt": excerpt,
+                            }
+                        )
+                    )
+                ],
+                increment=0,
+            )
+            save_profile(
+                conn,
+                catalog.owner_id,
+                snapshot.model_copy(
+                    update={"claim_revision_ids": [*snapshot.claim_revision_ids, revision]}
+                ),
+                "claim_saved",
+            )
+        profile = catalog.client.get("/api/v1/profile").json()["current_revision"]
+    claim = next(item for item in profile["claims"] if item["id"] == identifier)
     claim_id, evidence_uuid = UUID(claim["revision"]["id"]), UUID(evidence_id)
     with catalog.identity.admin.transaction() as conn:
         projection = suitability._profile_projection(conn, catalog.owner_id, UUID(profile["id"]))
