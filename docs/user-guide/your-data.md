@@ -69,12 +69,12 @@ Deleting removes your data from BonaFides. Exports and PDFs you downloaded, and 
 
 The same **Replace or permanently delete saved data** section can replace everything in your workspace with the contents of an export, under **Prepare workspace replacement**. The steps are the same as for deletion: confirm your identity, choose the **Owner-data ZIP**, select **Upload ZIP and prepare replacement preview**, check the preview, then type the confirmation and approve.
 
-Replacement has two safety requirements that currently need technical setup:
+Replacement has two safety requirements:
 
 - A **verified installation backup** must exist first, so the installation can be recovered if the replacement goes wrong. Select **Check replacement readiness** to see whether one exists.
-- If the export came from a **different installation**, you need the ID of the account that created it, entered under **Expected original owner UUID (optional)**. BonaFides doesn't take this from the file itself, because a file can't vouch for itself.
+- If the export came from a **different installation**, open **Settings** in the **original installation**. Under **Owner account**, select **Copy owner account ID** beside **Owner account ID**. In the destination installation, paste it into **Expected original owner UUID (optional)** before selecting **Upload ZIP and prepare replacement preview**. Use the original account's ID, not the destination's ID or your login name. If clipboard access fails, select the ID and copy it manually. BonaFides doesn't take this from the file itself, because a file can't vouch for itself.
 
-Both are covered in the developer guide's [owner-data portability and erasure](../development/README.md#owner-data-portability-and-erasure) section.
+Finding the account ID needs no technical setup. Preparing the verified installation backup still does; see the developer guide's [owner-data portability and erasure](../development/README.md#owner-data-portability-and-erasure) section. Reaching the replacement preview does not replace your saved data; that needs your separate, exact approval.
 
 ## Installation backups
 

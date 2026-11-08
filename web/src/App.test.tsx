@@ -57,6 +57,26 @@ function connectedApi(saveFailure?: Error) {
   });
   return { api, request };
 }
+describe('owner account identifier', () => {
+  it('keeps the identifier selectable when the clipboard refuses access', async () => {
+    const user = userEvent.setup(); const { api } = connectedApi();
+    const copy = vi.spyOn(navigator.clipboard, 'writeText').mockRejectedValue(new DOMException('Clipboard denied', 'NotAllowedError'));
+    try {
+      render(<App api={api} />);
+      await screen.findByDisplayValue('Mira');
+      await goTo(user, 'Settings');
+      const identifier = screen.getByRole('textbox', { name: 'Owner account ID' });
+      await user.click(screen.getByRole('button', { name: 'Copy owner account ID' }));
+      expect(await screen.findByRole('alert')).toBeVisible();
+      await user.click(identifier);
+      expect(identifier).toHaveFocus();
+      expect(identifier).toHaveAttribute('readonly');
+      expect((identifier as HTMLInputElement).selectionStart).toBe(0);
+      expect((identifier as HTMLInputElement).selectionEnd).toBe((identifier as HTMLInputElement).value.length);
+    } finally { copy.mockRestore(); }
+  });
+});
+
 describe('profile editing', () => {
   it('retains description-only drafts through navigation and themes, fences source edits, and explicitly discards them', async () => {
     const user = userEvent.setup(); const { api, request } = connectedApi();

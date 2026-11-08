@@ -6,6 +6,7 @@ All notable changes to BonaFides are recorded here. The format follows [Keep a C
 
 ### Added
 
+- Settings shows the signed-in owner's account ID with a copy control and manual selection when clipboard access fails; cross-installation import guidance explains how to use the original installation's ID.
 - Root `install.sh`, `start.sh`, `stop.sh` and `uninstall.sh` separate source-checkout preparation from runtime management; installed management copies work without the checkout using saved settings.
 - `bonafides demo load` loads synthetic profile, evidence and claims into an existing, empty owner profile; reruns are no-ops and any real or changed state is refused without writes.
 - `tools/core_loop_proof.py` proves posting, checked résumé and letter, exact-revision review, PDF export and saved tracking on the release image in production mode with the explicit fixture model; unsupported and ownership-inflated output blocks review/export. The full tier runs it on both architectures. `tools/demo_capture.py` rebuilds the README workflow recording.
