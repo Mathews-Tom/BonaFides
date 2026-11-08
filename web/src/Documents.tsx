@@ -22,11 +22,13 @@ function withheldClaimText(projection: Record<string, unknown>, id: string): str
 
 const TASK_REASONS: Record<string, string> = {
   model_output_invalid_after_correction: 'The model output did not match the required document shape, even after one corrective retry. No documents or application changes were created.',
+  model_output_limit: 'The model reached its output limit. This failure does not block the route. No documents or application changes were created.',
   model_incomplete: 'The model output was cut off before it finished. No documents were created.',
   stale_document_context: 'Your profile, posting or settings changed after the request. No documents were created; preview and request again.',
 };
 const SECTION_TASK_REASONS: Record<string, string> = {
   model_output_invalid_after_correction: 'The model output did not match the required section shape, even after one corrective retry. No proposal was created and the document is unchanged.',
+  model_output_limit: 'The model reached its output limit. This failure does not block the route. No proposal was created and the document is unchanged.',
   model_incomplete: 'The model output was cut off before it finished. No proposal was created and the document is unchanged.',
 };
 
@@ -42,7 +44,7 @@ function Sources({ facts, claimIds, evidenceIds }: { facts: DocumentFact[]; clai
 const RATE_STAGES = [['generate_documents', 'Pair generation'], ['regenerate_section', 'Section regeneration']] as const;
 function ClaimJsonRates({ rates }: { rates: ApplicationDocuments['claim_json_rates'] }) {
   return <section className="disclosure" aria-label="Valid claim JSON rate for this route"><h4>Valid claim JSON rate for this route</h4><ul>{RATE_STAGES.map(([stage, label]) => { const item = rates[stage]; return <li key={stage}>
-    <strong>{label}: {item.rate_percent === null ? 'no checked generations yet' : `${item.rate_percent}% valid`}.</strong> {item.valid_first} valid on the first response, {item.valid_after_correction} valid after one correction, {item.invalid_after_correction} invalid after correction; {item.failed_before_check} ended before a response could be checked (cut off, unreachable or interrupted), not counted in the rate.
+    <strong>{label}: {item.rate_percent === null ? 'no checked generations yet' : `${item.rate_percent}% valid`}.</strong> {item.valid_first} valid on the first response, {item.valid_after_correction} valid after one correction, {item.invalid_after_correction} invalid after correction; {item.output_limited} output-limited, counted in the rate; {item.failed_before_check} other failures before a response could be checked, not counted in the rate.
   </li>; })}</ul><p>Counts cover finished generations sent to this exact route. Valid JSON is a shape check, not proof that statements are supported.</p></section>;
 }
 function QualificationReceipts({ details }: { details: ApplicationDocuments['receipt_details'] }) {

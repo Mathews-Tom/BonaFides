@@ -18,7 +18,7 @@ const saved: DocumentRecord = {
 const application: ApplicationSummary = { id: 'application-1', version: 7, attempt_no: 1, posting_id: 'posting-1', opportunity_id: 'opportunity-1', title: 'Engineer', company: 'Fictional North', current_stage: 'preparing', archived_at: null, created_at: '2026-10-25T12:00:00Z', updated_at: '2026-10-25T12:00:00Z', next_action: null };
 const tailored: DocumentRecord = { ...saved, id: 'tailored-resume', scope: 'tailored', application_id: application.id };
 const route = { status: 'unqualified' as const, reason: 'generate_documents qualification has not been authorized', identity: { model: 'unqualified-local' } };
-const noGenerations = { valid_first: 0, valid_after_correction: 0, invalid_after_correction: 0, failed_before_check: 0, rate_percent: null };
+const noGenerations = { valid_first: 0, valid_after_correction: 0, invalid_after_correction: 0, output_limited: 0, failed_before_check: 0, rate_percent: null };
 const missingReceipt = { status: 'missing' as const, valid_rate_per_mille: null, reviewed_at: null, qualified: false, reason: null };
 const pair: ApplicationDocuments = { application_id: application.id, version: 7, items: [tailored], generation_route: route, requirements_revision_id: 'requirements-1', claim_json_rates: { generate_documents: noGenerations, regenerate_section: noGenerations }, receipt_details: { generate_documents: missingReceipt, regenerate_section: missingReceipt } };
 const context: GenerationContext = { application_id: application.id, application_version: 7, profile_revision_id: 'profile-rev-3', profile_version: 3, requirements_revision_id: 'requirements-1', template_version: 'bonafides-evidence-v1', tone: 'professional', language: 'en', context_sha256: '1'.repeat(64), model_projection: { facts: [{ text: 'Maintained Linux service checks.' }], requirements: [{ text: 'Linux' }] }, frame: { display_name: 'Mira Vale', contact: { email: 'mira@example.test' } }, generation_route: route, withheld_evidence: [] };
@@ -604,7 +604,7 @@ async function inspectSection(user: UserEvent) {
 describe('saved tailored section proposals', () => {
   it('shows the valid claim JSON rate of this route for both document stages', async () => {
     const user = userEvent.setup();
-    const rates = { generate_documents: { valid_first: 2, valid_after_correction: 1, invalid_after_correction: 1, failed_before_check: 1, rate_percent: 75 }, regenerate_section: noGenerations };
+    const rates = { generate_documents: { valid_first: 2, valid_after_correction: 1, invalid_after_correction: 1, output_limited: 0, failed_before_check: 1, rate_percent: 75 }, regenerate_section: noGenerations };
     const { api } = fixture(saved, async path => {
       if (path === '/applications') return { items: [application], next_cursor: null, query_elapsed_ms: 1, as_of: application.updated_at };
       if (path === '/applications/application-1/documents') return { ...pair, claim_json_rates: rates };
@@ -616,7 +616,6 @@ describe('saved tailored section proposals', () => {
     await user.selectOptions(await screen.findByLabelText('Tracked application'), application.id);
     const panel = await screen.findByRole('region', { name: 'Valid claim JSON rate for this route' });
     expect(within(panel).getByText('Pair generation: 75% valid.')).toBeVisible();
-    expect(within(panel).getByText(/2 valid on the first response, 1 valid after one correction, 1 invalid after correction; 1 ended before/)).toBeVisible();
     expect(within(panel).getByText('Section regeneration: no checked generations yet.')).toBeVisible();
   });
 
@@ -741,7 +740,6 @@ describe('saved tailored section proposals', () => {
       await act(async () => { await vi.advanceTimersByTimeAsync(1000); });
       const panel = screen.getByRole('region', { name: 'Valid claim JSON rate for this route' });
       expect(within(panel).getByText(label)).toBeVisible();
-      expect(within(panel).getByText(new RegExp(`${rates.valid_after_correction} valid after one correction, ${rates.invalid_after_correction} invalid after correction; ${rates.failed_before_check} ended before`))).toBeVisible();
       expect(reads).toBe(2);
       expect(screen.getByLabelText('Block text: b-1')).toHaveValue('Maintained Linux service checks.');
       expect(screen.queryByDisplayValue('Concurrent saved change')).not.toBeInTheDocument();

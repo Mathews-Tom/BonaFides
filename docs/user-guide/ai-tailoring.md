@@ -65,3 +65,11 @@ Setting up AI is a one-off technical task, best done by someone comfortable with
 The exact steps and commands are in the developer guide under [Optional operator-controlled local model route](../development/README.md#optional-operator-controlled-local-model-route).
 
 Once it's set up, the Documents page shows **Generation route:** with the model's status. Tailoring becomes available when it shows the route as qualified.
+
+## If an AI task fails
+
+If the model reaches its output limit while writing a tailored pair or rewriting a section, only that task fails. No partial documents or section proposal are saved, and saved wording is unchanged. This failure does not block the model route: preview the task again and explicitly request another attempt. BonaFides does not make a corrective retry for an output limit.
+
+An answer in the wrong format gets one corrective retry. If that answer is still malformed, the task fails and that kind of task is blocked for the route. A block on section regeneration does not by itself block pair generation. Another qualification receipt does not clear an existing live block.
+
+On **Documents**, **Valid claim JSON rate for this route** shows separate **Pair generation** and **Section regeneration** counts. Output-limited tasks count against the rate: one output-limited task followed by one valid task gives 50% valid. Unreachable, interrupted and other failures before an answer can be evaluated are shown separately and excluded. This rate measures output format, not factual accuracy or writing quality.

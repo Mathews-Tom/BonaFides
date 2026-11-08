@@ -167,7 +167,7 @@ export interface ApplicationDocuments {
   receipt_details: Record<'generate_documents' | 'regenerate_section', QualificationReceiptDetails>;
 }
 export interface ClaimJsonRate {
-  valid_first: number; valid_after_correction: number; invalid_after_correction: number; failed_before_check: number; rate_percent: number | null;
+  valid_first: number; valid_after_correction: number; invalid_after_correction: number; output_limited: number; failed_before_check: number; rate_percent: number | null;
 }
 export interface QualificationReceiptDetails {
   status: 'passed' | 'failed' | 'missing'; valid_rate_per_mille: number | null; reviewed_at: string | null;

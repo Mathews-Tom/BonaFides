@@ -369,6 +369,32 @@ def test_invalid_envelopes_fail_without_retry(tmp_path: Path, changes: dict[str,
         assert len(requests) == 1
 
 
+@pytest.mark.parametrize("stage", ["generate_documents", "regenerate_section"])
+@pytest.mark.parametrize(
+    ("changes", "code"),
+    [
+        ({"done_reason": "length"}, "model_output_limit"),
+        ({"done": False, "done_reason": "length"}, "model_incomplete"),
+        ({"model": "foreign:q4", "done_reason": "length"}, "model_incomplete"),
+        ({"done_reason": "unknown"}, "model_incomplete"),
+    ],
+)
+def test_output_limit_requires_complete_identity_matched_response(
+    tmp_path: Path, stage: str, changes: dict[str, object], code: str
+) -> None:
+    from bonafides import model_qualification as qualification
+
+    cases, _ = qualification.load_cases(Path(__file__).parent / "fixtures" / "qualification", stage)
+    with fixture_server(response_body(**changes)) as (endpoint, requests):
+        with pytest.raises(ModelFailure) as error:
+            OllamaClient(qualified_route(tmp_path, route_data(endpoint))).call(
+                stage, qualification.projection(cases[0], stage), PROMPT_VERSIONS[stage]
+            )
+        assert error.value.code == code
+        assert not error.value.retryable
+        assert len(requests) == 1
+
+
 @pytest.mark.parametrize("status", [301, 302, 307, 400, 404, 503])
 def test_http_failures_and_redirects_never_follow(tmp_path: Path, status: int) -> None:
     with fixture_server(status=status, headers={"Location": "http://169.254.169.254/private"}) as (
@@ -529,14 +555,18 @@ def test_qualification_post_connection_failure_is_not_measured(
         assert requests == []
 
 
+@pytest.mark.parametrize("failure", ["timeout", "output_limit"])
 @pytest.mark.parametrize("stage", ["generate_documents", "regenerate_section"])
-def test_qualification_sent_inference_timeout_remains_measured(tmp_path: Path, stage: str) -> None:
+def test_qualification_model_failure_remains_measured(
+    tmp_path: Path, stage: str, failure: str
+) -> None:
     from bonafides import model_qualification as qualification
 
     cases, dataset_sha256 = qualification.load_cases(
         Path(__file__).parent / "fixtures" / "qualification", stage
     )
-    with fixture_server(delay=2) as (endpoint, requests):
+    body = response_body(done_reason="length") if failure == "output_limit" else response_body()
+    with fixture_server(body=body, delay=2 if failure == "timeout" else 0) as (endpoint, requests):
         data = route_data(endpoint)
         data["deadline_seconds"] = 1
         route = qualified_route(tmp_path, data)

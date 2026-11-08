@@ -1303,6 +1303,14 @@ class OllamaClient:
             if interrupted is not None and interrupted.is_set():
                 raise ModelFailure("model_interrupted")
             if (
+                stage in _CORRECTIONS
+                and self.qualification_stage is None
+                and envelope.get("done") is True
+                and envelope.get("model") == route.model
+                and envelope.get("done_reason") == "length"
+            ):
+                raise ModelFailure("model_output_limit")
+            if (
                 envelope.get("done") is not True
                 or envelope.get("model") != route.model
                 or envelope.get("done_reason") != "stop"
