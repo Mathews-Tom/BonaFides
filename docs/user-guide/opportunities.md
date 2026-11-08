@@ -92,7 +92,7 @@ This is a summary of your reviewed evidence, not a hiring probability or indepen
 
 **"Not evidenced" doesn't mean you lack the skill.** It means your profile doesn't yet contain an entry showing it. BonaFides never adds skills to your profile from a job posting. If you do have the skill, explicitly [save an entry with genuine supporting evidence](profile.md#add-an-entry), then return here and select **Reload profile citations**. That reload does not change the saved coverage or score. Select **Review evidence coverage manually** to start a fresh review: review every row again, set its coverage, choose its claim and source citations and explain the support or gap. Confirm the review and select **Save owner-reviewed assessment** to create the updated result.
 
-If your profile or the posting changes after you save an assessment, it's marked as a stale historical snapshot so you know to review it again. Its saved rows, score and reasons remain unchanged; unsaved edits and AI proposals do not replace them. Existing documents also remain unchanged until you explicitly edit or rebuild them.
+If your saved profile, reviewed requirements or the posting's source details change after you save an assessment, it's marked as a stale historical snapshot so you know to review it again. Changing only the posting's disposition does not make it stale. Its saved rows, score and reasons remain unchanged; unsaved edits and AI proposals do not replace them. Existing documents also remain unchanged until you explicitly edit or rebuild them.
 
 ### AI suggestions (optional)
 
