@@ -94,12 +94,14 @@ def _counts(
     corrected: int = 0,
     invalid: int = 0,
     failed: int = 0,
+    limited: int = 0,
     rate: int | None = None,
 ) -> dict[str, Any]:
     return {
         "valid_first": valid_first,
         "valid_after_correction": corrected,
         "invalid_after_correction": invalid,
+        "output_limited": limited,
         "failed_before_check": failed,
         "rate_percent": rate,
     }
@@ -391,7 +393,7 @@ def test_route_rates_survive_terminal_task_input_retention(
     ("scenario", "calls", "code", "counts"),
     [
         ("malformed", 2, "model_output_invalid_after_correction", _counts(invalid=1, rate=0)),
-        ("truncated", 1, "model_incomplete", _counts(failed=1)),
+        ("truncated", 1, "model_output_limit", _counts(limited=1, rate=0)),
     ],
 )
 def test_failed_section_task_creates_no_proposal_and_keeps_the_document(
@@ -414,6 +416,32 @@ def test_failed_section_task_creates_no_proposal_and_keeps_the_document(
     assert _rates(catalog, application) == {
         "generate_documents": _counts(valid_first=1, rate=100),
         "regenerate_section": counts,
+    }
+
+
+@pytest.mark.postgres
+def test_output_limit_keeps_section_qualified_and_next_proposal_succeeds(
+    catalog: SourceContext, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    with _resume(catalog, monkeypatch, tmp_path) as (stub, application, resume):
+        stub.scenario = "truncated"
+        failed = _regenerate(catalog, resume)
+        assert failed["state"] == "permanent_failure", failed
+        assert failed["last_error_code"] == "model_output_limit"
+        assert _proposal_count(catalog, resume) == 0
+        assert _document(catalog, resume["id"]) == resume
+        assert _section_preview(catalog, resume)["generation_route"]["status"] == "qualified"
+
+        stub.scenario = "valid"
+        proposal = _proposal(catalog, resume, _regenerate(catalog, resume))
+        assert proposal["validation_issues"] == []
+        assert len(stub.requests) == 3
+
+    assert _document(catalog, resume["id"]) == resume
+    assert _proposal_count(catalog, resume) == 1
+    assert _rates(catalog, application) == {
+        "generate_documents": _counts(valid_first=1, rate=100),
+        "regenerate_section": _counts(valid_first=1, limited=1, rate=50),
     }
 
 

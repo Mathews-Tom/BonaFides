@@ -344,11 +344,54 @@ def test_failed_generation_creates_no_documents_or_applications(
         assert len(stub.requests) == 2
     else:
         # Truncation is not a schema mismatch: no corrective call.
-        assert workflow["last_error_code"] == "model_incomplete"
+        assert workflow["last_error_code"] == "model_output_limit"
         assert len(stub.requests) == 1
     assert _pair_documents(catalog, application)["items"] == []
     assert _count(catalog, "document_drafts") == 0
     assert _count(catalog, "applications") == applications
+
+
+@pytest.mark.postgres
+def test_output_limit_keeps_route_qualified_and_next_pair_succeeds(
+    catalog: SourceContext, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    with _stub(monkeypatch, tmp_path, "truncated") as stub:
+        profile, application, task = _generate(catalog)
+        failed = _run(catalog, task)
+        assert failed["state"] == "permanent_failure", failed
+        assert failed["last_error_code"] == "model_output_limit"
+        documents = _pair_documents(catalog, application)
+        assert documents["items"] == []
+        assert documents["generation_route"]["status"] == "qualified"
+        assert _count(catalog, "document_drafts") == 0
+        assert _count(catalog, "local_model_route_blocks") == 0
+
+        stub.scenario = "valid"
+        next_task = _queue_pair(catalog, _preview(catalog, profile, application))
+        assert _run(catalog, next_task)["state"] == "succeeded"
+        assert len(stub.requests) == 2
+
+    documents = _pair_documents(catalog, application)
+    assert len(documents["items"]) == 2
+    assert documents["claim_json_rates"] == {
+        "generate_documents": {
+            "valid_first": 1,
+            "valid_after_correction": 0,
+            "invalid_after_correction": 0,
+            "output_limited": 1,
+            "failed_before_check": 0,
+            "rate_percent": 50,
+        },
+        "regenerate_section": {
+            "valid_first": 0,
+            "valid_after_correction": 0,
+            "invalid_after_correction": 0,
+            "output_limited": 0,
+            "failed_before_check": 0,
+            "rate_percent": None,
+        },
+    }
+    assert _count(catalog, "local_model_route_blocks") == 0
 
 
 @pytest.mark.postgres

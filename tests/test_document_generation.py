@@ -556,7 +556,7 @@ def test_context_exact_projection_route_gate_and_atomic_pair_provenance(
         "duplicate_key",
         "connective_cites_claim",
         "foreign_gap",
-        "truncated",
+        "incomplete",
     ],
 )
 def test_invalid_pair_publishes_neither_document_and_blocks_route(
@@ -581,17 +581,17 @@ def test_invalid_pair_publishes_neither_document_and_blocks_route(
         ]
     model = FixtureModel(
         candidate,
-        failure=local_model.ModelFailure("model_incomplete") if failure == "truncated" else None,
+        failure=local_model.ModelFailure("model_incomplete") if failure == "incomplete" else None,
     )
     with pytest.raises((Problem, local_model.ModelFailure)) as raised:
         suitability.execute_model(catalog.runtime, catalog.identity.settings, task, Event(), model)
-    # A schema mismatch gets exactly one corrective call; truncation gets none.
+    # A schema mismatch gets exactly one corrective call; an incomplete envelope gets none.
     expected = (
-        "model_incomplete" if failure == "truncated" else "model_output_invalid_after_correction"
+        "model_incomplete" if failure == "incomplete" else "model_output_invalid_after_correction"
     )
     assert isinstance(raised.value, (Problem, local_model.ModelFailure))
     assert raised.value.code == expected
-    assert model.calls == (1 if failure == "truncated" else 2)
+    assert model.calls == (1 if failure == "incomplete" else 2)
     assert len(model.corrections) == model.calls - 1
     records = _pair_documents(catalog, application)
     assert records["items"] == [] and records["generation_route"]["status"] == "unqualified"

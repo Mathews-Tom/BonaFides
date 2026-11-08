@@ -368,15 +368,16 @@ def claim_json_rates(
     """Per checked stage, how this route's finished generations ended against the schema.
 
     Each generation counts once, by its latest model call: valid on the first response,
-    valid after the one correction, or invalid after it. Truncation, transport and other
-    failures before a response passed the schema are counted apart and excluded from the
-    rate, a whole percentage of checked generations. Kept out of ``route_status`` so the counts never enter a frozen context digest.
+    valid after the one correction, invalid after it, or output-limited. Output limits
+    count against the rate; transport and other failures before evaluation do not.
+    Kept out of ``route_status`` so counts never enter a frozen context digest.
     """
     counts: dict[str, dict[str, object]] = {
         stage: {
             "valid_first": 0,
             "valid_after_correction": 0,
             "invalid_after_correction": 0,
+            "output_limited": 0,
             "failed_before_check": 0,
             "rate_percent": None,
         }
@@ -396,21 +397,24 @@ def claim_json_rates(
         count(*) FILTER (WHERE valid AND NOT corrected) AS valid_first,
         count(*) FILTER (WHERE valid AND corrected) AS valid_after_correction,
         count(*) FILTER (WHERE invalid) AS invalid_after_correction,
-        count(*) FILTER (WHERE NOT valid AND NOT invalid) AS failed_before_check
+        count(*) FILTER (WHERE output_limited) AS output_limited,
+        count(*) FILTER (WHERE NOT valid AND NOT invalid AND NOT output_limited) AS failed_before_check
         FROM (SELECT task_kind,corrected,
             status='succeeded' OR coalesce(metadata->>'output_valid','')='true' AS valid,
-            coalesce(metadata->>'error_code','')='model_output_invalid_after_correction' AS invalid
+            coalesce(metadata->>'error_code','')='model_output_invalid_after_correction' AS invalid,
+            coalesce(metadata->>'error_code','')='model_output_limit' AS output_limited
             FROM runs WHERE latest=1 AND status NOT IN ('reserved','running')) finished
         GROUP BY task_kind"""),
         {"owner": owner, "identity": canonical_json(identity)},
     ).mappings()
     for row in rows:
         valid = int(row["valid_first"]) + int(row["valid_after_correction"])
-        checked = valid + int(row["invalid_after_correction"])
+        checked = valid + int(row["invalid_after_correction"]) + int(row["output_limited"])
         counts[str(row["task_kind"])] = {
             "valid_first": int(row["valid_first"]),
             "valid_after_correction": int(row["valid_after_correction"]),
             "invalid_after_correction": int(row["invalid_after_correction"]),
+            "output_limited": int(row["output_limited"]),
             "failed_before_check": int(row["failed_before_check"]),
             # API values are canonical JSON, which carries no floating point.
             "rate_percent": round(100 * valid / checked) if checked else None,
