@@ -652,7 +652,7 @@ def test_disabled_orphan_removal_preserves_installation_safeguards(
     before = files(directory)
     runtime_before = sandbox["state"].read_text()
     result = run(sandbox, "models.sh", "remove", "--dir", str(directory), explicit_directory=False)
-    if condition != "private":
+    if condition not in {"private", "public"}:
         assert result.returncode == 2
         assert files(directory) == before
         assert sandbox["state"].read_text() == runtime_before
@@ -664,6 +664,37 @@ def test_disabled_orphan_removal_preserves_installation_safeguards(
     after = json.loads(sandbox["state"].read_text())
     assert after["volumes"] == state["volumes"]
     assert after["containers"]["owner-api"] == state["containers"]["owner-api"]
+
+
+def test_interrupted_nonprivate_route_removal_can_be_retried(
+    sandbox: dict[str, Path], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    populate(sandbox)
+    directory = sandbox["install"]
+    environment = directory / ".env"
+    original_env = environment.read_bytes()
+    environment.write_bytes(
+        original_env + b"BONAFIDES_LOCAL_MODEL_ROUTE_FILE=/run/bonafides/local_model_route.json\n"
+    )
+    route = directory / "secrets/local_model_route.json"
+    route.write_text("{}")
+    route.chmod(0o644)
+    before = files(directory)
+    fault = sandbox["bin"] / "rm"
+    fault.write_text(
+        '#!/bin/sh\nfor argument do\n[ "$argument" != "$FAKE_REMOVE_ROUTE" ] || exit 73\n'
+        'done\nexec /bin/rm "$@"\n'
+    )
+    fault.chmod(0o755)
+    monkeypatch.setenv("FAKE_REMOVE_ROUTE", str(route))
+    arguments = ("remove", "--dir", str(directory))
+    assert run(sandbox, "models.sh", *arguments, explicit_directory=False).returncode == 2
+    fault.unlink()
+    result = run(sandbox, "models.sh", *arguments, explicit_directory=False)
+    assert result.returncode == 0, result.stderr
+    before.pop("secrets/local_model_route.json")
+    before[".env"] = (original_env, before[".env"][1])
+    assert files(directory) == before
 
 
 def test_busy_qualification_is_infrastructure_failure_without_a_saved_receipt(

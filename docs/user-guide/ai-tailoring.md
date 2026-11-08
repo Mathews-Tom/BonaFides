@@ -73,7 +73,7 @@ Replace `Local owner` with the name to record as the reviewer. Attaching authori
 
 Each completed test saves its real result and restarts this installation to apply it. Exit status 0 means passed and applied; 1 means failed and applied, with its failed receipt saved; 2 means a setup, connection or application problem. Failures before publication leave earlier receipts unchanged. If configuration was saved but restarting failed, the error says so: resolve the reported problem and run `sh start.sh`. A failed test is not permission to use that stage. Only one model command can run at a time.
 
-If an interrupted first attach leaves a disabled managed route, run `sh models.sh remove` before attaching again. A lock left by an interrupted command requires [safe manual recovery](../development/README.md#optional-operator-controlled-local-model-route); do not force-unlock a running command.
+If interrupted attachment or removal leaves a disabled managed route, run `sh models.sh remove` again before attaching another model. A lock left by an interrupted command requires [safe manual recovery](../development/README.md#optional-operator-controlled-local-model-route); do not force-unlock a running command.
 
 Open **Documents** for an application. **Generation route:** and the qualification receipts show each stage's real status. Writing a pair and rewriting a section qualify separately; a passed receipt cannot override a block caused by a malformed live answer. No model task runs until you preview its input and explicitly approve that task.
 

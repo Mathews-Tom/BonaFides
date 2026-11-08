@@ -45,8 +45,7 @@ if [ "$operation" = attach ]; then
 else
   if [ "$model_route_enabled" != yes ]; then
     [ "$operation" = remove ] && [ -e "$route" ] || fail "no managed model route is attached"
-    # First attach can publish the route before its opt-in; recover only a private owned file.
-    private_file "$route"
+    # Interrupted attach or removal can leave a route after opt-in is disabled.
   fi
   if [ "$operation" = qualify ]; then private_file "$route"; fi
   if [ -e "$route" ] || [ -L "$route" ]; then
