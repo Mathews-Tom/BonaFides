@@ -10,6 +10,7 @@ from typing import Any
 
 import pytest
 
+from bonafides.local_model import load_route
 from bonafides.local_setup import main
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -600,3 +601,157 @@ def test_environment_configuration_is_not_executed(sandbox: dict[str, Path]) -> 
     assert not marker.exists()
     assert sandbox["state"].read_text() == before
     assert files(directory) == saved_files
+
+
+@pytest.mark.parametrize("missing", [True, False])
+def test_route_file_damage_does_not_prevent_stop_or_managed_removal(
+    sandbox: dict[str, Path], missing: bool
+) -> None:
+    state = populate(sandbox)
+    directory = sandbox["install"]
+    environment = directory / ".env"
+    base = environment.read_bytes()
+    environment.write_bytes(
+        base + b"BONAFIDES_LOCAL_MODEL_ROUTE_FILE=/run/bonafides/local_model_route.json\n"
+    )
+    route = directory / "secrets/local_model_route.json"
+    if not missing:
+        route.write_text("{}")
+        route.chmod(0o644)
+    assert run(sandbox, "stop.sh").returncode == 0
+    result = run(sandbox, "models.sh", "remove", "--dir", str(directory), explicit_directory=False)
+    assert result.returncode == 0, result.stderr
+    assert not route.exists()
+    assert environment.read_bytes() == base
+    after = json.loads(sandbox["state"].read_text())
+    assert after["volumes"] == state["volumes"]
+    assert after["containers"]["owner-api"] == state["containers"]["owner-api"]
+
+
+@pytest.mark.parametrize(
+    "condition", ["private", "missing", "public", "symlink", "directory", "unmanaged-env", "locked"]
+)
+def test_disabled_orphan_removal_preserves_installation_safeguards(
+    sandbox: dict[str, Path], condition: str
+) -> None:
+    state = populate(sandbox)
+    directory = sandbox["install"]
+    route = directory / "secrets/local_model_route.json"
+    if condition == "directory":
+        route.mkdir()
+    elif condition == "symlink":
+        route.symlink_to(directory / "secrets/keyring")
+    elif condition != "missing":
+        route.write_text("{}")
+        route.chmod(0o644 if condition == "public" else 0o600)
+    if condition == "unmanaged-env":
+        environment = directory / ".env"
+        environment.write_text(environment.read_text() + "UNMANAGED=value\n")
+    if condition == "locked":
+        (directory / ".model-route-lock").mkdir()
+    before = files(directory)
+    runtime_before = sandbox["state"].read_text()
+    result = run(sandbox, "models.sh", "remove", "--dir", str(directory), explicit_directory=False)
+    if condition not in {"private", "public"}:
+        assert result.returncode == 2
+        assert files(directory) == before
+        assert sandbox["state"].read_text() == runtime_before
+        return
+    assert result.returncode == 0, result.stderr
+    assert files(directory) == {
+        name: value for name, value in before.items() if name != "secrets/local_model_route.json"
+    }
+    after = json.loads(sandbox["state"].read_text())
+    assert after["volumes"] == state["volumes"]
+    assert after["containers"]["owner-api"] == state["containers"]["owner-api"]
+
+
+def test_interrupted_nonprivate_route_removal_can_be_retried(
+    sandbox: dict[str, Path], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    populate(sandbox)
+    directory = sandbox["install"]
+    environment = directory / ".env"
+    original_env = environment.read_bytes()
+    environment.write_bytes(
+        original_env + b"BONAFIDES_LOCAL_MODEL_ROUTE_FILE=/run/bonafides/local_model_route.json\n"
+    )
+    route = directory / "secrets/local_model_route.json"
+    route.write_text("{}")
+    route.chmod(0o644)
+    before = files(directory)
+    fault = sandbox["bin"] / "rm"
+    fault.write_text(
+        '#!/bin/sh\nfor argument do\n[ "$argument" != "$FAKE_REMOVE_ROUTE" ] || exit 73\n'
+        'done\nexec /bin/rm "$@"\n'
+    )
+    fault.chmod(0o755)
+    monkeypatch.setenv("FAKE_REMOVE_ROUTE", str(route))
+    arguments = ("remove", "--dir", str(directory))
+    assert run(sandbox, "models.sh", *arguments, explicit_directory=False).returncode == 2
+    fault.unlink()
+    result = run(sandbox, "models.sh", *arguments, explicit_directory=False)
+    assert result.returncode == 0, result.stderr
+    before.pop("secrets/local_model_route.json")
+    before[".env"] = (original_env, before[".env"][1])
+    assert files(directory) == before
+
+
+def test_busy_qualification_is_infrastructure_failure_without_a_saved_receipt(
+    sandbox: dict[str, Path],
+) -> None:
+    populate(sandbox)
+    directory = sandbox["install"]
+    environment = directory / ".env"
+    environment.write_bytes(
+        environment.read_bytes()
+        + b"BONAFIDES_LOCAL_MODEL_ROUTE_FILE=/run/bonafides/local_model_route.json\n"
+    )
+    route = directory / "secrets/local_model_route.json"
+    route.write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "endpoint": "http://source-egress:11434",
+                "approved_ips": ["172.19.0.3"],
+                "model": "fixture-model:q4",
+                "model_sha256": "a" * 64,
+                "runtime_version": "fixture-runtime-1",
+                "model_license": "Apache-2.0",
+                "operator_controlled": True,
+                "authorized": True,
+                "cloud_disabled": True,
+                "metadata_authorized": True,
+                "private_network_http_authorized": True,
+                "context_window": 32768,
+                "max_input_tokens": 12000,
+                "max_output_tokens": 6000,
+                "max_request_bytes": 131072,
+                "max_response_bytes": 262144,
+                "deadline_seconds": 300,
+                "framing_token_overhead": 2048,
+                "qualification_receipts": {},
+                "ca_file": None,
+            }
+        )
+    )
+    route.chmod(0o600)
+    assert load_route(route) is not None
+    (directory / ".model-route-lock").mkdir()
+    before = files(directory)
+    runtime_before = sandbox["state"].read_text()
+    result = run(
+        sandbox,
+        "models.sh",
+        "qualify",
+        "--dir",
+        str(directory),
+        "--stage",
+        "generate_documents",
+        "--reviewed-by",
+        "Synthetic fixture",
+        explicit_directory=False,
+    )
+    assert result.returncode == 2
+    assert files(directory) == before
+    assert sandbox["state"].read_text() == runtime_before

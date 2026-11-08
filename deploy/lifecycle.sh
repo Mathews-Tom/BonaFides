@@ -2,7 +2,8 @@
 # SPDX-License-Identifier: MIT OR Apache-2.0
 # Shared by the image-owned installer and the installed management commands.
 
-fail() { printf '%s refused: %s\n' "${action:-lifecycle}" "$*" >&2; exit 1; }
+failure_status=1
+fail() { printf '%s refused: %s\n' "${action:-lifecycle}" "$*" >&2; exit "$failure_status"; }
 
 clean_environment() {
   for name in $(env | sed -n 's/=.*//p' | grep -E '^(BONAFIDES|COMPOSE)_' || true); do
@@ -80,10 +81,27 @@ load_saved() {
   port=$(sed -n 's/^BONAFIDES_PORT=//p' "$dir/.env")
   valid_port || fail "invalid saved port"
   expected_env=$(printf "COMPOSE_PROJECT_NAME=%s\nBONAFIDES_SECRET_DIR='%s/secrets'\nBONAFIDES_PORT=%s\nBONAFIDES_ORIGIN=http://localhost:%s\nBONAFIDES_MODE=production" "$project" "$dir" "$port" "$port")
-  [ "$(cat "$dir/.env")" = "$expected_env" ] || fail "saved environment differs from the managed configuration; reconcile it deliberately"
+  model_route_enabled=no
+  model_route_env='BONAFIDES_LOCAL_MODEL_ROUTE_FILE=/run/bonafides/local_model_route.json'
+  saved_env=$(cat "$dir/.env")
+  if [ "$saved_env" = "$expected_env
+$model_route_env" ]; then
+    model_route_enabled=yes
+  else
+    [ "$saved_env" = "$expected_env" ] || fail "saved environment differs from the managed configuration; reconcile it deliberately"
+  fi
   private_file "$dir/.installer-image"
   image=$(cat "$dir/.installer-image")
   valid_image || fail "invalid saved image identity"
+}
+
+check_install() {
+  docker run --rm --pull never --network none --read-only --cap-drop ALL \
+    --security-opt no-new-privileges:true --user "$(id -u):$(id -g)" \
+    --mount "type=bind,source=$dir,target=/install,readonly" --entrypoint python "$image" \
+    -m bonafides.local_setup --release-root /install --host-root "$dir" \
+    --project "$project" --port "$port" --image "$image" --resource-map "$resources" \
+    --check --validate-installed >/dev/null || fail "saved credentials or assets were refused"
 }
 
 resource_exists() {

@@ -37,12 +37,14 @@ ASSETS = {
     "stop.sh": ("stop.sh", 0o755),
     "uninstall.sh": ("uninstall.sh", 0o755),
     "lifecycle.sh": ("lifecycle.sh", 0o755),
+    "models.sh": ("models.sh", 0o755),
 }
 IMAGE_ASSET_ROOT = Path("/app/deploy")
 _PROJECT = re.compile(r"[a-z][a-z0-9-]{2,47}")
 _HEX_64 = re.compile(r"[0-9a-f]{64}")
 _KEY_ID = re.compile(r"[A-Za-z0-9_-]{1,64}")
 _TOKEN = re.compile(r"[A-Za-z0-9_-]{43,128}")
+MODEL_ROUTE_ENV = "BONAFIDES_LOCAL_MODEL_ROUTE_FILE=/run/bonafides/local_model_route.json"
 
 
 class SetupError(ValueError):
@@ -162,7 +164,9 @@ def verify(
         )
     values = {name: _private_regular(directory / name, name) for name in SECRET_NAMES}
     _verify_secret_formats(values)
-    if _private_regular(env_file, str(env_file)) != _env_text(project, port, benchmark, published):
+    expected = _env_text(project, port, benchmark, published)
+    allowed = {expected} if benchmark else {expected, f"{expected}\n{MODEL_ROUTE_ENV}"}
+    if _private_regular(env_file, str(env_file)) not in allowed:
         raise SetupError(
             f"{env_file} differs from the requested project, port or secret path; rerun with the "
             "original values or reconcile the file by hand; nothing was changed"

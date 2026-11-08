@@ -134,6 +134,7 @@ services:
     mem_limit: 256m
     cpus: 0.5
     networks: [sources, source-outbound]
+    extra_hosts: ["host.docker.internal:host-gateway"]
     healthcheck:
       test: [CMD, python, -c, "import socket; socket.create_connection(('127.0.0.1',8766),2).close()"]
       interval: 5s
