@@ -139,6 +139,17 @@ export function App({ api = defaultApi }: { api?: Api }) {
     });
     form.reset();
   }
+  async function copyOwnerId() {
+    if (!session) return;
+    const epoch = workspaceEpoch.current;
+    setError(''); setNotice('');
+    try {
+      await navigator.clipboard.writeText(session.owner_id);
+      if (epoch === workspaceEpoch.current) setNotice('Owner account ID copied.');
+    } catch {
+      if (epoch === workspaceEpoch.current) setError('Clipboard copy failed. Select the owner account ID and copy it manually.');
+    }
+  }
   const profileMutation = useRef<{ fingerprint: string; key: string } | null>(null);
   async function signOut() {
     await act(async () => {
@@ -277,6 +288,11 @@ export function App({ api = defaultApi }: { api?: Api }) {
       <div hidden={page !== 'opportunities'} data-workspace-screen="opportunities"><JobSources api={api} currentProfile={profile} onProfileChange={observeProfile} disabled={busy || documentsDirty || documentsBusy} onDirtyChange={setJobsDirty} onBusyChange={setJobsBusy} /></div>
       <div hidden={page !== 'activity'} data-workspace-screen="activity"><Tasks api={api} session={session} requestedTask={workflow} disabled={taskResultBlocked} resultDisabled={taskResultBlocked} onSession={setSession} onWorkflowChange={observeTask} onOpenDocument={openTaskDocument} onBusyChange={setTasksBusy} /></div>
       <div hidden={page !== 'settings'} data-workspace-screen="settings"><section className="panel workspace-principles"><h2>Your workspace, your authority</h2><p>Local résumé import and base documents need no model. Tailoring requires an explicitly authorized and qualified route. Imported facts are owner assertions, not independently verified credentials. No hosted fallback, automatic rejection, application submission or sending authority is enabled.</p><details><summary>Development and review boundaries</summary><p>This is a private prototype. Structural checks do not prove semantic meaning or independently verify credentials. Real-model and human factual qualification remain outstanding. Greenhouse reads require board-specific terms review and authorization. Tracking Applied is not proof of delivery.</p></details></section>
+      <section className="panel"><h2>Owner account</h2>
+        <p>Use this ID from the original installation when bringing its export into another installation. It is not your login name or password.</p>
+        <label>Owner account ID<input readOnly value={session.owner_id} onFocus={event => event.currentTarget.select()} /></label>
+        <button type="button" className="secondary" onClick={() => { void copyOwnerId(); }}>Copy owner account ID</button>
+      </section>
       <details className="panel"><summary>Privacy, backup and portable data</summary><DataPortability api={api} profile={profile} disabled={taskResultBlocked || !!(workflow && !terminal(workflow.state))} onBusyChange={setPortabilityBusy} /></details>
       <details className="advanced-tools"><summary>Advanced diagnostic tools</summary>
       <section className="panel"><h2>Evidence proof</h2><p>Explicitly load SYN-CORE: fictional Mira Vale, Linux and SQL evidence. This replaces the saved proof profile; it is not imported personal history. Benchmark tasks are synthetic mechanisms, separate from production composition.</p>{benchmark ? <><button className="secondary" disabled={profileLocked || !profile || !!(workflow && !terminal(workflow.state))} onClick={() => { if (profile) void benchmarkAction(async () => { acceptProfile(await api.request<Profile>('/benchmarks/profile', 'POST', { fixture: 'SYN-CORE' }, profile.version, true)); setNotice('SYN-CORE saved by the server.'); }); }}>Load SYN-CORE benchmark evidence</button><label>Proof scenario<select value={scenario} disabled={profileLocked} onChange={event => setScenario(event.target.value)}><option value="normal">Normal task</option><option value="slow">Slow task (cancellation proof)</option><option value="poison">Poison task (bounded failure proof)</option><option value="stage_pause">Stage pause (restart proof)</option></select></label><button disabled={profileLocked || !profile || profile.current_revision.snapshot.claim_revision_ids.length === 0 || !!(workflow && !terminal(workflow.state))} onClick={() => { if (profile) void benchmarkAction(async () => { const value = await api.request<Workflow>('/benchmarks/tasks', 'POST', { profile_revision_id: profile.current_revision.id, scenario, delay_seconds: scenario === 'normal' ? 0 : 15 }, profile.version, true); setWorkflow(value); }); }}>Start synthetic proof task</button></> : <p className="hint">Benchmark endpoints are disabled here. No synthetic task was started.</p>}

@@ -15,10 +15,13 @@ Use the theme switch in the top bar: **System theme** follows your computer's se
 | Section | What it does |
 |---|---|
 | **Your workspace, your authority** | A summary of what BonaFides will and won't do. |
+| **Owner account** | Find your **Owner account ID** and select **Copy owner account ID** before moving an export to another installation. |
 | **Privacy, backup and portable data** | Export your data, move it to another installation, or delete it. See [Your data and privacy](your-data.md). |
 | **Advanced diagnostic tools** | Tools for developers. You don't need them. |
 | **Confirm owner identity** | Re-enter your password before a sensitive action (see below). |
 | **Change password** | Change your password. |
+
+Your **Owner account ID** is different from your login name and password. Use the ID shown in the original installation when bringing its export into another installation; see [Bring an export back in](your-data.md#bring-an-export-back-in). If the browser refuses clipboard access, select the ID and copy it manually.
 
 ## Change your password
 
