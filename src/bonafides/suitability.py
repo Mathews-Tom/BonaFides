@@ -512,6 +512,9 @@ def _assessment_view(
         "hard_constraints": row["hard_constraints"],
         "assessments": assessments,
         "evidence_coverage": counts,
+        "fit_score": (100 * counts["supported"] + 50 * counts["partial"]) // counts["total"]
+        if counts["total"]
+        else None,
         "provenance": row["provenance"],
     }
 

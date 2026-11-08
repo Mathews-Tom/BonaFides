@@ -20,7 +20,7 @@ function initialView(): RequirementsView {
     current_revision: { id: 'requirements-one', revision_no: 1, source_sha256: 'a'.repeat(64), requirements: [{ ...requirement, span: { ...requirement.span } }], confirmed: true, created_at: metadata.created_at, provenance: { origin: 'manual' }, stale: false } };
 }
 function assessmentSnapshot(): Assessment {
-  return { id: 'assessment-current', profile_revision_id: 'profile-rev-one', requirements_revision_id: 'requirements-one', created_at: metadata.created_at, stale: false, stale_reasons: [], hard_eligibility: 'unknown', hard_constraints: [{ requirement_key: null, state: 'unknown', reason: 'no_reviewed_constraints' }], assessments: [], evidence_coverage: { supported: 0, partial: 0, not_evidenced: 1, conflicting: 0, total: 1 }, provenance: { origin: 'owner_reviewed' } };
+  return { id: 'assessment-current', profile_revision_id: 'profile-rev-one', requirements_revision_id: 'requirements-one', created_at: metadata.created_at, stale: false, stale_reasons: [], hard_eligibility: 'unknown', hard_constraints: [{ requirement_key: null, state: 'unknown', reason: 'no_reviewed_constraints' }], assessments: [], evidence_coverage: { supported: 0, partial: 0, not_evidenced: 1, conflicting: 0, total: 1 }, fit_score: 0, provenance: { origin: 'owner_reviewed' } };
 }
 interface Submission { path: string; body: unknown; version: number | undefined; key: boolean | string }
 function server() {
@@ -58,8 +58,10 @@ function server() {
     }
     if (path === '/postings/posting-one/coverage' && method === 'PUT') {
       const input = body as { profile_revision_id: string; requirements_revision_id: string; assessments: Coverage[] };
+      const counts = { supported: 0, partial: 0, not_evidenced: 0, conflicting: 0, total: input.assessments.length };
+      for (const row of input.assessments) counts[row.coverage] += 1;
       const assessment: Assessment = { id: 'assessment-one', profile_revision_id: input.profile_revision_id, requirements_revision_id: input.requirements_revision_id, created_at: metadata.created_at, stale: false, stale_reasons: [], hard_eligibility: 'unknown', hard_constraints: [{ requirement_key: null, state: 'unknown', reason: 'no_reviewed_constraints' }], assessments: input.assessments,
-        evidence_coverage: { supported: input.assessments.filter(item => item.coverage === 'supported').length, partial: 0, not_evidenced: input.assessments.filter(item => item.coverage === 'not_evidenced').length, conflicting: 0, total: input.assessments.length }, provenance: { origin: 'owner_reviewed' } };
+        evidence_coverage: counts, fit_score: counts.total ? Math.floor((100 * counts.supported + 50 * counts.partial) / counts.total) : null, provenance: { origin: 'owner_reviewed' } };
       state.view = { ...state.view, version: state.view.version + 1, latest_assessment: assessment }; return state.view as T;
     }
     if (path === '/postings/posting-one/extract' || path === '/postings/posting-one/match') {
@@ -306,11 +308,12 @@ describe('reviewed suitability boundaries', () => {
 
   it('keeps stale eligibility snapshots explicitly historical and independent from evidence counts', async () => {
     const { api, state } = server();
-    state.view.latest_assessment = { id: 'assessment-old', profile_revision_id: 'old-profile', requirements_revision_id: 'requirements-one', created_at: metadata.created_at, stale: true, stale_reasons: ['profile_revision_changed'], hard_eligibility: 'not_met', hard_constraints: [{ requirement_key: 'req-1', state: 'not_met', reason: 'explicit_mismatch' }], assessments: [], evidence_coverage: { supported: 1, partial: 0, not_evidenced: 0, conflicting: 0, total: 1 }, provenance: { origin: 'owner_reviewed' } };
+    state.view.latest_assessment = { id: 'assessment-old', profile_revision_id: 'old-profile', requirements_revision_id: 'requirements-one', created_at: metadata.created_at, stale: true, stale_reasons: ['profile_revision_changed'], hard_eligibility: 'not_met', hard_constraints: [{ requirement_key: 'req-1', state: 'not_met', reason: 'explicit_mismatch' }], assessments: [], evidence_coverage: { supported: 1, partial: 0, not_evidenced: 0, conflicting: 0, total: 1 }, fit_score: 100, provenance: { origin: 'owner_reviewed' } };
     render(<Suitability api={api} postingId="posting-one" />);
     expect(await screen.findByText('Stale historical snapshot — not a current eligibility assertion')).toBeVisible();
     expect(screen.getByText(/Evidence coverage, not hiring probability: 1 supported/)).toBeVisible();
     expect(screen.getByText(/req-1: not met — explicit_mismatch/)).toBeVisible();
+    expect(screen.getByText('100/100', { selector: 'strong' })).toBeVisible();
     expect(screen.getByText(/profile_revision_changed/)).toBeVisible();
     fireEvent.click(screen.getByRole('button', { name: "Inspect assessment's pinned profile evidence" }));
     const historical = await screen.findByRole('region', { name: 'Assessment pinned profile evidence' });
@@ -563,10 +566,11 @@ describe('reviewed suitability boundaries', () => {
   it('keeps a confirmed empty review explicitly unavailable instead of asserting suitability from zero-of-zero coverage', async () => {
     const { api, state } = server();
     state.view.current_revision = { ...state.view.current_revision!, requirements: [] };
-    state.view.latest_assessment = { ...assessmentSnapshot(), evidence_coverage: { supported: 0, partial: 0, not_evidenced: 0, conflicting: 0, total: 0 } };
+    state.view.latest_assessment = { ...assessmentSnapshot(), evidence_coverage: { supported: 0, partial: 0, not_evidenced: 0, conflicting: 0, total: 0 }, fit_score: null };
     render(<Suitability api={api} postingId="posting-one" />);
     expect(await screen.findByText('Requirements unavailable — no current suitability assertion')).toBeVisible();
     expect(screen.queryByText('Current snapshot')).not.toBeInTheDocument();
+    expect(screen.queryByText(/^\d+\/100$/)).not.toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Review evidence coverage manually' })).toBeDisabled();
     expect(screen.getByRole('button', { name: 'Request matching proposal' })).toBeDisabled();
     fireEvent.click(screen.getByRole('button', { name: 'Review requirements manually' }));

@@ -276,6 +276,7 @@ export interface Assessment {
   hard_eligibility: 'met' | 'not_met' | 'unknown';
   hard_constraints: { requirement_key: string | null; state: 'met' | 'not_met' | 'unknown'; reason: string }[];
   assessments: Coverage[]; evidence_coverage: { supported: number; partial: number; not_evidenced: number; conflicting: number; total: number };
+  fit_score: number | null;
   provenance: Record<string, unknown>;
 }
 export interface RequirementsView {
