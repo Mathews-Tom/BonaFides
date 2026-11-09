@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import hashlib
+import logging
 import os
 import re
 import time
@@ -16,6 +17,7 @@ from uuid import UUID, uuid4, uuid5
 from fastapi import APIRouter, Depends, Request, Response
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import Connection, text
+from sqlalchemy.exc import DBAPIError
 
 from bonafides.auth import Owner, require_owner
 from bonafides.commands import canonical_json, command, lock_installation
@@ -105,8 +107,15 @@ def manifest(conn: Connection, owner: UUID) -> tuple[dict[str, object], list[Pre
             raise Problem(409, "document_archive_source_changed", identifier)
         try:
             prepared = prepare_render(conn, owner, row["id"], row["current_revision_id"])
+            template_sha = prepared.template_sha256 or template_digest(prepared.template_version)
         except Problem as error:
             raise Problem(error.status, error.code, identifier) from error
+        except OSError as error:
+            raise Problem(409, "document_template_unavailable", identifier) from error
+        except ValueError as error:
+            if str(error) != "unsupported_document_template":
+                raise
+            raise Problem(409, "document_template_unavailable", identifier) from error
         company, role = str(row["company"]), str(row["title"])
         if company not in companies:
             base = safe_component(company, "Company")
@@ -128,8 +137,7 @@ def manifest(conn: Connection, owner: UUID) -> tuple[dict[str, object], list[Pre
                 "revision_id": str(prepared.revision_id),
                 "content_sha256": prepared.content_sha256,
                 "template_version": prepared.template_version,
-                "template_sha256": prepared.template_sha256
-                or template_digest(prepared.template_version),
+                "template_sha256": template_sha,
                 "render_sha256": hashlib.sha256(
                     canonical_json(
                         {
@@ -211,6 +219,7 @@ def _progress(conn: Connection, task: Claim, completed: int, total: int) -> None
 
 def execute_archive(db: Database, settings: Settings, task: Claim, interrupted: Event) -> None:
     published = False
+    publication_started = False
     name = _name(task)
     try:
         with db.transaction() as conn:
@@ -273,6 +282,7 @@ def execute_archive(db: Database, settings: Settings, task: Claim, interrupted: 
             with db.transaction() as conn:
                 check_manifest(conn, task.owner_id, task.input)
                 assert_fence(conn, task)
+        publication_started = True
         with db.transaction() as conn:
 
             def effect(active: Connection) -> dict[str, object]:
@@ -295,7 +305,40 @@ def execute_archive(db: Database, settings: Settings, task: Claim, interrupted: 
         published = True
     finally:
         if not published:
-            _remove(settings, task.owner_id, name)
+            if not publication_started:
+                _remove(settings, task.owner_id, name)
+            else:
+                try:
+                    with db.transaction() as conn:
+                        # Serialize with publication, erasure and the orphan sweeper.
+                        # A failed COMMIT acknowledgement is not proof of rollback.
+                        lock_installation(conn)
+                        conn.execute(
+                            text(
+                                "SELECT owner_id FROM bonafides.owner_settings WHERE owner_id=:owner FOR UPDATE"
+                            ),
+                            {"owner": task.owner_id},
+                        ).all()
+                        committed = conn.execute(
+                            text("""SELECT EXISTS(SELECT 1 FROM bonafides.workflow_runs
+                            WHERE owner_id=:owner AND id=:id AND fence=:fence
+                            AND state='succeeded' AND result->>'artifact_type'='document_archive'
+                            AND result->>'archive_filename'=:name)"""),
+                            {
+                                "owner": task.owner_id,
+                                "id": task.id,
+                                "fence": task.fence,
+                                "name": name,
+                            },
+                        ).scalar_one()
+                        if not committed:
+                            _remove(settings, task.owner_id, name)
+                except DBAPIError:
+                    # Keep uncertain private bytes for the existing lifecycle sweep.
+                    # Privacy erasure still removes them synchronously under its lock.
+                    logging.getLogger(__name__).exception(
+                        "Document archive publication reconciliation failed; cleanup deferred"
+                    )
 
 
 def expire_archives(db: Database, settings: Settings) -> int:

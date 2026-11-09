@@ -5,6 +5,8 @@ import base64
 import hashlib
 import io
 import json
+import os
+import signal
 import subprocess
 import sys
 import time
@@ -29,7 +31,7 @@ from bonafides.commands import canonical_json, lock_installation
 from bonafides.import_parser import ImportParserClient
 from bonafides.portable_exports import LifecycleWorker, expire_exports
 from bonafides.profiles import content_hash
-from bonafides.storage import BlobStore
+from bonafides.storage import BlobStore, atomic_file, directory
 
 
 def _queue(context: SourceContext, key: str | None = None) -> dict[str, object]:
@@ -447,4 +449,70 @@ finally: db.close()
         child.terminate()
         stdout, _ = child.communicate(timeout=15)
     events = [json.loads(line) for line in stdout.splitlines()]
+    assert any(event.get("code") == "backup_configuration_invalid" for event in events)
+
+
+@pytest.mark.postgres
+def test_archive_cleanup_failure_does_not_stall_backup_or_export_lifecycle(
+    catalog: SourceContext,
+    parser: ImportParserClient,
+    renderer_spool: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    _base(catalog, _profile(catalog))
+    worker = _worker(catalog, parser, renderer_spool)
+    expired = _queue(catalog)
+    assert worker.run_once()
+    expired_path = (
+        catalog.identity.settings.blob_root
+        / "portable_exports"
+        / str(catalog.owner_id)
+        / (str(expired["id"]) + ".zip")
+    )
+    with catalog.identity.admin.transaction() as conn:
+        conn.execute(
+            text("""UPDATE bonafides.portable_exports
+            SET created_at=clock_timestamp()-interval '2 days',
+                expires_at=clock_timestamp()-interval '1 day'
+            WHERE owner_id=:owner AND workflow_run_id=:id"""),
+            {"owner": catalog.owner_id, "id": UUID(str(expired["id"]))},
+        )
+    queued = _queue(catalog)
+    malformed = tmp_path / "malformed-archive-cleanup-backup.json"
+    malformed.touch(mode=0o600)
+    malformed.write_text("{not valid JSON")
+    worker.settings = replace(worker.settings, backup_capture_config_file=malformed)
+    orphan = f"{uuid4()}.1.zip"
+    folder = catalog.identity.settings.blob_root / "document_archives" / str(catalog.owner_id)
+    with directory(folder, create=True) as descriptor:
+        atomic_file(descriptor, orphan, b"private crash orphan")
+    real_unlink = os.unlink
+
+    def unlink(name: str, *, dir_fd: int | None = None) -> None:
+        if name == orphan:
+            raise PermissionError("archive unlink refused")
+        real_unlink(name, dir_fd=dir_fd)
+
+    real_run_once = worker.run_once
+
+    def finish_one() -> bool:
+        try:
+            return real_run_once()
+        finally:
+            worker.stopping.set()
+
+    with monkeypatch.context() as fault:
+        fault.setattr(os, "unlink", unlink)
+        fault.setattr(signal, "signal", lambda *args: None)
+        fault.setattr(worker, "run_once", finish_one)
+        worker.run()
+    assert catalog.workflow(UUID(str(queued["id"])))["state"] == "succeeded"
+    response = catalog.client.get(f"/api/v1/portable-exports/{queued['id']}/download")
+    assert response.status_code == 200, response.text
+    assert not expired_path.exists()
+    assert (folder / orphan).read_bytes() == b"private crash orphan"
+    events = [json.loads(line) for line in capsys.readouterr().out.splitlines()]
+    assert any(event.get("event") == "document_archive_cleanup_failed" for event in events)
     assert any(event.get("code") == "backup_configuration_invalid" for event in events)

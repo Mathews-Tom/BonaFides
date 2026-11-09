@@ -9,6 +9,8 @@ import sys
 import threading
 import time
 import zipfile
+from contextlib import contextmanager
+from dataclasses import replace
 from html.parser import HTMLParser
 from pathlib import Path
 from typing import Any, cast
@@ -17,6 +19,7 @@ from uuid import UUID, uuid4
 import pytest
 from pydantic import ValidationError
 from sqlalchemy import text
+from sqlalchemy.exc import DBAPIError
 from test_document_generation import (
     _base,
     _candidate,
@@ -59,6 +62,7 @@ from bonafides.render_service import (
 from bonafides.statement_check import check_statements
 from bonafides.storage import BlobStore, atomic_file, directory, read_file
 from bonafides.worker import Worker
+from bonafides.workflows import publish as publish_workflow
 
 
 def example(text: str = "Maintained Linux services.") -> tuple[DocumentBody, Fact]:
@@ -961,6 +965,120 @@ def test_archive_all_current_membership_review_and_deleted_partner(
     refused = catalog.client.get("/api/v1/document-archives/preview")
     assert refused.status_code == 409 and refused.json()["code"] == "review_required"
     assert records[1]["id"] in refused.json()["detail"]
+
+
+@pytest.mark.postgres
+@pytest.mark.parametrize("lookup", ["prepare", "manifest_fallback"])
+def test_archive_unavailable_template_identifies_blocked_member(
+    catalog: SourceContext, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, lookup: str
+) -> None:
+    _archive_pair(catalog, monkeypatch, tmp_path)
+    with catalog.runtime.transaction() as conn:
+        snapshot, _ = document_archives.manifest(conn, catalog.owner_id)
+    blocked = cast(list[dict[str, object]], snapshot["documents"])[0]["document_id"]
+
+    def unavailable_digest(version: str) -> str:
+        return hashlib.sha256((tmp_path / "missing-templates" / version).read_bytes()).hexdigest()
+
+    if lookup == "prepare":
+        monkeypatch.setattr(documents, "template_digest", unavailable_digest)
+    else:
+        actual_prepare = prepare_render
+
+        def legacy_render(*args: Any) -> documents.PreparedRender:
+            # Older saved revisions have no pinned template digest.
+            return replace(actual_prepare(*args), template_sha256=None, frame=None)
+
+        monkeypatch.setattr(document_archives, "prepare_render", legacy_render)
+        monkeypatch.setattr(document_archives, "template_digest", unavailable_digest)
+    response = catalog.client.get("/api/v1/document-archives/preview")
+    assert response.status_code == 409, response.text
+    assert response.json()["code"] == "document_template_unavailable"
+    assert response.json()["detail"] == blocked
+
+
+@pytest.mark.postgres
+@pytest.mark.parametrize("outcome", ["committed", "rolled_back", "unknown"])
+def test_archive_lost_publication_ack_preserves_only_confirmed_or_uncertain_zip(
+    catalog: SourceContext,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+    outcome: str,
+) -> None:
+    _archive_pair(catalog, monkeypatch, tmp_path)
+    pdf = b"%PDF-1.7\npublication acknowledgement boundary\n"
+    monkeypatch.setattr(RenderClient, "render", lambda self, *args: pdf)
+    task = _queue_archive(catalog)
+    actual_transaction = catalog.runtime.transaction
+    actual_publish = publish_workflow
+    publication_reached = False
+    injected = False
+
+    def publish(*args: Any) -> dict[str, object]:
+        nonlocal publication_reached
+        result = actual_publish(*args)
+        publication_reached = True
+        return result
+
+    def lost_ack() -> DBAPIError:
+        return DBAPIError(
+            "COMMIT",
+            None,
+            ConnectionError("publication acknowledgement lost"),
+            connection_invalidated=True,
+        )
+
+    @contextmanager
+    def transaction() -> Any:
+        nonlocal injected
+        if injected and outcome == "unknown":
+            raise lost_ack()
+        with actual_transaction() as conn:
+            yield conn
+            if publication_reached and not injected and outcome != "committed":
+                injected = True
+                raise lost_ack()
+        if publication_reached and not injected:
+            injected = True
+            raise lost_ack()
+
+    with monkeypatch.context() as fault:
+        fault.setattr(document_archives, "publish", publish)
+        fault.setattr(catalog.runtime, "transaction", transaction)
+        with pytest.raises(DBAPIError):
+            document_archives.execute_archive(
+                catalog.runtime, catalog.identity.settings, task, threading.Event()
+            )
+    assert injected
+    folder = catalog.identity.settings.blob_root / "document_archives" / str(catalog.owner_id)
+    path = folder / f"{task.id}.{task.fence}.zip"
+    workflow = catalog.workflow(task.id)
+    response = catalog.client.get(f"/api/v1/document-archives/{task.id}/download")
+    if outcome == "committed":
+        assert workflow["state"] == "succeeded", workflow
+        assert response.status_code == 200, response.text
+        with zipfile.ZipFile(io.BytesIO(response.content)) as archive:
+            assert len(archive.namelist()) == 2
+            assert all(archive.read(name) == pdf for name in archive.namelist())
+        assert document_archives.expire_archives(catalog.runtime, catalog.identity.settings) == 0
+        assert path.exists()
+    else:
+        assert workflow["state"] != "succeeded" and response.status_code == 404
+        assert path.exists() == (outcome == "unknown")
+        if outcome == "unknown":
+            assert "publication reconciliation failed" in caplog.text
+            with catalog.identity.admin.transaction() as conn:
+                conn.execute(
+                    text("""UPDATE bonafides.workflow_runs
+                    SET lease_expires_at=clock_timestamp()-interval '1 second'
+                    WHERE owner_id=:owner AND id=:id"""),
+                    {"owner": catalog.owner_id, "id": task.id},
+                )
+            assert (
+                document_archives.expire_archives(catalog.runtime, catalog.identity.settings) == 1
+            )
+            assert not path.exists()
 
 
 @pytest.mark.postgres

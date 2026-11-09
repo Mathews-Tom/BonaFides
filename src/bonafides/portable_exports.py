@@ -313,7 +313,18 @@ class LifecycleWorker:
 
                     # Independent privacy expiry must not depend on optional backup config.
                     expire_task_inputs(self.db)
-                    expire_archives(self.db, self.settings)
+                    try:
+                        expire_archives(self.db, self.settings)
+                    except (DBAPIError, Problem, OSError, ValueError) as error:
+                        code = (
+                            error.code
+                            if isinstance(error, Problem)
+                            else "lifecycle_operation_failed"
+                        )
+                        print(
+                            json.dumps({"event": "document_archive_cleanup_failed", "code": code}),
+                            flush=True,
+                        )
 
                     try:
                         scheduled = run_due(self.db, self.settings)

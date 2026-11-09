@@ -329,7 +329,12 @@ export class Api {
   async createDocumentArchive(body: DocumentArchiveRequest, workspaceVersion: number, idempotencyKey: string, signal?: AbortSignal): Promise<Workflow> {
     return this.request<Workflow>('/document-archives', 'POST', body, workspaceVersion, idempotencyKey, signal);
   }
-  private async send<T>(path: string, options: RequestInit): Promise<T> {
+  async downloadDocumentArchive(workflowId: string, signal?: AbortSignal): Promise<Blob> {
+    return this.send<Blob>(`/document-archives/${encodeURIComponent(workflowId)}/download`, {
+      method: 'GET', headers: { Accept: 'application/zip' }, ...(signal ? { signal } : {}),
+    }, true);
+  }
+  private async send<T>(path: string, options: RequestInit, binary = false): Promise<T> {
     const method = options.method ?? 'GET';
     const authentication = method === 'POST' && ['/session', '/bootstrap', '/session/reauthenticate'].includes(path);
     if (method !== 'GET' && this.writeBlock && !authentication) throw new ApiError(409, this.writeBlock);
@@ -352,7 +357,7 @@ export class Api {
       throw failure;
     }
     if (response.status === 204) return undefined as T;
-    try { return await response.json() as T; }
+    try { return binary ? await response.blob() as T : await response.json() as T; }
     catch (failure) {
       if (!(failure instanceof DOMException && failure.name === 'AbortError')) this.onUnavailable?.(failure);
       throw failure;

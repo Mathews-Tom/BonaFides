@@ -1218,16 +1218,16 @@ describe('all-current saved document archives', () => {
     vi.useFakeTimers();
     try {
       await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Create all-document ZIP' })); });
-      expect(screen.queryByRole('link', { name: /Download all saved application PDFs/ })).not.toBeInTheDocument();
+      expect(screen.queryByRole('button', { name: /Download all saved application PDFs/ })).not.toBeInTheDocument();
       expect(screen.getByRole('button', { name: 'Base résumé' })).toBeDisabled();
       await act(async () => { await vi.advanceTimersByTimeAsync(1000); });
       expect(screen.getByText(/2 of 4 documents rendered/)).toBeVisible();
-      expect(screen.queryByRole('link', { name: /Download all saved application PDFs/ })).not.toBeInTheDocument();
+      expect(screen.queryByRole('button', { name: /Download all saved application PDFs/ })).not.toBeInTheDocument();
       await act(async () => { await vi.advanceTimersByTimeAsync(1000); });
-      expect(screen.getByRole('link', { name: /Download all saved application PDFs/ })).toHaveAttribute('href', '/api/v1/document-archives/archive-1/download');
+      expect(screen.getByRole('button', { name: /Download all saved application PDFs/ })).toBeEnabled();
       expect(screen.getByRole('button', { name: 'Base résumé' })).toBeEnabled();
       await act(async () => { await vi.advanceTimersByTimeAsync(3000); });
-      expect(screen.queryByRole('link', { name: /Download all saved application PDFs/ })).not.toBeInTheDocument();
+      expect(screen.queryByRole('button', { name: /Download all saved application PDFs/ })).not.toBeInTheDocument();
       expect(screen.getByText(/This archive expired at/)).toBeVisible();
     } finally { vi.useRealTimers(); }
   });
@@ -1258,6 +1258,7 @@ describe('all-current saved document archives', () => {
   it.each([
     ['document_archive_empty', /There are no current saved tailored/],
     ['review_required', /Every current saved tailored document must be reviewed/],
+    ['document_template_unavailable', /A saved document’s built-in PDF template is unavailable/],
   ] as const)('recovers from %s only through explicit preview and refuses a changed snapshot without silently refreshing', async (code, message) => {
     const user = userEvent.setup(); let previews = 0;
     const { api, request } = proposalFixture(async (path, method) => {
@@ -1281,11 +1282,15 @@ describe('all-current saved document archives', () => {
     expect(request.mock.calls.filter(call => call[1] === 'POST')).toHaveLength(1);
   });
 
-  it('retains an uncertain enqueue across reconnect and retries only the identical frozen request and key', async () => {
+  it('retains an uncertain enqueue through a rejected authenticated replay and recovers only the identical frozen request and key', async () => {
     const user = userEvent.setup(); let writes = 0;
     const { api, request } = proposalFixture(async (path, method) => {
       if (path === '/document-archives/preview') return snapshot;
-      if (path === '/document-archives' && method === 'POST') { if (++writes === 1) throw new TypeError('lost response'); return archiveTask; }
+      if (path === '/document-archives' && method === 'POST') {
+        if (++writes === 1) throw new TypeError('lost response');
+        if (writes === 2) throw new ApiError(401, 'session_expired');
+        return archiveTask;
+      }
       throw new ApiError(404, 'not_found');
     });
     const view = render(<Documents api={api} profile={profile} />); await openTailored(user);
@@ -1297,11 +1302,171 @@ describe('all-current saved document archives', () => {
     expect(screen.getByRole('button', { name: 'Retry exact archive request' })).toBeDisabled();
     view.rerender(<Documents api={api} profile={profile} />);
     await user.click(screen.getByRole('button', { name: 'Retry exact archive request' }));
+    expect(await screen.findByText(/Your session is unavailable or expired/)).toBeVisible();
+    expect(screen.getByText(/The request outcome is unknown/)).toBeVisible();
+    expect(screen.getByRole('button', { name: 'Refresh archive preview' })).toBeDisabled();
+    view.rerender(<Documents api={api} profile={profile} disabled />);
+    expect(screen.getByRole('button', { name: 'Retry exact archive request' })).toBeDisabled();
+    view.rerender(<Documents api={api} profile={profile} />);
+    await user.click(screen.getByRole('button', { name: 'Retry exact archive request' }));
     expect(await screen.findByRole('heading', { name: 'Document task: pending' })).toBeVisible();
     const commands = request.mock.calls.filter(call => call[0] === '/document-archives');
-    expect(commands).toHaveLength(2);
+    expect(commands).toHaveLength(3);
     expect(commands[1]?.slice(2, 5)).toEqual(commands[0]?.slice(2, 5));
+    expect(commands[2]?.slice(2, 5)).toEqual(commands[0]?.slice(2, 5));
     expect(request.mock.calls.filter(call => call[0] === '/document-archives/preview')).toHaveLength(1);
+  });
+
+  it('releases an uncertain enqueue after a definitive stale-version refusal and permits an explicit fresh preview', async () => {
+    const user = userEvent.setup(); let writes = 0; let previews = 0;
+    const { api } = proposalFixture(async (path, method) => {
+      if (path === '/document-archives/preview') return ++previews === 1 ? snapshot : { ...snapshot, workspace_version: snapshot.workspace_version + 1, manifest_sha256: 'c'.repeat(64) };
+      if (path === '/document-archives' && method === 'POST') {
+        if (++writes === 1) throw new TypeError('lost response');
+        if (writes === 2) throw new ApiError(412, 'version_conflict');
+        return archiveTask;
+      }
+      throw new ApiError(404, 'not_found');
+    });
+    render(<Documents api={api} profile={profile} />); await openTailored(user);
+    await user.click(screen.getByRole('button', { name: 'Prepare archive preview' }));
+    await user.click(screen.getByRole('button', { name: 'Create all-document ZIP' }));
+    expect(await screen.findByText(/The request outcome is unknown/)).toBeVisible();
+    await user.click(screen.getByRole('button', { name: 'Retry exact archive request' }));
+    expect(await screen.findByRole('button', { name: 'Prepare archive preview' })).toBeEnabled();
+    expect(screen.queryByRole('button', { name: 'Retry exact archive request' })).not.toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Prepare archive preview' }));
+    await user.click(screen.getByRole('button', { name: 'Create all-document ZIP' }));
+    expect(await screen.findByRole('heading', { name: 'Document task: pending' })).toBeVisible();
+  });
+
+  it.each([
+    ['redacted', false], ['missing', false], ['redacted', true], ['missing', true],
+  ] as const)('explicitly clears a %s archive task and preserves local edits (%s) without claiming cancellation', async (response, dirty) => {
+    const user = userEvent.setup(); let reads = 0; const busyChanges = vi.fn();
+    const { api, request } = proposalFixture(async (path, method) => {
+      if (path === '/document-archives/preview') return snapshot;
+      if (path === '/document-archives' && method === 'POST') return dirty ? complete('2030-01-01T00:00:00Z') : archiveTask;
+      if (path === '/workflows/archive-1') {
+        reads++;
+        if (response === 'missing') throw new ApiError(404, 'workflow_not_found');
+        return { ...archiveTask, version: 4, state: 'cancelled', mode: undefined, result: null };
+      }
+      throw new ApiError(404, 'not_found');
+    });
+    render(<Documents api={api} profile={profile} onBusyChange={busyChanges} />); await openTailored(user);
+    await user.click(screen.getByRole('button', { name: 'Prepare archive preview' }));
+    vi.useFakeTimers();
+    try {
+      await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Create all-document ZIP' })); });
+      if (dirty) fireEvent.change(screen.getByLabelText('Block text: b-1'), { target: { value: 'Keep my wording through archive recovery.' } });
+      await act(async () => { await vi.advanceTimersByTimeAsync(1000); });
+      expect(screen.getByText(/server cancellation is not confirmed/)).toBeVisible();
+      expect(screen.queryByRole('button', { name: /Download all saved application PDFs/ })).not.toBeInTheDocument();
+      expect(screen.getByRole('button', { name: 'Prepare archive preview' })).toBeDisabled();
+      await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Clear unavailable archive task' })); });
+      expect(screen.queryByRole('heading', { name: /Document task:/ })).not.toBeInTheDocument();
+      expect(screen.queryByRole('button', { name: 'Reconnect document task' })).not.toBeInTheDocument();
+      expect(screen.getByRole('status')).toHaveTextContent('does not confirm server cancellation');
+      expect(screen.getByLabelText('Block text: b-1')).toHaveValue(dirty ? 'Keep my wording through archive recovery.' : tailored.current_revision.body.sections[0]!.blocks[0]!.text);
+      expect(busyChanges).toHaveBeenLastCalledWith(false);
+      if (dirty) {
+        expect(screen.getByRole('button', { name: 'Base résumé' })).toBeDisabled();
+        expect(screen.getByRole('button', { name: 'Save document revision' })).toBeEnabled();
+        await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Discard document changes' })); });
+      }
+      expect(screen.getByRole('button', { name: 'Base résumé' })).toBeEnabled();
+      expect(screen.getByRole('button', { name: 'Reload application documents' })).toBeEnabled();
+      await act(async () => { await vi.advanceTimersByTimeAsync(10000); });
+      expect(reads).toBe(1);
+      expect(screen.queryByRole('heading', { name: /Document task:/ })).not.toBeInTheDocument();
+      expect(request.mock.calls.filter(call => call[1] === 'POST')).toHaveLength(1);
+      expect(screen.getByRole('button', { name: 'Prepare archive preview' })).toBeEnabled();
+    } finally { vi.useRealTimers(); }
+  });
+
+  it('checks the authenticated ZIP response before handing its bytes to the browser, retaining unsaved safeguards and rejecting late downloads', async () => {
+    const user = userEvent.setup();
+    const { api } = proposalFixture(async (path, method) => {
+      if (path === '/document-archives/preview') return snapshot;
+      if (path === '/document-archives' && method === 'POST') return archiveTask;
+      if (path === '/workflows/archive-1') return { ...complete('2030-01-01T00:00:00Z'), result: { ...complete('2030-01-01T00:00:00Z').result, download_url: 'https://untrusted.test/archive.zip' } };
+      throw new ApiError(404, 'not_found');
+    });
+    const fetchDownload = vi.fn<typeof fetch>().mockResolvedValueOnce(new Response('PK-private-ZIP-bytes', { headers: { 'Content-Type': 'application/zip' } }));
+    // ES2022 has no Promise.withResolvers; retain the deferred-response pattern used in this file.
+    let finishLate: (response: Response) => void = () => { throw new Error('late download not started'); };
+    // The first download succeeds; the second deliberately ignores abort to exercise the UI's late fence.
+    fetchDownload.mockImplementationOnce(() => new Promise<Response>(resolve => { finishLate = resolve; }));
+    const createURL = vi.fn<typeof URL.createObjectURL>(() => 'blob:checked-private-zip'); const revokeURL = vi.fn<typeof URL.revokeObjectURL>(); const NativeURL = URL;
+    vi.stubGlobal('fetch', fetchDownload);
+    vi.stubGlobal('URL', class extends NativeURL { static createObjectURL = createURL; static revokeObjectURL = revokeURL; });
+    const clicked: { href: string; download: string }[] = [];
+    const click = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(function (this: HTMLAnchorElement) { clicked.push({ href: this.href, download: this.download }); });
+    const view = render(<Documents api={api} profile={profile} />); await openTailored(user);
+    await user.click(screen.getByRole('button', { name: 'Prepare archive preview' }));
+    vi.useFakeTimers();
+    try {
+      await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Create all-document ZIP' })); });
+      await act(async () => { await vi.advanceTimersByTimeAsync(1000); });
+      fireEvent.change(screen.getByLabelText('Block text: b-1'), { target: { value: 'Only my saved wording belongs in the ZIP.' } });
+      expect(screen.getByRole('button', { name: /Download all saved application PDFs/ })).toBeDisabled();
+      expect(fetchDownload).not.toHaveBeenCalled();
+      expect(screen.getByLabelText('Block text: b-1')).toHaveValue('Only my saved wording belongs in the ZIP.');
+      await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Discard document changes' })); });
+      await act(async () => { fireEvent.click(screen.getByRole('button', { name: /Download all saved application PDFs/ })); });
+      expect(screen.getByRole('status')).toHaveTextContent('handed to your browser');
+      expect(fetchDownload).toHaveBeenCalledWith('/api/v1/document-archives/archive-1/download', expect.objectContaining({ method: 'GET', credentials: 'same-origin', cache: 'no-store', headers: { Accept: 'application/zip' } }));
+      expect(createURL).toHaveBeenCalledTimes(1);
+      expect(await (createURL.mock.calls[0]?.[0] as unknown as Blob).text()).toBe('PK-private-ZIP-bytes');
+      expect(clicked).toEqual([{ href: 'blob:checked-private-zip', download: 'bonafides-application-pdfs.zip' }]);
+      await act(async () => { await vi.advanceTimersByTimeAsync(1); });
+      expect(revokeURL).toHaveBeenCalledWith('blob:checked-private-zip');
+      expect(screen.getByLabelText('Block text: b-1')).toHaveValue(tailored.current_revision.body.sections[0]!.blocks[0]!.text);
+      await act(async () => { fireEvent.click(screen.getByRole('button', { name: /Download all saved application PDFs/ })); });
+      view.unmount();
+      await act(async () => { finishLate(new Response('PK-late-private-bytes', { headers: { 'Content-Type': 'application/zip' } })); });
+      expect(createURL).toHaveBeenCalledTimes(1); expect(clicked).toHaveLength(1);
+    } finally { view.unmount(); click.mockRestore(); vi.unstubAllGlobals(); vi.useRealTimers(); }
+  });
+
+  it.each([
+    [409, 'document_archive_source_changed', /The saved document set, sources, reviews/],
+    [410, 'document_archive_expired', /This archive has expired/],
+    [410, 'document_archive_unavailable', /This temporary archive is no longer available/],
+  ] as const)('withdraws a ZIP rejected with %s %s, explains the server reason and requires a new explicit preview', async (status, code, message) => {
+    const user = userEvent.setup();
+    const { api, request } = proposalFixture(async (path, method) => {
+      if (path === '/document-archives/preview') return snapshot;
+      if (path === '/document-archives' && method === 'POST') return archiveTask;
+      if (path === '/workflows/archive-1') return complete('2030-01-01T00:00:00Z');
+      throw new ApiError(404, 'not_found');
+    });
+    const fetchDownload = vi.fn<typeof fetch>().mockResolvedValue(new Response(JSON.stringify({ code, detail: 'Blocked document tailored-resume.' }), { status, headers: { 'Content-Type': 'application/problem+json' } }));
+    vi.stubGlobal('fetch', fetchDownload);
+    const click = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {});
+    const view = render(<Documents api={api} profile={profile} />); await openTailored(user);
+    await user.click(screen.getByRole('button', { name: 'Prepare archive preview' }));
+    vi.useFakeTimers();
+    try {
+      await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Create all-document ZIP' })); });
+      await act(async () => { await vi.advanceTimersByTimeAsync(1000); });
+      await act(async () => { fireEvent.click(screen.getByRole('button', { name: /Download all saved application PDFs/ })); });
+      expect(screen.getByText(message)).toHaveTextContent('Blocked document tailored-resume.');
+      expect(screen.getByRole('status')).toHaveTextContent('old download has been withdrawn');
+      expect(screen.queryByRole('button', { name: /Download all saved application PDFs/ })).not.toBeInTheDocument();
+      expect(click).not.toHaveBeenCalled();
+      expect(screen.getByLabelText('Tracked application')).toHaveValue(application.id);
+      expect(screen.getByLabelText('Block text: b-1')).toHaveValue(tailored.current_revision.body.sections[0]!.blocks[0]!.text);
+      expect(request.mock.calls.filter(call => call[0] === '/document-archives/preview')).toHaveLength(1);
+      expect(request.mock.calls.filter(call => call[1] === 'POST')).toHaveLength(1);
+      await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Prepare archive preview' })); });
+      expect(screen.getByText(/Preview: 4 saved documents/)).toBeVisible();
+      expect(screen.queryByText(message)).not.toBeInTheDocument();
+      expect(request.mock.calls.filter(call => call[0] === '/document-archives/preview')).toHaveLength(2);
+      expect(request.mock.calls.filter(call => call[1] === 'POST')).toHaveLength(1);
+      expect(fetchDownload).toHaveBeenCalledTimes(1);
+    } finally { view.unmount(); click.mockRestore(); vi.unstubAllGlobals(); vi.useRealTimers(); }
   });
 
   it('rejects a mismatched workflow or artifact result and reconnects the same task without loading result documents', async () => {
@@ -1325,11 +1490,11 @@ describe('all-current saved document archives', () => {
       for (let attempt = 0; attempt < 2; attempt++) {
         await act(async () => { await vi.advanceTimersByTimeAsync(1000); });
         expect(screen.getByText(/Archive status or its matching result could not be confirmed/)).toBeVisible();
-        expect(screen.queryByRole('link', { name: /Download all saved application PDFs/ })).not.toBeInTheDocument();
+        expect(screen.queryByRole('button', { name: /Download all saved application PDFs/ })).not.toBeInTheDocument();
         await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Reconnect document task' })); });
       }
       await act(async () => { await vi.advanceTimersByTimeAsync(1000); });
-      expect(screen.getByRole('link', { name: /Download all saved application PDFs/ })).toHaveAttribute('href', '/api/v1/document-archives/archive-1/download');
+      expect(screen.getByRole('button', { name: /Download all saved application PDFs/ })).toBeEnabled();
       expect(screen.getByLabelText('Block text: b-1')).toHaveValue(tailored.current_revision.body.sections[0]!.blocks[0]!.text);
       expect(request.mock.calls.some(call => call[0] === '/documents/wrong-document')).toBe(false);
     } finally { vi.useRealTimers(); }
@@ -1365,7 +1530,7 @@ describe('all-current saved document archives', () => {
       await act(async () => { finishOld(complete(new Date(Date.now() + 86400000).toISOString())); });
       expect(screen.getByRole('heading', { name: 'Document task: pending' })).toBeVisible();
       expect(screen.getByText('Task archive-2')).toBeVisible();
-      expect(screen.queryByRole('link', { name: /Download all saved application PDFs/ })).not.toBeInTheDocument();
+      expect(screen.queryByRole('button', { name: /Download all saved application PDFs/ })).not.toBeInTheDocument();
       expect(screen.getByLabelText('Tracked application')).toHaveValue(application.id);
     } finally { vi.useRealTimers(); }
   });

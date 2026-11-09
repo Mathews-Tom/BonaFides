@@ -118,6 +118,10 @@ This export is **all-or-nothing**. An empty set is refused. An unreviewed or oth
 
 **Cancel document task** revokes publication of the ZIP; a task may still be stopping. If a temporary failure permits **Retry frozen archive task**, that retry keeps the original saved-document set, cumulative attempt limits and deadline. It does not refresh the preview. For an unknown enqueue outcome, **Retry exact archive request** retains the original preview and request key rather than silently creating a different request. **Reconnect document task** reloads the same task after a monitoring failure and does not replace your selected document or local edits.
 
+Downloads are checked before the ZIP is handed to your browser. A refused or expired download shows the problem and withdraws the old download button; resolve the problem and explicitly prepare a new preview. If an uncertain create request needs authentication, sign in again and retry that exact request. A definitive refusal lets you prepare a fresh preview instead.
+
+After privacy erasure, a monitored archive task can lose its inputs or disappear. Use **Clear unavailable archive task** to stop monitoring it without replacing your selected document or local edits. This is not confirmation of server cancellation. Save or copy any local edits before reloading the current workspace.
+
 Archive PDFs receive the same saved-text and glyph checks as individual PDFs. These are internal machine-readability checks, not external ATS certification, visual layout inspection or factual proof. The ZIP is a temporary convenience download, not a replacement for an owner-data backup. Existing individual PDF downloads remain unchanged.
 
 ## Look back or restore an earlier version
