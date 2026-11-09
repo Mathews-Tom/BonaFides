@@ -3,7 +3,7 @@ import { act, fireEvent, render, screen, waitFor, within } from '@testing-librar
 import userEvent, { type UserEvent } from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
 import { Documents } from './Documents';
-import { Api, ApiError, type ApplicationDocuments, type DocumentDefaults, type DocumentDefaultsPatch, type DocumentRecord, type DocumentSaveRequest, type GenerationContext, type Profile, type SectionProposal, type SectionRegenerationContext, type Workflow } from './api';
+import { Api, ApiError, type ApplicationDocuments, type DocumentDefaults, type DocumentDefaultsPatch, type DocumentOmissionRequest, type DocumentRecord, type DocumentSaveRequest, type GenerationContext, type Profile, type SectionProposal, type SectionRegenerationContext, type Workflow } from './api';
 import type { ApplicationSummary } from './tracking-api';
 
 const profile: Profile = { id: 'profile', version: 3, current_revision: { id: 'profile-rev-3', revision_no: 3, content_sha256: 'a'.repeat(64), created_at: '2026-10-25T12:00:00Z', author_owner_id: 'owner', reason: 'Accepted facts', claims: [], snapshot: { display_name: 'Mira Vale', headline: '', claim_revision_ids: ['claim-1', 'claim-2'], contact: { email: 'mira@example.test', phone: '', location: '', postal_address: '' } } }, evidence: [], quality_warnings: [], experience_coverage: { minimum_days: 0, maximum_days: 0, undated_or_open_entries: 0 } };
@@ -1000,5 +1000,198 @@ describe('saved tailored section proposals', () => {
     expect(commands).toHaveLength(2);
     expect(commands[1]?.[2]).toEqual(commands[0]?.[2]);
     expect(commands[0]?.[4]).toBeTypeOf('string'); expect(commands[1]?.[4]).toBe(commands[0]?.[4]);
+  });
+});
+
+describe('reversible saved résumé page fitting', () => {
+  const block = tailored.current_revision.body.sections[1]!.blocks[0]!;
+  const fitted: DocumentRecord = {
+    ...tailored, version: 5, reviewed: false,
+    current_revision: { ...tailored.current_revision, id: 'fit-revision', revision_no: 3, content_sha256: '9'.repeat(64),
+      body: { ...tailored.current_revision.body, sections: [tailored.current_revision.body.sections[0]!] },
+      provenance_snapshot: { ...tailored.current_revision.provenance_snapshot, page_fit: {
+        page_target: 1, page_count: 2, measured_content_sha256: '8'.repeat(64),
+        order: tailored.current_revision.body.sections.map(section => ({ key: section.key, heading: section.heading, block_keys: section.blocks.map(item => item.block_key) })),
+        omissions: [{ section_key: 'skills', block, reason: 'page_target' }],
+      } },
+    },
+  };
+  const letter: DocumentRecord = { ...tailored, id: 'fit-letter', kind: 'cover_letter', current_revision: { ...tailored.current_revision, id: 'fit-letter-revision', body: { title: 'Saved cover letter', sections: [{ key: 'letter', heading: 'Letter', blocks: [{ ...block, block_key: 'letter-block' }] }] } } };
+  const fitTask: Workflow = { ...workflow, id: 'fit-task', mode: 'page_fit' };
+
+  it('omits recoverably, offers exact immediate Undo, and restores after surrounding saved edits without duplicating hidden text', async () => {
+    const user = userEvent.setup(); let live = { ...tailored, reviewed: true };
+    const { api, request } = proposalFixture(async (path, method, body, version) => {
+      if (path === '/documents/tailored-resume/omissions') {
+        const change = body as DocumentOmissionRequest;
+        expect(version).toBe(live.version);
+        expect(change.revision_id).toBe(live.current_revision.id);
+        expect(change.content_sha256).toBe(live.current_revision.content_sha256);
+        const omit = change.operation === 'omit';
+        live = { ...live, version: live.version + 1, reviewed: false,
+          current_revision: { ...live.current_revision, id: `omission-${live.version + 1}`, revision_no: live.current_revision.revision_no + 1,
+            body: { ...live.current_revision.body, sections: omit ? [live.current_revision.body.sections[0]!] : [...live.current_revision.body.sections, tailored.current_revision.body.sections[1]!] },
+            provenance_snapshot: { ...live.current_revision.provenance_snapshot, page_fit: { ...fitted.current_revision.provenance_snapshot.page_fit!, page_count: null, measured_content_sha256: null, omissions: omit ? [{ section_key: 'skills', block, reason: 'owner' }] : [] } },
+          },
+        };
+        return live;
+      }
+      if (path === '/documents/tailored-resume' && method === 'PUT') {
+        live = { ...live, version: live.version + 1, current_revision: { ...live.current_revision, id: 'surrounding-edits', body: (body as DocumentSaveRequest).body } };
+        return live;
+      }
+      throw new ApiError(404, 'not_found');
+    }, [live]);
+    render(<Documents api={api} profile={profile} />); await openTailored(user);
+    await user.click(screen.getByRole('button', { name: 'Omit block b-2' }));
+    expect(await screen.findByRole('button', { name: 'Undo omit block b-2' })).toBeEnabled();
+    expect(screen.queryByLabelText('Block text: b-2')).not.toBeInTheDocument();
+    const inventory = screen.getByRole('complementary', { name: 'Page fit and omitted blocks' });
+    expect(inventory).toHaveTextContent('Omitted by you');
+    expect(inventory).toHaveTextContent('Wrote SQL queries.');
+    expect(inventory).toHaveTextContent('claim-2'); expect(inventory).toHaveTextContent('evidence-2');
+    expect(screen.getByRole('button', { name: 'Render reviewed PDF' })).toBeDisabled();
+    await user.click(screen.getByRole('button', { name: 'Undo omit block b-2' }));
+    expect(await screen.findByLabelText('Block text: b-2')).toHaveValue(block.text);
+    expect(screen.queryByRole('button', { name: 'Restore block b-2' })).not.toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Omit block b-2' }));
+    await screen.findByRole('button', { name: 'Restore block b-2' });
+    fireEvent.change(screen.getByLabelText('Block text: b-1'), { target: { value: 'My surrounding saved edit.' } });
+    expect(screen.getByRole('button', { name: 'Restore block b-2' })).toBeDisabled();
+    await user.click(screen.getByRole('button', { name: 'Save document revision' }));
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Restore block b-2' })).toBeEnabled());
+    await user.click(screen.getByRole('button', { name: 'Restore block b-2' }));
+    expect(await screen.findByLabelText('Block text: b-2')).toHaveValue(block.text);
+    expect(screen.getAllByLabelText('Block text: b-2')).toHaveLength(1);
+    expect(screen.getByLabelText('Block text: b-1')).toHaveValue('My surrounding saved edit.');
+    expect(screen.getByLabelText('Document state')).toHaveTextContent('review required');
+    const changes = request.mock.calls.filter(call => call[0].endsWith('/omissions'));
+    expect(changes.map(call => (call[2] as DocumentOmissionRequest).operation)).toEqual(['omit', 'restore', 'omit', 'restore']);
+    expect(changes.every(call => typeof call[4] === 'string')).toBe(true);
+    expect(request.mock.calls.some(call => call[0].includes('/fit') || call[0].includes('/generation'))).toBe(false);
+  });
+
+  it('locks dirty, historical and wrong-kind operations while leaving their text inspectable', async () => {
+    const user = userEvent.setup();
+    const withHidden: DocumentRecord = { ...tailored, current_revision: { ...tailored.current_revision, provenance_snapshot: { ...tailored.current_revision.provenance_snapshot, page_fit: { ...fitted.current_revision.provenance_snapshot.page_fit!, order: [{ key: 'experience', heading: 'Experience', block_keys: ['b-1'] }, { key: 'skills', heading: 'Skills', block_keys: ['b-2', 'hidden-3'] }], omissions: [{ section_key: 'skills', block: { ...block, block_key: 'hidden-3' }, reason: 'owner' }] } } } };
+    const { api, request } = proposalFixture(async path => {
+      if (path.endsWith('/revisions?limit=20')) return { items: [withHidden.current_revision], next_cursor: null };
+      if (path.endsWith(`/revisions/${withHidden.current_revision.id}`)) return withHidden.current_revision;
+      throw new ApiError(404, 'not_found');
+    }, [withHidden, letter]);
+    render(<Documents api={api} profile={profile} />); await openTailored(user);
+    fireEvent.change(screen.getByLabelText('Block text: b-1'), { target: { value: 'Keep my unsaved wording.' } });
+    for (const name of ['Fit saved résumé to target', 'Omit block b-1', 'Restore block hidden-3']) {
+      expect(screen.getByRole('button', { name })).toBeDisabled();
+      await user.click(screen.getByRole('button', { name }));
+    }
+    expect(screen.getByLabelText('Block text: b-1')).toHaveValue('Keep my unsaved wording.');
+    await user.click(screen.getByRole('button', { name: 'Discard document changes' }));
+    await user.click(screen.getByRole('button', { name: 'Load document history' }));
+    await user.click(await screen.findByRole('button', { name: 'Preview revision 2 — deterministic' }));
+    await screen.findByRole('heading', { name: 'Historical revision 2 — read-only' });
+    expect(screen.getByRole('complementary', { name: 'Page fit and omitted blocks' })).toHaveTextContent(block.text);
+    expect(screen.queryByRole('button', { name: 'Restore block hidden-3' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Fit saved résumé to target' })).not.toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Return to current saved revision' }));
+    await user.click(screen.getByRole('button', { name: 'Cover letter' }));
+    expect(screen.getByLabelText('Block text: letter-block')).toHaveValue(block.text);
+    expect(screen.queryByRole('button', { name: 'Fit saved résumé to target' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /^(Omit|Restore) block/ })).not.toBeInTheDocument();
+    expect(request.mock.calls.filter(call => call[1] === 'POST')).toHaveLength(0);
+  });
+
+  it.each(['succeeded', 'permanent_failure', 'cancelled'] as const)('follows initial generation’s fit child before loading the final pair (%s)', async state => {
+    const user = userEvent.setup(); let generated = false; let childReads = 0;
+    const originalMembers = [tailored, letter].map(item => ({ kind: item.kind, document_id: item.id, revision_id: item.current_revision.id }));
+    const finalMembers = [fitted, letter].map(item => ({ kind: item.kind, document_id: item.id, revision_id: item.current_revision.id }));
+    const { api, request } = fixture(saved, async (path, method) => {
+      if (path === '/applications') return { items: [application], next_cursor: null };
+      if (path === '/applications/application-1/documents') return { ...pair, items: generated ? [state === 'succeeded' ? fitted : tailored, letter] : [], generation_route: { ...route, status: 'qualified' } };
+      if (path.includes('/generation-context?')) return { ...context, page_target: Number(new URL(path, 'https://test.local').searchParams.get('page_target')), generation_route: { ...route, status: 'qualified' } };
+      if (path === '/applications/application-1/generation' && method === 'POST') return { ...workflow, mode: 'tailored_ai' };
+      if (path === '/workflows/compose-1') { generated = true; return { ...workflow, mode: 'tailored_ai', state: 'succeeded', result: { application_id: application.id, documents: originalMembers, fit_workflow_id: fitTask.id } }; }
+      if (path === '/workflows/fit-task') {
+        if (state !== 'succeeded' && childReads++ === 0) return fitTask;
+        return { ...fitTask, state, last_error_code: state === 'permanent_failure' ? 'render_text_unsupported' : null, result: state === 'succeeded' ? { document_id: fitted.id, revision_id: fitted.current_revision.id, application_id: application.id, documents: finalMembers, page_target: 1, page_count: 2 } : null };
+      }
+      throw new ApiError(404, 'not_found');
+    });
+    render(<Documents api={api} profile={profile} />); await ready();
+    await user.click(screen.getByRole('button', { name: 'Tracked application documents' }));
+    await user.click(screen.getByRole('button', { name: 'Reload tracked applications' }));
+    await user.selectOptions(await screen.findByLabelText('Tracked application'), application.id);
+    await waitFor(() => expect(screen.getByLabelText('Initial résumé page target (optional)')).toBeEnabled());
+    await user.selectOptions(screen.getByLabelText('Initial résumé page target (optional)'), '2');
+    await user.click(screen.getByRole('button', { name: 'Preview reviewed generation context' }));
+    await screen.findByRole('checkbox', { name: /I reviewed this exact projection/ });
+    await user.selectOptions(screen.getByLabelText('Initial résumé page target (optional)'), '1');
+    expect(screen.queryByRole('checkbox', { name: /I reviewed this exact projection/ })).not.toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Preview reviewed generation context' }));
+    await user.click(await screen.findByRole('checkbox', { name: /I reviewed this exact projection/ }));
+    vi.useFakeTimers();
+    try {
+      await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Generate résumé and cover letter pair' })); });
+      await act(async () => { await vi.advanceTimersByTimeAsync(1000); });
+      if (state !== 'succeeded') {
+        expect(screen.getByRole('heading', { name: 'Document task: pending' })).toBeInTheDocument();
+        expect(screen.getByLabelText('Tracked application')).toBeDisabled();
+        expect(screen.queryByLabelText('Block text: b-1')).not.toBeInTheDocument();
+        await act(async () => { await vi.advanceTimersByTimeAsync(1000); });
+      }
+      expect(screen.getByRole('heading', { name: `Document task: ${state.replaceAll('_', ' ')}` })).toBeInTheDocument();
+      expect(screen.queryByText(/The task returned an incomplete pair/)).not.toBeInTheDocument();
+      expect(request.mock.calls.find(call => call[1] === 'POST')?.[2]).toMatchObject({ page_target: 1 });
+      const reads = request.mock.calls.map(call => call[0]);
+      expect(reads.lastIndexOf('/applications/application-1/documents')).toBeGreaterThan(reads.indexOf('/workflows/fit-task'));
+      expect(screen.getByLabelText('Block text: b-1')).toHaveValue('Maintained Linux service checks.');
+      if (state === 'succeeded') {
+        expect(screen.queryByLabelText('Block text: b-2')).not.toBeInTheDocument();
+        expect(screen.getByRole('complementary', { name: 'Page fit and omitted blocks' })).toHaveTextContent('Measured saved content: 2 pages. Target: 1 page.');
+        expect(screen.getByText(/The résumé remains above target/)).toBeVisible();
+        expect(screen.getByRole('button', { name: 'Restore block b-2' })).toBeEnabled();
+      } else {
+        expect(screen.getByLabelText('Block text: b-2')).toHaveValue(block.text);
+        expect(screen.getByRole('status')).toHaveTextContent('No fitting success is claimed');
+        if (state === 'permanent_failure') expect(screen.getByRole('status')).toHaveTextContent('render_text_unsupported');
+      }
+      expect(screen.getByRole('button', { name: 'Render reviewed PDF' })).toBeDisabled();
+    } finally { vi.useRealTimers(); }
+  });
+
+  it.each([false, true])('retains dirty edits and selection when reconnecting a completed saved-résumé fit (other selection: %s)', async other => {
+    const user = userEvent.setup(); let reads = 0;
+    const { api, request } = proposalFixture(async (path, method) => {
+      if (path === '/documents/tailored-resume/fit' && method === 'POST') return fitTask;
+      if (path === '/workflows/fit-task') return { ...fitTask, state: 'succeeded', result: { document_id: fitted.id, revision_id: fitted.current_revision.id, page_target: 1, page_count: 2 } };
+      if (path === '/documents/tailored-resume') { if (++reads === 1) throw new TypeError('offline result read'); return fitted; }
+      throw new ApiError(404, 'not_found');
+    }, [tailored, letter]);
+    render(<Documents api={api} profile={profile} />); await openTailored(user);
+    vi.useFakeTimers();
+    try {
+      await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Fit saved résumé to target' })); });
+      await act(async () => { await vi.advanceTimersByTimeAsync(1000); });
+      expect(screen.getByText(/Task status\/result could not be loaded/)).toBeVisible();
+      if (other) await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Cover letter' })); });
+      const label = other ? 'Block text: letter-block' : 'Block text: b-1';
+      await act(async () => { fireEvent.change(screen.getByLabelText(label), { target: { value: 'Keep my dirty document.' } }); });
+      await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Reconnect document task' })); });
+      await act(async () => { await vi.advanceTimersByTimeAsync(1000); });
+      expect(screen.getByLabelText(label)).toHaveValue('Keep my dirty document.');
+      if (other) {
+        expect(screen.queryByLabelText('Block text: b-1')).not.toBeInTheDocument();
+        expect(screen.getByRole('status')).toHaveTextContent('earlier selection');
+        expect(screen.getByRole('button', { name: 'Save document revision' })).toBeEnabled();
+      } else {
+        expect(screen.getByLabelText('Document state')).toHaveTextContent('Reconciliation required');
+        expect(screen.getByRole('button', { name: 'Save document revision' })).toBeDisabled();
+        expect(screen.getByRole('button', { name: 'Fit saved résumé to target' })).toBeDisabled();
+      }
+      const command = request.mock.calls.find(call => call[0].endsWith('/fit'));
+      expect(command?.[2]).toEqual({ revision_id: tailored.current_revision.id, content_sha256: tailored.current_revision.content_sha256, page_target: 1 });
+      expect(command?.[3]).toBe(tailored.version); expect(command?.[4]).toBeTypeOf('string');
+      expect(request.mock.calls.filter(call => call[1] === 'POST')).toHaveLength(1);
+    } finally { vi.useRealTimers(); }
   });
 });

@@ -2003,3 +2003,329 @@ def test_literal_omission_never_bypasses_evidence_withdrawal_or_repins_on_restor
             "code": "literal_claim_not_grounded",
         }
     ]
+
+
+@pytest.mark.postgres
+@pytest.mark.parametrize(
+    ("outcome", "during_render"),
+    [
+        ("success", False),
+        ("renderer_failure", False),
+        ("renderer_busy", False),
+        ("stale", False),
+        ("stale", True),
+        ("letter_changed", False),
+        ("letter_changed", True),
+        ("cancelled", False),
+        ("cancelled", True),
+        ("withdrawn", False),
+        ("withdrawn", True),
+    ],
+)
+def test_initial_page_fit_keeps_original_pair_and_fences_every_publication(
+    catalog: SourceContext,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    outcome: str,
+    during_render: bool,
+) -> None:
+    import io
+
+    from pypdf import PdfWriter
+
+    from bonafides.render_service import RenderClient, RenderFailure
+
+    profile, application = _setup_pair(catalog)
+    _route(monkeypatch, tmp_path)
+    preview = _preview(catalog, profile, application)
+    response = catalog.client.post(
+        f"/api/v1/applications/{application['id']}/generation",
+        json={
+            **{
+                key: preview[key]
+                for key in (
+                    "profile_revision_id",
+                    "requirements_revision_id",
+                    "template_version",
+                    "tone",
+                    "language",
+                    "context_sha256",
+                )
+            },
+            "page_target": 1,
+        },
+        headers=catalog.headers(preview["application_version"]),
+    )
+    assert response.status_code == 202, response.text
+    parent = _claim(catalog, response.json()["id"])
+    candidate = cast(dict[str, Any], _candidate(preview))
+    original_block = candidate["documents"][0]["sections"][0]["blocks"][0]
+    candidate["documents"][0]["sections"][0]["blocks"] = [
+        {**original_block, "block_key": f"b-{i}"} for i in range(1, 6)
+    ]
+    candidate["documents"][1]["sections"][0]["blocks"][0]["block_key"] = "b-99"
+    suitability.execute_model(
+        catalog.runtime, catalog.identity.settings, parent, Event(), FixtureModel(candidate)
+    )
+    generated = catalog.workflow(parent.id)["result"]
+    child = _claim(catalog, generated["fit_workflow_id"])
+    records = _pair_documents(catalog, application)["items"]
+    resume = next(item for item in records if item["kind"] == "resume")
+    letter = next(item for item in records if item["kind"] == "cover_letter")
+    original = resume["current_revision"]
+    assert (
+        next(item for item in generated["documents"] if item["kind"] == "resume")["revision_id"]
+        == original["id"]
+    )
+    reviewed = _review(catalog, resume)
+    assert reviewed.status_code == 200
+    current = reviewed.json()
+    calls = 0
+
+    def intervene() -> None:
+        nonlocal current, letter
+        if outcome == "stale":
+            content = copy.deepcopy(original["body"])
+            content["title"] = "Owner edit while fitting"
+            saved = _save(catalog, current, content)
+            assert saved.status_code == 200, saved.text
+            current = saved.json()
+        elif outcome == "letter_changed":
+            content = copy.deepcopy(letter["current_revision"]["body"])
+            content["title"] = "Owner-edited companion letter"
+            saved = _save(catalog, letter, content)
+            assert saved.status_code == 200, saved.text
+            letter = saved.json()
+        elif outcome == "cancelled":
+            with catalog.runtime.transaction() as conn:
+                cancel_workflow(conn, catalog.owner_id, child.id)
+        elif outcome == "withdrawn":
+            with catalog.runtime.transaction() as conn:
+                conn.execute(
+                    text(
+                        "UPDATE bonafides.applications SET current_stage='withdrawn' WHERE owner_id=:owner AND id=:id"
+                    ),
+                    {"owner": catalog.owner_id, "id": application["id"]},
+                )
+
+    def render(self: RenderClient, body: documents.DocumentBody, *args: object) -> bytes:
+        nonlocal calls
+        calls += 1
+        if during_render and calls == 1:
+            intervene()
+        if outcome == "renderer_failure" and calls == 2:
+            raise RenderFailure("render_text_unsupported")
+        if outcome == "renderer_busy" and calls == 2:
+            raise RenderFailure("renderer_busy")
+        writer = PdfWriter()
+        pages = 1 if sum(len(s.blocks) for s in body.sections) <= 2 else 3
+        for _ in range(pages):
+            writer.add_blank_page(width=612, height=792)
+        output = io.BytesIO()
+        writer.write(output)
+        return output.getvalue()
+
+    monkeypatch.setattr(RenderClient, "render", render)
+    if not during_render:
+        intervene()
+    Worker(catalog.runtime, catalog.identity.settings)._execute(child, Event())
+    result = catalog.workflow(child.id)
+    after = _document(catalog, resume["id"])
+    assert _document(catalog, letter["id"]) == letter
+    assert after["artifacts"] == []
+    historical = catalog.client.get(f"/api/v1/documents/{resume['id']}/revisions/{original['id']}")
+    assert historical.status_code == 200 and historical.json() == original
+    if outcome != "success":
+        assert after["current_revision"] == current["current_revision"]
+        if outcome == "renderer_failure":
+            assert result["state"] == "permanent_failure"
+            assert result["last_error_code"] == "render_text_unsupported"
+        elif outcome == "renderer_busy":
+            assert result["state"] == "retryable_failure"
+            assert result["last_error_code"] == "renderer_busy"
+        elif outcome == "withdrawn":
+            assert result["state"] == "permanent_failure"
+            assert result["last_error_code"] == "application_not_active"
+        elif outcome in {"stale", "letter_changed"}:
+            assert bool(calls) == during_render and result["last_error_code"] == "revision_mismatch"
+        else:
+            with catalog.runtime.transaction() as conn:
+                reap(conn)
+            assert (
+                bool(calls) == during_render and catalog.workflow(child.id)["state"] == "cancelled"
+            )
+        return
+    assert result["state"] == "succeeded", result
+    assert result["result"]["page_count"] == 1 and result["result"]["page_target"] == 1
+    assert result["result"]["application_id"] == application["id"]
+    assert {item["document_id"]: item["revision_id"] for item in result["result"]["documents"]} == {
+        resume["id"]: after["current_revision"]["id"],
+        letter["id"]: letter["current_revision"]["id"],
+    }
+    assert not after["reviewed"] and not after["unsupported_claims"]
+    fit = after["current_revision"]["provenance_snapshot"]["page_fit"]
+    assert len(after["current_revision"]["body"]["sections"][0]["blocks"]) == 2
+    assert [item["block"]["block_key"] for item in fit["omissions"]] == ["b-3", "b-4", "b-5"]
+    export = catalog.client.post(
+        f"/api/v1/documents/{resume['id']}/renders",
+        json={
+            "revision_id": after["current_revision"]["id"],
+            "content_sha256": after["current_revision"]["content_sha256"],
+            "format": "pdf",
+        },
+        headers=catalog.headers(after["version"]),
+    )
+    assert export.status_code == 409 and export.json()["code"] == "review_required"
+    # Restoring the immutable original is still an exact body/pin restoration.
+    restored = catalog.client.post(
+        f"/api/v1/documents/{resume['id']}/restore",
+        json={"revision_id": original["id"], "reason": "Restore exact pre-fit original"},
+        headers=catalog.headers(after["version"]),
+    )
+    assert restored.status_code == 200, restored.text
+    assert restored.json()["current_revision"]["body"] == original["body"]
+    assert "page_fit" not in restored.json()["current_revision"]["provenance_snapshot"]
+    current = restored.json()
+    path = f"/api/v1/documents/{resume['id']}/fit"
+    body = {
+        "revision_id": current["current_revision"]["id"],
+        "content_sha256": current["current_revision"]["content_sha256"],
+        "page_target": 2,
+    }
+    wrong_digest = catalog.client.post(
+        path, json={**body, "content_sha256": "0" * 64}, headers=catalog.headers(current["version"])
+    )
+    assert wrong_digest.status_code == 409 and wrong_digest.json()["code"] == "revision_mismatch"
+    headers = catalog.headers(current["version"])
+    queued = catalog.client.post(path, json=body, headers=headers)
+    assert queued.status_code == 202, queued.text
+    replay = catalog.client.post(path, json=body, headers=headers)
+    assert replay.status_code == 202 and replay.json()["id"] == queued.json()["id"]
+    manual = _claim(catalog, queued.json()["id"])
+    Worker(catalog.runtime, catalog.identity.settings)._execute(manual, Event())
+    fitted = catalog.workflow(manual.id)
+    assert fitted["state"] == "succeeded", fitted
+    assert set(fitted["result"]) == {"document_id", "revision_id", "page_target", "page_count"}
+    assert fitted["result"]["revision_id"] != current["current_revision"]["id"]
+    refreshed = _preview(catalog, profile, application)
+    request = {
+        key: refreshed[key] for key in json.loads(response.request.content) if key != "page_target"
+    }
+    rejected = catalog.client.post(
+        f"/api/v1/applications/{application['id']}/generation",
+        json={**request, "page_target": 1},
+        headers=catalog.headers(refreshed["application_version"]),
+    )
+    assert rejected.status_code == 422 and rejected.json()["code"] == "page_fit_requires_new_resume"
+
+
+@pytest.mark.postgres
+def test_owner_omissions_survive_edits_restore_once_and_validate_hidden_portable_references(
+    catalog: SourceContext,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    from bonafides import portable_data
+    from bonafides.portable_archive import ArchiveError
+
+    profile, application = _setup_pair(catalog)
+    _route(monkeypatch, tmp_path)
+    preview = _preview(catalog, profile, application)
+    task = _queue_pair(catalog, preview)
+    suitability.execute_model(
+        catalog.runtime, catalog.identity.settings, task, Event(), FixtureModel(_candidate(preview))
+    )
+    pair = _pair_documents(catalog, application)["items"]
+    original = next(item for item in pair if item["kind"] == "resume")
+    letter = next(item for item in pair if item["kind"] == "cover_letter")
+    content = copy.deepcopy(original["current_revision"]["body"])
+    first = content["sections"][0]["blocks"][0]
+    content["sections"][0]["blocks"] = [{**first, "block_key": key} for key in ("a", "b", "c", "d")]
+    saved = _save(catalog, original, content)
+    assert saved.status_code == 200, saved.text
+    current = saved.json()
+
+    def operation(document: dict[str, Any], kind: str, key: str) -> Any:
+        return catalog.client.post(
+            f"/api/v1/documents/{document['id']}/omissions",
+            json={
+                "revision_id": document["current_revision"]["id"],
+                "content_sha256": document["current_revision"]["content_sha256"],
+                "operation": kind,
+                "block_key": key,
+            },
+            headers=catalog.headers(document["version"]),
+        )
+
+    rejected_scope = operation(letter, "omit", "b-2")
+    assert (
+        rejected_scope.status_code == 422
+        and rejected_scope.json()["code"] == "page_fit_requires_tailored_resume"
+    )
+
+    for key in ("b", "c"):
+        omitted = operation(current, "omit", key)
+        assert omitted.status_code == 200, omitted.text
+        current = omitted.json()
+    stale = operation(saved.json(), "restore", "b")
+    assert stale.status_code == 412
+    edited = copy.deepcopy(current["current_revision"]["body"])
+    edited["sections"][0]["blocks"][0]["text"] += " Owner draft."
+    saved_neighbor = _save(catalog, current, edited)
+    assert saved_neighbor.status_code == 200, saved_neighbor.text
+    current = saved_neighbor.json()
+    inventory = current["current_revision"]["provenance_snapshot"]["page_fit"]
+    assert [item["block"] for item in inventory["omissions"]] == [
+        {**first, "block_key": key} for key in ("b", "c")
+    ]
+    with (
+        catalog.runtime.engine.connect().execution_options(
+            isolation_level="REPEATABLE READ"
+        ) as conn,
+        conn.begin(),
+    ):
+        archive = portable_data.collect_owner_data(
+            conn, catalog.identity.settings, catalog.owner_id
+        )
+    portable_data._semantic_hashes(archive)
+    records = copy.deepcopy(archive.manifest.records)
+    row = next(
+        item
+        for item in records["document_revisions"]
+        if item["id"] == current["current_revision"]["id"]
+    )
+    provenance = cast(dict[str, Any], row["provenance_snapshot"])
+    provenance["page_fit"]["omissions"][0]["block"]["claim_revision_ids"] = [str(uuid4())]
+    row["content_sha256"] = generation.revision_digest(
+        documents.parse_body(row["body"]), str(row["template_version"]), provenance
+    )
+    corrupted = replace(archive, manifest=archive.manifest.model_copy(update={"records": records}))
+    with pytest.raises(ArchiveError, match="portable_snapshot_reference_missing"):
+        portable_data._semantic_hashes(corrupted)
+    collision = copy.deepcopy(current["current_revision"]["body"])
+    collision["sections"][0]["blocks"].append({**first, "block_key": "b"})
+    rejected = _save(catalog, current, collision)
+    assert rejected.status_code == 422 and rejected.json()["code"] == "page_fit_key_collision"
+    for key in ("c", "b"):
+        restored = operation(current, "restore", key)
+        assert restored.status_code == 200, restored.text
+        current = restored.json()
+    blocks = current["current_revision"]["body"]["sections"][0]["blocks"]
+    assert [block["block_key"] for block in blocks] == ["a", "b", "c", "d"]
+    assert blocks[0]["text"] == edited["sections"][0]["blocks"][0]["text"]
+    assert operation(current, "restore", "b").status_code == 409
+    history = catalog.client.get(
+        f"/api/v1/documents/{current['id']}/revisions/{original['current_revision']['id']}"
+    )
+    assert history.status_code == 200 and history.json() == original["current_revision"]
+    invalid = copy.deepcopy(current["current_revision"]["body"])
+    invalid["sections"][0]["blocks"][1]["claim_revision_ids"] = [str(uuid4())]
+    saved_invalid = _save(catalog, current, invalid)
+    assert saved_invalid.status_code == 200, saved_invalid.text
+    rejected_reference = operation(saved_invalid.json(), "omit", "b")
+    assert rejected_reference.status_code == 422
+    assert rejected_reference.json()["code"] == "invalid_page_fit_reference"
+    assert (
+        _document(catalog, current["id"])["current_revision"]
+        == saved_invalid.json()["current_revision"]
+    )

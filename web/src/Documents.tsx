@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Api, ApiError, errorText, terminal, type ApplicationDocuments, type BaseResumeRequest, type DocumentBody, type DocumentDefaults, type DocumentDefaultsPatch, type DocumentFact, type DocumentIssue, type DocumentRecord, type DocumentRenderRequest, type DocumentRestoreRequest, type DocumentReviewRequest, type DocumentRevision, type DocumentRevisionPage, type DocumentSaveRequest, type DocumentTemplate, type GenerationContext, type GenerationRequest, type Profile, type ProfileRevisionSummary, type RevisionPage, type SectionProposal, type SectionProposalApplyRequest, type SectionProposalPage, type SectionRegenerationContext, type SectionRegenerationRequest, type Workflow } from './api';
+import { Api, ApiError, errorText, terminal, type ApplicationDocuments, type BaseResumeRequest, type DocumentBody, type DocumentDefaults, type DocumentDefaultsPatch, type DocumentFact, type DocumentFitRequest, type DocumentIssue, type DocumentOmissionRequest, type DocumentRecord, type DocumentRenderRequest, type DocumentRestoreRequest, type DocumentReviewRequest, type DocumentRevision, type DocumentRevisionPage, type DocumentSaveRequest, type DocumentTemplate, type GenerationContext, type GenerationRequest, type Profile, type ProfileRevisionSummary, type RevisionPage, type SectionProposal, type SectionProposalApplyRequest, type SectionProposalPage, type SectionRegenerationContext, type SectionRegenerationRequest, type Workflow } from './api';
 import type { ApplicationPage, ApplicationSummary } from './tracking-api';
 import { copyBody, ISSUE_REASONS, issueAnchor, linkedClaim, rebaseBody, sameBody } from './document-state';
 import { proposalMatches, SectionProposals } from './SectionProposals';
@@ -60,8 +60,22 @@ function OmittedClaims({ revision }: { revision: DocumentRevision }) {
     <ul>{omitted.map(item => <li key={item.claim_revision_id}><p><q>{item.claim_text}</q></p><small>Claim revision {item.claim_revision_id} · {item.code}</small></li>)}</ul>
   </aside>;
 }
+function PageFitInventory({ revision, disabled = true, onRestore }: { revision: DocumentRevision; disabled?: boolean; onRestore?: (key: string) => void }) {
+  const fit = revision.provenance_snapshot.page_fit;
+  if (!fit) return null;
+  return <aside className="disclosure" aria-label="Page fit and omitted blocks"><h4>Page fit and omitted blocks</h4>
+    <p>{fit.page_count === null ? 'This saved revision has no current page measurement.' : `Measured saved content: ${fit.page_count} ${fit.page_count === 1 ? 'page' : 'pages'}.`}{fit.page_target !== null && ` Target: ${fit.page_target} ${fit.page_target === 1 ? 'page' : 'pages'}.`}</p>
+    {fit.page_count !== null && fit.page_target !== null && fit.page_count > fit.page_target && <p>The résumé remains above target. Review the remaining wording, omit another block or explicitly rebuild with a different built-in presentation before fitting again. A target is not a fit guarantee.</p>}
+    <p>Omissions keep exact saved text and source links here, not in the printable body. Restoring or saving changes does not automatically refit. Your profile is unchanged; the original revision remains in history.</p>
+    {fit.omissions.length ? <ul>{fit.omissions.map(item => <li key={item.block.block_key}>
+      <p><strong>{fit.order.find(section => section.key === item.section_key)?.heading ?? item.section_key}</strong> · {item.reason === 'owner' ? 'Omitted by you' : 'Omitted for page target'} · {item.block.claim_kind}</p>
+      <blockquote>{item.block.text}</blockquote><small>Block {item.block.block_key} · claims: {item.block.claim_revision_ids.join(', ') || 'none'} · evidence: {item.block.evidence_revision_ids.join(', ') || 'none'}</small>
+      {onRestore && <button className="secondary" disabled={disabled} onClick={() => onRestore(item.block.block_key)}>Restore block {item.block.block_key}</button>}
+    </li>)}</ul> : <p>No recoverably omitted blocks.</p>}
+  </aside>;
+}
 function ReadonlyBody({ revision }: { revision: DocumentRevision }) {
-  return <><OmittedClaims revision={revision} /><article className="paper"><h3>{revision.body.title}</h3>{revision.body.sections.map(section => <section key={section.key}><h4>{section.heading}</h4>{section.blocks.map(block => <div className="evidence-seam" key={block.block_key}><p>{block.text}</p><details><summary>Statement sources ({block.claim_kind})</summary><Sources facts={revision.provenance_snapshot.facts ?? []} claimIds={block.claim_revision_ids} evidenceIds={block.evidence_revision_ids} /></details></div>)}</section>)}</article></>;
+  return <><OmittedClaims revision={revision} /><PageFitInventory revision={revision} /><article className="paper"><h3>{revision.body.title}</h3>{revision.body.sections.map(section => <section key={section.key}><h4>{section.heading}</h4>{section.blocks.map(block => <div className="evidence-seam" key={block.block_key}><p>{block.text}</p><details><summary>Statement sources ({block.claim_kind})</summary><Sources facts={revision.provenance_snapshot.facts ?? []} claimIds={block.claim_revision_ids} evidenceIds={block.evidence_revision_ids} /></details></div>)}</section>)}</article></>;
 }
 
 export function Documents({ api, profile, disabled = false, externalDocumentId, externalRequestKey, onDirtyChange, onBusyChange }: DocumentsProps) {
@@ -85,6 +99,9 @@ export function Documents({ api, profile, disabled = false, externalDocumentId, 
   const [context, setContext] = useState<GenerationContext | null>(null);
   const [contextConfirmed, setContextConfirmed] = useState(false);
   const [tone, setTone] = useState<'professional' | 'concise'>('professional');
+  const [initialPageTarget, setInitialPageTarget] = useState<'' | '1' | '2'>('');
+  const [fitTarget, setFitTarget] = useState<1 | 2>(1);
+  const [undoOmission, setUndoOmission] = useState<{ documentId: string; revisionId: string; blockKey: string } | null>(null);
   const [doc, setDoc] = useState<DocumentRecord | null>(null);
   const [buffer, setBuffer] = useState<DocumentBody | null>(null);
   const [comparison, setComparison] = useState<DocumentRecord | null>(null);
@@ -116,6 +133,7 @@ export function Documents({ api, profile, disabled = false, externalDocumentId, 
   const mutation = useRef<{ fingerprint: string; key: string } | null>(null);
   const handledExternal = useRef<string | null>(null);
   const processedWorkflow = useRef<string | null>(null);
+  const generationFit = useRef<{ workflowId: string; applicationId: string } | null>(null);
   const errorRef = useRef<HTMLDivElement>(null);
   const headingRef = useRef<HTMLHeadingElement>(null);
   const callbacks = useRef({ onDirtyChange, onBusyChange });
@@ -144,7 +162,7 @@ export function Documents({ api, profile, disabled = false, externalDocumentId, 
     const prevent = (event: BeforeUnloadEvent) => { event.preventDefault(); event.returnValue = ''; };
     window.addEventListener('beforeunload', prevent); return () => window.removeEventListener('beforeunload', prevent);
   }, [dirty, busy, activeTask]);
-  useEffect(() => { setContext(null); setContextConfirmed(false); }, [profileId, profile?.version, template, tone, applicationId]);
+  useEffect(() => { setContext(null); setContextConfirmed(false); }, [profileId, profile?.version, template, tone, applicationId, initialPageTarget]);
   useEffect(() => {
     setSectionContext(null); setSectionConfirmed(false); setApplyConfirmed(false);
   }, [doc?.id, doc?.version, doc?.current_revision.id, profile?.version, profile?.current_revision.id, sectionKey, sectionTone, dirty]);
@@ -170,6 +188,7 @@ export function Documents({ api, profile, disabled = false, externalDocumentId, 
     setPair(previous => previous && previous.application_id === value.application_id ? { ...previous, items: previous.items.map(item => item.id === value.id ? value : item) } : previous);
     setDoc(value); setBuffer(null); setComparison(null); setReconcile(false); setRebaseConfirmed(false);
     setPreview(null); setRestoreConfirmed(false); setReviewedKeys([]); setHistory(null);
+    setUndoOmission(null);
   }, []);
   const run = useCallback(async (action: (signal: AbortSignal) => Promise<void>) => {
     if (lock.current) return;
@@ -315,6 +334,7 @@ export function Documents({ api, profile, disabled = false, externalDocumentId, 
     const epoch = selection.current;
     void run(async signal => {
       const query = new URLSearchParams({ profile_revision_id: profileId, template_version: template, tone, language: 'en' });
+      if (initialPageTarget && !pair?.items.some(item => item.kind === 'resume')) query.set('page_target', initialPageTarget);
       const value = await request<GenerationContext>(signal, `${appPath(applicationId)}/generation-context?${query}`);
       if (epoch !== selection.current || current.current.profile?.version !== value.profile_version) { setNotice('Profile or selection changed. Preview the current generation context again.'); return; }
       setContext(value); setContextConfirmed(false);
@@ -325,9 +345,40 @@ export function Documents({ api, profile, disabled = false, externalDocumentId, 
     const epoch = selection.current;
     void run(async signal => {
       const body: GenerationRequest = { profile_revision_id: context.profile_revision_id, requirements_revision_id: context.requirements_revision_id, template_version: context.template_version, tone: context.tone, language: context.language, context_sha256: context.context_sha256 };
+      if (context.page_target && !pair?.items.some(item => item.kind === 'resume')) body.page_target = context.page_target;
       const path = `${appPath(context.application_id)}/generation`;
       const value = await request<Workflow>(signal, path, 'POST', body, context.application_version, keyFor(path, body, context.application_version));
       mutation.current = null; workflowSelection.current = epoch; setWorkflow(value); setMonitorError(''); setContextConfirmed(false); setNotice('Tailored pair task accepted. Acceptance is not publication or factual approval.');
+    });
+  }
+  function fitSaved() {
+    if (!doc || doc.scope !== 'tailored' || doc.kind !== 'resume' || locked || dirty || preview || application?.archived_at) return;
+    const epoch = selection.current; const documentId = doc.id;
+    void run(async signal => {
+      const path = `${docPath(documentId)}/fit`;
+      const body: DocumentFitRequest = { revision_id: doc.current_revision.id, content_sha256: doc.current_revision.content_sha256, page_target: fitTarget };
+      const value = await request<Workflow>(signal, path, 'POST', body, doc.version, keyFor(path, body, doc.version));
+      mutation.current = null;
+      if (epoch !== selection.current || current.current.doc?.id !== documentId) return;
+      generationFit.current = null; workflowSelection.current = epoch; setWorkflow(value); setMonitorError('');
+      setNotice('Page-fit task accepted for this exact saved résumé. Original content remains available. Any new revision needs review before PDF export.');
+    });
+  }
+  function changeOmission(operation: DocumentOmissionRequest['operation'], blockKey: string) {
+    if (!doc || doc.scope !== 'tailored' || doc.kind !== 'resume' || locked || dirty || preview || application?.archived_at) return;
+    const epoch = selection.current; const documentId = doc.id;
+    const omissions = doc.current_revision.provenance_snapshot.page_fit?.omissions ?? [];
+    const visible = doc.current_revision.body.sections.flatMap(section => section.blocks);
+    if (operation === 'restore' ? !omissions.some(item => item.block.block_key === blockKey) : visible.length <= 1 || !visible.some(block => block.block_key === blockKey)) return;
+    void run(async signal => {
+      const path = `${docPath(documentId)}/omissions`;
+      const body: DocumentOmissionRequest = { revision_id: doc.current_revision.id, content_sha256: doc.current_revision.content_sha256, operation, block_key: blockKey };
+      const value = await request<DocumentRecord>(signal, path, 'POST', body, doc.version, keyFor(path, body, doc.version));
+      mutation.current = null;
+      if (epoch !== selection.current || current.current.doc?.id !== documentId) return;
+      receive(value);
+      if (operation === 'omit') setUndoOmission({ documentId, revisionId: value.current_revision.id, blockKey });
+      setNotice(operation === 'omit' ? `Block ${blockKey} omitted recoverably. Undo or restore its exact text from the omission inventory. Review the new saved revision before export.` : `Block ${blockKey} restored to its original relative position. Surrounding saved edits are retained. No automatic refit; review the new revision before export.`);
     });
   }
   function save() {
@@ -496,8 +547,18 @@ export function Documents({ api, profile, disabled = false, externalDocumentId, 
       if (stopped) return;
       if (document.hidden) { timer = window.setTimeout(() => { void poll(); }, 1000); return; }
       try {
-        const value = await request<Workflow>(controller.signal, `/workflows/${encodeURIComponent(workflowId)}`);
+        let value = await request<Workflow>(controller.signal, `/workflows/${encodeURIComponent(workflowId)}`);
         if (stopped) return;
+        if (value.state === 'succeeded' && value.result?.fit_workflow_id) {
+          if (!value.result.application_id) throw new Error('missing_fit_application');
+          generationFit.current = { workflowId: value.result.fit_workflow_id, applicationId: value.result.application_id };
+          // The child may already have replaced the original résumé revision.
+          // Follow it before checking the final pair against expected revisions.
+          value = await request<Workflow>(controller.signal, `/workflows/${encodeURIComponent(value.result.fit_workflow_id)}`);
+          if (stopped) return;
+          if (value.id !== generationFit.current.workflowId || value.mode !== 'page_fit') throw new Error('invalid_fit_workflow');
+          setNotice('Original pair saved. Following its page-fit task; fitting is not yet confirmed.');
+        }
         if (terminal(value.state)) {
           completedWorkflow = value;
           // Refresh only route counters: proposals and failed tasks must not reload
@@ -526,18 +587,31 @@ export function Documents({ api, profile, disabled = false, externalDocumentId, 
                 setNotice('Section proposal stored for comparison. Saved wording and local edits are unchanged. Apply explicitly only after comparing the original target and proposed text.');
               } else setNotice('A section proposal was stored for an earlier selection. Your current document and edits are unchanged. Open that document’s saved section proposals to compare it.');
             } else if (value.result?.application_id) {
+              if (value.mode === 'page_fit' && epoch !== selection.current) {
+                setNotice('A page-fit result is available for an earlier selection. Your current document and local edits are unchanged. Reopen that saved résumé to inspect its measurement and omissions.');
+                processedWorkflow.current = value.id; setWorkflow(value); setMonitorError(''); return;
+              }
               const members = value.result.documents;
               if (!members || members.length !== 2 || new Set(members.map(item => item.kind)).size !== 2 || !members.some(item => item.kind === 'resume') || !members.some(item => item.kind === 'cover_letter')) throw new Error('incomplete_pair');
               await loadPair(controller.signal, value.result.application_id, epoch, current.current.doc?.id, members);
             } else if (value.result?.document_id) {
               const saved = await request<DocumentRecord>(controller.signal, docPath(value.result.document_id));
-              if (epoch === selection.current) receive(saved);
+              if (value.mode === 'page_fit' && (epoch !== selection.current || current.current.doc?.id !== saved.id)) {
+                setNotice('A page-fit result is available for an earlier selection. Your current document and local edits are unchanged. Reopen that saved résumé to inspect its measurement and omissions.');
+                processedWorkflow.current = value.id; setWorkflow(value); setMonitorError(''); return;
+              }
+              if (epoch === selection.current && (value.mode !== 'page_fit' || current.current.doc?.id === saved.id)) receive(saved);
               if (value.result.artifact_id && !saved.artifacts.some(artifact => artifact.id === value.result?.artifact_id && artifact.revision_id === saved.current_revision.id)) {
                 if (!stopped) setNotice('The PDF task completed, but no matching artifact is available for the displayed current revision. No download success is claimed. Reload the saved revision or inspect its history.');
                 processedWorkflow.current = value.id; setWorkflow(value); setMonitorError(''); return;
               }
             } else throw new Error('missing_document_result');
-            if (!stopped && value.mode !== 'section_regeneration' && !value.result?.proposal_id) setNotice(value.result?.artifact_id ? 'PDF created for the saved revision. Download appears only if its artifact belongs to the displayed revision. Nothing was sent.' : 'Saved document result loaded. Review its sources and blockers; task success is not factual approval.');
+            if (!stopped && value.mode !== 'section_regeneration' && !value.result?.proposal_id) setNotice(value.result?.artifact_id ? 'PDF created for the saved revision. Download appears only if its artifact belongs to the displayed revision. Nothing was sent.' : value.mode === 'page_fit' ? 'Page-fit result loaded. Inspect its measured page count and omissions; the target is not guaranteed. Review this new revision before PDF export.' : 'Saved document result loaded. Review its sources and blockers; task success is not factual approval.');
+          }
+          if (value.state !== 'succeeded' && value.mode === 'page_fit') {
+            const original = generationFit.current;
+            if (original?.workflowId === value.id) await loadPair(controller.signal, original.applicationId, epoch, current.current.doc?.id);
+            if (!stopped) setNotice(`Page-fit task ${value.state.replaceAll('_', ' ')}${value.last_error_code ? ` (${value.last_error_code})` : ''}. No fitting success is claimed. Original/current saved content remains available; inspect it and explicitly retry if wanted.`);
           }
           if (!stopped) { processedWorkflow.current = value.id; setWorkflow(value); setMonitorError(''); }
           return;
@@ -585,8 +659,10 @@ export function Documents({ api, profile, disabled = false, externalDocumentId, 
         {!applications.length && <p>No tracked applications loaded. Begin tracking explicitly in Tracking; generation never creates an application.</p>}
         {applicationId && <><button className="secondary" onClick={() => { void run(signal => loadPair(signal, applicationId, selection.current, doc?.id)); }}>Reload application documents</button>{pair && <><p>{pair.items.some(item => item.kind === 'resume') && pair.items.some(item => item.kind === 'cover_letter') ? 'Saved résumé and cover letter available.' : pair.items.length ? 'The requested pair is incomplete. A missing member is not a successful pair.' : 'No saved pair. Existing application data remains available.'}</p><div className="actions">{(['resume', 'cover_letter'] as const).map(kind => { const member = pair.items.find(item => item.kind === kind); return <button key={kind} className="secondary" disabled={!member} aria-pressed={doc?.id === member?.id} onClick={() => { if (member) { selection.current++; receive(member, true); } }}>{kind === 'resume' ? 'Résumé' : 'Cover letter'}{!member ? ' unavailable' : ''}</button>; })}</div></>}
           {route && <p className="disclosure"><strong>Generation route: {route.status}.</strong> {route.reason}</p>}{pair && <><QualificationReceipts details={pair.receipt_details} /><ClaimJsonRates rates={pair.claim_json_rates} /></>}{!pair?.requirements_revision_id && <p>Reviewed, current, nonempty requirements are required. Review them in the posting workspace before preparing a pair.</p>}{application?.archived_at && <p>Archived applications remain readable. Generation is unavailable.</p>}
+          {pair && !pair.items.some(item => item.kind === 'resume') ? <label>Initial résumé page target (optional)<select value={initialPageTarget} disabled={!!application?.archived_at} onChange={event => setInitialPageTarget(event.target.value as '' | '1' | '2')}><option value="">No automatic fitting</option><option value="1">One page</option><option value="2">Two pages</option></select></label> : <p>Regenerating an existing résumé does not refit it. Use Fit saved résumé to target explicitly after generation.</p>}
           <label>Writing tone<select value={tone} onChange={event => { choicesInitialized.current = true; setTone(event.target.value as 'professional' | 'concise'); }}><option value="professional">Professional</option><option value="concise">Concise</option></select></label><button className="secondary" disabled={!profile || !profileId || !template || !!application?.archived_at} onClick={previewContext}>Preview reviewed generation context</button>
           {context && <section className="disclosure"><h3>Exact minimized model projection</h3>
+            <p>{context.page_target ? `After the original pair is saved, a separate model-free task will try to fit the new résumé to ${context.page_target} ${context.page_target === 1 ? 'page' : 'pages'}. It may remain above target. Original content stays in history; a failed fit leaves it available.` : 'No automatic page fitting requested.'} Fitting never applies to the cover letter.</p>
             <p>Destination from this operation’s route: <code>{typeof context.generation_route.identity?.endpoint === 'string' ? context.generation_route.identity.endpoint : 'No endpoint supplied — inspect route identity below'}</code>. Model: {typeof context.generation_route.identity?.model === 'string' ? context.generation_route.identity.model : 'Not supplied'}. A local endpoint is not a universal no-network guarantee; prose may still contain personal information, not anonymization. No hosted fallback.</p>
             <p>Included categories: posting title, organization and source text; reviewed requirements with importance and source spans; accepted professional claim text, structured fields and source references; evidence text and references, except that confidential or employer-owned evidence is sent as a reference without its content; selected tone and language. Dedicated identity/contact fields, private tracking notes/contacts/appointments/attachments, credentials, internal owner/workflow IDs and route/budget settings are excluded.</p>
             <p>Temporary task inputs are eligible for clearing 24 hours after terminal completion, with a daily sweep and no extension. Saved revisions remain until explicit, confirmed scoped erasure; local backups/downloads and external copies are independent.</p>
@@ -598,7 +674,12 @@ export function Documents({ api, profile, disabled = false, externalDocumentId, 
         </>}
       </>}
     </fieldset>
-    {workflow && <section className="task" aria-live="polite"><h3>Document task: {workflow.state.replaceAll('_', ' ')}</h3><p>Attempt {workflow.attempt}{workflow.max_attempts === undefined ? '' : ` of ${workflow.max_attempts}`}. No estimated progress percentage.</p><small>Task {workflow.id}</small>{workflow.next_attempt_at && <p>Next scheduled attempt: {workflow.next_attempt_at}</p>}{workflow.last_error_code && <p>{workflow.last_error_code === 'render_text_unsupported' ? 'The saved text contains glyphs or text this built-in PDF renderer cannot preserve. Edit to supported text, or keep your portable owner data and ask the operator about font qualification. Save and review any changed revision before retrying. No PDF was created.' : `${(workflow.mode === 'section_regeneration' ? SECTION_TASK_REASONS : TASK_REASONS)[workflow.last_error_code] ?? 'The task failed.'} Failure code: ${workflow.last_error_code}. Existing saved documents remain available.`}</p>}{workflow.state === 'waiting_for_approval' && <p>This task is waiting for a separate approval; opening or reviewing a document does not grant provider access.</p>}{activeTask && <button className="secondary" disabled={busy || disabled} onClick={() => { void run(async signal => { const path = `/workflows/${encodeURIComponent(workflow.id)}/cancel`; const value = await request<Workflow>(signal, path, 'POST', {}, workflow.version, keyFor(path, {}, workflow.version)); mutation.current = null; setWorkflow(value); setNotice('Cancellation requested. The task may still be stopping.'); }); }}>Cancel document task</button>}{monitorError && <><p className="error">{monitorError}</p><button className="secondary" disabled={busy} onClick={() => setPollToken(value => value + 1)}>Reconnect document task</button></>}</section>}
+    {workflow && <section className="task" aria-live="polite"><h3>Document task: {workflow.state.replaceAll('_', ' ')}</h3><p>Attempt {workflow.attempt}{workflow.max_attempts === undefined ? '' : ` of ${workflow.max_attempts}`}. No estimated progress percentage.</p><small>Task {workflow.id}</small>{workflow.next_attempt_at && <p>Next scheduled attempt: {workflow.next_attempt_at}</p>}
+      {workflow.last_error_code && <p>{workflow.mode === 'page_fit' ? `The page-fit task failed. Failure code: ${workflow.last_error_code}. Original/current saved content remains available; no fitting success or PDF export is claimed.` : workflow.last_error_code === 'render_text_unsupported' ? 'The saved text contains glyphs or text this built-in PDF renderer cannot preserve. Edit to supported text, or keep your portable owner data and ask the operator about font qualification. Save and review any changed revision before retrying. No PDF was created.' : `${(workflow.mode === 'section_regeneration' ? SECTION_TASK_REASONS : TASK_REASONS)[workflow.last_error_code] ?? 'The task failed.'} Failure code: ${workflow.last_error_code}. Existing saved documents remain available.`}</p>}
+      {workflow.state === 'waiting_for_approval' && <p>This task is waiting for a separate approval; opening or reviewing a document does not grant provider access.</p>}
+      {activeTask && <button className="secondary" disabled={busy || disabled} onClick={() => { void run(async signal => { const path = `/workflows/${encodeURIComponent(workflow.id)}/cancel`; const value = await request<Workflow>(signal, path, 'POST', {}, workflow.version, keyFor(path, {}, workflow.version)); mutation.current = null; setWorkflow(value); setNotice('Cancellation requested. The task may still be stopping.'); }); }}>Cancel document task</button>}
+      {monitorError && <><p className="error">{monitorError}</p><button className="secondary" disabled={busy} onClick={() => setPollToken(value => value + 1)}>Reconnect document task</button></>}
+    </section>}
     {doc && displayed ? <section className="document-current" aria-label="Selected saved document">
       <header className="document-current-heading"><h3>{doc.scope === 'base' ? 'Base résumé' : doc.kind === 'resume' ? 'Application résumé' : 'Application cover letter'} · saved revision {doc.current_revision.revision_no}</h3>
         <p className={`document-save-state${dirty || issues.length ? ' needs-attention' : ''}`} aria-label="Document state">{preview ? 'Historical preview · read-only' : reconcile ? 'Reconciliation required · local edits retained' : dirty ? 'Unsaved changes · review and export locked' : issues.length ? 'Saved · export blocked' : doc.reviewed ? 'Saved · exact revision reviewed' : 'Saved · review required'}</p>
@@ -606,6 +687,14 @@ export function Documents({ api, profile, disabled = false, externalDocumentId, 
       {(doc.stale || upstreamChanged) && <aside className="disclosure"><strong>Outdated frozen inputs.</strong> {doc.stale_reason ?? 'upstream_profile_revision_changed'}. Profile/contact updates do not change this wording, printable frame, history or existing PDF. Rebuild is explicit.</aside>}
       {preview ? <section className="document-history-preview"><h3>Historical revision {preview.revision_no} — read-only</h3><p>Viewing does not change the current document. Restore copies this historical frozen context into a new revision, not the newest profile.</p><ReadonlyBody revision={preview} /><details><summary>Historical provenance and validation issues</summary><pre className="import-source">{JSON.stringify({ provenance: preview.provenance_snapshot, issues: preview.validation_issues }, null, 2)}</pre></details><button className="secondary" disabled={busy} onClick={() => { setPreview(null); setRestoreConfirmed(false); }}>Return to current saved revision</button><label className="check"><input type="checkbox" disabled={locked || dirty} checked={restoreConfirmed} onChange={event => setRestoreConfirmed(event.target.checked)} />Restore this historical revision as a new current revision, retaining displaced history</label><button disabled={locked || dirty || !restoreConfirmed} onClick={restore}>Restore historical revision</button>{reconcile && <p>Return to the current revision, compare the server version and reconfirm before restoring. No history has been replaced.</p>}</section> : <>
         <OmittedClaims revision={doc.current_revision} />
+        {doc.scope === 'tailored' && doc.kind === 'resume' && <section className="disclosure" aria-label="Fit saved résumé">
+          <h3>Fit saved résumé</h3><p>Measure this exact saved résumé and, if needed, omit whole blocks from the end to try to reach your target. No model calls or wording changes. A new fitted revision needs review; no measurement PDF is published.</p>
+          <label>Saved résumé page target<select value={fitTarget} disabled={locked || dirty || !!application?.archived_at} onChange={event => setFitTarget(Number(event.target.value) as 1 | 2)}><option value="1">One page</option><option value="2">Two pages</option></select></label>
+          <button className="secondary" disabled={locked || dirty || !!application?.archived_at} onClick={fitSaved}>Fit saved résumé to target</button>
+          <p>Omit saves a recoverable omission immediately. Remove block is a separate editor deletion, saved only when you save the document; it does not add to the omission inventory.</p>
+          {undoOmission?.documentId === doc.id && undoOmission.revisionId === doc.current_revision.id && <button className="secondary" disabled={locked || dirty || !!application?.archived_at} onClick={() => changeOmission('restore', undoOmission.blockKey)}>Undo omit block {undoOmission.blockKey}</button>}
+        </section>}
+        <PageFitInventory revision={doc.current_revision} disabled={locked || dirty || !!application?.archived_at || doc.scope !== 'tailored' || doc.kind !== 'resume'} {...(doc.scope === 'tailored' && doc.kind === 'resume' ? { onRestore: (key: string) => changeOmission('restore', key) } : {})} />
         {issues.length > 0 && <div className="error" tabIndex={-1}><strong>Export blocked: unresolved factual or source issues.</strong><ul>{issues.map((issue, index) => <li key={`${issue.path}-${issue.code}-${index}`}><a href="#/documents" onClick={event => { event.preventDefault(); const target = document.getElementById(issueAnchor(issue.path, doc.current_revision.body, displayed)); target?.focus(); target?.scrollIntoView({ block: 'center' }); }}>{ISSUE_REASONS[issue.code] ?? `Unsupported (${issue.code}).`}</a>{issue.statement !== undefined && <> Statement: <q>{issue.statement}</q></>} <small>{issue.path} · {issue.code}</small></li>)}</ul><p>These issues belong to the saved revision. Unsaved corrections or removals must be saved and revalidated before review/export. Remove/reword unsupported assertions or add a genuinely accepted profile claim/evidence and explicitly rebuild. Human review cannot waive unsupported content. Conservative checks do not establish the meaning of paraphrases.</p></div>}
         <div className="actions"><button disabled={locked || !buffer || reconcile || !displayed.title.trim() || displayed.sections.some(section => !section.heading.trim() || section.blocks.some(block => !block.text.trim()))} onClick={save}>Save document revision</button><button className="secondary" disabled={locked} onClick={compare}>Compare current document revision</button>{dirty && <button className="secondary" disabled={locked} onClick={() => { setBuffer(null); setComparison(null); setReconcile(false); setReviewedKeys([]); mutation.current = null; setNotice('Local document edits discarded. Saved wording is unchanged.'); }}>Discard document changes</button>}</div>
         <article className="paper document-editor">
@@ -619,6 +708,7 @@ export function Documents({ api, profile, disabled = false, externalDocumentId, 
               <small>{block.text.length}/4000 characters. {block.claim_kind}. Stable block {block.block_key}.</small>
               {block.claim_kind === 'factual' && <p className="claim-link">Linked claim: {linkedClaim(doc.current_revision.provenance_snapshot.facts ?? [], block.claim_revision_ids)}</p>}
               <details><summary>Statement sources ({block.claim_kind})</summary><Sources facts={doc.current_revision.provenance_snapshot.facts ?? []} claimIds={block.claim_revision_ids} evidenceIds={block.evidence_revision_ids} /></details>
+              {doc.scope === 'tailored' && doc.kind === 'resume' && <button className="secondary" disabled={locked || dirty || !!application?.archived_at || displayed.sections.reduce((count, item) => count + item.blocks.length, 0) <= 1} onClick={() => changeOmission('omit', block.block_key)}>Omit block {block.block_key}</button>}
               <button className="secondary" disabled={locked || displayed.sections.reduce((count, item) => count + item.blocks.length, 0) <= 1} onClick={() => edit(body => { const target = body.sections.find(item => item.key === section.key); if (target) target.blocks = target.blocks.filter(item => item.block_key !== block.block_key); body.sections = body.sections.filter(item => item.blocks.length > 0); })}>Remove block {block.block_key}</button>
               {block.claim_kind === 'factual' && <label className="check"><input type="checkbox" checked={reviewedKeys.includes(block.block_key)} disabled={locked || dirty || !!issues.length || doc.reviewed} onChange={event => setReviewedKeys(keys => event.target.checked ? [...keys, block.block_key] : keys.filter(key => key !== block.block_key))} />I checked block {block.block_key} against its frozen sources for this exact saved revision</label>}
             </div>)}
@@ -630,6 +720,7 @@ export function Documents({ api, profile, disabled = false, externalDocumentId, 
         <section className="document-review" aria-label="Review and export">
           <div><h3>Review and export</h3><p>{dirty ? 'Save and revalidate your changes before reviewing or rendering a PDF.' : issues.length ? 'Resolve the factual or source issues shown above before review or export.' : doc.reviewed ? 'This saved revision is reviewed and ready to render.' : `Checked ${factualKeys.filter(key => reviewedKeys.includes(key)).length} of ${factualKeys.length} factual blocks. Accept only after checking the wording and sources.`}</p></div>
         <div className="actions"><button disabled={locked || dirty || doc.reviewed || !!issues.length || !allReviewed} onClick={review}>{doc.reviewed ? 'Exact revision reviewed' : 'Accept this exact revision'}</button><button disabled={locked || dirty || !doc.reviewed || !!issues.length} onClick={renderPdf}>Render reviewed PDF</button></div>
+        <p>Built-in PDF rendering checks extractable text against the saved content and rejects missing or unsupported glyphs. These checks are not external ATS certification, visual inspection or factual proof. This explanation does not claim that an unrendered revision or an external file has passed.</p>
         </section>
         {doc.scope === 'tailored' && <SectionProposals document={doc} dirty={dirty} locked={locked} archived={!!application?.archived_at} sectionKey={sectionKey} tone={sectionTone} context={sectionContext} confirmed={sectionConfirmed} proposals={proposals} proposal={proposal} applyConfirmed={applyConfirmed} onSection={setSectionKey} onTone={value => { choicesInitialized.current = true; setSectionTone(value); }} onPreview={previewSection} onConfirm={setSectionConfirmed} onRequest={requestSection} onReload={proposalPage} onOpen={openProposal} onApplyConfirm={setApplyConfirmed} onApply={applyProposal} />}
         {doc.artifacts.filter(artifact => artifact.format === 'pdf' && artifact.revision_id === doc.current_revision.id).map(artifact => <p className="download" key={artifact.id}><a className="document-download" href={`/api/v1/artifacts/${encodeURIComponent(artifact.id)}`} download>Download rendered PDF for revision {doc.current_revision.revision_no}</a><span>Actual saved-revision artifact. Downloaded files contain personal data; store securely. Nothing was sent.</span></p>)}

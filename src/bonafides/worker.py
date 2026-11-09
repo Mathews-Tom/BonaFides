@@ -122,6 +122,10 @@ class Worker:
                         )
                 elif mode in {"tailored_ai", "section_regeneration"}:
                     suitability.execute_model(self.db, self.settings, task, interrupted)
+                elif mode == "page_fit":
+                    from bonafides.print_fitting import execute_fit
+
+                    execute_fit(self.db, self.settings, task, interrupted)
                 else:
                     # Explicitly retained synthetic benchmark protocol, never a production fallback.
                     if self.settings.mode != "benchmark":
@@ -178,7 +182,16 @@ class Worker:
         except Problem as exc:
             self._record_failure(task, exc.code, False)
         except RenderFailure as exc:
-            self._record_failure(task, exc.code, exc.code in {"render_timeout", "benchmark_poison"})
+            self._record_failure(
+                task,
+                exc.code,
+                exc.code in {"render_timeout", "benchmark_poison"}
+                or (
+                    exc.code == "renderer_busy"
+                    and task.kind == "document_generate"
+                    and task.input.get("mode") == "page_fit"
+                ),
+            )
         except local_model.ModelFailure as exc:
             # Shutdown/lease-loss Events are execution interruption, not an owner
             # cancellation command or a new terminal model failure. PostgreSQL's
