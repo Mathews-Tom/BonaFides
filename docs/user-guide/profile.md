@@ -111,6 +111,16 @@ Each saved entry has its own buttons:
 
 Changing your profile doesn't rewrite documents you've already created. Those keep the exact wording and sources they were built from, and show that newer profile facts exist.
 
+## Prepare for interview questions
+
+Under a saved entry, select **Interview preparation for skills entry 1** (the button names the kind and entry number). **Source-specific interview questions** asks about your contribution, the limits of the evidence and how an outcome was measured. Each group quotes that entry's own saved source excerpt and shows its source reference, privacy, exact revisions and content hash. An owner assertion is labelled **Owner-asserted support; not independently verified.**
+
+This is model-free preparation: no AI setup is needed, no answers or qualifications are invented, and nothing is saved or sent to a model. Select the same button to close the questions. Save or discard open edits before opening preparation; it uses saved entries, not unsaved wording.
+
+Public and Private supporting sources are eligible. Confidential and employer-owned sources never supply interview questions. A mixed entry uses only its eligible sources; Context only links do not count. **Interview preparation unavailable** explains missing support or an unsupported older entry instead of supplying unrelated questions.
+
+Editing a source does not update an entry's pin. If preparation says **Review and explicitly re-link the entry**, use **Edit … entry *N*** to choose the intended **Evidence revision** and genuine **Source excerpt**, then **Save entry revision**. Loading a changed profile, including a classification change or restore, closes the old questions. Reopen them to inspect the current source state; restoring history does not undo current privacy classifications.
+
 ## See where an entry is used
 
 Select **Show where … is used** under an entry to list the documents that state it. Once the list appears, select **Include earlier document revisions** to include older versions too. Only statements that passed the evidence check count; blocked statements aren't listed.

@@ -652,3 +652,141 @@ describe('focused profile sections', () => {
     expect(screen.getByText(/Evidence revision source-revision/)).toBeVisible();
   });
 });
+
+function interviewProfile(): Profile {
+  const excerpts = [
+    'Maintained QueueCo scheduler. Measured 14 recovered tasks.',
+    'Presented the QueueCo scheduler at a public workshop.',
+    'CONFIDENTIAL-SECRET incident report.',
+    'EMPLOYER-SECRET internal design.',
+    'CONTEXT-ONLY background briefing.',
+    'OTHER-CLAIM unrelated language certificate.',
+  ];
+  const evidence: Profile['evidence'] = excerpts.map((excerpt, index) => ({
+    ...source, id: `source-${index}`, current_revision_id: `source-revision-${index}`,
+    revision: { ...source.revision, id: `source-revision-${index}`,
+      payload: { source: `Workshop source ${index}`, text: `${excerpt} NON-LINKED-NOTE-${index}` },
+      provenance: { ...source.revision.provenance, privacy_class: index === 1 ? 'public' : index === 2 ? 'confidential' : 'private', employer_owned: index === 3 },
+    },
+  }));
+  const claim = profile.current_revision.claims[0]!;
+  return { ...profile, evidence, current_revision: { ...profile.current_revision,
+    snapshot: { ...profile.current_revision.snapshot, claim_revision_ids: [claim.revision.id, 'other-claim-revision'], evidence_revision_ids: evidence.map(item => item.revision.id) },
+    claims: [
+      { ...claim, rendering: 'Maintained QueueCo scheduler.', revision: { ...claim.revision, payload: { text: 'Maintained QueueCo scheduler.' },
+        evidence_links: evidence.slice(0, 5).map((item, index) => ({ evidence_revision_id: item.revision.id, evidence: item.revision,
+          excerpt: excerpts[index]!, support_kind: index === 4 ? 'context' : index === 0 ? 'user_asserted' : 'direct' })),
+      } },
+      { ...claim, id: 'other-claim', current_revision_id: 'other-claim-revision', rendering: 'Unrelated language certificate.',
+        revision: { ...claim.revision, id: 'other-claim-revision', payload: { text: 'Unrelated language certificate.' },
+          evidence_links: [{ evidence_revision_id: evidence[5]!.revision.id, evidence: evidence[5]!.revision, excerpt: excerpts[5]!, support_kind: 'direct' }] },
+      },
+    ],
+  } };
+}
+
+describe('source-specific interview preparation', () => {
+  it('uses only this claim’s eligible pinned excerpts, not whole sources or other claims', async () => {
+    const user = userEvent.setup();
+    render(<ProfileEntries api={new Api()} profile={interviewProfile()} disabled={false} onProfile={vi.fn()} onDirtyChange={vi.fn()} onBusyChange={vi.fn()} />);
+    await user.click(screen.getByRole('button', { name: 'Interview preparation for skills entry 1' }));
+    const preparation = screen.getByRole('region', { name: 'Interview preparation for skills entry 1' });
+    expect(preparation).toHaveTextContent('What was your personal contribution to “Maintained QueueCo scheduler. Measured 14 recovered tasks.”');
+    expect(preparation).toHaveTextContent('Presented the QueueCo scheduler at a public workshop.');
+    expect(preparation).toHaveTextContent('Owner-asserted support; not independently verified.');
+    expect(within(preparation).getByRole('region', { name: 'Source 1: Workshop source 0' })).toHaveTextContent('Evidence revision source-revision-0');
+    expect(within(preparation).getByRole('region', { name: 'Source 2: Workshop source 1' })).toHaveTextContent('Privacy: Public');
+    for (const forbidden of ['CONFIDENTIAL-SECRET', 'EMPLOYER-SECRET', 'CONTEXT-ONLY', 'OTHER-CLAIM', 'NON-LINKED-NOTE']) {
+      expect(preparation).not.toHaveTextContent(forbidden);
+    }
+    expect(within(preparation).queryByRole('status')).not.toBeInTheDocument();
+  });
+
+  it.each([
+    { name: 'confidential', index: 2, reason: /Confidential or employer-owned/ },
+    { name: 'employer-owned', index: 3, reason: /Confidential or employer-owned/ },
+    { name: 'context-only', index: 4, reason: /Context-only links/ },
+  ])('does not substitute questions for an all-$name entry', async ({ index, reason }) => {
+    const user = userEvent.setup(); const value = interviewProfile();
+    value.current_revision.claims[0]!.revision.evidence_links = [value.current_revision.claims[0]!.revision.evidence_links[index]!];
+    render(<ProfileEntries api={new Api()} profile={value} disabled={false} onProfile={vi.fn()} onDirtyChange={vi.fn()} onBusyChange={vi.fn()} />);
+    await user.click(screen.getByRole('button', { name: 'Interview preparation for skills entry 1' }));
+    const preparation = screen.getByRole('region', { name: 'Interview preparation for skills entry 1' });
+    expect(within(preparation).getByRole('status')).toHaveTextContent('Interview preparation unavailable');
+    expect(within(preparation).getByText(reason)).toBeVisible();
+    expect(within(preparation).queryByRole('list')).not.toBeInTheDocument();
+    expect(preparation).not.toHaveTextContent(/SECRET|CONTEXT-ONLY|OTHER-CLAIM/);
+  });
+
+  it('refuses ungrounded legacy entries even when their linked source is eligible', async () => {
+    const user = userEvent.setup(); const value = interviewProfile();
+    value.current_revision.claims[0]!.grounding_issue = 'literal_claim_not_grounded';
+    render(<ProfileEntries api={new Api()} profile={value} disabled={false} onProfile={vi.fn()} onDirtyChange={vi.fn()} onBusyChange={vi.fn()} />);
+    await user.click(screen.getByRole('button', { name: 'Interview preparation for skills entry 1' }));
+    const preparation = screen.getByRole('region', { name: 'Interview preparation for skills entry 1' });
+    expect(within(preparation).getByRole('status')).toHaveTextContent('not grounded as a whole phrase');
+    expect(within(preparation).queryByRole('list')).not.toBeInTheDocument();
+  });
+
+  it('closes stale cards on loaded changes and never silently substitutes an edited or restored pin', async () => {
+    const user = userEvent.setup(); const api = new Api();
+    let value = interviewProfile();
+    value.current_revision.claims[0]!.revision.evidence_links = [value.current_revision.claims[0]!.revision.evidence_links[0]!];
+    const props = { api, disabled: false, onProfile: vi.fn(), onDirtyChange: vi.fn(), onBusyChange: vi.fn() };
+    const view = render(<ProfileEntries {...props} profile={value} />);
+    const button = () => screen.getByRole('button', { name: 'Interview preparation for skills entry 1' });
+    const card = () => screen.getByRole('region', { name: 'Interview preparation for skills entry 1' });
+    await user.click(button());
+    expect(card()).toHaveTextContent('Measured 14 recovered tasks.');
+
+    // Classification is current record state, not the provenance cached on the old link.
+    value = structuredClone(value); value.version++;
+    value.evidence[0]!.revision.provenance.privacy_class = 'confidential';
+    view.rerender(<ProfileEntries {...props} profile={value} />);
+    expect(button()).toHaveAttribute('aria-expanded', 'false');
+    expect(screen.queryByRole('region', { name: 'Interview preparation for skills entry 1' })).not.toBeInTheDocument();
+    await user.click(button());
+    expect(within(card()).getByRole('status')).toHaveTextContent('Interview preparation unavailable');
+    expect(card()).not.toHaveTextContent('Measured 14 recovered tasks.');
+
+    value = structuredClone(value); value.version++;
+    value.evidence[0]!.revision = { ...value.evidence[0]!.revision, id: 'edited-source-revision',
+      payload: { source: 'Edited source', text: 'Rebuilt QueueCo dispatcher. Measured 23 recovered tasks.' },
+      provenance: { ...source.revision.provenance } };
+    value.evidence[0]!.current_revision_id = 'edited-source-revision';
+    view.rerender(<ProfileEntries {...props} profile={value} />);
+    expect(button()).toHaveAttribute('aria-expanded', 'false');
+    await user.click(button());
+    expect(card()).toHaveTextContent('Review and explicitly re-link the entry');
+    expect(card()).not.toHaveTextContent('23 recovered tasks');
+
+    // Only an explicit new claim revision may pin the edited source.
+    value = structuredClone(value); value.version++;
+    const claim = value.current_revision.claims[0]!;
+    claim.revision.id = 'relinked-claim-revision'; claim.current_revision_id = claim.revision.id;
+    claim.revision.evidence_links = [{ evidence_revision_id: 'edited-source-revision', evidence: value.evidence[0]!.revision, support_kind: 'direct', excerpt: value.evidence[0]!.revision.payload.text }];
+    view.rerender(<ProfileEntries {...props} profile={value} />);
+    await user.click(button());
+    expect(card()).toHaveTextContent('23 recovered tasks');
+    expect(card()).not.toHaveTextContent('14 recovered tasks');
+
+    value = structuredClone(value); value.version++;
+    value.current_revision.id = 'restored-profile-revision';
+    value.current_revision.claims = [interviewProfile().current_revision.claims[0]!];
+    value.current_revision.claims[0]!.revision.evidence_links = [value.current_revision.claims[0]!.revision.evidence_links[0]!];
+    view.rerender(<ProfileEntries {...props} profile={value} />);
+    expect(button()).toHaveAttribute('aria-expanded', 'false');
+    await user.click(button());
+    expect(card()).toHaveTextContent('Review and explicitly re-link the entry');
+    expect(card()).not.toHaveTextContent(/14 recovered tasks|23 recovered tasks/);
+
+    value = structuredClone(value); value.version++; value.evidence = [];
+    view.rerender(<ProfileEntries {...props} profile={value} />);
+    await user.click(button());
+    expect(within(card()).getByRole('status')).toHaveTextContent('Interview preparation unavailable');
+    value = structuredClone(value); value.version++; value.current_revision.claims = [];
+    view.rerender(<ProfileEntries {...props} profile={value} />);
+    expect(screen.queryByRole('button', { name: 'Interview preparation for skills entry 1' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('region', { name: 'Interview preparation for skills entry 1' })).not.toBeInTheDocument();
+  });
+});

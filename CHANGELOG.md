@@ -6,6 +6,7 @@ All notable changes to BonaFides are recorded here. The format follows [Keep a C
 
 ### Added
 
+- Saved profile entries offer model-free, source-specific interview questions using only their own current eligible supporting excerpts. Exact citations and unverified owner assertions remain visible; confidential/employer-owned, context-only, outdated and unsupported input never supplies fallback questions. Loaded profile changes close old cards without saving answers or changing owner data.
 - Saved owner-reviewed requirement coverage shows a deterministic evidence fit score with its formula, counts and cited explanations. Partial support earns half credit; hard eligibility remains independent, and adding evidence or editing a review does not change the saved result until an assessment is explicitly saved.
 - Installed `models.sh attach|qualify|remove` manages an explicitly authorized, pinned local Ollama route without host Python/uv, runs both document-stage qualifications on bundled synthetic examples and applies real passed or failed receipts. Removal disables the route while retaining owner data and model weights; strict managed configuration and internal application networks are preserved.
 - Pull requests start with a template containing Summary, Evidence and Checks sections and the existing exact contribution licensing statement; per-commit sign-offs remain required.
