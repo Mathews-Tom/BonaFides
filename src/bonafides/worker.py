@@ -152,6 +152,11 @@ class Worker:
                             ),
                         )
             elif task.kind == "pdf_render":
+                if task.input.get("mode") == "document_archive":
+                    from bonafides.document_archives import execute_archive
+
+                    execute_archive(self.db, self.settings, task, interrupted)
+                    return
                 document_id = UUID(str(task.input["document_id"]))
                 revision_id = UUID(str(task.input["revision_id"]))
                 with self.db.transaction() as conn:
@@ -180,6 +185,8 @@ class Worker:
         except LeaseLost:
             return
         except Problem as exc:
+            if task.input.get("mode") == "document_archive" and interrupted.is_set():
+                return
             self._record_failure(task, exc.code, False)
         except RenderFailure as exc:
             self._record_failure(
@@ -188,8 +195,7 @@ class Worker:
                 exc.code in {"render_timeout", "benchmark_poison"}
                 or (
                     exc.code == "renderer_busy"
-                    and task.kind == "document_generate"
-                    and task.input.get("mode") == "page_fit"
+                    and task.input.get("mode") in {"page_fit", "document_archive"}
                 ),
             )
         except local_model.ModelFailure as exc:

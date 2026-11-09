@@ -8,6 +8,7 @@ from test_database import PGContext
 from test_database import pg_context as pg_context
 
 from bonafides.commands import append_outbox, canonical_json, require_if_match
+from bonafides.document_archives import _progress
 from bonafides.problems import Problem
 from bonafides.workflows import (
     Claim,
@@ -335,3 +336,51 @@ def test_deadline_reaper_revokes_claim(pg_context: PGContext) -> None:
         ]
     with pytest.raises(DBAPIError), pg_context.runtime.begin() as conn:
         publish(conn, current, lambda active: {"forbidden": True})
+
+
+@pytest.mark.postgres
+def test_archive_progress_is_current_fence_owned_and_survives_input_retention(
+    pg_context: PGContext,
+) -> None:
+    with pg_context.runtime.begin() as conn:
+        identifier = enqueue(
+            conn,
+            pg_context.owner_id,
+            "pdf_render",
+            {"mode": "document_archive", "schema_version": 1},
+        )
+        deadline, attempts = conn.execute(
+            text("""SELECT extract(epoch FROM deadline_at-created_at),max_attempts
+            FROM bonafides.workflow_runs WHERE owner_id=:owner AND id=:id"""),
+            {"owner": pg_context.owner_id, "id": identifier},
+        ).one()
+        assert deadline == 600 and attempts == 3
+    old = _claim(pg_context)
+    with pg_context.runtime.begin() as conn:
+        _progress(conn, old, 1, 3)
+    _expire(pg_context, old)
+    current = _claim(pg_context)
+    with pytest.raises(DBAPIError), pg_context.runtime.begin() as conn:
+        _progress(conn, old, 2, 3)
+    with pg_context.runtime.begin() as conn:
+        workflow = get_workflow(conn, current.owner_id, current.id)
+        assert "progress" not in workflow
+        _progress(conn, current, 0, 3)
+    with pg_context.migrator.begin() as conn:
+        conn.execute(
+            text(
+                "UPDATE bonafides.workflow_runs SET input='{}'::jsonb WHERE owner_id=:owner AND id=:id"
+            ),
+            {"owner": current.owner_id, "id": current.id},
+        )
+    with pg_context.runtime.begin() as conn:
+        workflow = get_workflow(conn, current.owner_id, current.id)
+        assert workflow["mode"] == "document_archive"
+        assert workflow["progress"] == {"completed": 0, "total": 3}
+    with pytest.raises(Problem) as refused, pg_context.runtime.begin() as conn:
+        get_workflow(conn, uuid4(), current.id)
+    assert refused.value.code == "workflow_not_found"
+    with pg_context.runtime.begin() as conn:
+        cancel_workflow(conn, current.owner_id, current.id)
+    with pytest.raises(DBAPIError), pg_context.runtime.begin() as conn:
+        _progress(conn, current, 1, 3)

@@ -1,10 +1,13 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent, { type UserEvent } from '@testing-library/user-event';
-import { describe, expect, it, vi } from 'vitest';
-import { Documents } from './Documents';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { Documents, type DocumentArchiveRecovery } from './Documents';
 import { Api, ApiError, type ApplicationDocuments, type DocumentDefaults, type DocumentDefaultsPatch, type DocumentOmissionRequest, type DocumentRecord, type DocumentSaveRequest, type GenerationContext, type Profile, type SectionProposal, type SectionRegenerationContext, type Workflow } from './api';
 import type { ApplicationSummary } from './tracking-api';
+
+let archiveRecovery: { current: DocumentArchiveRecovery };
+beforeEach(() => { archiveRecovery = { current: { generation: 0, request: null } }; });
 
 const profile: Profile = { id: 'profile', version: 3, current_revision: { id: 'profile-rev-3', revision_no: 3, content_sha256: 'a'.repeat(64), created_at: '2026-10-25T12:00:00Z', author_owner_id: 'owner', reason: 'Accepted facts', claims: [], snapshot: { display_name: 'Mira Vale', headline: '', claim_revision_ids: ['claim-1', 'claim-2'], contact: { email: 'mira@example.test', phone: '', location: '', postal_address: '' } } }, evidence: [], quality_warnings: [], experience_coverage: { minimum_days: 0, maximum_days: 0, undated_or_open_entries: 0 } };
 const saved: DocumentRecord = {
@@ -72,7 +75,7 @@ describe('remembered document defaults and current operation isolation', () => {
       }
       return stored;
     });
-    const view = render(<Documents api={api} profile={profile} />); const input = await ready();
+    const view = render(<Documents archiveRecovery={archiveRecovery} api={api} profile={profile} />); const input = await ready();
     const defaultsDisclosure = screen.getByText('Remembered defaults and retention').closest('details');
     expect(defaultsDisclosure).not.toHaveAttribute('open');
     expect(screen.getByLabelText('Document state')).toHaveTextContent('Saved · review required');
@@ -92,7 +95,7 @@ describe('remembered document defaults and current operation isolation', () => {
     expect(input).toHaveValue('Dirty words retained while defaults change.');
     expect(screen.getByLabelText('Built-in presentation')).toHaveValue('bonafides-evidence-letter-v1');
     expect(request.mock.calls.some(call => call[1] === 'PUT' || call[0].startsWith('/documents/'))).toBe(false);
-    view.unmount(); render(<Documents api={api} profile={profile} />); await ready();
+    view.unmount(); render(<Documents archiveRecovery={archiveRecovery} api={api} profile={profile} />); await ready();
     await user.click(screen.getByText('Remembered defaults and retention'));
     expect(screen.getByLabelText('Built-in presentation')).toHaveValue('bonafides-compact-letter-v1');
     expect(screen.getByLabelText('Block text: b-1')).toHaveValue(saved.current_revision.body.sections[0]!.blocks[0]!.text);
@@ -115,7 +118,7 @@ describe('remembered document defaults and current operation isolation', () => {
       if (++reads === 1) throw new TypeError('offline');
       return { ...remembered, template_version: 'bonafides-evidence-letter-v1', tone: 'concise' };
     });
-    render(<Documents api={api} profile={profile} />); const input = await ready();
+    render(<Documents archiveRecovery={archiveRecovery} api={api} profile={profile} />); const input = await ready();
     expect(await screen.findByText(/Remembered defaults could not be loaded/)).toBeVisible();
     expect(screen.getByText('Remembered defaults and retention').closest('details')).not.toHaveAttribute('open');
     await user.click(screen.getByText('Remembered defaults and retention'));
@@ -140,7 +143,7 @@ describe('remembered document defaults and current operation isolation', () => {
       }
       return stored;
     });
-    render(<Documents api={api} profile={profile} />); await ready();
+    render(<Documents archiveRecovery={archiveRecovery} api={api} profile={profile} />); await ready();
     await user.click(screen.getByText('Remembered defaults and retention'));
     await user.selectOptions(screen.getByLabelText('Remembered built-in presentation'), 'bonafides-compact-letter-v1');
     await user.click(screen.getByRole('button', { name: 'Save remembered defaults' }));
@@ -168,7 +171,7 @@ describe('remembered document defaults and current operation isolation', () => {
       }
       return remembered;
     });
-    render(<Documents api={api} profile={profile} />); await ready();
+    render(<Documents archiveRecovery={archiveRecovery} api={api} profile={profile} />); await ready();
     await user.click(screen.getByText('Remembered defaults and retention'));
     await user.selectOptions(screen.getByLabelText('Remembered writing tone'), 'concise');
     await user.click(screen.getByRole('button', { name: 'Save remembered defaults' }));
@@ -193,7 +196,7 @@ describe('saved document editing and recovery', () => {
       if (path === '/documents/base-doc' && method === 'PUT') { writes++; if (writes === 1) throw new ApiError(412, 'version_conflict'); return { ...newer, version: 6, current_revision: { ...newer.current_revision, id: 'doc-rev-4', revision_no: 4, body: (body as DocumentSaveRequest).body } }; }
       throw new ApiError(404, 'not_found');
     });
-    render(<Documents api={api} profile={profile} />); const input = await ready();
+    render(<Documents archiveRecovery={archiveRecovery} api={api} profile={profile} />); const input = await ready();
     fireEvent.change(input, { target: { value: 'My retained Linux wording.' } });
     await user.click(screen.getByRole('button', { name: 'Save document revision' }));
     expect(await screen.findByRole('alert')).toHaveFocus(); expect(input).toHaveValue('My retained Linux wording.');
@@ -219,7 +222,7 @@ describe('saved document editing and recovery', () => {
       if (path === '/documents/base-doc' && method === 'PUT') throw new TypeError('offline');
       throw new ApiError(404, 'not_found');
     });
-    render(<Documents api={api} profile={profile} />); const input = await ready();
+    render(<Documents archiveRecovery={archiveRecovery} api={api} profile={profile} />); const input = await ready();
     fireEvent.change(input, { target: { value: 'Retained during offline save.' } });
     await user.click(screen.getByRole('button', { name: 'Save document revision' }));
     expect(await screen.findByRole('alert')).toHaveTextContent('server could not be reached');
@@ -245,7 +248,7 @@ describe('saved document editing and recovery', () => {
       if (path === '/documents/base-doc' && method === 'GET') return newer;
       throw new ApiError(404, 'not_found');
     });
-    render(<Documents api={api} profile={profile} />); await ready();
+    render(<Documents archiveRecovery={archiveRecovery} api={api} profile={profile} />); await ready();
     await user.click(screen.getByRole('button', { name: 'Remove block b-2' }));
     await user.click(screen.getByRole('button', { name: 'Save document revision' }));
     await screen.findByRole('alert');
@@ -260,10 +263,10 @@ describe('saved document editing and recovery', () => {
 
   it('does not replace a dirty editor on upstream profile updates or a newly selected benchmark result', async () => {
     const onDirtyChange = vi.fn(); const { api, request } = fixture();
-    const view = render(<Documents api={api} profile={profile} onDirtyChange={onDirtyChange} />); const input = await ready();
+    const view = render(<Documents archiveRecovery={archiveRecovery} api={api} profile={profile} onDirtyChange={onDirtyChange} />); const input = await ready();
     fireEvent.change(input, { target: { value: 'Keep this unsaved text.' } });
     const nextProfile = { ...profile, version: 4, current_revision: { ...profile.current_revision, id: 'profile-rev-4', revision_no: 4 } };
-    view.rerender(<Documents api={api} profile={nextProfile} externalDocumentId="other-document" externalRequestKey="new-task" onDirtyChange={onDirtyChange} />);
+    view.rerender(<Documents archiveRecovery={archiveRecovery} api={api} profile={nextProfile} externalDocumentId="other-document" externalRequestKey="new-task" onDirtyChange={onDirtyChange} />);
     expect(input).toHaveValue('Keep this unsaved text.');
     expect(screen.getByRole('button', { name: 'Tracked application documents' })).toBeDisabled();
     await waitFor(() => expect(onDirtyChange).toHaveBeenLastCalledWith(true));
@@ -279,7 +282,7 @@ describe('saved document editing and recovery', () => {
       if (path === '/documents/base-doc/restore' && method === 'POST') return { ...saved, version: 5, current_revision: { ...historical, id: 'restored', revision_no: 3, origin: 'restore' }, reviewed: false, artifacts: [] };
       throw new ApiError(404, 'not_found');
     });
-    render(<Documents api={api} profile={profile} />); await ready();
+    render(<Documents archiveRecovery={archiveRecovery} api={api} profile={profile} />); await ready();
     await user.click(screen.getByRole('button', { name: 'Load document history' }));
     await user.click(await screen.findByRole('button', { name: 'Preview revision 1 — deterministic' }));
     expect(await screen.findByRole('heading', { name: 'Historical revision 1 — read-only' })).toBeInTheDocument();
@@ -306,7 +309,7 @@ describe('review, export and generation boundaries', () => {
       if (path === '/documents/base-doc') return document;
       throw new ApiError(404, 'not_found');
     });
-    render(<Documents api={api} profile={profile} />); await ready();
+    render(<Documents archiveRecovery={archiveRecovery} api={api} profile={profile} />); await ready();
     expect(screen.queryByRole('link', { name: /Download rendered PDF/ })).not.toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Accept this exact revision' })).toBeDisabled();
     await user.click(screen.getByRole('checkbox', { name: /I checked block b-1/ }));
@@ -330,7 +333,7 @@ describe('review, export and generation boundaries', () => {
     const body = { ...saved.current_revision.body, sections: [saved.current_revision.body.sections[0]!, { key: 'skills', heading: 'Skills', blocks: [{ block_key: 'b-2', text: fabricated, claim_kind: 'factual' as const, claim_revision_ids: ['claim-absent'], evidence_revision_ids: [] }] }] };
     const blocked = { ...saved, unsupported_claims: ['/sections/1/blocks/0'], current_revision: { ...saved.current_revision, body, validation_issues: [{ path: '/sections/1/blocks/0', code: 'claim_not_in_profile', statement: fabricated }] } };
     const { api } = fixture(blocked, async () => { throw new ApiError(404, 'not_found'); });
-    render(<Documents api={api} profile={profile} />); await ready();
+    render(<Documents archiveRecovery={archiveRecovery} api={api} profile={profile} />); await ready();
     const blocker = screen.getByText('Export blocked: unresolved factual or source issues.').closest('div')!;
     expect(blocker).toHaveTextContent('It cites a claim that is not in your profile.');
     expect(blocker).toHaveTextContent(`Statement: “${fabricated}”`.replace(/[“”]/g, ''));
@@ -351,7 +354,7 @@ describe('review, export and generation boundaries', () => {
     const issues = kinds.map(([code, statement], index) => ({ path: `/sections/0/blocks/${index}`, code, statement }));
     const blocked = { ...saved, unsupported_claims: issues.map(issue => issue.path), current_revision: { ...saved.current_revision, body, validation_issues: issues } };
     const { api } = fixture(blocked, async () => { throw new ApiError(404, 'not_found'); });
-    render(<Documents api={api} profile={profile} />); await ready();
+    render(<Documents archiveRecovery={archiveRecovery} api={api} profile={profile} />); await ready();
     const items = within(screen.getByText('Export blocked: unresolved factual or source issues.').closest('div')!).getAllByRole('listitem');
     expect(items).toHaveLength(kinds.length);
     kinds.forEach(([code, statement, reason], index) => {
@@ -369,7 +372,7 @@ describe('review, export and generation boundaries', () => {
       if (path === '/documents/base-doc' && method === 'PUT') return { ...blocked, version: 5, reviewed: false, current_revision: { ...blocked.current_revision, id: 'manual', revision_no: 3, body: (body as DocumentSaveRequest).body } };
       throw new ApiError(404, 'not_found');
     });
-    render(<Documents api={api} profile={profile} />); const input = await ready();
+    render(<Documents archiveRecovery={archiveRecovery} api={api} profile={profile} />); const input = await ready();
     expect(screen.getByRole('button', { name: 'Exact revision reviewed' })).toBeDisabled();
     expect(screen.getByRole('button', { name: 'Render reviewed PDF' })).toBeDisabled();
     fireEvent.change(input, { target: { value: 'Unsupported wording remains inspectable.' } });
@@ -387,7 +390,7 @@ describe('review, export and generation boundaries', () => {
       if (path === '/workflows/compose-1') return workflow;
       throw new ApiError(404, 'not_found');
     });
-    render(<Documents api={api} profile={profile} />);
+    render(<Documents archiveRecovery={archiveRecovery} api={api} profile={profile} />);
     await waitFor(() => expect(screen.getByRole('button', { name: 'Create base résumé' })).toBeEnabled());
     await user.selectOptions(screen.getByLabelText('Built-in presentation'), 'bonafides-compact-v1');
     await user.click(screen.getByRole('button', { name: 'Create base résumé' }));
@@ -409,7 +412,7 @@ describe('review, export and generation boundaries', () => {
       if (path.startsWith('/applications/application-1/generation-context?')) return context;
       throw new ApiError(404, 'not_found');
     });
-    render(<Documents api={api} profile={profile} />); await ready();
+    render(<Documents archiveRecovery={archiveRecovery} api={api} profile={profile} />); await ready();
     await user.click(screen.getByRole('button', { name: 'Tracked application documents' }));
     await user.click(screen.getByRole('button', { name: 'Reload tracked applications' }));
     await user.selectOptions(await screen.findByLabelText('Tracked application'), 'application-1');
@@ -438,7 +441,7 @@ describe('review, export and generation boundaries', () => {
       if (path.startsWith('/applications/application-1/generation-context?')) return withheld;
       throw new ApiError(404, 'not_found');
     });
-    render(<Documents api={api} profile={profile} />); await ready();
+    render(<Documents archiveRecovery={archiveRecovery} api={api} profile={profile} />); await ready();
     await user.click(screen.getByRole('button', { name: 'Tracked application documents' }));
     await user.click(screen.getByRole('button', { name: 'Reload tracked applications' }));
     await user.selectOptions(await screen.findByLabelText('Tracked application'), 'application-1');
@@ -468,7 +471,7 @@ describe('review, export and generation boundaries', () => {
       if (path === '/applications/application-1/documents') return { ...pair, items: [selected] };
       throw new ApiError(404, 'not_found');
     });
-    render(<Documents api={api} profile={profile} onDirtyChange={onDirtyChange} />); await ready();
+    render(<Documents archiveRecovery={archiveRecovery} api={api} profile={profile} onDirtyChange={onDirtyChange} />); await ready();
     vi.useFakeTimers();
     try {
       await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Rebuild base from selected profile' })); });
@@ -518,7 +521,7 @@ describe('review, export and generation boundaries', () => {
       if (path === '/workflows/compose-1') return { ...workflow, mode: 'tailored_ai', state: 'permanent_failure', last_error_code: 'model_output_invalid_after_correction' };
       throw new ApiError(404, 'not_found');
     });
-    render(<Documents api={api} profile={profile} />); await ready();
+    render(<Documents archiveRecovery={archiveRecovery} api={api} profile={profile} />); await ready();
     await user.click(screen.getByRole('button', { name: 'Tracked application documents' }));
     await user.click(screen.getByRole('button', { name: 'Reload tracked applications' }));
     await user.selectOptions(await screen.findByLabelText('Tracked application'), 'application-1');
@@ -539,7 +542,7 @@ describe('review, export and generation boundaries', () => {
       if (path === '/workflows/compose-1') return { ...workflow, state: 'succeeded', result: { application_id: 'application-1', documents: [{ kind: 'resume', document_id: 'new-half', revision_id: 'new-half-revision' }], model_run_id: 'synthetic-run' } };
       throw new ApiError(404, 'not_found');
     });
-    render(<Documents api={api} profile={profile} onBusyChange={onBusyChange} />); await ready();
+    render(<Documents archiveRecovery={archiveRecovery} api={api} profile={profile} onBusyChange={onBusyChange} />); await ready();
     await user.click(screen.getByRole('button', { name: 'Tracked application documents' }));
     await user.click(screen.getByRole('button', { name: 'Reload tracked applications' }));
     await user.selectOptions(await screen.findByLabelText('Tracked application'), 'application-1');
@@ -610,7 +613,7 @@ describe('saved tailored section proposals', () => {
       if (path === '/applications/application-1/documents') return { ...pair, claim_json_rates: rates };
       throw new ApiError(404, 'not_found');
     });
-    render(<Documents api={api} profile={profile} />); await ready();
+    render(<Documents archiveRecovery={archiveRecovery} api={api} profile={profile} />); await ready();
     await user.click(screen.getByRole('button', { name: 'Tracked application documents' }));
     await user.click(screen.getByRole('button', { name: 'Reload tracked applications' }));
     await user.selectOptions(await screen.findByLabelText('Tracked application'), application.id);
@@ -627,7 +630,7 @@ describe('saved tailored section proposals', () => {
       if (path === '/applications/application-1/documents') return { ...pair, receipt_details: { generate_documents: detail, regenerate_section: missingReceipt } };
       throw new ApiError(404, 'not_found');
     });
-    render(<Documents api={api} profile={profile} />); await openTailored(user);
+    render(<Documents archiveRecovery={archiveRecovery} api={api} profile={profile} />); await openTailored(user);
     const panel = screen.getByRole('region', { name: 'Local model qualification receipts' });
     expect(within(panel).getByText(`Pair generation: receipt ${status}; ${status === 'passed' ? 'qualified' : 'unqualified'}.`)).toBeVisible();
     if (status === 'missing') expect(within(panel).getByText(/receipt is stale/)).toBeVisible();
@@ -640,7 +643,7 @@ describe('saved tailored section proposals', () => {
 
   it('exposes no model rewrite surface or model requests for a base document, including its dirty editor', async () => {
     const user = userEvent.setup(); const { api, request } = fixture();
-    render(<Documents api={api} profile={profile} />); const input = await ready();
+    render(<Documents archiveRecovery={archiveRecovery} api={api} profile={profile} />); const input = await ready();
     expect(screen.queryByRole('heading', { name: 'Selected-section proposals' })).not.toBeInTheDocument();
     expect(screen.queryByLabelText('Section to regenerate')).not.toBeInTheDocument();
     expect(screen.queryByLabelText(/^(Section )?writing tone$/i)).not.toBeInTheDocument();
@@ -657,7 +660,7 @@ describe('saved tailored section proposals', () => {
       if (path === '/workflows/section-task-1') return sectionWorkflow;
       throw new ApiError(404, 'not_found');
     });
-    render(<Documents api={api} profile={profile} />); await openTailored(user);
+    render(<Documents archiveRecovery={archiveRecovery} api={api} profile={profile} />); await openTailored(user);
     await user.selectOptions(screen.getByLabelText('Section to regenerate'), 'skills');
     await user.selectOptions(screen.getByLabelText('Section writing tone'), 'concise');
     await inspectSection(user);
@@ -691,7 +694,7 @@ describe('saved tailored section proposals', () => {
       if (path.includes('/regeneration-context?')) return sectionPreview(path, status);
       throw new ApiError(404, 'not_found');
     });
-    render(<Documents api={api} profile={profile} />); await openTailored(user);
+    render(<Documents archiveRecovery={archiveRecovery} api={api} profile={profile} />); await openTailored(user);
     await inspectSection(user);
     expect(screen.getByText(`Section regeneration route: ${status}.`)).toBeInTheDocument();
     expect(screen.getByRole('checkbox', { name: /I reviewed this exact selected-section projection/ })).toBeDisabled();
@@ -726,7 +729,7 @@ describe('saved tailored section proposals', () => {
       if (path === '/documents/tailored-resume/regeneration-proposals/proposal-1') return sectionProposal;
       throw new ApiError(404, 'not_found');
     });
-    render(<Documents api={api} profile={profile} />); await openTailored(user);
+    render(<Documents archiveRecovery={archiveRecovery} api={api} profile={profile} />); await openTailored(user);
     if (mode === 'section_regeneration') {
       await inspectSection(user);
       await user.click(screen.getByRole('checkbox', { name: /I reviewed this exact selected-section projection/ }));
@@ -763,7 +766,7 @@ describe('saved tailored section proposals', () => {
       if (path === '/documents/tailored-resume/regeneration-proposals/proposal-1') return sectionProposal;
       throw new ApiError(404, 'not_found');
     });
-    render(<Documents api={api} profile={profile} />); await openTailored(user);
+    render(<Documents archiveRecovery={archiveRecovery} api={api} profile={profile} />); await openTailored(user);
     await inspectSection(user);
     await user.click(screen.getByRole('checkbox', { name: /I reviewed this exact selected-section projection/ }));
     vi.useFakeTimers();
@@ -787,7 +790,7 @@ describe('saved tailored section proposals', () => {
       if (path === '/workflows/section-task-1') return failed;
       throw new ApiError(404, 'not_found');
     });
-    render(<Documents api={api} profile={profile} />); await openTailored(user); await inspectSection(user);
+    render(<Documents archiveRecovery={archiveRecovery} api={api} profile={profile} />); await openTailored(user); await inspectSection(user);
     await user.click(screen.getByRole('checkbox', { name: /I reviewed this exact selected-section projection/ }));
     await user.click(screen.getByRole('button', { name: 'Request section proposal' }));
     expect(await screen.findByText(/required section shape, even after one corrective retry\. No proposal was created and the document is unchanged\. Failure code: model_output_invalid_after_correction\./, {}, { timeout: 4000 })).toBeInTheDocument();
@@ -804,7 +807,7 @@ describe('saved tailored section proposals', () => {
       if (path === '/documents/tailored-resume/regeneration-proposals/proposal-1/apply') return applied;
       throw new ApiError(404, 'not_found');
     });
-    render(<Documents api={api} profile={profile} />); await openTailored(user); await inspectSection(user);
+    render(<Documents archiveRecovery={archiveRecovery} api={api} profile={profile} />); await openTailored(user); await inspectSection(user);
     await user.click(screen.getByRole('checkbox', { name: /I reviewed this exact selected-section projection/ }));
     vi.useFakeTimers();
     try {
@@ -847,8 +850,8 @@ describe('saved tailored section proposals', () => {
       if (path === '/documents/tailored-resume/regeneration-proposals/older-proposal') return older;
       throw new ApiError(404, 'not_found');
     });
-    const first = render(<Documents api={api} profile={profile} />); await openTailored(user); first.unmount();
-    render(<Documents api={api} profile={profile} />); await openTailored(user);
+    const first = render(<Documents archiveRecovery={archiveRecovery} api={api} profile={profile} />); await openTailored(user); first.unmount();
+    render(<Documents archiveRecovery={archiveRecovery} api={api} profile={profile} />); await openTailored(user);
     fireEvent.change(screen.getByLabelText('Block text: b-1'), { target: { value: 'Retained while recovering saved proposals.' } });
     await user.click(screen.getByRole('button', { name: 'Reload saved section proposals' }));
     expect(await screen.findByRole('alert')).toHaveTextContent('server could not be reached');
@@ -874,7 +877,7 @@ describe('saved tailored section proposals', () => {
       if (path === '/documents/tailored-resume/regeneration-proposals/proposal-1') return historical;
       throw new ApiError(404, 'not_found');
     });
-    render(<Documents api={api} profile={profile} />); await openTailored(user);
+    render(<Documents archiveRecovery={archiveRecovery} api={api} profile={profile} />); await openTailored(user);
     await user.click(screen.getByRole('button', { name: 'Reload saved section proposals' }));
     await user.click(await screen.findByRole('button', { name: /Compare proposal for Experience/ }));
     await screen.findByRole('region', { name: 'Section proposal comparison' });
@@ -894,7 +897,7 @@ describe('saved tailored section proposals', () => {
       if (path === '/documents/tailored-resume' && method === 'GET') return newer;
       throw new ApiError(404, 'not_found');
     });
-    render(<Documents api={api} profile={profile} />); await openTailored(user);
+    render(<Documents archiveRecovery={archiveRecovery} api={api} profile={profile} />); await openTailored(user);
     await user.click(screen.getByRole('button', { name: 'Reload saved section proposals' }));
     await user.click(await screen.findByRole('button', { name: /Compare proposal for Experience/ }));
     await user.click(await screen.findByRole('checkbox', { name: /I compared the original and proposal/ }));
@@ -930,7 +933,7 @@ describe('saved tailored section proposals', () => {
       if (path === '/documents/tailored-resume/regeneration-proposals/proposal-1') { if (++reads === 1) throw new TypeError('offline proposal read'); return sectionProposal; }
       throw new ApiError(404, 'not_found');
     }, [tailored, letter]);
-    render(<Documents api={api} profile={profile} onDirtyChange={onDirtyChange} />); await openTailored(user); await inspectSection(user);
+    render(<Documents archiveRecovery={archiveRecovery} api={api} profile={profile} onDirtyChange={onDirtyChange} />); await openTailored(user); await inspectSection(user);
     await user.click(screen.getByRole('checkbox', { name: /I reviewed this exact selected-section projection/ }));
     vi.useFakeTimers();
     try {
@@ -962,7 +965,7 @@ describe('saved tailored section proposals', () => {
       if (path === '/documents/tailored-resume/regeneration-proposals' && method === 'POST') throw new ApiError(409, 'regeneration_context_changed');
       throw new ApiError(404, 'not_found');
     });
-    render(<Documents api={api} profile={profile} />); await openTailored(user); await inspectSection(user);
+    render(<Documents archiveRecovery={archiveRecovery} api={api} profile={profile} />); await openTailored(user); await inspectSection(user);
     await user.click(screen.getByRole('checkbox', { name: /I reviewed this exact selected-section projection/ }));
     await user.click(screen.getByRole('button', { name: 'Request section proposal' }));
     expect(await screen.findByRole('alert')).toHaveFocus();
@@ -984,7 +987,7 @@ describe('saved tailored section proposals', () => {
       if (path === '/workflows/section-task-1') return sectionWorkflow;
       throw new ApiError(404, 'not_found');
     });
-    render(<Documents api={api} profile={profile} />); await openTailored(user); await inspectSection(user);
+    render(<Documents archiveRecovery={archiveRecovery} api={api} profile={profile} />); await openTailored(user); await inspectSection(user);
     await user.click(screen.getByRole('checkbox', { name: /I reviewed this exact selected-section projection/ }));
     await user.click(screen.getByRole('button', { name: 'Request section proposal' }));
     expect(await screen.findByRole('alert')).toHaveTextContent('server could not be reached');
@@ -1042,7 +1045,7 @@ describe('reversible saved résumé page fitting', () => {
       }
       throw new ApiError(404, 'not_found');
     }, [live]);
-    render(<Documents api={api} profile={profile} />); await openTailored(user);
+    render(<Documents archiveRecovery={archiveRecovery} api={api} profile={profile} />); await openTailored(user);
     await user.click(screen.getByRole('button', { name: 'Omit block b-2' }));
     expect(await screen.findByRole('button', { name: 'Undo omit block b-2' })).toBeEnabled();
     expect(screen.queryByLabelText('Block text: b-2')).not.toBeInTheDocument();
@@ -1079,7 +1082,7 @@ describe('reversible saved résumé page fitting', () => {
       if (path.endsWith(`/revisions/${withHidden.current_revision.id}`)) return withHidden.current_revision;
       throw new ApiError(404, 'not_found');
     }, [withHidden, letter]);
-    render(<Documents api={api} profile={profile} />); await openTailored(user);
+    render(<Documents archiveRecovery={archiveRecovery} api={api} profile={profile} />); await openTailored(user);
     fireEvent.change(screen.getByLabelText('Block text: b-1'), { target: { value: 'Keep my unsaved wording.' } });
     for (const name of ['Fit saved résumé to target', 'Omit block b-1', 'Restore block hidden-3']) {
       expect(screen.getByRole('button', { name })).toBeDisabled();
@@ -1117,7 +1120,7 @@ describe('reversible saved résumé page fitting', () => {
       }
       throw new ApiError(404, 'not_found');
     });
-    render(<Documents api={api} profile={profile} />); await ready();
+    render(<Documents archiveRecovery={archiveRecovery} api={api} profile={profile} />); await ready();
     await user.click(screen.getByRole('button', { name: 'Tracked application documents' }));
     await user.click(screen.getByRole('button', { name: 'Reload tracked applications' }));
     await user.selectOptions(await screen.findByLabelText('Tracked application'), application.id);
@@ -1167,7 +1170,7 @@ describe('reversible saved résumé page fitting', () => {
       if (path === '/documents/tailored-resume') { if (++reads === 1) throw new TypeError('offline result read'); return fitted; }
       throw new ApiError(404, 'not_found');
     }, [tailored, letter]);
-    render(<Documents api={api} profile={profile} />); await openTailored(user);
+    render(<Documents archiveRecovery={archiveRecovery} api={api} profile={profile} />); await openTailored(user);
     vi.useFakeTimers();
     try {
       await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Fit saved résumé to target' })); });
@@ -1192,6 +1195,346 @@ describe('reversible saved résumé page fitting', () => {
       expect(command?.[2]).toEqual({ revision_id: tailored.current_revision.id, content_sha256: tailored.current_revision.content_sha256, page_target: 1 });
       expect(command?.[3]).toBe(tailored.version); expect(command?.[4]).toBeTypeOf('string');
       expect(request.mock.calls.filter(call => call[1] === 'POST')).toHaveLength(1);
+    } finally { vi.useRealTimers(); }
+  });
+});
+
+describe('all-current saved document archives', () => {
+  const snapshot = { workspace_version: 17, manifest_sha256: 'a'.repeat(64), document_count: 4, expires_in_seconds: 86400, max_documents: 100, max_archive_bytes: 67108864 };
+  const archiveTask: Workflow = { ...workflow, id: 'archive-1', kind: 'pdf_render', mode: 'document_archive', progress: { completed: 0, total: 4 } };
+  const complete = (expires: string): Workflow => ({ ...archiveTask, version: 3, state: 'succeeded', cancelable: false, progress: { completed: 4, total: 4 }, result: { artifact_type: 'document_archive', archive_document_count: 4, archive_expires_at: expires } });
+
+  it('archives the global saved set without selecting an application, shows recorded progress and withdraws the exact download at expiry', async () => {
+    const user = userEvent.setup(); let reads = 0;
+    const { api } = fixture(saved, async (path, method) => {
+      if (path === '/document-archives/preview') return snapshot;
+      if (path === '/document-archives' && method === 'POST') return archiveTask;
+      if (path === '/workflows/archive-1') return ++reads === 1
+        ? { ...archiveTask, version: 2, state: 'running', progress: { completed: 2, total: 4 } }
+        : { ...complete(new Date(Date.now() + 3000).toISOString()), result: { ...complete(new Date(Date.now() + 3000).toISOString()).result, download_url: 'https://untrusted.test/other.zip' } };
+      throw new ApiError(404, 'not_found');
+    });
+    render(<Documents archiveRecovery={archiveRecovery} api={api} profile={profile} />); await ready();
+    await user.click(screen.getByRole('button', { name: 'Tracked application documents' }));
+    await user.click(screen.getByRole('button', { name: 'Prepare archive preview' }));
+    expect(await screen.findByText(/Preview: 4 saved documents/)).toBeVisible();
+    vi.useFakeTimers();
+    try {
+      await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Create all-document ZIP' })); });
+      expect(screen.queryByRole('button', { name: /Download all saved application PDFs/ })).not.toBeInTheDocument();
+      expect(screen.getByRole('button', { name: 'Base résumé' })).toBeDisabled();
+      await act(async () => { await vi.advanceTimersByTimeAsync(1000); });
+      expect(screen.getByText(/2 of 4 documents rendered/)).toBeVisible();
+      expect(screen.queryByRole('button', { name: /Download all saved application PDFs/ })).not.toBeInTheDocument();
+      await act(async () => { await vi.advanceTimersByTimeAsync(1000); });
+      expect(screen.getByRole('button', { name: /Download all saved application PDFs/ })).toBeEnabled();
+      expect(screen.getByRole('button', { name: 'Base résumé' })).toBeEnabled();
+      await act(async () => { await vi.advanceTimersByTimeAsync(3000); });
+      expect(screen.queryByRole('button', { name: /Download all saved application PDFs/ })).not.toBeInTheDocument();
+      expect(screen.getByText(/This archive expired at/)).toBeVisible();
+    } finally { vi.useRealTimers(); }
+  });
+
+  it('requires an explicit save or discard of local edits and leaves individual PDFs and the selected saved document intact', async () => {
+    const user = userEvent.setup();
+    const reviewed: DocumentRecord = { ...tailored, reviewed: true, artifacts: [{ id: 'current-pdf', revision_id: tailored.current_revision.id, format: 'pdf' }] };
+    const { api, request } = proposalFixture(async (path, method) => {
+      if (path === '/document-archives/preview') return snapshot;
+      if (path === '/document-archives' && method === 'POST') return archiveTask;
+      throw new ApiError(404, 'not_found');
+    }, [reviewed]);
+    render(<Documents archiveRecovery={archiveRecovery} api={api} profile={profile} />); await openTailored(user);
+    await user.click(screen.getByRole('button', { name: 'Prepare archive preview' }));
+    fireEvent.change(screen.getByLabelText('Block text: b-1'), { target: { value: 'Keep this unsaved wording.' } });
+    expect(screen.getByRole('button', { name: 'Create all-document ZIP' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Refresh archive preview' })).toBeDisabled();
+    expect(screen.getByLabelText('Block text: b-1')).toHaveValue('Keep this unsaved wording.');
+    expect(request.mock.calls.filter(call => call[1] === 'POST')).toHaveLength(0);
+    await user.click(screen.getByRole('button', { name: 'Discard document changes' }));
+    await user.click(screen.getByRole('button', { name: 'Create all-document ZIP' }));
+    expect(screen.getByLabelText('Block text: b-1')).toHaveValue(tailored.current_revision.body.sections[0]!.blocks[0]!.text);
+    expect(screen.getByRole('link', { name: 'Download rendered PDF for revision 2' })).toHaveAttribute('href', '/api/v1/artifacts/current-pdf');
+    expect(screen.getByLabelText('Tracked application')).toHaveValue(application.id);
+    expect(request.mock.calls.filter(call => call[1] === 'PUT')).toHaveLength(0);
+  });
+
+  it.each([
+    ['document_archive_empty', /There are no current saved tailored/],
+    ['review_required', /Every current saved tailored document must be reviewed/],
+    ['document_template_unavailable', /A saved document’s built-in PDF template is unavailable/],
+  ] as const)('recovers from %s only through explicit preview and refuses a changed snapshot without silently refreshing', async (code, message) => {
+    const user = userEvent.setup(); let previews = 0;
+    const { api, request } = proposalFixture(async (path, method) => {
+      if (path === '/document-archives/preview') {
+        if (++previews === 1) throw new ApiError(409, code, [], undefined, 'Blocked document tailored-resume.');
+        return snapshot;
+      }
+      if (path === '/document-archives' && method === 'POST') throw new ApiError(409, 'document_archive_source_changed');
+      throw new ApiError(404, 'not_found');
+    });
+    render(<Documents archiveRecovery={archiveRecovery} api={api} profile={profile} />); await openTailored(user);
+    await user.click(screen.getByRole('button', { name: 'Prepare archive preview' }));
+    expect(await screen.findByText(message)).toHaveTextContent('Blocked document tailored-resume.');
+    expect(screen.queryByRole('button', { name: 'Create all-document ZIP' })).not.toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Prepare archive preview' }));
+    await user.click(screen.getByRole('button', { name: 'Create all-document ZIP' }));
+    expect(await screen.findByText(/The saved document set, sources, reviews/)).toBeVisible();
+    expect(screen.queryByRole('button', { name: 'Create all-document ZIP' })).not.toBeInTheDocument();
+    expect(previews).toBe(2);
+    expect(screen.getByLabelText('Block text: b-1')).toHaveValue(tailored.current_revision.body.sections[0]!.blocks[0]!.text);
+    expect(request.mock.calls.filter(call => call[1] === 'POST')).toHaveLength(1);
+  });
+
+  it('retains an uncertain enqueue through a rejected authenticated replay and recovers only the identical frozen request and key', async () => {
+    const user = userEvent.setup(); let writes = 0;
+    const { api, request } = proposalFixture(async (path, method) => {
+      if (path === '/document-archives/preview') return snapshot;
+      if (path === '/document-archives' && method === 'POST') {
+        if (++writes === 1) throw new TypeError('lost response');
+        if (writes === 2) throw new ApiError(401, 'session_expired');
+        return archiveTask;
+      }
+      throw new ApiError(404, 'not_found');
+    });
+    const view = render(<Documents archiveRecovery={archiveRecovery} api={api} profile={profile} />); await openTailored(user);
+    await user.click(screen.getByRole('button', { name: 'Prepare archive preview' }));
+    await user.click(screen.getByRole('button', { name: 'Create all-document ZIP' }));
+    expect(await screen.findByText(/The request outcome is unknown/)).toBeVisible();
+    expect(screen.getByRole('button', { name: 'Refresh archive preview' })).toBeDisabled();
+    view.rerender(<Documents archiveRecovery={archiveRecovery} api={api} profile={profile} disabled />);
+    expect(screen.getByRole('button', { name: 'Retry exact archive request' })).toBeDisabled();
+    view.rerender(<Documents archiveRecovery={archiveRecovery} api={api} profile={profile} />);
+    await user.click(screen.getByRole('button', { name: 'Retry exact archive request' }));
+    expect(await screen.findByText(/Your session is unavailable or expired/)).toBeVisible();
+    expect(screen.getByText(/The request outcome is unknown/)).toBeVisible();
+    expect(screen.getByRole('button', { name: 'Refresh archive preview' })).toBeDisabled();
+    view.rerender(<Documents archiveRecovery={archiveRecovery} api={api} profile={profile} disabled />);
+    expect(screen.getByRole('button', { name: 'Retry exact archive request' })).toBeDisabled();
+    view.rerender(<Documents archiveRecovery={archiveRecovery} api={api} profile={profile} />);
+    await user.click(screen.getByRole('button', { name: 'Retry exact archive request' }));
+    expect(await screen.findByRole('heading', { name: 'Document task: pending' })).toBeVisible();
+    const commands = request.mock.calls.filter(call => call[0] === '/document-archives');
+    expect(commands).toHaveLength(3);
+    expect(commands[1]?.slice(2, 5)).toEqual(commands[0]?.slice(2, 5));
+    expect(commands[2]?.slice(2, 5)).toEqual(commands[0]?.slice(2, 5));
+    expect(request.mock.calls.filter(call => call[0] === '/document-archives/preview')).toHaveLength(1);
+  });
+
+  it('releases an uncertain enqueue after a definitive stale-version refusal and permits an explicit fresh preview', async () => {
+    const user = userEvent.setup(); let writes = 0; let previews = 0;
+    const { api } = proposalFixture(async (path, method) => {
+      if (path === '/document-archives/preview') return ++previews === 1 ? snapshot : { ...snapshot, workspace_version: snapshot.workspace_version + 1, manifest_sha256: 'c'.repeat(64) };
+      if (path === '/document-archives' && method === 'POST') {
+        if (++writes === 1) throw new TypeError('lost response');
+        if (writes === 2) throw new ApiError(412, 'version_conflict');
+        return archiveTask;
+      }
+      throw new ApiError(404, 'not_found');
+    });
+    render(<Documents archiveRecovery={archiveRecovery} api={api} profile={profile} />); await openTailored(user);
+    await user.click(screen.getByRole('button', { name: 'Prepare archive preview' }));
+    await user.click(screen.getByRole('button', { name: 'Create all-document ZIP' }));
+    expect(await screen.findByText(/The request outcome is unknown/)).toBeVisible();
+    await user.click(screen.getByRole('button', { name: 'Retry exact archive request' }));
+    expect(await screen.findByRole('button', { name: 'Prepare archive preview' })).toBeEnabled();
+    expect(screen.queryByRole('button', { name: 'Retry exact archive request' })).not.toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Prepare archive preview' }));
+    await user.click(screen.getByRole('button', { name: 'Create all-document ZIP' }));
+    expect(await screen.findByRole('heading', { name: 'Document task: pending' })).toBeVisible();
+  });
+
+  it.each([
+    ['redacted', false], ['missing', false], ['redacted', true], ['missing', true],
+  ] as const)('explicitly clears a %s archive task and preserves local edits (%s) without claiming cancellation', async (response, dirty) => {
+    const user = userEvent.setup(); let reads = 0; const busyChanges = vi.fn();
+    const { api, request } = proposalFixture(async (path, method) => {
+      if (path === '/document-archives/preview') return snapshot;
+      if (path === '/document-archives' && method === 'POST') return dirty ? complete('2030-01-01T00:00:00Z') : archiveTask;
+      if (path === '/workflows/archive-1') {
+        reads++;
+        if (response === 'missing') throw new ApiError(404, 'workflow_not_found');
+        return { ...archiveTask, version: 4, state: 'cancelled', mode: undefined, result: null };
+      }
+      throw new ApiError(404, 'not_found');
+    });
+    render(<Documents archiveRecovery={archiveRecovery} api={api} profile={profile} onBusyChange={busyChanges} />); await openTailored(user);
+    await user.click(screen.getByRole('button', { name: 'Prepare archive preview' }));
+    vi.useFakeTimers();
+    try {
+      await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Create all-document ZIP' })); });
+      if (dirty) fireEvent.change(screen.getByLabelText('Block text: b-1'), { target: { value: 'Keep my wording through archive recovery.' } });
+      await act(async () => { await vi.advanceTimersByTimeAsync(1000); });
+      expect(screen.getByText(/server cancellation is not confirmed/)).toBeVisible();
+      expect(screen.queryByRole('button', { name: /Download all saved application PDFs/ })).not.toBeInTheDocument();
+      expect(screen.getByRole('button', { name: 'Prepare archive preview' })).toBeDisabled();
+      await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Clear unavailable archive task' })); });
+      expect(screen.queryByRole('heading', { name: /Document task:/ })).not.toBeInTheDocument();
+      expect(screen.queryByRole('button', { name: 'Reconnect document task' })).not.toBeInTheDocument();
+      expect(screen.getByRole('status')).toHaveTextContent('does not confirm server cancellation');
+      expect(screen.getByLabelText('Block text: b-1')).toHaveValue(dirty ? 'Keep my wording through archive recovery.' : tailored.current_revision.body.sections[0]!.blocks[0]!.text);
+      expect(busyChanges).toHaveBeenLastCalledWith(false);
+      if (dirty) {
+        expect(screen.getByRole('button', { name: 'Base résumé' })).toBeDisabled();
+        expect(screen.getByRole('button', { name: 'Save document revision' })).toBeEnabled();
+        await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Discard document changes' })); });
+      }
+      expect(screen.getByRole('button', { name: 'Base résumé' })).toBeEnabled();
+      expect(screen.getByRole('button', { name: 'Reload application documents' })).toBeEnabled();
+      await act(async () => { await vi.advanceTimersByTimeAsync(10000); });
+      expect(reads).toBe(1);
+      expect(screen.queryByRole('heading', { name: /Document task:/ })).not.toBeInTheDocument();
+      expect(request.mock.calls.filter(call => call[1] === 'POST')).toHaveLength(1);
+      expect(screen.getByRole('button', { name: 'Prepare archive preview' })).toBeEnabled();
+    } finally { vi.useRealTimers(); }
+  });
+
+  it('checks the authenticated ZIP response before handing its bytes to the browser, retaining unsaved safeguards and rejecting late downloads', async () => {
+    const user = userEvent.setup();
+    const { api } = proposalFixture(async (path, method) => {
+      if (path === '/document-archives/preview') return snapshot;
+      if (path === '/document-archives' && method === 'POST') return archiveTask;
+      if (path === '/workflows/archive-1') return { ...complete('2030-01-01T00:00:00Z'), result: { ...complete('2030-01-01T00:00:00Z').result, download_url: 'https://untrusted.test/archive.zip' } };
+      throw new ApiError(404, 'not_found');
+    });
+    const fetchDownload = vi.fn<typeof fetch>().mockResolvedValueOnce(new Response('PK-private-ZIP-bytes', { headers: { 'Content-Type': 'application/zip' } }));
+    // ES2022 has no Promise.withResolvers; retain the deferred-response pattern used in this file.
+    let finishLate: (response: Response) => void = () => { throw new Error('late download not started'); };
+    // The first download succeeds; the second deliberately ignores abort to exercise the UI's late fence.
+    fetchDownload.mockImplementationOnce(() => new Promise<Response>(resolve => { finishLate = resolve; }));
+    const createURL = vi.fn<typeof URL.createObjectURL>(() => 'blob:checked-private-zip'); const revokeURL = vi.fn<typeof URL.revokeObjectURL>(); const NativeURL = URL;
+    vi.stubGlobal('fetch', fetchDownload);
+    vi.stubGlobal('URL', class extends NativeURL { static createObjectURL = createURL; static revokeObjectURL = revokeURL; });
+    const clicked: { href: string; download: string }[] = [];
+    const click = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(function (this: HTMLAnchorElement) { clicked.push({ href: this.href, download: this.download }); });
+    const view = render(<Documents archiveRecovery={archiveRecovery} api={api} profile={profile} />); await openTailored(user);
+    await user.click(screen.getByRole('button', { name: 'Prepare archive preview' }));
+    vi.useFakeTimers();
+    try {
+      await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Create all-document ZIP' })); });
+      await act(async () => { await vi.advanceTimersByTimeAsync(1000); });
+      fireEvent.change(screen.getByLabelText('Block text: b-1'), { target: { value: 'Only my saved wording belongs in the ZIP.' } });
+      expect(screen.getByRole('button', { name: /Download all saved application PDFs/ })).toBeDisabled();
+      expect(fetchDownload).not.toHaveBeenCalled();
+      expect(screen.getByLabelText('Block text: b-1')).toHaveValue('Only my saved wording belongs in the ZIP.');
+      await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Discard document changes' })); });
+      await act(async () => { fireEvent.click(screen.getByRole('button', { name: /Download all saved application PDFs/ })); });
+      expect(screen.getByRole('status')).toHaveTextContent('handed to your browser');
+      expect(fetchDownload).toHaveBeenCalledWith('/api/v1/document-archives/archive-1/download', expect.objectContaining({ method: 'GET', credentials: 'same-origin', cache: 'no-store', headers: { Accept: 'application/zip' } }));
+      expect(createURL).toHaveBeenCalledTimes(1);
+      expect(await (createURL.mock.calls[0]?.[0] as unknown as Blob).text()).toBe('PK-private-ZIP-bytes');
+      expect(clicked).toEqual([{ href: 'blob:checked-private-zip', download: 'bonafides-application-pdfs.zip' }]);
+      await act(async () => { await vi.advanceTimersByTimeAsync(1); });
+      expect(revokeURL).toHaveBeenCalledWith('blob:checked-private-zip');
+      expect(screen.getByLabelText('Block text: b-1')).toHaveValue(tailored.current_revision.body.sections[0]!.blocks[0]!.text);
+      await act(async () => { fireEvent.click(screen.getByRole('button', { name: /Download all saved application PDFs/ })); });
+      view.unmount();
+      await act(async () => { finishLate(new Response('PK-late-private-bytes', { headers: { 'Content-Type': 'application/zip' } })); });
+      expect(createURL).toHaveBeenCalledTimes(1); expect(clicked).toHaveLength(1);
+    } finally { view.unmount(); click.mockRestore(); vi.unstubAllGlobals(); vi.useRealTimers(); }
+  });
+
+  it.each([
+    [409, 'document_archive_source_changed', /The saved document set, sources, reviews/],
+    [410, 'document_archive_expired', /This archive has expired/],
+    [410, 'document_archive_unavailable', /This temporary archive is no longer available/],
+  ] as const)('withdraws a ZIP rejected with %s %s, explains the server reason and requires a new explicit preview', async (status, code, message) => {
+    const user = userEvent.setup();
+    const { api, request } = proposalFixture(async (path, method) => {
+      if (path === '/document-archives/preview') return snapshot;
+      if (path === '/document-archives' && method === 'POST') return archiveTask;
+      if (path === '/workflows/archive-1') return complete('2030-01-01T00:00:00Z');
+      throw new ApiError(404, 'not_found');
+    });
+    const fetchDownload = vi.fn<typeof fetch>().mockResolvedValue(new Response(JSON.stringify({ code, detail: 'Blocked document tailored-resume.' }), { status, headers: { 'Content-Type': 'application/problem+json' } }));
+    vi.stubGlobal('fetch', fetchDownload);
+    const click = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {});
+    const view = render(<Documents archiveRecovery={archiveRecovery} api={api} profile={profile} />); await openTailored(user);
+    await user.click(screen.getByRole('button', { name: 'Prepare archive preview' }));
+    vi.useFakeTimers();
+    try {
+      await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Create all-document ZIP' })); });
+      await act(async () => { await vi.advanceTimersByTimeAsync(1000); });
+      await act(async () => { fireEvent.click(screen.getByRole('button', { name: /Download all saved application PDFs/ })); });
+      expect(screen.getByText(message)).toHaveTextContent('Blocked document tailored-resume.');
+      expect(screen.getByRole('status')).toHaveTextContent('old download has been withdrawn');
+      expect(screen.queryByRole('button', { name: /Download all saved application PDFs/ })).not.toBeInTheDocument();
+      expect(click).not.toHaveBeenCalled();
+      expect(screen.getByLabelText('Tracked application')).toHaveValue(application.id);
+      expect(screen.getByLabelText('Block text: b-1')).toHaveValue(tailored.current_revision.body.sections[0]!.blocks[0]!.text);
+      expect(request.mock.calls.filter(call => call[0] === '/document-archives/preview')).toHaveLength(1);
+      expect(request.mock.calls.filter(call => call[1] === 'POST')).toHaveLength(1);
+      await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Prepare archive preview' })); });
+      expect(screen.getByText(/Preview: 4 saved documents/)).toBeVisible();
+      expect(screen.queryByText(message)).not.toBeInTheDocument();
+      expect(request.mock.calls.filter(call => call[0] === '/document-archives/preview')).toHaveLength(2);
+      expect(request.mock.calls.filter(call => call[1] === 'POST')).toHaveLength(1);
+      expect(fetchDownload).toHaveBeenCalledTimes(1);
+    } finally { view.unmount(); click.mockRestore(); vi.unstubAllGlobals(); vi.useRealTimers(); }
+  });
+
+  it('rejects a mismatched workflow or artifact result and reconnects the same task without loading result documents', async () => {
+    const user = userEvent.setup(); let reads = 0;
+    const { api, request } = proposalFixture(async (path, method) => {
+      if (path === '/document-archives/preview') return snapshot;
+      if (path === '/document-archives' && method === 'POST') return archiveTask;
+      if (path === '/workflows/archive-1') {
+        const value = complete(new Date(Date.now() + 86400000).toISOString());
+        if (++reads === 1) return { ...value, id: 'someone-else-task' };
+        if (reads === 2) return { ...value, result: { document_id: 'wrong-document', artifact_id: 'wrong-pdf' } };
+        return value;
+      }
+      throw new ApiError(404, 'not_found');
+    });
+    render(<Documents archiveRecovery={archiveRecovery} api={api} profile={profile} />); await openTailored(user);
+    await user.click(screen.getByRole('button', { name: 'Prepare archive preview' }));
+    vi.useFakeTimers();
+    try {
+      await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Create all-document ZIP' })); });
+      for (let attempt = 0; attempt < 2; attempt++) {
+        await act(async () => { await vi.advanceTimersByTimeAsync(1000); });
+        expect(screen.getByText(/Archive status or its matching result could not be confirmed/)).toBeVisible();
+        expect(screen.queryByRole('button', { name: /Download all saved application PDFs/ })).not.toBeInTheDocument();
+        await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Reconnect document task' })); });
+      }
+      await act(async () => { await vi.advanceTimersByTimeAsync(1000); });
+      expect(screen.getByRole('button', { name: /Download all saved application PDFs/ })).toBeEnabled();
+      expect(screen.getByLabelText('Block text: b-1')).toHaveValue(tailored.current_revision.body.sections[0]!.blocks[0]!.text);
+      expect(request.mock.calls.some(call => call[0] === '/documents/wrong-document')).toBe(false);
+    } finally { vi.useRealTimers(); }
+  });
+
+  it('retries a due failure without changing the frozen set, then ignores an old poll after cancellation and a new archive task', async () => {
+    const user = userEvent.setup(); let writes = 0; let reads = 0; let finishOld: (value: Workflow) => void = () => { throw new Error('old poll not started'); };
+    const { api, request } = proposalFixture(async (path, method) => {
+      if (path === '/document-archives/preview') return snapshot;
+      if (path === '/document-archives' && method === 'POST') return { ...archiveTask, id: ++writes === 1 ? 'archive-1' : 'archive-2' };
+      if (path === '/workflows/archive-1') {
+        if (++reads === 1) return { ...archiveTask, version: 2, state: 'retryable_failure', retryable: true, retry_block_reason: null, last_error_code: 'renderer_busy' };
+        return new Promise<Workflow>(resolve => { finishOld = resolve; });
+      }
+      if (path === '/workflows/archive-1/retry') return { ...archiveTask, version: 3 };
+      if (path === '/workflows/archive-1/cancel') return { ...archiveTask, version: 4, state: 'cancelled', cancelable: false };
+      throw new ApiError(404, 'not_found');
+    });
+    render(<Documents archiveRecovery={archiveRecovery} api={api} profile={profile} />); await openTailored(user);
+    await user.click(screen.getByRole('button', { name: 'Prepare archive preview' }));
+    vi.useFakeTimers();
+    try {
+      await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Create all-document ZIP' })); });
+      await act(async () => { await vi.advanceTimersByTimeAsync(1000); });
+      expect(screen.getByRole('button', { name: 'Retry frozen archive task' })).toBeEnabled();
+      await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Retry frozen archive task' })); });
+      expect(request.mock.calls.filter(call => call[0] === '/document-archives/preview')).toHaveLength(1);
+      await act(async () => { await vi.advanceTimersByTimeAsync(1000); });
+      await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Cancel document task' })); });
+      expect(screen.getByRole('heading', { name: 'Document task: cancelled' })).toBeVisible();
+      await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Prepare archive preview' })); });
+      await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Create all-document ZIP' })); });
+      await act(async () => { finishOld(complete(new Date(Date.now() + 86400000).toISOString())); });
+      expect(screen.getByRole('heading', { name: 'Document task: pending' })).toBeVisible();
+      expect(screen.getByText('Task archive-2')).toBeVisible();
+      expect(screen.queryByRole('button', { name: /Download all saved application PDFs/ })).not.toBeInTheDocument();
+      expect(screen.getByLabelText('Tracked application')).toHaveValue(application.id);
     } finally { vi.useRealTimers(); }
   });
 });

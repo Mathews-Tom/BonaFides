@@ -104,6 +104,26 @@ If rendering fails with a message about glyphs or text the renderer can't preser
 
 The built-in renderer also compares selectable PDF text with the saved visible content. This is an internal machine-readability check, not certification by an external applicant-tracking system, a visual layout review or a factual check.
 
+## Download all saved application PDFs together
+
+In **Tracked application documents**, use **Download all saved application PDFs** to make one private ZIP, grouped into company folders. You do not need to select an application first. This includes every current saved tailored résumé and cover letter across all your applications, even archived applications. Base résumés, email drafts, deleted documents and earlier revisions are not included.
+
+1. Save your local edits with **Save document revision**, or explicitly choose **Discard document changes**. The archive never includes unsaved wording or silently discards it.
+2. Review and accept each current saved document you want to keep in the set. Every included document must pass the same source, factual-support and review requirements as an individual PDF. A missing partner is not invented: an application with only a saved résumé contributes that résumé.
+3. Select **Prepare archive preview**. The preview counts the whole saved-document set, not the selected job. The limits are **100 documents** and **64 MiB for PDF data plus the ZIP**.
+4. Select **Create all-document ZIP** to use that exact preview. The task reports recorded **completed of total** document counts, not an estimated percentage. It uses the built-in renderer without an AI call and changes no saved documents, reviews, profile entries or history.
+5. After the whole task succeeds, select **Download all saved application PDFs (ZIP)**. The ready archive shows its expiry time and is available for **24 hours**. The temporary server copy is removed automatically; your downloaded copy is independent and contains personal information, so store it carefully.
+
+This export is **all-or-nothing**. An empty set is refused. An unreviewed or otherwise blocked document, unsupported glyphs, a size limit, or a change to the document set, sources, reviews, presentation or company/job labels prevents the whole ZIP from being published. No blocked document is silently skipped and there is no partial download. Correct the named problem, select **Prepare archive preview** or **Refresh archive preview**, and explicitly create a new ZIP. Changes after success can also invalidate the download before its expiry; prepare a new archive in that case.
+
+**Cancel document task** revokes publication of the ZIP; a task may still be stopping. If a temporary failure permits **Retry frozen archive task**, that retry keeps the original saved-document set, cumulative attempt limits and deadline. It does not refresh the preview. For an unknown enqueue outcome, **Retry exact archive request** retains the original preview and request key rather than silently creating a different request. **Reconnect document task** reloads the same task after a monitoring failure and does not replace your selected document or local edits.
+
+Downloads are checked before the ZIP is handed to your browser. A refused or expired download shows the problem and withdraws the old download button; resolve the problem and explicitly prepare a new preview. If an uncertain create request needs authentication, sign in again. Preserve any editor text before the connection panel requires an explicit workspace reload, then return to **Tracked application documents** and select **Retry exact archive request**. The original request survives that reload for the same owner and installation; no retry is automatic. Keep this page open: recovery is only in memory, not browser storage, and signing out or changing owner or installation discards it. A definitive refusal lets you prepare a fresh preview instead.
+
+After privacy erasure, a monitored archive task can lose its inputs or disappear. Use **Clear unavailable archive task** to stop monitoring it without replacing your selected document or local edits. This is not confirmation of server cancellation. Save or copy any local edits before reloading the current workspace.
+
+Archive PDFs receive the same saved-text and glyph checks as individual PDFs. These are internal machine-readability checks, not external ATS certification, visual layout inspection or factual proof. The ZIP is a temporary convenience download, not a replacement for an owner-data backup. Existing individual PDF downloads remain unchanged.
+
 ## Look back or restore an earlier version
 
 Select **Load document history**, then choose a version to preview it. Previewing changes nothing; select **Return to current saved revision** to go back. To bring an old version back, tick **Restore this historical revision as a new current revision, retaining displaced history** and select **Restore historical revision**. Nothing is deleted.

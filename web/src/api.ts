@@ -110,8 +110,14 @@ export interface InstallationBackups {
   generations: { id: string; captured_at: string; restore_verified_at: string | null; byte_length: number }[];
 }
 export const MAX_PORTABLE_BYTES = 10_000 * 64 * 1024 * 1024 + 20 * 1024 * 1024;
+export interface DocumentArchivePreview {
+  workspace_version: number; manifest_sha256: string; document_count: number;
+  expires_in_seconds: number; max_documents: number; max_archive_bytes: number;
+}
+export interface DocumentArchiveRequest { manifest_sha256: string }
 export interface Workflow {
-  id: string; version: number; state: WorkflowState; attempt: number; kind?: string; mode?: 'deterministic_base' | 'tailored_ai' | 'section_regeneration' | 'page_fit';
+  id: string; version: number; state: WorkflowState; attempt: number; kind?: string; mode?: 'deterministic_base' | 'tailored_ai' | 'section_regeneration' | 'page_fit' | 'document_archive';
+  progress?: { completed: number; total: number };
   max_attempts: number; next_attempt_at: string | null; last_error_code: string | null;
   created_at: string; updated_at: string; deadline_at: string; cancel_requested_at: string | null;
   lease_expires_at: string | null; last_heartbeat_at: string | null; queue_age_seconds: number | null;
@@ -128,6 +134,7 @@ export interface Workflow {
     document_id?: string; revision_id?: string; artifact_id?: string; application_id?: string; model_run_id?: string;
     proposal_id?: string; target_revision_id?: string; section_key?: string;
     fit_workflow_id?: string; page_target?: 1 | 2; page_count?: number;
+    artifact_type?: 'document_archive'; archive_document_count?: number; archive_expires_at?: string;
     documents?: { kind: DocumentKind; document_id: string; revision_id: string }[];
     source_id?: string; posting_id?: string; profile_revision_id?: string; requirements_revision_id?: string; source_sha256?: string;
     requirements?: Requirement[]; assessments?: Coverage[]; policy_version?: number; fetch_elapsed_ms?: number; posting_count?: number;
@@ -316,7 +323,18 @@ export class Api {
     if (idempotent) headers['Idempotency-Key'] = typeof idempotent === 'string' ? idempotent : crypto.randomUUID();
     return this.send<T>(path, { method, headers, ...(signal ? { signal } : {}), ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
   }
-  private async send<T>(path: string, options: RequestInit): Promise<T> {
+  async previewDocumentArchive(signal?: AbortSignal): Promise<DocumentArchivePreview> {
+    return this.request<DocumentArchivePreview>('/document-archives/preview', 'GET', undefined, undefined, false, signal);
+  }
+  async createDocumentArchive(body: DocumentArchiveRequest, workspaceVersion: number, idempotencyKey: string, signal?: AbortSignal): Promise<Workflow> {
+    return this.request<Workflow>('/document-archives', 'POST', body, workspaceVersion, idempotencyKey, signal);
+  }
+  async downloadDocumentArchive(workflowId: string, signal?: AbortSignal): Promise<Blob> {
+    return this.send<Blob>(`/document-archives/${encodeURIComponent(workflowId)}/download`, {
+      method: 'GET', headers: { Accept: 'application/zip' }, ...(signal ? { signal } : {}),
+    }, true);
+  }
+  private async send<T>(path: string, options: RequestInit, binary = false): Promise<T> {
     const method = options.method ?? 'GET';
     const authentication = method === 'POST' && ['/session', '/bootstrap', '/session/reauthenticate'].includes(path);
     if (method !== 'GET' && this.writeBlock && !authentication) throw new ApiError(409, this.writeBlock);
@@ -339,7 +357,7 @@ export class Api {
       throw failure;
     }
     if (response.status === 204) return undefined as T;
-    try { return await response.json() as T; }
+    try { return binary ? await response.blob() as T : await response.json() as T; }
     catch (failure) {
       if (!(failure instanceof DOMException && failure.name === 'AbortError')) this.onUnavailable?.(failure);
       throw failure;

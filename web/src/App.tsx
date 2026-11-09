@@ -6,7 +6,7 @@ import { ResumeImport } from './ResumeImport';
 import { JobSources } from './JobSources';
 import { ThemePreference } from './ThemePreference';
 import { Tracking } from './Tracking';
-import { Documents } from './Documents';
+import { Documents, type DocumentArchiveRecovery } from './Documents';
 import { Tasks } from './Tasks';
 import { DataPortability } from './DataPortability';
 import { ConnectionPanel } from './ConnectionPanel';
@@ -59,6 +59,7 @@ export function App({ api = defaultApi }: { api?: Api }) {
   const [portabilityBusy, setPortabilityBusy] = useState(false);
   const busy = acting || tasksBusy || portabilityBusy;
   const [documentRequest, setDocumentRequest] = useState<{ id: string; key: string } | null>(null);
+  const archiveRecovery = useRef<DocumentArchiveRecovery>({ generation: 0, request: null });
   const [scenario, setScenario] = useState('normal');
   const errorRef = useRef<HTMLDivElement>(null);
   useEffect(() => { if (error) errorRef.current?.focus(); }, [error]);
@@ -151,9 +152,13 @@ export function App({ api = defaultApi }: { api?: Api }) {
     }
   }
   const profileMutation = useRef<{ fingerprint: string; key: string } | null>(null);
+  function clearArchiveRecovery() {
+    archiveRecovery.current = { generation: archiveRecovery.current.generation + 1, request: null };
+  }
   async function signOut() {
     await act(async () => {
       await api.request('/session', 'DELETE');
+      clearArchiveRecovery();
       workspaceEpoch.current++; setWorkspaceGeneration(workspaceEpoch.current);
       identityEpoch.current++; latestProfileVersion.current = 0; latestProfileId.current = null; profileMutation.current = null;
       setSession(null); setProfile(null); setName(''); setHeadline(''); setDescription(''); setContact(emptyContact);
@@ -161,7 +166,9 @@ export function App({ api = defaultApi }: { api?: Api }) {
       const value = await api.request<Challenge>('/auth/challenge'); api.csrf = value.csrf_token; setChallenge(value);
     });
   }
-  function reloadWorkspace(value: Profile) {
+  function reloadWorkspace(value: Profile, status: InstallationStatus) {
+    if (status.namespace_id !== initialStatus?.namespace_id || value.id !== profile?.id) clearArchiveRecovery();
+    setInitialStatus(status);
     latestProfileVersion.current = 0; latestProfileId.current = null; identityEpoch.current++;
     profileMutation.current = null; acceptProfile(value); workspaceEpoch.current++;
     setWorkspaceGeneration(workspaceEpoch.current);
@@ -236,7 +243,7 @@ export function App({ api = defaultApi }: { api?: Api }) {
     <main id="main" tabIndex={-1}>
       <div ref={errorRef} className="error" role="alert" tabIndex={-1} hidden={!error}>{error}</div><p role="status" className="status">{notice}</p>
       {startupProblem && !session && <section className="panel" aria-label="Installation unavailable"><h2>Installation unavailable</h2><p role="status">{startupProblem}</p><button className="secondary" disabled={!ready || busy} onClick={() => { setError(''); setReady(false); setStartupGeneration(value => value + 1); }}>Check installation again</button></section>}
-      {session && initialStatus && <details className={`connection-details${connectionPaused ? ' needs-attention' : ''}`} open={connectionPaused}><summary>{connectionPaused ? 'Workspace connection needs attention' : 'Connected to your installation'}</summary><ConnectionPanel api={api} session={session} profile={profile} initialStatus={initialStatus} reloadDisabled={busy || entriesBusy || importBusy || jobsBusy || trackingBusy || documentsBusy} onSession={setSession} onReload={reloadWorkspace} onPaused={setConnectionPaused} /></details>}
+      {session && initialStatus && <details className={`connection-details${connectionPaused ? ' needs-attention' : ''}`} open={connectionPaused}><summary>{connectionPaused ? 'Workspace connection needs attention' : 'Connected to your installation'}</summary><ConnectionPanel api={api} session={session} profile={profile} initialStatus={initialStatus} reloadDisabled={busy || entriesBusy || importBusy || jobsBusy || trackingBusy || documentsBusy} onSession={value => { if (value.owner_id !== session.owner_id) clearArchiveRecovery(); setSession(value); }} onReload={reloadWorkspace} onPaused={setConnectionPaused} /></details>}
       {!ready ? <p role="status">Connecting to your installation…</p> : !session ? <section className="access">
         <div><h1>Your career, your workspace.</h1><p>Create your personal account, import your résumé and review the facts before building your next application.</p></div>
         <form onSubmit={event => { void authenticate(event); }}>
@@ -306,7 +313,7 @@ export function App({ api = defaultApi }: { api?: Api }) {
         </form>
       </details>
       <details className="panel"><summary>Change password</summary><form onSubmit={event => { event.preventDefault(); const form = event.currentTarget; const values = new FormData(form); void act(async () => { const value = await api.request<Session>('/session/password', 'POST', { current_password: String(values.get('current_password')), new_password: String(values.get('new_password')) }); api.csrf = value.csrf_token; setSession(value); form.reset(); setNotice('Password changed. This session has been rotated.'); }); }}><label>Current password<input type="password" name="current_password" autoComplete="current-password" required maxLength={128} /></label><label>New password<input type="password" name="new_password" autoComplete="new-password" minLength={15} maxLength={128} required /></label><button disabled={connectionPaused || busy}>Change password</button></form></details></div>
-      <div hidden={page !== 'documents'} data-workspace-screen="documents"><Documents api={api} profile={profile} disabled={busy || identityDirty || entriesDirty || entriesBusy || importDirty || importBusy || jobsDirty || jobsBusy || trackingDirty || trackingBusy || !!(workflow && !terminal(workflow.state))} externalDocumentId={documentRequest?.id ?? null} externalRequestKey={documentRequest?.key ?? null} onDirtyChange={setDocumentsDirty} onBusyChange={setDocumentsBusy} /></div>
+      <div hidden={page !== 'documents'} data-workspace-screen="documents"><Documents api={api} profile={profile} archiveRecovery={archiveRecovery} disabled={connectionPaused || busy || identityDirty || entriesDirty || entriesBusy || importDirty || importBusy || jobsDirty || jobsBusy || trackingDirty || trackingBusy || !!(workflow && !terminal(workflow.state))} externalDocumentId={documentRequest?.id ?? null} externalRequestKey={documentRequest?.key ?? null} onDirtyChange={setDocumentsDirty} onBusyChange={setDocumentsBusy} /></div>
       {page === 'not-found' && <section className="panel"><h2>This workspace page does not exist</h2><a href="#/overview">Return to overview</a></section>}</div>}
     </main><footer>BonaFides · Private workspace · Review before export · No sending authority</footer>
   </div>;

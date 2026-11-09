@@ -30,6 +30,7 @@ from test_tracking import _application
 
 from bonafides import suitability
 from bonafides.approvals import consume_action_approval, prepare_action_approval
+from bonafides.commands import command
 from bonafides.import_parser import ImportParserClient
 from bonafides.installation_control import Control, InstallationMaintenance, begin_control
 from bonafides.portable_erasure import delete_controlled_owner_data, purge_scope
@@ -411,3 +412,167 @@ def test_workspace_erasure_removes_reviewed_source_and_profile_history_but_keeps
     task = _queue(catalog, _view(catalog, posting["id"]))
     with catalog.runtime.transaction() as conn:
         assert suitability._reserve_call(conn, task, catalog.identity.settings, 2) is not None
+
+
+@pytest.mark.postgres
+@pytest.mark.parametrize("workspace", [False, True])
+def test_bulk_archive_erasure_scrubs_metadata_and_waits_for_private_copy_removal(
+    catalog: SourceContext, parser: ImportParserClient, renderer_spool: Path, workspace: bool
+) -> None:
+    application = _application(catalog, title="Synthetic archive erasure target")
+    neighbor = _application(catalog, title="Synthetic retained archive neighbor")
+    retained = _attachment(catalog, neighbor, b"Unrelated shared storage remains intact")
+    # Erasure-policy fixture, not evidence of rendering: the archive includes
+    # nested application references and private labels, unlike a single PDF task.
+    with catalog.runtime.transaction() as conn:
+        archive_id = enqueue(
+            conn,
+            catalog.owner_id,
+            "pdf_render",
+            {
+                "mode": "document_archive",
+                "manifest": {
+                    "documents": [
+                        {"application_id": application["id"], "company": "Private erased company"}
+                    ]
+                },
+            },
+        )
+        conn.execute(
+            text("""UPDATE bonafides.workflow_runs SET state='succeeded',fence=1,attempt=1,
+            finished_at=clock_timestamp(),result=jsonb_build_object(
+            'artifact_type','document_archive','archive_filename',CAST(:file AS text))
+            WHERE owner_id=:owner AND id=:id"""),
+            {"owner": catalog.owner_id, "id": archive_id, "file": f"{archive_id}.1.zip"},
+        )
+        pending_id = enqueue(
+            conn,
+            catalog.owner_id,
+            "pdf_render",
+            {
+                "mode": "document_archive",
+                "manifest": {"documents": [{"application_id": application["id"]}]},
+            },
+        )
+        conn.execute(
+            text("""INSERT INTO bonafides.workflow_steps
+            (owner_id,workflow_run_id,step_key,attempt,fence,state,checkpoint,completed_at)
+            VALUES(:owner,:id,'publish',1,1,'succeeded',
+            '{"company":"Private erased company"}',clock_timestamp())"""),
+            {"owner": catalog.owner_id, "id": archive_id},
+        )
+        request_version = conn.execute(
+            text("SELECT workspace_version FROM bonafides.owner_settings WHERE owner_id=:owner"),
+            {"owner": catalog.owner_id},
+        ).scalar_one()
+        command(
+            conn,
+            catalog.owner_id,
+            "POST",
+            "/document-archives",
+            {},
+            {"manifest_sha256": "a" * 64},
+            f'"{request_version}"',
+            "synthetic-archive-replay",
+            "workspace",
+            catalog.owner_id,
+            lambda active: (202, {"id": str(archive_id)}),
+        )
+    folder = catalog.identity.settings.blob_root / "document_archives" / str(catalog.owner_id)
+    folder.mkdir(parents=True)
+    raw = b"Synthetic private archive bytes requiring synchronous erasure"
+    path = folder / f"{archive_id}.1.zip"
+    path.write_bytes(raw)
+    staged = folder / (".staging-" + uuid4().hex)
+    staged.write_bytes(b"Interrupted private archive")
+    control = _deletion(catalog, None if workspace else application)
+    maintenance = InstallationMaintenance(catalog.runtime, control, parser.spool, renderer_spool)
+    with maintenance.quiescent():
+        folder.chmod(0o500)
+        try:
+            with pytest.raises(PermissionError):
+                delete_controlled_owner_data(catalog.runtime, catalog.identity.settings, control)
+            assert path.read_bytes() == raw
+            with catalog.runtime.transaction() as conn:
+                assert (
+                    conn.execute(
+                        text(
+                            "SELECT completed_at FROM bonafides.portable_purges WHERE control_id=:id"
+                        ),
+                        {"id": control.id},
+                    ).scalar_one()
+                    is None
+                )
+                if not workspace:
+                    erased = (
+                        conn.execute(
+                            text(
+                                "SELECT input,result,last_error_code FROM bonafides.workflow_runs WHERE id=:id"
+                            ),
+                            {"id": archive_id},
+                        )
+                        .mappings()
+                        .one()
+                    )
+                    assert erased["input"] == {"erased": True}
+                    assert erased["result"] is None and erased["last_error_code"] == "data_erased"
+                    pending = (
+                        conn.execute(
+                            text(
+                                "SELECT state::text,input,last_error_code FROM bonafides.workflow_runs WHERE id=:id"
+                            ),
+                            {"id": pending_id},
+                        )
+                        .mappings()
+                        .one()
+                    )
+                    assert pending == {
+                        "state": "cancelled",
+                        "input": {"erased": True},
+                        "last_error_code": "data_erased",
+                    }
+                    assert (
+                        conn.execute(
+                            text(
+                                "SELECT checkpoint FROM bonafides.workflow_steps WHERE workflow_run_id=:id"
+                            ),
+                            {"id": archive_id},
+                        ).scalar_one()
+                        == {}
+                    )
+                    replay = (
+                        conn.execute(
+                            text(
+                                "SELECT response_status,response_body FROM bonafides.idempotency_records WHERE key='synthetic-archive-replay'"
+                            )
+                        )
+                        .mappings()
+                        .one()
+                    )
+                    assert replay["response_status"] == 410
+                    assert replay["response_body"]["code"] == "data_erased"
+            with pytest.raises(DBAPIError):
+                maintenance.finish({"filesystem_complete": False})
+        finally:
+            folder.chmod(0o700)
+        purge_scope(catalog.runtime, catalog.identity.settings, control)
+        assert not path.exists() and not staged.exists()
+        maintenance.finish({"filesystem_complete": True})
+    login = _login(catalog.identity, catalog.client)
+    assert login.status_code == 201, login.text
+    catalog.csrf = login.json()["csrf_token"]
+    replayed = catalog.client.post(
+        "/api/v1/document-archives",
+        json={"manifest_sha256": "a" * 64},
+        headers=catalog.headers(request_version, key="synthetic-archive-replay"),
+    )
+    assert replayed.status_code == 410, replayed.text
+    assert replayed.json()["code"] == "data_erased"
+    assert catalog.client.get(f"/api/v1/document-archives/{archive_id}/download").status_code in (
+        404,
+        410,
+    )
+    if not workspace:
+        assert (
+            catalog.identity.settings.blob_root / str(catalog.owner_id) / retained.storage_key
+        ).read_bytes() == b"Unrelated shared storage remains intact"
