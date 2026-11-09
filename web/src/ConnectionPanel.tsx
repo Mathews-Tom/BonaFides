@@ -13,7 +13,7 @@ function checkedStatus(value: InstallationStatus): InstallationStatus {
 
 export function ConnectionPanel({ api, session, profile, initialStatus, reloadDisabled, onSession, onReload, onPaused }: {
   api: Api; session: Session; profile: Profile | null; initialStatus: InstallationStatus;
-  reloadDisabled: boolean; onSession: (value: Session) => void; onReload: (value: Profile) => void; onPaused: (paused: boolean) => void;
+  reloadDisabled: boolean; onSession: (value: Session) => void; onReload: (value: Profile, status: InstallationStatus) => void; onPaused: (paused: boolean) => void;
 }) {
   const [phase, setPhase] = useState<Phase>('checking');
   const [status, setStatus] = useState(initialStatus);
@@ -133,7 +133,7 @@ export function ConnectionPanel({ api, session, profile, initialStatus, reloadDi
       const latest = await observe(); if (!mounted.current) return;
       if (identity(latest) !== identity(reviewed)) { setComparison(latest); setDiscard(false); setError('The current workspace changed since comparison. Review it again; no editor was replaced and writers remain paused.'); return; }
       if (!replace && !compatible(latest)) { setComparison(latest); setDiscard(false); setError('The saved workspace differs. Preserve your text, then explicitly discard and reload before writing.'); return; }
-      if (replace) current.current.onReload(latest.profile);
+      if (replace) current.current.onReload(latest.profile, latest.status);
       baseline.current = { status: latest.status, owner: latest.owner, profileId: latest.profile.id, profileVersion: latest.profile.version };
       setComparison(null); setDiscard(false); transition('online'); setStopped(false); setMonitor(value => value + 1);
     });

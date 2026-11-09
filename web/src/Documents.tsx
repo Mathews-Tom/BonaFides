@@ -6,8 +6,13 @@ import { copyBody, ISSUE_REASONS, issueAnchor, linkedClaim, rebaseBody, sameBody
 import { proposalMatches, SectionProposals } from './SectionProposals';
 import './Documents.css';
 
+export interface DocumentArchiveRecovery {
+  generation: number;
+  request: { preview: DocumentArchivePreview; key: string } | null;
+}
 export interface DocumentsProps {
   api: Api; profile: Profile | null; disabled?: boolean; externalDocumentId?: string | null; externalRequestKey?: string | null;
+  archiveRecovery: { current: DocumentArchiveRecovery };
   onDirtyChange?: (dirty: boolean) => void; onBusyChange?: (busy: boolean) => void;
 }
 const docPath = (id: string) => `/documents/${encodeURIComponent(id)}`;
@@ -97,7 +102,7 @@ function ReadonlyBody({ revision }: { revision: DocumentRevision }) {
   return <><OmittedClaims revision={revision} /><PageFitInventory revision={revision} /><article className="paper"><h3>{revision.body.title}</h3>{revision.body.sections.map(section => <section key={section.key}><h4>{section.heading}</h4>{section.blocks.map(block => <div className="evidence-seam" key={block.block_key}><p>{block.text}</p><details><summary>Statement sources ({block.claim_kind})</summary><Sources facts={revision.provenance_snapshot.facts ?? []} claimIds={block.claim_revision_ids} evidenceIds={block.evidence_revision_ids} /></details></div>)}</section>)}</article></>;
 }
 
-export function Documents({ api, profile, disabled = false, externalDocumentId, externalRequestKey, onDirtyChange, onBusyChange }: DocumentsProps) {
+export function Documents({ api, profile, archiveRecovery, disabled = false, externalDocumentId, externalRequestKey, onDirtyChange, onBusyChange }: DocumentsProps) {
   const [mode, setMode] = useState<'base' | 'tailored'>('base');
   const [templates, setTemplates] = useState<DocumentTemplate[]>([]);
   const [template, setTemplate] = useState('');
@@ -143,13 +148,15 @@ export function Documents({ api, profile, disabled = false, externalDocumentId, 
   const [notice, setNotice] = useState('');
   const [monitorError, setMonitorError] = useState('');
   const [pollToken, setPollToken] = useState(0);
-  const [archivePreview, setArchivePreview] = useState<DocumentArchivePreview | null>(null);
+  const [archivePreview, setArchivePreview] = useState<DocumentArchivePreview | null>(() => archiveRecovery.current.request?.preview ?? null);
   const [archiveError, setArchiveError] = useState('');
-  const [archiveUncertain, setArchiveUncertain] = useState(false);
+  const [archiveUncertain, setArchiveUncertain] = useState(() => archiveRecovery.current.request !== null);
   const [archiveUnavailable, setArchiveUnavailable] = useState(false);
   const [archiveDownloadInvalid, setArchiveDownloadInvalid] = useState(false);
   const [archiveClock, setArchiveClock] = useState(Date.now);
-  const archiveIntent = useRef<{ preview: DocumentArchivePreview; key: string; workflowId: string | null; uncertain: boolean } | null>(null);
+  const archiveIntent = useRef<{ preview: DocumentArchivePreview; key: string; generation: number; workflowId: string | null; uncertain: boolean } | null>(
+    archiveRecovery.current.request ? { ...archiveRecovery.current.request, generation: archiveRecovery.current.generation, workflowId: null, uncertain: true } : null,
+  );
   const workflowCurrent = useRef(workflow);
   workflowCurrent.current = workflow;
   const mounted = useRef(false);
@@ -357,27 +364,29 @@ export function Documents({ api, profile, disabled = false, externalDocumentId, 
   function createArchive() {
     if (!archivePreview || locked || dirty || monitorError) return;
     const snapshot = archivePreview;
-    const intent = archiveIntent.current ?? { preview: snapshot, key: crypto.randomUUID(), workflowId: null, uncertain: false };
-    if (intent.preview !== snapshot || intent.workflowId) return;
+    const intent = archiveIntent.current ?? { preview: snapshot, key: crypto.randomUUID(), generation: archiveRecovery.current.generation, workflowId: null, uncertain: false };
+    if (intent.preview !== snapshot || intent.workflowId || intent.generation !== archiveRecovery.current.generation) return;
     archiveIntent.current = intent;
     void run(async signal => {
       setArchiveError('');
       try {
         const value = await api.createDocumentArchive({ manifest_sha256: snapshot.manifest_sha256 }, snapshot.workspace_version, intent.key, signal);
-        if (!mounted.current || signal.aborted || archiveIntent.current !== intent) return;
+        if (!mounted.current || signal.aborted || archiveIntent.current !== intent || intent.generation !== archiveRecovery.current.generation) return;
         if (value.mode !== 'document_archive' || value.kind !== 'pdf_render' || !value.id) throw new Error('invalid_archive_workflow');
         intent.workflowId = value.id; intent.uncertain = false; workflowCurrent.current = value;
+        archiveRecovery.current.request = null;
         workflowSelection.current = selection.current; processedWorkflow.current = null;
         setWorkflow(value); setMonitorError(''); setArchiveUnavailable(false); setArchiveDownloadInvalid(false); setArchiveUncertain(false); setArchivePreview(null);
         setNotice('Archive task accepted for the exact previewed saved-document set. Your selected document and saved content are unchanged.');
       } catch (failure) {
-        if (aborted(failure) || !mounted.current || archiveIntent.current !== intent) return;
+        if (aborted(failure) || !mounted.current || archiveIntent.current !== intent || intent.generation !== archiveRecovery.current.generation) return;
         // Admission/auth failures cannot settle a previous unknown commit.
         // Other server refusals follow the idempotency lookup and settle it.
         const admissionFailure = failure instanceof ApiError &&
           ([401, 403, 408, 429].includes(failure.status) || (failure.status === 409 && failure.code === api.writeBlock));
         intent.uncertain = !(failure instanceof ApiError) || failure.status >= 500 || (intent.uncertain && admissionFailure);
         const uncertain = intent.uncertain;
+        archiveRecovery.current.request = uncertain ? { preview: snapshot, key: intent.key } : null;
         setArchiveUncertain(uncertain);
         if (!uncertain) { setArchivePreview(null); archiveIntent.current = null; }
         setArchiveError(archiveErrorText(failure));

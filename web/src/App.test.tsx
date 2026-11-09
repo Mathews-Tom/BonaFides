@@ -654,6 +654,68 @@ describe('maintenance and preserved-workspace reconnection', () => {
     expect(screen.getByRole('heading', { name: 'Source refresh task task-1' })).toBeInTheDocument();
   });
 
+  it.each(['same workspace', 'different namespace', 'different owner', 'late owner response'])('scopes an uncertain archive request across mandatory reconnect/reload: %s', async context => {
+    const user = userEvent.setup(); const api = new Api(); let status = installation; let revoked = false; let writes = 0;
+    let rejectLate: ((failure: Error) => void) | undefined;
+    const snapshot = { workspace_version: 1, manifest_sha256: 'b'.repeat(64), document_count: 2, expires_in_seconds: 86400, max_documents: 100, max_archive_bytes: 67108864 };
+    const accepted = task({ id: 'accepted-archive', kind: 'pdf_render', mode: 'document_archive' });
+    const request = mockRequest(api, async (path, method) => {
+      if (path === '/session' && method === 'POST') { revoked = false; return { ...session, owner_id: context.includes('owner') ? 'new-owner' : session.owner_id, csrf_token: 'renewed-csrf' }; }
+      if (path === '/session') return session;
+      if (path === '/auth/challenge') return { csrf_token: 'challenge-csrf', bootstrap_available: false };
+      if (path === '/profile') return profile;
+      if (path === '/document-archives/preview') return snapshot;
+      if (path === '/document-archives' && method === 'POST') {
+        if (++writes === 1) { status = { ...installation, workspace_version: 2 }; throw new ApiError(502, 'response_lost'); }
+        if (writes === 2) {
+          revoked = true;
+          if (context === 'late owner response') return await new Promise<never>((_resolve, reject) => { rejectLate = reject; });
+          const failure = new ApiError(401, 'session_revoked'); api.onUnavailable?.(failure); throw failure;
+        }
+        return accepted;
+      }
+      if (path === '/workflows/accepted-archive') return accepted;
+      throw new ApiError(404, 'not_found');
+    }, null, [], async () => { if (revoked) throw new ApiError(401, 'session_revoked'); return status; });
+    render(<App api={api} />);
+    await screen.findByLabelText('Display name'); await waitFor(() => expect(api.writeBlock).toBeNull());
+    await goTo(user, 'Documents');
+    await user.click(screen.getByRole('button', { name: 'Tracked application documents' }));
+    await user.click(screen.getByRole('button', { name: 'Prepare archive preview' }));
+    await user.click(await screen.findByRole('button', { name: 'Create all-document ZIP' }));
+    await user.click(await screen.findByRole('button', { name: 'Retry exact archive request' }));
+    if (context === 'late owner response') fireEvent(document, new Event('visibilitychange'));
+    await user.type(await screen.findByLabelText('Password to reconnect'), 'Fictional reconnect password 817!');
+    if (context === 'different namespace') status = { ...status, namespace_id: 'replacement-namespace' };
+    await user.click(screen.getByRole('button', { name: 'Sign in and retain editors' }));
+    if (rejectLate) await act(async () => { rejectLate?.(new ApiError(502, 'late_response_lost')); });
+    expect(screen.getByRole('button', { name: 'Retry exact archive request' })).toBeDisabled();
+    await user.click(await screen.findByRole('button', { name: 'Check connection and compare saved workspace' }));
+    await screen.findByRole('region', { name: 'Saved workspace comparison' });
+    expect(screen.queryByRole('button', { name: 'Resume writes and keep all editor text' })).not.toBeInTheDocument();
+    await user.click(screen.getByRole('checkbox', { name: /I have preserved the text I need/ }));
+    await user.click(screen.getByRole('button', { name: 'Discard all editors and load this saved workspace' }));
+    await screen.findByText('Every workspace editor was explicitly discarded and reloaded from the reviewed saved context.');
+    await waitFor(() => expect(api.writeBlock).toBeNull());
+    await user.click(screen.getByRole('button', { name: 'Tracked application documents' }));
+    expect(request.mock.calls.filter(call => call[0] === '/document-archives')).toHaveLength(2);
+    if (context === 'same workspace') {
+      expect(await screen.findByRole('button', { name: 'Retry exact archive request' })).toBeEnabled();
+      expect(screen.getByRole('button', { name: 'Refresh archive preview' })).toBeDisabled();
+      await user.click(screen.getByRole('button', { name: 'Retry exact archive request' }));
+    } else {
+      expect(screen.queryByRole('button', { name: 'Retry exact archive request' })).not.toBeInTheDocument();
+      await user.click(screen.getByRole('button', { name: 'Prepare archive preview' }));
+      await user.click(await screen.findByRole('button', { name: 'Create all-document ZIP' }));
+    }
+    await screen.findByRole('heading', { name: 'Document task: pending' });
+    const commands = request.mock.calls.filter(call => call[0] === '/document-archives');
+    expect(commands).toHaveLength(3);
+    expect(commands[1]?.slice(2, 5)).toEqual(commands[0]?.slice(2, 5));
+    if (context === 'same workspace') expect(commands[2]?.slice(2, 5)).toEqual(commands[0]?.slice(2, 5));
+    else expect(commands[2]?.[4]).not.toBe(commands[0]?.[4]);
+  });
+
   it('retains drafts through revoked-session sign-in and rejects version aliasing until explicit full reload', async () => {
     const user = userEvent.setup(); const api = new Api(); let status = installation; let saved = { ...profile, version: 9 };
     let revoked = false; let profileReads = 0;
