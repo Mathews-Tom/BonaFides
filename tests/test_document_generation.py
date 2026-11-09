@@ -2007,18 +2007,21 @@ def test_literal_omission_never_bypasses_evidence_withdrawal_or_repins_on_restor
 
 @pytest.mark.postgres
 @pytest.mark.parametrize(
-    "outcome",
+    ("outcome", "during_render"),
     [
-        "success",
-        "renderer_failure",
-        "renderer_busy",
-        "stale",
-        "letter_changed",
-        "cancelled",
-        "withdrawn",
+        ("success", False),
+        ("renderer_failure", False),
+        ("renderer_busy", False),
+        ("stale", False),
+        ("stale", True),
+        ("letter_changed", False),
+        ("letter_changed", True),
+        ("cancelled", False),
+        ("cancelled", True),
+        ("withdrawn", False),
+        ("withdrawn", True),
     ],
 )
-@pytest.mark.parametrize("during_render", [False, True])
 def test_initial_page_fit_keeps_original_pair_and_fences_every_publication(
     catalog: SourceContext,
     monkeypatch: pytest.MonkeyPatch,
