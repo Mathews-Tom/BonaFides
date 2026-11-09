@@ -81,7 +81,7 @@ For an existing tailored résumé, save your edits, choose **Saved résumé page
 
 Fitting, omission and restoration create saved revisions that need fresh review. Later edits or restores never cut content automatically, and they can take you above the target. A changed document has no current page measurement until you explicitly fit it again. Use **Load document history** to preview or restore earlier wording; the omission inventory also travels with owner-data exports and imports.
 
-Unsaved edits and historical previews cannot be fitted. A failed or cancelled fit leaves the saved document and application available; an intervening save prevents an old task from publishing cuts. Measurement PDFs are private working data, not downloads. Resolve the displayed error before requesting another fit.
+Unsaved edits and historical previews cannot be fitted. A failed or cancelled fit leaves the saved document and application available; an intervening save or application withdrawal prevents an old task from publishing cuts. A fit blocked by temporary renderer saturation remains retryable. Measurement PDFs are private working data, not downloads. Resolve the displayed error before requesting another fit.
 
 ## Approve the exact version
 

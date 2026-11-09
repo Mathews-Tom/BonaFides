@@ -2007,10 +2007,24 @@ def test_literal_omission_never_bypasses_evidence_withdrawal_or_repins_on_restor
 
 @pytest.mark.postgres
 @pytest.mark.parametrize(
-    "outcome", ["success", "renderer_failure", "stale", "letter_changed", "cancelled"]
+    "outcome",
+    [
+        "success",
+        "renderer_failure",
+        "renderer_busy",
+        "stale",
+        "letter_changed",
+        "cancelled",
+        "withdrawn",
+    ],
 )
+@pytest.mark.parametrize("during_render", [False, True])
 def test_initial_page_fit_keeps_original_pair_and_fences_every_publication(
-    catalog: SourceContext, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, outcome: str
+    catalog: SourceContext,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    outcome: str,
+    during_render: bool,
 ) -> None:
     import io
 
@@ -2065,11 +2079,41 @@ def test_initial_page_fit_keeps_original_pair_and_fences_every_publication(
     current = reviewed.json()
     calls = 0
 
+    def intervene() -> None:
+        nonlocal current, letter
+        if outcome == "stale":
+            content = copy.deepcopy(original["body"])
+            content["title"] = "Owner edit while fitting"
+            saved = _save(catalog, current, content)
+            assert saved.status_code == 200, saved.text
+            current = saved.json()
+        elif outcome == "letter_changed":
+            content = copy.deepcopy(letter["current_revision"]["body"])
+            content["title"] = "Owner-edited companion letter"
+            saved = _save(catalog, letter, content)
+            assert saved.status_code == 200, saved.text
+            letter = saved.json()
+        elif outcome == "cancelled":
+            with catalog.runtime.transaction() as conn:
+                cancel_workflow(conn, catalog.owner_id, child.id)
+        elif outcome == "withdrawn":
+            with catalog.runtime.transaction() as conn:
+                conn.execute(
+                    text(
+                        "UPDATE bonafides.applications SET current_stage='withdrawn' WHERE owner_id=:owner AND id=:id"
+                    ),
+                    {"owner": catalog.owner_id, "id": application["id"]},
+                )
+
     def render(self: RenderClient, body: documents.DocumentBody, *args: object) -> bytes:
         nonlocal calls
         calls += 1
+        if during_render and calls == 1:
+            intervene()
         if outcome == "renderer_failure" and calls == 2:
             raise RenderFailure("render_text_unsupported")
+        if outcome == "renderer_busy" and calls == 2:
+            raise RenderFailure("renderer_busy")
         writer = PdfWriter()
         pages = 1 if sum(len(s.blocks) for s in body.sections) <= 2 else 3
         for _ in range(pages):
@@ -2079,21 +2123,8 @@ def test_initial_page_fit_keeps_original_pair_and_fences_every_publication(
         return output.getvalue()
 
     monkeypatch.setattr(RenderClient, "render", render)
-    if outcome == "stale":
-        content = copy.deepcopy(original["body"])
-        content["title"] = "Owner edit while fit queued"
-        saved = _save(catalog, current, content)
-        assert saved.status_code == 200, saved.text
-        current = saved.json()
-    elif outcome == "letter_changed":
-        content = copy.deepcopy(letter["current_revision"]["body"])
-        content["title"] = "Owner-edited companion letter"
-        saved = _save(catalog, letter, content)
-        assert saved.status_code == 200, saved.text
-        letter = saved.json()
-    elif outcome == "cancelled":
-        with catalog.runtime.transaction() as conn:
-            cancel_workflow(conn, catalog.owner_id, child.id)
+    if not during_render:
+        intervene()
     Worker(catalog.runtime, catalog.identity.settings)._execute(child, Event())
     result = catalog.workflow(child.id)
     after = _document(catalog, resume["id"])
@@ -2106,12 +2137,20 @@ def test_initial_page_fit_keeps_original_pair_and_fences_every_publication(
         if outcome == "renderer_failure":
             assert result["state"] == "permanent_failure"
             assert result["last_error_code"] == "render_text_unsupported"
+        elif outcome == "renderer_busy":
+            assert result["state"] == "retryable_failure"
+            assert result["last_error_code"] == "renderer_busy"
+        elif outcome == "withdrawn":
+            assert result["state"] == "permanent_failure"
+            assert result["last_error_code"] == "application_not_active"
         elif outcome in {"stale", "letter_changed"}:
-            assert calls == 0 and result["last_error_code"] == "revision_mismatch"
+            assert bool(calls) == during_render and result["last_error_code"] == "revision_mismatch"
         else:
             with catalog.runtime.transaction() as conn:
                 reap(conn)
-            assert calls == 0 and catalog.workflow(child.id)["state"] == "cancelled"
+            assert (
+                bool(calls) == during_render and catalog.workflow(child.id)["state"] == "cancelled"
+            )
         return
     assert result["state"] == "succeeded", result
     assert result["result"]["page_count"] == 1 and result["result"]["page_target"] == 1
@@ -2165,6 +2204,16 @@ def test_initial_page_fit_keeps_original_pair_and_fences_every_publication(
     assert fitted["state"] == "succeeded", fitted
     assert set(fitted["result"]) == {"document_id", "revision_id", "page_target", "page_count"}
     assert fitted["result"]["revision_id"] != current["current_revision"]["id"]
+    refreshed = _preview(catalog, profile, application)
+    request = {
+        key: refreshed[key] for key in json.loads(response.request.content) if key != "page_target"
+    }
+    rejected = catalog.client.post(
+        f"/api/v1/applications/{application['id']}/generation",
+        json={**request, "page_target": 1},
+        headers=catalog.headers(refreshed["application_version"]),
+    )
+    assert rejected.status_code == 422 and rejected.json()["code"] == "page_fit_requires_new_resume"
 
 
 @pytest.mark.postgres

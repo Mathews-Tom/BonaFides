@@ -690,8 +690,10 @@ def _fit_provenance() -> dict[str, object]:
 
 
 @pytest.mark.parametrize("restore_order", [("b", "c"), ("c", "b")])
+@pytest.mark.parametrize("reordered", [False, True])
 def test_recoverable_blocks_keep_adjacent_order_exact_pins_and_edited_neighbors(
     restore_order: tuple[str, str],
+    reordered: bool,
 ) -> None:
     from bonafides import print_fitting as fitting
 
@@ -701,7 +703,9 @@ def test_recoverable_blocks_keep_adjacent_order_exact_pins_and_edited_neighbors(
         title=body.title,
         sections=[
             DocumentSection(
-                key="first", heading="First", blocks=[block.model_copy(update={"block_key": "a"})]
+                key="first",
+                heading="First",
+                blocks=[block.model_copy(update={"block_key": key}) for key in ("a", "e")],
             ),
             DocumentSection(
                 key="hidden",
@@ -718,6 +722,15 @@ def test_recoverable_blocks_keep_adjacent_order_exact_pins_and_edited_neighbors(
     for key in ("b", "c"):
         body, fit = fitting.change_block(body, fit, "omit", key)
     edited = body.model_copy(update={"title": "Owner-edited title"})
+    visible = (
+        [
+            section.model_copy(update={"blocks": list(reversed(section.blocks))})
+            for section in reversed(body.sections)
+        ]
+        if reordered
+        else body.sections
+    )
+    edited = edited.model_copy(update={"sections": visible})
     provenance: dict[str, object] = {
         **_fit_provenance(),
         "page_fit": fit.model_dump(mode="json"),
@@ -728,7 +741,12 @@ def test_recoverable_blocks_keep_adjacent_order_exact_pins_and_edited_neighbors(
             edited, fitting.inventory(edited, provenance), "restore", key
         )
         provenance = {**provenance, "page_fit": fit.model_dump(mode="json")}
-    assert edited.title == "Owner-edited title" and edited.sections == original.sections
+    assert edited.title == "Owner-edited title"
+    assert [section for section in edited.sections if section.key != "hidden"] == visible
+    assert (
+        next(section for section in edited.sections if section.key == "hidden")
+        == original.sections[1]
+    )
     with pytest.raises(Problem, match="block_not_omitted"):
         fitting.change_block(edited, fit, "restore", restore_order[0])
     assert original.sections[1].blocks == [

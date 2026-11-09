@@ -1346,6 +1346,11 @@ def install_routes(router: APIRouter, db: Database, settings: Settings) -> None:
             if cast(dict[str, object], plan["generation_route"])["status"] != "qualified":
                 raise Problem(503, "generation_route_unavailable")
             if body.page_target is not None:
+                if any(
+                    item["kind"] == "resume"
+                    for item in cast(list[dict[str, object]], plan["targets"])
+                ):
+                    raise Problem(422, "page_fit_requires_new_resume")
                 plan["page_target"] = body.page_target
             workflow = enqueue(conn, owner.id, "document_generate", plan)
             return 202, get_workflow(conn, owner.id, workflow)

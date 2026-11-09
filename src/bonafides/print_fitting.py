@@ -265,8 +265,12 @@ def pinned_source(
     if provenance.get("schema_version") != generation.PROTOCOL:
         raise Problem(422, "page_fit_requires_supported_revision")
     generation.require_template(str(revision["template_version"]))
-    generation._application(conn, owner, UUID(str(record["application_id"])), active=True)
+    application = generation._application(
+        conn, owner, UUID(str(record["application_id"])), active=True
+    )
     if fitting:
+        if application["current_stage"] == "withdrawn":
+            raise Problem(409, "application_not_active")
         if record["stale"]:
             raise Problem(409, "stale_document_context")
         if record["unsupported_claims"]:

@@ -182,7 +182,16 @@ class Worker:
         except Problem as exc:
             self._record_failure(task, exc.code, False)
         except RenderFailure as exc:
-            self._record_failure(task, exc.code, exc.code in {"render_timeout", "benchmark_poison"})
+            self._record_failure(
+                task,
+                exc.code,
+                exc.code in {"render_timeout", "benchmark_poison"}
+                or (
+                    exc.code == "renderer_busy"
+                    and task.kind == "document_generate"
+                    and task.input.get("mode") == "page_fit"
+                ),
+            )
         except local_model.ModelFailure as exc:
             # Shutdown/lease-loss Events are execution interruption, not an owner
             # cancellation command or a new terminal model failure. PostgreSQL's
