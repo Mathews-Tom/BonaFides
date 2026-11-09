@@ -44,6 +44,9 @@ LEFT JOIN bonafides.saved_opportunities o ON o.owner_id=:owner AND o.id=a.opport
 LEFT JOIN bonafides.job_postings p ON p.owner_id=:owner AND p.id=o.posting_id
 ORDER BY d.scope,a.created_at,a.id,d.kind DESC,r.revision_no DESC,c.created_at,c.id,cr.revision_no"""
 
+_OUTCOME_STAGES = ("applied", "screening", "interview", "offer", "accepted")
+_SMALL_SAMPLE_THRESHOLD = 5
+
 
 def _item(row: RowMapping) -> dict[str, object]:
     application = (
@@ -98,14 +101,75 @@ def claim_usage(
     if claim is None:
         raise Problem(404, "not_found")
     rows = _usage(conn, owner_id, "cr.claim_id=:claim", claim=claim_id)
-    current = [
-        _item(row) for row in rows if row["document_revision_id"] == row["current_revision_id"]
+    current_rows = [
+        row for row in rows if row["document_revision_id"] == row["current_revision_id"]
     ]
+    applications = {
+        row["application_id"]
+        for row in current_rows
+        if row["scope"] == "tailored" and row["application_id"] is not None
+    }
+    archived_applications = {
+        row["application_id"]
+        for row in current_rows
+        if row["application_id"] in applications and row["application_archived_at"] is not None
+    }
+    application_count = len(applications)
+    furthest = [0] * len(_OUTCOME_STAGES)
+    inferred_applied = 0
+    if applications:
+        # Like tracking.counts(), a replacement invalidates its target even when
+        # that replacement is itself corrected. Dates do not limit this history.
+        for row in conn.execute(
+            text("""SELECT GREATEST(peak,CASE WHEN rejected THEN 1 ELSE 0 END) AS peak,
+            count(*) AS n,count(*) FILTER (WHERE peak=0 AND rejected) AS inferred
+            FROM (
+              SELECT e.application_id,
+                COALESCE(max(array_position(CAST(:stages AS text[]),e.to_stage::text)),0) AS peak,
+                bool_or(e.to_stage='rejected') AS rejected
+              FROM bonafides.application_stage_events e
+              WHERE e.owner_id=:owner AND e.application_id=ANY(CAST(:applications AS uuid[]))
+              AND NOT EXISTS(SELECT 1 FROM bonafides.application_stage_events replacement
+                WHERE replacement.owner_id=e.owner_id AND replacement.application_id=e.application_id
+                  AND replacement.correction_of=e.id)
+              GROUP BY e.application_id
+            ) progress GROUP BY GREATEST(peak,CASE WHEN rejected THEN 1 ELSE 0 END)"""),
+            {
+                "owner": owner_id,
+                "applications": list(applications),
+                "stages": list(_OUTCOME_STAGES),
+            },
+        ).mappings():
+            peak = int(row["peak"])
+            if peak:
+                furthest[peak - 1] = int(row["n"])
+            inferred_applied += int(row["inferred"])
+    stages = []
+    reached = sum(furthest)
+    for stage, count in zip(_OUTCOME_STAGES, furthest, strict=True):
+        stages.append(
+            {
+                "stage": stage,
+                "furthest_count": count,
+                "reached_count": reached,
+                "rate": reached / application_count if application_count else None,
+            }
+        )
+        reached -= count
     result: dict[str, object] = {
         "claim_id": str(claim_id),
         "current_revision_id": str(claim["current_revision_id"]),
         "archived": claim["archived_at"] is not None,
-        "items": current,
+        "items": [_item(row) for row in current_rows],
+        "outcomes": {
+            "application_count": application_count,
+            "archived_application_count": len(archived_applications),
+            "no_progression_count": application_count - sum(furthest),
+            "inferred_applied_from_rejection": inferred_applied,
+            "small_sample_threshold": _SMALL_SAMPLE_THRESHOLD,
+            "small_sample": application_count < _SMALL_SAMPLE_THRESHOLD,
+            "stages": stages,
+        },
     }
     if history:
         result["history"] = [

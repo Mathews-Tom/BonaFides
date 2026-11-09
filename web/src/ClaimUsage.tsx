@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 import { useEffect, useRef, useState } from 'react';
-import { errorText, type Api, type ApplicationClaims, type ClaimUsage, type ClaimUsageItem } from './api';
+import { errorText, type Api, type ApplicationClaims, type ClaimOutcomes, type ClaimUsage, type ClaimUsageItem } from './api';
+import { stageName } from './tracking-api';
 
 export const USAGE_RULE = 'Only factual statements that passed the evidence check count as usage. Blocked statements, greetings and statements of intent are not listed.';
 const kindName = (kind: ClaimUsageItem['kind']) => kind === 'resume' ? 'Résumé' : 'Cover letter';
@@ -42,6 +43,25 @@ function useLoader<T>() {
   return { value, error, loading, load };
 }
 
+function ApplicationOutcomes({ outcomes }: { outcomes: ClaimOutcomes }) {
+  return <section aria-label="Application outcomes"><h5>Application outcomes</h5>
+    <p>Application attempts: {outcomes.application_count} · Archived attempts included: {outcomes.archived_application_count} · No positive progress: {outcomes.no_progression_count} · Applied inferred from rejection: {outcomes.inferred_applied_from_rejection}.</p>
+    <p className="hint">Small-sample threshold: {outcomes.small_sample_threshold} application attempts.</p>
+    {outcomes.small_sample && <p className="disclosure">Small sample: fewer than {outcomes.small_sample_threshold} application attempts. Treat these counts cautiously.</p>}
+    <table aria-label="Application outcomes">
+      <thead><tr><th scope="col">Stage</th><th scope="col">Furthest stage</th><th scope="col">Reached at least</th><th scope="col">Reach (k/N)</th></tr></thead>
+      <tbody>{outcomes.stages.map(stage => <tr key={stage.stage}>
+        <th scope="row">{stageName(stage.stage)}</th><td>{stage.furthest_count}</td><td>{stage.reached_count}</td>
+        <td>{stage.reached_count}/{outcomes.application_count} ({stage.rate === null ? 'Unavailable' : stage.rate.toLocaleString('en', { style: 'percent', maximumFractionDigits: 1 })})</td>
+      </tr>)}</tbody>
+    </table>
+    <p className="hint">Distinct application attempts whose current, nondeleted checked résumé or cover-letter revisions use this claim, including older pinned claim revisions. Résumé and letter count once per attempt; repeats count separately. Base résumés, blocked statements and earlier document revisions do not add attempts. Expanding earlier document history does not change this cohort.</p>
+    <p className="hint">Archived and Preparing attempts are included in every denominator. Progress uses all recorded valid events, including future-dated events; corrections replace prior events. Ordinary backward moves retain the furthest stage.</p>
+    <p className="hint">Furthest stage counts each attempt at its peak only. Reached at least infers earlier stages from that peak; it does not mean every stage was recorded. Rejection without a positive stage infers Applied. Preparing or Withdrawn alone is no positive progress.</p>
+    <p className="hint">Manually recorded, unverified tracking: not proof of delivery or verified employer response. Reach is not a response rate and does not show that this claim caused an outcome.</p>
+  </section>;
+}
+
 export function ClaimUsedIn({ api, claimId, label }: { api: Api; claimId: string; label: string }) {
   const usage = useLoader<ClaimUsage>();
   const read = (history: boolean) => usage.load(signal => api.request<ClaimUsage>(`/claims/${encodeURIComponent(claimId)}/usage${history ? '?history=true' : ''}`, 'GET', undefined, undefined, false, signal));
@@ -51,6 +71,7 @@ export function ClaimUsedIn({ api, claimId, label }: { api: Api; claimId: string
     {usage.error && <p className="error" role="status">Usage unavailable, not empty. {usage.error}</p>}
     {usage.value && <section aria-label={`Used in: ${label}`}><h4>Used in</h4><p className="hint">{USAGE_RULE} Each entry shows the claim revision the document pinned.</p>
       {usage.value.items.length ? <UsageList items={usage.value.items} /> : <p>Not used by any current document revision.</p>}
+      <ApplicationOutcomes outcomes={usage.value.outcomes} />
       {usage.value.history ? <><h5>Earlier document revisions</h5>{usage.value.history.length ? <UsageList items={usage.value.history} /> : <p>No earlier document revisions used this claim.</p>}</>
         : <button type="button" className="secondary" disabled={usage.loading} onClick={() => { void read(true); }}>Include earlier document revisions</button>}
     </section>}

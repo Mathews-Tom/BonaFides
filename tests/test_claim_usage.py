@@ -21,10 +21,19 @@ from test_checked_generation import (
     _run,
     _stub,
 )
-from test_document_generation import _base, _document, _pair_documents, _save
+from test_document_generation import (
+    _base,
+    _document,
+    _pair_documents,
+    _preview,
+    _queue_pair,
+    _save,
+)
 from test_identity import identity as identity
 from test_sources import SourceContext
 from test_sources import catalog as catalog
+from test_tracking import _application, _history, _stage, _write
+from test_tracking import _get as _get_application
 
 from bonafides import claim_usage, documents
 from bonafides.problems import Problem
@@ -122,7 +131,17 @@ def test_pair_usage_lists_each_cited_claim_revision_under_its_application(
         claim["revision"]["id"]
     }
     assert {item["application"]["id"] for item in usage["items"]} == {application["id"]}
-    assert {item["kind"] for item in usage["items"]} <= {"resume", "cover_letter"}
+    assert {item["kind"] for item in usage["items"]} == {"resume", "cover_letter"}
+    outcomes = usage["outcomes"]
+    assert outcomes["application_count"] == 1
+    assert outcomes["no_progression_count"] == 1
+    assert outcomes["inferred_applied_from_rejection"] == 0
+    assert outcomes["archived_application_count"] == 0
+    assert outcomes["small_sample_threshold"] == 5 and outcomes["small_sample"]
+    assert outcomes["stages"] == [
+        {"stage": stage, "furthest_count": 0, "reached_count": 0, "rate": 0}
+        for stage in ("applied", "screening", "interview", "offer", "accepted")
+    ]
 
 
 @pytest.mark.postgres
@@ -132,7 +151,8 @@ def test_edited_archived_and_restored_claims_keep_their_pinned_usage(
     profile, application = _pair(catalog, monkeypatch, tmp_path, "valid")
     _, claim = _claim_item(catalog)
     pinned = claim["revision"]["id"]
-    before = _usage(catalog, claim["id"])["items"]
+    original = _usage(catalog, claim["id"])
+    before = original["items"]
     assert before and all(not item["superseded"] for item in before)
 
     assert _edit_claim(catalog).status_code == 200
@@ -142,10 +162,12 @@ def test_edited_archived_and_restored_claims_keep_their_pinned_usage(
         (item["document_id"], pinned) for item in before
     ]
     assert all(item["superseded"] and not item["archived"] for item in edited["items"])
+    assert edited["outcomes"] == original["outcomes"]
 
     assert _archive_claim(catalog).status_code == 200
     archived = _usage(catalog, claim["id"])
     assert archived["archived"] and len(archived["items"]) == len(before)
+    assert archived["outcomes"] == original["outcomes"]
     listed = [
         item
         for item in _application_claims(catalog, application)
@@ -157,6 +179,7 @@ def test_edited_archived_and_restored_claims_keep_their_pinned_usage(
     restored = _usage(catalog, claim["id"])
     assert not restored["archived"] and restored["current_revision_id"] == pinned
     assert all(not item["superseded"] for item in restored["items"])
+    assert restored["outcomes"] == original["outcomes"]
 
 
 @pytest.mark.postgres
@@ -192,6 +215,39 @@ def test_document_edit_moves_current_usage_and_keeps_history(
         resume["current_revision"]["id"]
     ]
     assert "history" not in _usage(catalog, claim_id)
+    # Remove this claim from the other current document as well: earlier links
+    # remain available as history, but cannot keep an attempt in the cohort.
+    for document in _pair_documents(catalog, application)["items"]:
+        if document["id"] == resume["id"]:
+            continue
+        other_body = document["current_revision"]["body"]
+        for section in other_body["sections"]:
+            section["blocks"] = [
+                block
+                for block in section["blocks"]
+                if claim_revision not in block["claim_revision_ids"]
+            ]
+        response = _save(catalog, document, other_body)
+        assert response.status_code == 200, response.text
+    empty = _usage(catalog, claim_id)
+    expanded = _usage(catalog, claim_id, history=True)
+    assert not empty["items"] and expanded["history"]
+    assert empty["outcomes"] == expanded["outcomes"]
+    assert empty["outcomes"]["application_count"] == 0
+    assert empty["outcomes"]["no_progression_count"] == 0
+    assert all(stage["rate"] is None for stage in empty["outcomes"]["stages"])
+    restored = catalog.client.post(
+        f"/api/v1/documents/{resume['id']}/restore",
+        json={
+            "revision_id": resume["current_revision"]["id"],
+            "reason": "Restore checked pinned claim",
+        },
+        headers=catalog.headers(_document(catalog, resume["id"])["version"]),
+    )
+    assert restored.status_code == 200, restored.text
+    restored_usage = _usage(catalog, claim_id)
+    assert restored_usage["outcomes"]["application_count"] == 1
+    assert {item["claim_revision_id"] for item in restored_usage["items"]} == {claim_revision}
 
 
 @pytest.mark.postgres
@@ -209,6 +265,30 @@ def test_blocked_statements_are_not_usage(
         for statement in item["statements"]
     }
     assert statements and issue["statement"] not in statements
+    blocked = next(
+        block for block in _factual_blocks(resume) if block["text"] == issue["statement"]
+    )
+    [claim_revision] = blocked["claim_revision_ids"]
+    claim_id = next(
+        item["claim_id"]
+        for item in _application_claims(catalog, application)
+        if item["claim_revision_id"] == claim_revision
+    )
+    # Leave the blocked statement, but remove this claim's checked statements.
+    for document in _pair_documents(catalog, application)["items"]:
+        body = document["current_revision"]["body"]
+        for section in body["sections"]:
+            section["blocks"] = [
+                block
+                for block in section["blocks"]
+                if claim_revision not in block["claim_revision_ids"]
+                or block["text"] == issue["statement"]
+            ]
+        response = _save(catalog, document, body)
+        assert response.status_code == 200, response.text
+    usage = _usage(catalog, claim_id, history=True)
+    assert not usage["items"] and usage["history"]
+    assert usage["outcomes"]["application_count"] == 0
 
 
 @pytest.mark.postgres
@@ -218,13 +298,158 @@ def test_base_resume_usage_is_not_an_application(
     _, application = _pair(catalog, monkeypatch, tmp_path, "valid")
     base = _base(catalog, catalog.client.get("/api/v1/profile").json())
     _, claim = _claim_item(catalog)
-    items = _usage(catalog, claim["id"])["items"]
+    usage = _usage(catalog, claim["id"])
+    items = usage["items"]
     [entry] = [item for item in items if item["scope"] == "base"]
     assert entry["application"] is None and entry["document_id"] == base["id"]
     assert all(item["application"]["id"] == application["id"] for item in items if item != entry)
     assert all(
         item["document_id"] != base["id"] for item in _application_claims(catalog, application)
     )
+    assert usage["outcomes"]["application_count"] == 1
+    # Deleted tailored drafts no longer qualify, even though their immutable
+    # checked links and the base résumé's links are still present.
+    with catalog.runtime.transaction() as conn:
+        conn.execute(
+            text("""UPDATE bonafides.document_drafts SET deleted_at=clock_timestamp()
+            WHERE owner_id=:owner AND application_id=:application"""),
+            {"owner": catalog.owner_id, "application": UUID(application["id"])},
+        )
+    base_only = _usage(catalog, claim["id"], history=True)
+    assert base_only["items"] and all(item["scope"] == "base" for item in base_only["items"])
+    assert base_only["outcomes"] == {
+        "application_count": 0,
+        "archived_application_count": 0,
+        "no_progression_count": 0,
+        "inferred_applied_from_rejection": 0,
+        "small_sample_threshold": 5,
+        "small_sample": True,
+        "stages": [
+            {"stage": stage, "furthest_count": 0, "reached_count": 0, "rate": None}
+            for stage in ("applied", "screening", "interview", "offer", "accepted")
+        ],
+    }
+
+
+@pytest.mark.postgres
+def test_outcomes_deduplicate_documents_count_repeats_archives_and_all_recorded_dates(
+    catalog: SourceContext, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    with _stub(monkeypatch, tmp_path, "valid"):
+        profile, first, task = _generate(catalog)
+        assert _run(catalog, task)["state"] == "succeeded"
+        _, claim = _claim_item(catalog)
+
+        def repeat_documented(previous: dict[str, Any]) -> dict[str, Any]:
+            attempt = _write(
+                catalog,
+                _get_application(catalog, previous),
+                "repeat",
+                {"confirmed": True},
+                expected=201,
+            )
+            task = _queue_pair(catalog, _preview(catalog, profile, attempt))
+            assert _run(catalog, task)["state"] == "succeeded"
+            return _get_application(catalog, attempt)
+
+        second = repeat_documented(first)
+        third = repeat_documented(second)
+        first = _stage(catalog, _get_application(catalog, first), "interview")
+        first = _stage(catalog, first, "applied")  # ordinary backward move preserves the peak
+        _write(catalog, first, "archive", {"archived": True})
+        second = _stage(catalog, _get_application(catalog, second), "interview")
+        _stage(catalog, second, "rejected")
+        third = _stage(catalog, third, "withdrawn")
+        # An application without a checked document for this claim is not a cohort member.
+        unrelated = _application(catalog, title="Unrelated checked-document-free role")
+        _stage(catalog, unrelated, "accepted")
+        at_three = _usage(catalog, claim["id"])["outcomes"]
+        assert at_three["application_count"] == 3
+        assert at_three["archived_application_count"] == 1
+        assert at_three["no_progression_count"] == 1
+        assert at_three["inferred_applied_from_rejection"] == 0
+        assert [stage["furthest_count"] for stage in at_three["stages"]] == [0, 0, 2, 0, 0]
+        assert [stage["reached_count"] for stage in at_three["stages"]] == [2, 2, 2, 0, 0]
+        assert [stage["rate"] for stage in at_three["stages"]] == [2 / 3, 2 / 3, 2 / 3, 0, 0]
+
+        # Old documents remain pinned while later attempts cite the new claim revision.
+        assert _edit_claim(catalog).status_code == 200
+        profile = catalog.client.get("/api/v1/profile").json()
+        fourth = repeat_documented(third)
+        fourth = _stage(catalog, fourth, "rejected")
+        at_four = _usage(catalog, claim["id"])["outcomes"]
+        assert at_four["application_count"] == 4 and at_four["small_sample"]
+        assert at_four["inferred_applied_from_rejection"] == 1
+        fifth = repeat_documented(fourth)
+        _stage(catalog, fifth, "accepted", "2099-01-01T00:00:00Z")
+        usage = _usage(catalog, claim["id"])
+        at_five = usage["outcomes"]
+        assert len({item["claim_revision_id"] for item in usage["items"]}) == 2
+        assert at_five["application_count"] == at_five["small_sample_threshold"] == 5
+        assert at_five["small_sample"] is False
+        assert at_five["archived_application_count"] == 1
+        assert at_five["no_progression_count"] == 1
+        assert at_five["inferred_applied_from_rejection"] == 1
+        assert [stage["furthest_count"] for stage in at_five["stages"]] == [1, 0, 2, 0, 1]
+        assert [stage["reached_count"] for stage in at_five["stages"]] == [4, 3, 3, 1, 1]
+        assert [stage["rate"] for stage in at_five["stages"]] == [4 / 5, 3 / 5, 3 / 5, 1 / 5, 1 / 5]
+        assert (
+            at_five["no_progression_count"]
+            + sum(stage["furthest_count"] for stage in at_five["stages"])
+            == at_five["application_count"]
+        )
+        assert _usage(catalog, claim["id"], history=True)["outcomes"] == at_five
+
+
+@pytest.mark.postgres
+def test_outcomes_recompute_corrected_peaks_and_rejection_inference_without_writes(
+    catalog: SourceContext, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _, application = _pair(catalog, monkeypatch, tmp_path, "valid")
+    _, claim = _claim_item(catalog)
+    application = _stage(catalog, _get_application(catalog, application), "interview")
+    interview_id = application["current_stage_event_id"]
+    application = _stage(catalog, application, "applied")
+    applied_id = application["current_stage_event_id"]
+    application = _stage(catalog, application, "rejected")
+    rejected_id = application["current_stage_event_id"]
+    assert [
+        stage["furthest_count"] for stage in _usage(catalog, claim["id"])["outcomes"]["stages"]
+    ] == [0, 0, 1, 0, 0]
+    application = _stage(catalog, application, "offer", correction_of=interview_id)
+    offer_id = _history(catalog, application)["items"][0]["id"]
+    offer = _usage(catalog, claim["id"])["outcomes"]
+    assert [stage["furthest_count"] for stage in offer["stages"]] == [0, 0, 0, 1, 0]
+    assert [stage["reached_count"] for stage in offer["stages"]] == [1, 1, 1, 1, 0]
+    application = _stage(catalog, application, "withdrawn", correction_of=offer_id)
+    # Correcting the replacement does not revive the original interview event.
+    applied = _usage(catalog, claim["id"])["outcomes"]
+    assert [stage["furthest_count"] for stage in applied["stages"]] == [1, 0, 0, 0, 0]
+    assert applied["inferred_applied_from_rejection"] == 0
+    application = _stage(catalog, application, "preparing", correction_of=applied_id)
+    inferred = _usage(catalog, claim["id"])["outcomes"]
+    assert [stage["furthest_count"] for stage in inferred["stages"]] == [1, 0, 0, 0, 0]
+    assert inferred["inferred_applied_from_rejection"] == 1
+    application = _stage(catalog, application, "withdrawn", correction_of=rejected_id)
+    no_progression = _usage(catalog, claim["id"])["outcomes"]
+    assert no_progression["application_count"] == no_progression["no_progression_count"] == 1
+    assert no_progression["inferred_applied_from_rejection"] == 0
+    assert all(
+        stage["furthest_count"] == stage["reached_count"] == stage["rate"] == 0
+        for stage in no_progression["stages"]
+    )
+    application = _stage(catalog, application, "screening", "2099-02-01T00:00:00Z")
+    before_history = _history(catalog, application)
+    before_documents = _state(catalog)
+    before_profile = catalog.client.get("/api/v1/profile").json()
+    for history in (False, True, False):
+        current = _usage(catalog, claim["id"], history=history)["outcomes"]
+        assert [stage["furthest_count"] for stage in current["stages"]] == [0, 1, 0, 0, 0]
+        assert [stage["reached_count"] for stage in current["stages"]] == [1, 1, 0, 0, 0]
+        assert current["inferred_applied_from_rejection"] == 0
+    assert _history(catalog, application) == before_history
+    assert _state(catalog) == before_documents
+    assert catalog.client.get("/api/v1/profile").json() == before_profile
 
 
 @pytest.mark.postgres
