@@ -44,7 +44,12 @@ export interface ClaimUsageItem {
   document_id: string; kind: 'resume' | 'cover_letter'; document_revision_id: string; document_revision_no: number;
   claim_id: string; claim_revision_id: string; claim_revision_no: number; claim_text: string; superseded: boolean; archived: boolean; statements: string[];
 }
-export interface ClaimUsage { claim_id: string; current_revision_id: string; archived: boolean; items: ClaimUsageItem[]; history?: ClaimUsageItem[] }
+export interface ClaimOutcomes {
+  application_count: number; archived_application_count: number; no_progression_count: number; inferred_applied_from_rejection: number;
+  small_sample_threshold: number; small_sample: boolean;
+  stages: { stage: 'applied' | 'screening' | 'interview' | 'offer' | 'accepted'; furthest_count: number; reached_count: number; rate: number | null }[];
+}
+export interface ClaimUsage { claim_id: string; current_revision_id: string; archived: boolean; items: ClaimUsageItem[]; outcomes: ClaimOutcomes; history?: ClaimUsageItem[] }
 export interface ApplicationClaims { application_id: string; items: ClaimUsageItem[] }
 export interface PinnedEvidence { id: string; revision: EvidenceRevision }
 export interface EvidenceRecord extends PinnedEvidence { version: number; archived: boolean; current_revision_id: string }

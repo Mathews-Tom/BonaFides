@@ -125,6 +125,18 @@ Editing a source does not update an entry's pin. If preparation says **Review an
 
 Select **Show where … is used** under an entry to list the documents that state it. Once the list appears, select **Include earlier document revisions** to include older versions too. Only statements that passed the evidence check count; blocked statements aren't listed.
 
+### Read application outcomes
+
+The same **Used in** panel includes **Application outcomes**. Each application attempt counts once, even when both its résumé and cover letter use the entry. Archived applications and attempts still in preparation are included. Base résumés and earlier document revisions do not add to this count; selecting **Include earlier document revisions** changes the document list, not the outcome totals.
+
+The figures use the entry's checked links in current saved document revisions. An older entry revision still counts when a current document pins it. Editing the entry does not rewrite those pins. Saving or restoring a document can change which entries it currently uses.
+
+Stage figures describe the furthest progress in your recorded history, not just the application's current stage. Moving an application back to preparation does not erase an earlier interview; correcting a stage event can change the figures. A rejection without recorded positive progress is counted as inferred Applied progress and identified separately. Withdrawal alone does not imply an application was submitted. The calculation uses all recorded events, including events with future effective dates.
+
+Each reach rate shows how many attempts reached at least that stage out of the full application count, including preparing attempts. It is not a response rate. A zero application count gives unavailable rates rather than 0%. Fewer than five attempts triggers a small-sample warning; even larger samples do not prove that an entry caused an outcome. These are your manual records, not verified employer responses or delivery receipts.
+
+After changing documents or tracking stages, select **Refresh where … is used** to read the current figures. Switching screens does not refresh a previously loaded panel. Reading outcomes does not save changes, alter tracking or call a model.
+
 ## Look back or restore an earlier version
 
 BonaFides keeps every saved version of your profile.
