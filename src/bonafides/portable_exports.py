@@ -308,10 +308,12 @@ class LifecycleWorker:
                 if time.monotonic() - last_cleanup >= 60:
                     last_cleanup = time.monotonic()
                     from bonafides.backup_schedule import run_due
+                    from bonafides.document_archives import expire_archives
                     from bonafides.task_retention import expire_task_inputs
 
                     # Independent privacy expiry must not depend on optional backup config.
                     expire_task_inputs(self.db)
+                    expire_archives(self.db, self.settings)
 
                     try:
                         scheduled = run_due(self.db, self.settings)

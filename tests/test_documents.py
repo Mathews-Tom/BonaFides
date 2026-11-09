@@ -2,26 +2,40 @@
 from __future__ import annotations
 
 import hashlib
+import io
 import os
 import subprocess
 import sys
 import threading
 import time
+import zipfile
 from html.parser import HTMLParser
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 from uuid import UUID, uuid4
 
 import pytest
 from pydantic import ValidationError
 from sqlalchemy import text
-from test_document_generation import _base, _document, _legacy_literal_profile, _review
+from test_document_generation import (
+    _base,
+    _candidate,
+    _claim,
+    _document,
+    _legacy_literal_profile,
+    _pair_documents,
+    _preview,
+    _queue_pair,
+    _review,
+    _setup_pair,
+)
 from test_identity import identity as identity
 from test_sources import SourceContext
 from test_sources import catalog as catalog
-from test_suitability import _profile
+from test_suitability import SOURCE, FixtureModel, _profile, _requirement, _route, _write
+from test_tracking import _application
 
-from bonafides import document_generation, documents
+from bonafides import document_archives, document_generation, documents, suitability
 from bonafides.documents import (
     DocumentBlock,
     DocumentBody,
@@ -44,6 +58,7 @@ from bonafides.render_service import (
 )
 from bonafides.statement_check import check_statements
 from bonafides.storage import BlobStore, atomic_file, directory, read_file
+from bonafides.worker import Worker
 
 
 def example(text: str = "Maintained Linux services.") -> tuple[DocumentBody, Fact]:
@@ -858,3 +873,385 @@ def test_hidden_inventory_shares_visible_bounds_and_rejects_collisions_and_stale
             documents.TEMPLATE_VERSION,
             {"schema_version": 1, "page_fit": fit.model_dump(mode="json")},
         )
+
+
+def _archive_pair(
+    context: SourceContext, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    profile, application = _setup_pair(context)
+    _route(monkeypatch, tmp_path)
+    preview = _preview(context, profile, application)
+    task = _queue_pair(context, preview)
+    suitability.execute_model(
+        context.runtime,
+        context.identity.settings,
+        task,
+        threading.Event(),
+        FixtureModel(_candidate(preview)),
+    )
+    records = _pair_documents(context, application)["items"]
+    for record in records:
+        response = _review(context, record)
+        assert response.status_code == 200, response.text
+    return application, records
+
+
+def _queue_archive(context: SourceContext) -> Any:
+    preview = context.client.get("/api/v1/document-archives/preview")
+    assert preview.status_code == 200, preview.text
+    value = preview.json()
+    response = context.client.post(
+        "/api/v1/document-archives",
+        json={"manifest_sha256": value["manifest_sha256"]},
+        headers=context.headers(value["workspace_version"]),
+    )
+    assert response.status_code == 202, response.text
+    return _claim(context, response.json()["id"])
+
+
+@pytest.mark.parametrize("value", ["../CON. ", "A/B\\C", "\u202eevil\x00", "  ...  ", "ＮＵＬ"])
+def test_archive_components_are_portable_and_never_paths(value: str) -> None:
+    component = document_archives.safe_component(value, "Company")
+    assert component and component not in {".", ".."}
+    assert not any(character in component for character in '/\\<>:"|?*\x00')
+    assert component == component.rstrip(". ")
+    assert len(component) <= 81
+    assert component.casefold() not in {"con", "nul"}
+
+
+@pytest.mark.postgres
+def test_archive_all_current_membership_review_and_deleted_partner(
+    catalog: SourceContext, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    empty = catalog.client.get("/api/v1/document-archives/preview")
+    assert empty.status_code == 409 and empty.json()["code"] == "document_archive_empty"
+    application, records = _archive_pair(catalog, monkeypatch, tmp_path)
+    with catalog.runtime.transaction() as conn:
+        frozen, renders = document_archives.manifest(conn, catalog.owner_id)
+        initial_digest = document_archives.digest_manifest(frozen)
+        assert len(renders) == 2
+    with catalog.identity.admin.transaction() as conn:
+        conn.execute(
+            text(
+                "UPDATE bonafides.applications SET archived_at=clock_timestamp() WHERE owner_id=:owner AND id=:id"
+            ),
+            {"owner": catalog.owner_id, "id": UUID(application["id"])},
+        )
+    preview = catalog.client.get("/api/v1/document-archives/preview")
+    assert preview.status_code == 200 and preview.json()["document_count"] == 2
+    assert preview.json()["manifest_sha256"] == initial_digest
+    removed = records[0]
+    with catalog.identity.admin.transaction() as conn:
+        conn.execute(
+            text(
+                "UPDATE bonafides.document_drafts SET deleted_at=clock_timestamp(),version=version+1 WHERE owner_id=:owner AND id=:id"
+            ),
+            {"owner": catalog.owner_id, "id": UUID(removed["id"])},
+        )
+    preview = catalog.client.get("/api/v1/document-archives/preview")
+    assert preview.status_code == 200 and preview.json()["document_count"] == 1
+    assert preview.json()["manifest_sha256"] != initial_digest
+    with catalog.identity.admin.transaction() as conn:
+        conn.execute(
+            text(
+                "DELETE FROM bonafides.document_reviews WHERE owner_id=:owner AND document_revision_id=:id"
+            ),
+            {"owner": catalog.owner_id, "id": UUID(records[1]["current_revision"]["id"])},
+        )
+    refused = catalog.client.get("/api/v1/document-archives/preview")
+    assert refused.status_code == 409 and refused.json()["code"] == "review_required"
+    assert records[1]["id"] in refused.json()["detail"]
+
+
+@pytest.mark.postgres
+def test_archive_zip_success_integrity_expiry_cleanup_and_shared_blob(
+    catalog: SourceContext, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _, records = _archive_pair(catalog, monkeypatch, tmp_path)
+    documents_before = [_document(catalog, record["id"]) for record in records]
+    profile_before = catalog.client.get("/api/v1/profile").json()
+    pdf = b"%PDF-1.7\nsynthetic archive boundary payload\n"
+    monkeypatch.setattr(RenderClient, "render", lambda self, *args: pdf)
+    shared = BlobStore(catalog.identity.settings.blob_root).put(catalog.owner_id, pdf)
+    task = _queue_archive(catalog)
+    with catalog.runtime.transaction() as conn:
+        # The archive command bumps workspace version, not the frozen manifest digest.
+        document_archives.check_manifest(conn, catalog.owner_id, task.input)
+    Worker(catalog.runtime, catalog.identity.settings)._execute(task, threading.Event())
+    workflow = catalog.workflow(task.id)
+    assert workflow["state"] == "succeeded", workflow
+    assert workflow["mode"] == "document_archive"
+    assert workflow["progress"] == {"completed": 2, "total": 2}
+    assert workflow["result"]["archive_document_count"] == 2
+    assert [_document(catalog, record["id"]) for record in records] == documents_before
+    assert catalog.client.get("/api/v1/profile").json() == profile_before
+    route = f"/api/v1/document-archives/{task.id}/download"
+    response = catalog.client.get(route)
+    assert response.status_code == 200 and response.headers["content-type"] == "application/zip"
+    with zipfile.ZipFile(io.BytesIO(response.content)) as archive:
+        assert len(archive.namelist()) == 2
+        assert len({name.casefold() for name in archive.namelist()}) == 2
+        assert all(len(Path(name).parts) == 2 for name in archive.namelist())
+        assert all(archive.read(name) == pdf for name in archive.namelist())
+    assert document_archives.expire_archives(catalog.runtime, catalog.identity.settings) == 0
+    with catalog.identity.admin.transaction() as conn:
+        conn.execute(
+            text("""UPDATE bonafides.workflow_runs SET result=jsonb_set(result,
+            '{archive_expires_at}',to_jsonb((clock_timestamp()-interval '1 second')::text))
+            WHERE owner_id=:owner AND id=:id"""),
+            {"owner": catalog.owner_id, "id": task.id},
+        )
+    expired = catalog.client.get(route)
+    assert expired.status_code == 410 and expired.json()["code"] == "document_archive_expired"
+    assert document_archives.expire_archives(catalog.runtime, catalog.identity.settings) == 1
+    assert (
+        BlobStore(catalog.identity.settings.blob_root).read(
+            catalog.owner_id, shared.storage_key, shared.sha256, shared.byte_length
+        )
+        == pdf
+    )
+    with catalog.runtime.transaction() as conn:
+        assert (
+            conn.execute(
+                text("SELECT count(*) FROM bonafides.document_artifacts WHERE owner_id=:owner"),
+                {"owner": catalog.owner_id},
+            ).scalar_one()
+            == 0
+        )
+
+
+@pytest.mark.postgres
+@pytest.mark.parametrize("change", ["label", "review", "cancel", "namespace", "lease"])
+def test_archive_render_boundary_drift_never_publishes_partial(
+    catalog: SourceContext, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, change: str
+) -> None:
+    application, records = _archive_pair(catalog, monkeypatch, tmp_path)
+    task = _queue_archive(catalog)
+    changed = False
+
+    def render(self: RenderClient, *args: object) -> bytes:
+        nonlocal changed
+        if not changed:
+            changed = True
+            with catalog.identity.admin.transaction() as conn:
+                if change == "label":
+                    conn.execute(
+                        text(
+                            "UPDATE bonafides.job_postings SET company='Changed company',version=version+1 WHERE owner_id=:owner AND id=:id"
+                        ),
+                        {"owner": catalog.owner_id, "id": UUID(application["posting_id"])},
+                    )
+                elif change == "review":
+                    conn.execute(
+                        text(
+                            "DELETE FROM bonafides.document_reviews WHERE owner_id=:owner AND document_revision_id=:id"
+                        ),
+                        {
+                            "owner": catalog.owner_id,
+                            "id": UUID(records[0]["current_revision"]["id"]),
+                        },
+                    )
+                elif change == "namespace":
+                    conn.execute(
+                        text(
+                            "UPDATE bonafides.installation_state SET namespace_id=gen_random_uuid(),maintenance_epoch=maintenance_epoch+1"
+                        )
+                    )
+                elif change == "lease":
+                    conn.execute(
+                        text(
+                            "UPDATE bonafides.workflow_runs SET lease_expires_at=clock_timestamp()-interval '1 second' WHERE owner_id=:owner AND id=:id"
+                        ),
+                        {"owner": catalog.owner_id, "id": task.id},
+                    )
+                else:
+                    from bonafides.workflows import cancel_workflow
+
+                    cancel_workflow(conn, catalog.owner_id, task.id)
+        return b"%PDF-1.7\nsynthetic boundary payload\n"
+
+    monkeypatch.setattr(RenderClient, "render", render)
+    Worker(catalog.runtime, catalog.identity.settings)._execute(task, threading.Event())
+    workflow = catalog.workflow(task.id)
+    assert workflow["state"] != "succeeded"
+    assert not workflow["result"]
+    response = catalog.client.get(f"/api/v1/document-archives/{task.id}/download")
+    assert response.status_code == 404
+    folder = catalog.identity.settings.blob_root / "document_archives" / str(catalog.owner_id)
+    with directory(folder) as descriptor:
+        assert os.listdir(descriptor) == []
+
+
+@pytest.mark.postgres
+def test_archive_inventory_spans_applications_and_added_members_invalidate_snapshot(
+    catalog: SourceContext, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _archive_pair(catalog, monkeypatch, tmp_path)
+    with catalog.runtime.transaction() as conn:
+        snapshot, _ = document_archives.manifest(conn, catalog.owner_id)
+    application = _application(
+        catalog,
+        description_text=SOURCE,
+        canonical_url="https://careers.fictional-employer.com/archive-second",
+    )
+    _write(catalog, {"id": application["posting_id"]}, [_requirement(1, "Linux required.")])
+    profile = catalog.client.get("/api/v1/profile").json()
+    preview = _preview(catalog, profile, application)
+    task = _queue_pair(catalog, preview)
+    suitability.execute_model(
+        catalog.runtime,
+        catalog.identity.settings,
+        task,
+        threading.Event(),
+        FixtureModel(_candidate(preview)),
+    )
+    # A newly saved but unreviewed member blocks the whole inventory, not just that application.
+    blocked = catalog.client.get("/api/v1/document-archives/preview")
+    assert blocked.status_code == 409 and blocked.json()["code"] == "review_required"
+    for record in _pair_documents(catalog, application)["items"]:
+        assert _review(catalog, record).status_code == 200
+    preview = catalog.client.get("/api/v1/document-archives/preview")
+    assert preview.status_code == 200 and preview.json()["document_count"] == 4
+    with catalog.runtime.transaction() as conn:
+        inventory, _ = document_archives.manifest(conn, catalog.owner_id)
+    paths = [str(item["path"]) for item in cast(list[dict[str, object]], inventory["documents"])]
+    assert len({path.casefold() for path in paths}) == 4
+    with pytest.raises(Problem) as changed, catalog.runtime.transaction() as conn:
+        document_archives.check_manifest(
+            conn,
+            catalog.owner_id,
+            {"manifest": snapshot, "manifest_sha256": document_archives.digest_manifest(snapshot)},
+        )
+    assert changed.value.code == "document_archive_source_changed"
+    monkeypatch.setattr(document_archives, "MAX_DOCUMENTS", 3)
+    capped = catalog.client.get("/api/v1/document-archives/preview")
+    assert (
+        capped.status_code == 409 and capped.json()["code"] == "document_archive_too_many_documents"
+    )
+
+
+@pytest.mark.postgres
+@pytest.mark.parametrize("change", ["namespace", "label", "bytes"])
+def test_archive_download_revalidates_namespace_source_and_integrity(
+    catalog: SourceContext, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, change: str
+) -> None:
+    application, _ = _archive_pair(catalog, monkeypatch, tmp_path)
+    monkeypatch.setattr(RenderClient, "render", lambda self, *args: b"%PDF-1.7\nboundary\n")
+    task = _queue_archive(catalog)
+    Worker(catalog.runtime, catalog.identity.settings)._execute(task, threading.Event())
+    workflow = catalog.workflow(task.id)
+    assert workflow["state"] == "succeeded", workflow
+    if change == "bytes":
+        folder = catalog.identity.settings.blob_root / "document_archives" / str(catalog.owner_id)
+        with directory(folder) as descriptor:
+            atomic_file(descriptor, workflow["result"]["archive_filename"], b"corrupted archive")
+    else:
+        with catalog.identity.admin.transaction() as conn:
+            if change == "namespace":
+                conn.execute(
+                    text("UPDATE bonafides.installation_state SET namespace_id=gen_random_uuid()")
+                )
+            else:
+                conn.execute(
+                    text(
+                        "UPDATE bonafides.job_postings SET title='Changed role',version=version+1 WHERE owner_id=:owner AND id=:id"
+                    ),
+                    {"owner": catalog.owner_id, "id": UUID(application["posting_id"])},
+                )
+    response = catalog.client.get(f"/api/v1/document-archives/{task.id}/download")
+    expected = {
+        "namespace": (410, "document_archive_unavailable"),
+        "label": (409, "document_archive_source_changed"),
+        "bytes": (409, "document_archive_integrity_failed"),
+    }[change]
+    assert (response.status_code, response.json()["code"]) == expected
+
+
+@pytest.mark.postgres
+def test_archive_size_failure_and_crash_orphan_cleanup_never_touch_shared_storage(
+    catalog: SourceContext, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _archive_pair(catalog, monkeypatch, tmp_path)
+    monkeypatch.setattr(RenderClient, "render", lambda self, *args: b"%PDF-1.7\nboundary\n")
+    task = _queue_archive(catalog)
+    monkeypatch.setattr(document_archives, "MAX_ARCHIVE_BYTES", 1)
+    Worker(catalog.runtime, catalog.identity.settings)._execute(task, threading.Event())
+    workflow = catalog.workflow(task.id)
+    assert workflow["state"] == "permanent_failure"
+    assert workflow["last_error_code"] == "document_archive_too_large"
+    folder = catalog.identity.settings.blob_root / "document_archives" / str(catalog.owner_id)
+    with directory(folder) as descriptor:
+        assert os.listdir(descriptor) == []
+        atomic_file(descriptor, f"{uuid4()}.1.zip", b"crashed completed file")
+        atomic_file(descriptor, f".staging-{uuid4().hex}", b"crashed partial file")
+    assert document_archives.expire_archives(catalog.runtime, catalog.identity.settings) == 2
+    with directory(folder) as descriptor:
+        assert os.listdir(descriptor) == []
+
+
+@pytest.mark.postgres
+def test_archive_private_spool_refuses_intermediate_symlink(
+    catalog: SourceContext, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _archive_pair(catalog, monkeypatch, tmp_path)
+    task = _queue_archive(catalog)
+    outside = tmp_path / "outside-archive-storage"
+    outside.mkdir()
+    marker = outside / "do-not-touch"
+    marker.write_bytes(b"unrelated content")
+    spool = catalog.identity.settings.blob_root / "document_archives"
+    spool.parent.mkdir(parents=True, exist_ok=True)
+    spool.symlink_to(outside, target_is_directory=True)
+    monkeypatch.setattr(RenderClient, "render", lambda self, *args: b"%PDF-1.7\nboundary\n")
+    Worker(catalog.runtime, catalog.identity.settings)._execute(task, threading.Event())
+    workflow = catalog.workflow(task.id)
+    assert workflow["state"] != "succeeded"
+    assert marker.read_bytes() == b"unrelated content"
+    with directory(outside) as descriptor:
+        assert os.listdir(descriptor) == ["do-not-touch"]
+
+
+@pytest.mark.postgres
+def test_archive_queue_idempotency_and_entry_revalidation(
+    catalog: SourceContext, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _, records = _archive_pair(catalog, monkeypatch, tmp_path)
+    preview = catalog.client.get("/api/v1/document-archives/preview").json()
+    headers = catalog.headers(preview["workspace_version"])
+    body = {"manifest_sha256": preview["manifest_sha256"]}
+    first = catalog.client.post("/api/v1/document-archives", json=body, headers=headers)
+    duplicate = catalog.client.post("/api/v1/document-archives", json=body, headers=headers)
+    assert first.status_code == duplicate.status_code == 202
+    assert first.json()["id"] == duplicate.json()["id"]
+    stale_version = catalog.client.post(
+        "/api/v1/document-archives",
+        json=body,
+        headers=catalog.headers(preview["workspace_version"]),
+    )
+    assert stale_version.status_code == 412
+    current = catalog.client.get("/api/v1/document-archives/preview").json()
+    wrong_digest = catalog.client.post(
+        "/api/v1/document-archives",
+        json={"manifest_sha256": "0" * 64},
+        headers=catalog.headers(current["workspace_version"]),
+    )
+    assert wrong_digest.status_code == 409
+    assert wrong_digest.json()["code"] == "document_archive_source_changed"
+    task = _claim(catalog, first.json()["id"])
+    with catalog.identity.admin.transaction() as conn:
+        conn.execute(
+            text(
+                "DELETE FROM bonafides.document_reviews WHERE owner_id=:owner AND document_revision_id=:id"
+            ),
+            {"owner": catalog.owner_id, "id": UUID(records[0]["current_revision"]["id"])},
+        )
+
+    def forbidden_render(self: RenderClient, *args: object) -> bytes:
+        raise AssertionError("An ineligible snapshot must fail before renderer admission")
+
+    monkeypatch.setattr(RenderClient, "render", forbidden_render)
+    Worker(catalog.runtime, catalog.identity.settings)._execute(task, threading.Event())
+    workflow = catalog.workflow(task.id)
+    assert workflow["state"] == "permanent_failure"
+    assert workflow["last_error_code"] == "review_required"
+    assert catalog.client.get(f"/api/v1/document-archives/{task.id}/download").status_code == 404

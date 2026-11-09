@@ -32,6 +32,7 @@ _BUCKET = re.compile(r"[0-9a-f]{2}\Z")
 _DIGEST = re.compile(r"[0-9a-f]{64}\Z")
 _STAGING = re.compile(r"\.staging-[0-9a-f]{32}\Z")
 _COPY = re.compile(r"[0-9a-f-]{36}\.zip\Z")
+_DOCUMENT_ARCHIVE = re.compile(r"[0-9a-f-]{36}\.[0-9]+\.zip\Z")
 
 
 class PurgeStorage(Protocol):
@@ -143,6 +144,34 @@ def erase_scope(
     runtime_pins: dict[str, str] | None = None,
 ) -> dict[str, object]:
     """Call in the SAME transaction as any replacement inserts, never before it."""
+    assert_control(conn, control)
+    # A bulk copy spans applications. Any scoped erasure invalidates the global
+    # saved set, including its private labels, checkpoints and cached responses.
+    conn.execute(
+        text("""WITH archives AS MATERIALIZED (
+        SELECT id FROM bonafides.workflow_runs WHERE owner_id=:owner AND kind='pdf_render'
+        AND (input->>'mode'='document_archive' OR result->>'artifact_type'='document_archive')
+        FOR UPDATE
+        ), redacted_commands AS (
+        UPDATE bonafides.idempotency_records SET response_status=410,
+        response_body=jsonb_build_object('type','about:blank','title','data_erased',
+        'status',410,'code','data_erased'),
+        workflow_run_id=NULL WHERE owner_id=:owner AND route_key='/document-archives'
+        RETURNING key
+        ), erased_steps AS (
+        UPDATE bonafides.workflow_steps SET checkpoint='{}',provider_operation_id=NULL
+        WHERE owner_id=:owner AND workflow_run_id IN (SELECT id FROM archives)
+        RETURNING workflow_run_id
+        )
+        UPDATE bonafides.workflow_runs SET input=jsonb_build_object('erased',true),result=NULL,
+        state=CASE WHEN state IN ('succeeded','cancelled','permanent_failure') THEN state
+        ELSE 'cancelled'::bonafides.workflow_state END,
+        cancel_requested_at=coalesce(cancel_requested_at,clock_timestamp()),
+        finished_at=coalesce(finished_at,clock_timestamp()),lease_holder=NULL,lease_expires_at=NULL,
+        fence=fence+1,version=version+1,updated_at=clock_timestamp(),last_error_code='data_erased'
+        WHERE owner_id=:owner AND id IN (SELECT id FROM archives)"""),
+        {"owner": control.owner_id},
+    )
     result = cast(
         dict[str, object],
         conn.execute(
@@ -215,6 +244,12 @@ def purge_scope(db: Database, settings: PurgeStorage, control: Control) -> int:
     """Resume only the current fenced controller's exact remaining journal."""
     with db.transaction() as conn:
         assert_control(conn, control)
+        if not conn.execute(
+            text("""SELECT EXISTS(SELECT 1 FROM bonafides.portable_purges
+            WHERE control_id=:id AND owner_id=:owner)"""),
+            {"id": control.id, "owner": control.owner_id},
+        ).scalar_one():
+            raise ArchiveError("purge_not_committed")
         items = (
             conn.execute(
                 text("""SELECT kind,storage_key,sha256,byte_length FROM bonafides.portable_purge_items
@@ -249,12 +284,33 @@ def purge_scope(db: Database, settings: PurgeStorage, control: Control) -> int:
                     "outcome": "retained" if retained else "removed",
                 },
             )
+    # The reserved private-copy directory is the resumable remaining inventory.
+    # Never complete the SQL purge while any of these disposable bytes remain.
+    with db.transaction() as conn:
+        assert_control(conn, control)
+    archive_copies = 0
+    try:
+        with (
+            directory(settings.blob_root / "document_archives") as root,
+            subdirectory(root, str(control.owner_id)) as folder,
+        ):
+            for name in os.listdir(folder):
+                if not (_DOCUMENT_ARCHIVE.fullmatch(name) or _STAGING.fullmatch(name)):
+                    raise ArchiveError("purge_file_invalid")
+                try:
+                    os.unlink(name, dir_fd=folder)
+                    archive_copies += 1
+                except FileNotFoundError:
+                    pass
+            os.fsync(folder)
+    except FileNotFoundError:
+        pass
     with db.transaction() as conn:
         conn.execute(
             text("SELECT bonafides.complete_portable_purge(:id,:holder,:fence)"),
             control.parameters,
         )
-    return len(items)
+    return len(items) + archive_copies
 
 
 def delete_controlled_owner_data(

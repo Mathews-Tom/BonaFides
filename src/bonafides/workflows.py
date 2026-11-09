@@ -206,7 +206,7 @@ def enqueue(conn: Connection, owner_id: UUID, kind: str, input_snapshot: dict[st
             if kind == "profile_import"
             else 3,
             "deadline": 600
-            if pinned.get("mode") == "page_fit"
+            if pinned.get("mode") in {"page_fit", "document_archive"}
             else 900
             if kind == "backup"
             else 480
@@ -232,6 +232,14 @@ def enqueue(conn: Connection, owner_id: UUID, kind: str, input_snapshot: dict[st
 
 def source_block_reason(conn: Connection, row: Mapping[str, object]) -> str | None:
     snapshot = cast(dict[str, object], row["input"])
+    if row["kind"] == "pdf_render" and snapshot.get("mode") == "document_archive":
+        from bonafides.document_archives import check_manifest
+
+        try:
+            check_manifest(conn, cast(UUID, row["owner_id"]), snapshot)
+        except (Problem, KeyError, ValueError):
+            return "source_unavailable"
+        return None
     owner_id = row["owner_id"]
     if row["kind"] == "document_generate" and snapshot.get("mode") == "page_fit":
         from bonafides.print_fitting import check_source_pair, pinned_source
@@ -536,6 +544,24 @@ def get_workflow(conn: Connection, owner_id: UUID, workflow_id: UUID) -> dict[st
         "page_fit",
     }:
         result["mode"] = row["input"]["mode"]
+    progress = conn.execute(
+        text("""SELECT checkpoint FROM bonafides.workflow_steps
+        WHERE owner_id=:owner AND workflow_run_id=:id AND fence=:fence
+        AND checkpoint->>'mode'='document_archive'
+        ORDER BY completed_at DESC,id DESC LIMIT 1"""),
+        {"owner": owner_id, "id": workflow_id, "fence": row["fence"]},
+    ).scalar_one_or_none()
+    if row["kind"] == "pdf_render" and (
+        row["input"].get("mode") == "document_archive"
+        or (row["result"] or {}).get("artifact_type") == "document_archive"
+        or progress is not None
+    ):
+        result["mode"] = "document_archive"
+        if progress is not None:
+            result["progress"] = {
+                "completed": progress["completed"],
+                "total": progress["total"],
+            }
     if row["kind"] in {"posting_extract", "matching"}:
         snapshot = row["input"]
         pins = {

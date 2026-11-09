@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Api, ApiError, errorText, terminal, type ApplicationDocuments, type BaseResumeRequest, type DocumentBody, type DocumentDefaults, type DocumentDefaultsPatch, type DocumentFact, type DocumentFitRequest, type DocumentIssue, type DocumentOmissionRequest, type DocumentRecord, type DocumentRenderRequest, type DocumentRestoreRequest, type DocumentReviewRequest, type DocumentRevision, type DocumentRevisionPage, type DocumentSaveRequest, type DocumentTemplate, type GenerationContext, type GenerationRequest, type Profile, type ProfileRevisionSummary, type RevisionPage, type SectionProposal, type SectionProposalApplyRequest, type SectionProposalPage, type SectionRegenerationContext, type SectionRegenerationRequest, type Workflow } from './api';
+import { Api, ApiError, errorText, terminal, type ApplicationDocuments, type BaseResumeRequest, type DocumentArchivePreview, type DocumentBody, type DocumentDefaults, type DocumentDefaultsPatch, type DocumentFact, type DocumentFitRequest, type DocumentIssue, type DocumentOmissionRequest, type DocumentRecord, type DocumentRenderRequest, type DocumentRestoreRequest, type DocumentReviewRequest, type DocumentRevision, type DocumentRevisionPage, type DocumentSaveRequest, type DocumentTemplate, type GenerationContext, type GenerationRequest, type Profile, type ProfileRevisionSummary, type RevisionPage, type SectionProposal, type SectionProposalApplyRequest, type SectionProposalPage, type SectionRegenerationContext, type SectionRegenerationRequest, type Workflow } from './api';
 import type { ApplicationPage, ApplicationSummary } from './tracking-api';
 import { copyBody, ISSUE_REASONS, issueAnchor, linkedClaim, rebaseBody, sameBody } from './document-state';
 import { proposalMatches, SectionProposals } from './SectionProposals';
@@ -31,6 +31,24 @@ const SECTION_TASK_REASONS: Record<string, string> = {
   model_output_limit: 'The model reached its output limit. This failure does not block the route. No proposal was created and the document is unchanged.',
   model_incomplete: 'The model output was cut off before it finished. No proposal was created and the document is unchanged.',
 };
+function archiveErrorText(failure: unknown): string {
+  if (!(failure instanceof ApiError)) return errorText(failure);
+  const reasons: Record<string, string> = {
+    document_archive_empty: 'There are no current saved tailored résumés or cover letters to archive. Create and review them first.',
+    document_archive_too_many_documents: 'The archive exceeds the 100-document limit. No partial archive is created.',
+    document_archive_too_large: 'The PDFs and ZIP exceed the 64 MiB limit. No partial archive is created.',
+    document_archive_source_changed: 'The saved document set, sources, reviews, presentation or company/job labels changed. Refresh the archive preview before creating a new archive.',
+    document_archive_expired: 'This archive has expired. Refresh the preview and create a new archive.',
+    document_archive_unavailable: 'This temporary archive is no longer available. Refresh the preview and create a new archive.',
+    document_archive_integrity_failed: 'The archive integrity check failed. No download is available.',
+    review_required: 'Every current saved tailored document must be reviewed. Review the blocked document, then refresh the archive preview.',
+    unsupported_claims: 'A current saved tailored document has unresolved factual or source issues. Resolve them, save and review, then refresh the archive preview.',
+    render_text_unsupported: 'A document contains text or glyphs the PDF renderer cannot preserve. Edit, save and review it before refreshing the archive preview.',
+  };
+  if (failure.status === 412) return 'The workspace changed after this preview. Refresh the archive preview; no partial archive is created.';
+  const reason = reasons[failure.code];
+  return reason ? `${reason}${failure.detail ? ` ${failure.detail}` : ''}` : `${errorText(failure)}${failure.detail ? ` ${failure.detail}` : ''} The archive is all-or-nothing; no documents are skipped.`;
+}
 
 
 function Sources({ facts, claimIds, evidenceIds }: { facts: DocumentFact[]; claimIds: string[]; evidenceIds: string[] }) {
@@ -124,6 +142,13 @@ export function Documents({ api, profile, disabled = false, externalDocumentId, 
   const [notice, setNotice] = useState('');
   const [monitorError, setMonitorError] = useState('');
   const [pollToken, setPollToken] = useState(0);
+  const [archivePreview, setArchivePreview] = useState<DocumentArchivePreview | null>(null);
+  const [archiveError, setArchiveError] = useState('');
+  const [archiveUncertain, setArchiveUncertain] = useState(false);
+  const [archiveClock, setArchiveClock] = useState(Date.now);
+  const archiveIntent = useRef<{ preview: DocumentArchivePreview; key: string; workflowId: string | null } | null>(null);
+  const workflowCurrent = useRef(workflow);
+  workflowCurrent.current = workflow;
   const mounted = useRef(false);
   const lock = useRef(false);
   const selection = useRef(0);
@@ -311,6 +336,61 @@ export function Documents({ api, profile, disabled = false, externalDocumentId, 
     void run(async signal => {
       const value = await request<ApplicationPage>(signal, `/applications${cursor ? `?cursor=${encodeURIComponent(cursor)}` : ''}`);
       setApplications(old => cursor ? [...old.filter(item => !value.items.some(next => next.id === item.id)), ...value.items] : value.items); setApplicationCursor(value.next_cursor);
+    });
+  }
+  function prepareArchive() {
+    if (locked || dirty || archiveUncertain || monitorError) return;
+    void run(async signal => {
+      setArchivePreview(null); setArchiveError(''); archiveIntent.current = null;
+      try {
+        const value = await api.previewDocumentArchive(signal);
+        if (!mounted.current || signal.aborted) return;
+        setArchivePreview(value);
+      } catch (failure) {
+        if (!aborted(failure) && mounted.current) setArchiveError(archiveErrorText(failure));
+      }
+    });
+  }
+  function createArchive() {
+    if (!archivePreview || locked || dirty || monitorError) return;
+    const snapshot = archivePreview;
+    const intent = archiveIntent.current ?? { preview: snapshot, key: crypto.randomUUID(), workflowId: null };
+    if (intent.preview !== snapshot || intent.workflowId) return;
+    archiveIntent.current = intent;
+    void run(async signal => {
+      setArchiveError('');
+      try {
+        const value = await api.createDocumentArchive({ manifest_sha256: snapshot.manifest_sha256 }, snapshot.workspace_version, intent.key, signal);
+        if (!mounted.current || signal.aborted || archiveIntent.current !== intent) return;
+        if (value.mode !== 'document_archive' || value.kind !== 'pdf_render' || !value.id) throw new Error('invalid_archive_workflow');
+        intent.workflowId = value.id; workflowCurrent.current = value;
+        workflowSelection.current = selection.current; processedWorkflow.current = null;
+        setWorkflow(value); setMonitorError(''); setArchiveUncertain(false); setArchivePreview(null);
+        setNotice('Archive task accepted for the exact previewed saved-document set. Your selected document and saved content are unchanged.');
+      } catch (failure) {
+        if (aborted(failure) || !mounted.current || archiveIntent.current !== intent) return;
+        const uncertain = !(failure instanceof ApiError) || failure.status >= 500;
+        setArchiveUncertain(uncertain);
+        if (!uncertain) { setArchivePreview(null); archiveIntent.current = null; }
+        setArchiveError(archiveErrorText(failure));
+      }
+    });
+  }
+  function controlArchive(action: 'cancel' | 'retry') {
+    const live = workflowCurrent.current;
+    if (!live || live.id !== archiveIntent.current?.workflowId || live.mode !== 'document_archive' || busy || disabled || monitorError) return;
+    if (action === 'cancel' ? !live.cancelable : !live.retryable) return;
+    if (action === 'retry' && (live.state !== 'retryable_failure' || live.remaining_attempts <= 0 ||
+        Date.parse(live.deadline_at) <= Date.now() || (live.next_attempt_at && Date.parse(live.next_attempt_at) > Date.now()) ||
+        live.cancel_requested_at || live.delivery_state === 'unknown')) return;
+    void run(async signal => {
+      const path = `/workflows/${encodeURIComponent(live.id)}/${action}`;
+      const value = await request<Workflow>(signal, path, 'POST', {}, live.version, keyFor(path, {}, live.version));
+      if (workflowCurrent.current?.id !== live.id || archiveIntent.current?.workflowId !== live.id) return;
+      if (value.id !== live.id || value.mode !== 'document_archive') throw new Error('invalid_archive_workflow');
+      if (workflowCurrent.current.version > value.version) return;
+      mutation.current = null; workflowCurrent.current = value; setWorkflow(value); setPollToken(previous => previous + 1);
+      setNotice(action === 'cancel' ? 'Archive cancellation requested. No partial download is published; the task may still be stopping.' : 'Retry requested for the same frozen archive, within its original attempt and deadline limits. It does not refresh or change the document set.');
     });
   }
   function edit(change: (body: DocumentBody) => void) {
@@ -542,6 +622,7 @@ export function Documents({ api, profile, disabled = false, externalDocumentId, 
     let stopped = false; let timer: number | undefined; const controller = new AbortController(); const pending = controllers.current; pending.add(controller);
     const epoch = workflowSelection.current;
     const applicationId = current.current.applicationId;
+    const archive = archiveIntent.current?.workflowId === workflowId ? archiveIntent.current : null;
     let completedWorkflow: Workflow | null = null;
     const poll = async () => {
       if (stopped) return;
@@ -549,6 +630,26 @@ export function Documents({ api, profile, disabled = false, externalDocumentId, 
       try {
         let value = await request<Workflow>(controller.signal, `/workflows/${encodeURIComponent(workflowId)}`);
         if (stopped) return;
+        if (archive || value.mode === 'document_archive') {
+          if (!archive) throw new Error('unexpected_archive_workflow');
+          if (archiveIntent.current !== archive || workflowCurrent.current?.id !== workflowId) return;
+          if (value.id !== workflowId || value.kind !== 'pdf_render' || value.mode !== 'document_archive') throw new Error('invalid_archive_workflow');
+          if (workflowCurrent.current.version > value.version || (terminal(workflowCurrent.current.state) && !terminal(value.state))) {
+            if (!terminal(workflowCurrent.current.state)) timer = window.setTimeout(() => { void poll(); }, 2000);
+            return;
+          }
+          if (value.state === 'succeeded' && (value.result?.artifact_type !== 'document_archive' ||
+              value.result.archive_document_count !== archive.preview.document_count ||
+              !value.result.archive_expires_at || !Number.isFinite(Date.parse(value.result.archive_expires_at)))) throw new Error('invalid_archive_result');
+          workflowCurrent.current = value; setWorkflow(value); setMonitorError(''); setArchiveClock(Date.now());
+          if (terminal(value.state)) {
+            processedWorkflow.current = value.id;
+            setNotice(value.state === 'succeeded' ? 'All previewed documents were archived. Download the private ZIP before its expiry; nothing was sent and no saved content was changed.' : `Archive task ${value.state.replaceAll('_', ' ')}. No partial download is available. Saved documents are unchanged; correct any issue and explicitly refresh the archive preview.`);
+            return;
+          }
+          timer = window.setTimeout(() => { void poll(); }, 2000);
+          return;
+        }
         if (value.state === 'succeeded' && value.result?.fit_workflow_id) {
           if (!value.result.application_id) throw new Error('missing_fit_application');
           generationFit.current = { workflowId: value.result.fit_workflow_id, applicationId: value.result.application_id };
@@ -620,7 +721,7 @@ export function Documents({ api, profile, disabled = false, externalDocumentId, 
       } catch (failure) {
         if (stopped || aborted(failure)) return;
         if (completedWorkflow) setWorkflow(completedWorkflow);
-        setMonitorError(failure instanceof Error && failure.message === 'incomplete_pair' ? 'The task returned an incomplete pair. Existing documents are unchanged; no complete-pair success is being shown.' : `Task status/result could not be loaded. Existing documents are unchanged. ${errorText(failure)}`);
+        setMonitorError(archive ? 'Archive status or its matching result could not be confirmed. No download is shown. Reconnect this exact task; your selected document and edits are unchanged.' : failure instanceof Error && failure.message === 'incomplete_pair' ? 'The task returned an incomplete pair. Existing documents are unchanged; no complete-pair success is being shown.' : `Task status/result could not be loaded. Existing documents are unchanged. ${errorText(failure)}`);
       }
       if (!stopped) timer = window.setTimeout(() => { void poll(); }, 2000);
     };
@@ -628,6 +729,20 @@ export function Documents({ api, profile, disabled = false, externalDocumentId, 
     return () => { stopped = true; controller.abort(); pending.delete(controller); clearTimeout(timer); };
   }, [request, workflowId, workflowState, pollToken, receive, loadPair, monitorError]);
 
+  const archiveResult = workflow?.id === archiveIntent.current?.workflowId && workflow?.mode === 'document_archive' &&
+    workflow.state === 'succeeded' && workflow.result?.artifact_type === 'document_archive' &&
+    workflow.result.archive_document_count === archiveIntent.current?.preview.document_count && !monitorError ? workflow.result : null;
+  const archiveExpiry = archiveResult?.archive_expires_at;
+  useEffect(() => {
+    if (!archiveExpiry) return;
+    const expiry = Date.parse(archiveExpiry);
+    if (!Number.isFinite(expiry)) return;
+    const timer = window.setTimeout(() => setArchiveClock(Date.now()), Math.max(0, expiry - Date.now()));
+    return () => clearTimeout(timer);
+  }, [archiveExpiry]);
+  const archiveRetryDue = workflow?.mode === 'document_archive' && workflow.state === 'retryable_failure' && workflow.retryable &&
+    workflow.remaining_attempts > 0 && Date.parse(workflow.deadline_at) > archiveClock &&
+    (!workflow.next_attempt_at || Date.parse(workflow.next_attempt_at) <= archiveClock) && !workflow.cancel_requested_at && workflow.delivery_state !== 'unknown';
   const displayed = buffer ?? doc?.current_revision.body;
   const route = context?.generation_route ?? pair?.generation_route;
   return <section className="documents document-panel" aria-labelledby="documents-heading">
@@ -643,6 +758,19 @@ export function Documents({ api, profile, disabled = false, externalDocumentId, 
       </div>
       {dirty && <p className="hint">Save or discard your document changes before switching workspaces.</p>}
     </fieldset>
+    {mode === 'tailored' && <section className="disclosure" aria-labelledby="document-archive-title">
+      <h3 id="document-archive-title">Download all saved application PDFs</h3>
+      <p>Prepare one private ZIP, grouped by company, containing every current saved tailored résumé and cover letter across all applications, including archived applications — not just the selected job. Base résumés, email drafts, deleted documents and unsaved edits are excluded. No model is called and nothing is sent.</p>
+      <p>Every included revision must be reviewed and eligible for PDF export. This is all-or-nothing: one blocked or changed document fails the entire archive; nothing is silently skipped. Limit: 100 documents and 64 MiB for PDF data plus the ZIP. A ready archive expires after 24 hours and its temporary copy is deleted automatically.</p>
+      {dirty && <p className="hint">Save document revision or Discard document changes below before preparing or creating an archive. Unsaved wording is never included or silently discarded.</p>}
+      {archiveError && <p className="error" role="alert">{archiveError}</p>}
+      {archiveUncertain && <p>The request outcome is unknown. Retry the exact archive request to recover the same task; do not prepare a different document set. Your preview and request key are retained.</p>}
+      <div className="actions">
+        <button className="secondary" disabled={locked || dirty || archiveUncertain || !!monitorError} onClick={prepareArchive}>{archivePreview ? 'Refresh archive preview' : 'Prepare archive preview'}</button>
+        {archivePreview && <button disabled={locked || dirty || !!monitorError} onClick={createArchive}>{archiveUncertain ? 'Retry exact archive request' : 'Create all-document ZIP'}</button>}
+      </div>
+      {archivePreview && <p role="status">Preview: {archivePreview.document_count} saved documents. Maximum {archivePreview.max_documents} documents; {archivePreview.max_archive_bytes / 1024 / 1024} MiB combined PDF and ZIP data. Download lifetime: {archivePreview.expires_in_seconds / 3600} hours. Creating uses this exact preview; intervening changes require an explicit refresh.</p>}
+    </section>}
     <fieldset className="document-compose" disabled={locked || dirty}><legend>{mode === 'base' ? 'Profile-only composition' : 'Tailored pair preparation'}</legend>
       <div className="document-compose-fields">
       <div>
@@ -675,9 +803,15 @@ export function Documents({ api, profile, disabled = false, externalDocumentId, 
       </>}
     </fieldset>
     {workflow && <section className="task" aria-live="polite"><h3>Document task: {workflow.state.replaceAll('_', ' ')}</h3><p>Attempt {workflow.attempt}{workflow.max_attempts === undefined ? '' : ` of ${workflow.max_attempts}`}. No estimated progress percentage.</p><small>Task {workflow.id}</small>{workflow.next_attempt_at && <p>Next scheduled attempt: {workflow.next_attempt_at}</p>}
-      {workflow.last_error_code && <p>{workflow.mode === 'page_fit' ? `The page-fit task failed. Failure code: ${workflow.last_error_code}. Original/current saved content remains available; no fitting success or PDF export is claimed.` : workflow.last_error_code === 'render_text_unsupported' ? 'The saved text contains glyphs or text this built-in PDF renderer cannot preserve. Edit to supported text, or keep your portable owner data and ask the operator about font qualification. Save and review any changed revision before retrying. No PDF was created.' : `${(workflow.mode === 'section_regeneration' ? SECTION_TASK_REASONS : TASK_REASONS)[workflow.last_error_code] ?? 'The task failed.'} Failure code: ${workflow.last_error_code}. Existing saved documents remain available.`}</p>}
+      {workflow.mode === 'document_archive' && <p>{workflow.progress ? `${workflow.progress.completed} of ${workflow.progress.total} documents rendered. A download is available only when the entire ZIP succeeds.` : 'Waiting for recorded document progress. No completed count is inferred.'}</p>}
+      {workflow.mode === 'document_archive' && workflow.last_error_code && <p className="error">{archiveErrorText(new ApiError(409, workflow.last_error_code))} Failure code: {workflow.last_error_code}.</p>}
+      {archiveResult && archiveExpiry && <p>{Date.parse(archiveExpiry) > archiveClock
+        ? <><a className="document-download" href={`/api/v1/document-archives/${encodeURIComponent(workflow.id)}/download`} download>Download all saved application PDFs (ZIP)</a> · {archiveResult.archive_document_count} documents. Expires <time dateTime={archiveExpiry}>{archiveExpiry}</time>. Changes to the saved document set or sources can invalidate this download sooner.</>
+        : <>This archive expired at <time dateTime={archiveExpiry}>{archiveExpiry}</time>. Refresh the archive preview and create a new ZIP.</>}</p>}
+      {workflow.mode === 'document_archive' && workflow.state === 'retryable_failure' && <><button className="secondary" disabled={busy || disabled || !archiveRetryDue || !!monitorError} onClick={() => controlArchive('retry')}>Retry frozen archive task</button><p>{archiveRetryDue ? 'Retry keeps the original document set, attempt limits and deadline. It does not refresh the preview.' : `Retry unavailable: ${workflow.retry_block_reason ?? 'not yet due or original limits exhausted'}. Reconnect status after the due time; a terminal task cannot be reopened.`}</p></>}
+      {workflow.mode !== 'document_archive' && workflow.last_error_code && <p>{workflow.mode === 'page_fit' ? `The page-fit task failed. Failure code: ${workflow.last_error_code}. Original/current saved content remains available; no fitting success or PDF export is claimed.` : workflow.last_error_code === 'render_text_unsupported' ? 'The saved text contains glyphs or text this built-in PDF renderer cannot preserve. Edit to supported text, or keep your portable owner data and ask the operator about font qualification. Save and review any changed revision before retrying. No PDF was created.' : `${(workflow.mode === 'section_regeneration' ? SECTION_TASK_REASONS : TASK_REASONS)[workflow.last_error_code] ?? 'The task failed.'} Failure code: ${workflow.last_error_code}. Existing saved documents remain available.`}</p>}
       {workflow.state === 'waiting_for_approval' && <p>This task is waiting for a separate approval; opening or reviewing a document does not grant provider access.</p>}
-      {activeTask && <button className="secondary" disabled={busy || disabled} onClick={() => { void run(async signal => { const path = `/workflows/${encodeURIComponent(workflow.id)}/cancel`; const value = await request<Workflow>(signal, path, 'POST', {}, workflow.version, keyFor(path, {}, workflow.version)); mutation.current = null; setWorkflow(value); setNotice('Cancellation requested. The task may still be stopping.'); }); }}>Cancel document task</button>}
+      {activeTask && <button className="secondary" disabled={busy || disabled || (workflow.mode === 'document_archive' && (!workflow.cancelable || !!monitorError))} onClick={() => { if (workflow.mode === 'document_archive') { controlArchive('cancel'); return; } void run(async signal => { const path = `/workflows/${encodeURIComponent(workflow.id)}/cancel`; const value = await request<Workflow>(signal, path, 'POST', {}, workflow.version, keyFor(path, {}, workflow.version)); mutation.current = null; setWorkflow(value); setNotice('Cancellation requested. The task may still be stopping.'); }); }}>Cancel document task</button>}
       {monitorError && <><p className="error">{monitorError}</p><button className="secondary" disabled={busy} onClick={() => setPollToken(value => value + 1)}>Reconnect document task</button></>}
     </section>}
     {doc && displayed ? <section className="document-current" aria-label="Selected saved document">
