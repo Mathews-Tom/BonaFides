@@ -69,6 +69,20 @@ Editing is best for trimming and reordering. To say something new, add or change
 
 To abandon your edits, select **Discard document changes**.
 
+## Fit a tailored résumé to one or two pages
+
+For a new tailored résumé, choose **Initial résumé page target (optional)** before previewing and authorizing generation. The original résumé and cover letter are saved first; a separate task then tries to fit the résumé. The cover letter and your profile are unchanged.
+
+For an existing tailored résumé, save your edits, choose **Saved résumé page target**, then select **Fit saved résumé to target**. This uses the built-in PDF renderer, not AI. It keeps wording and source links intact and, when needed, leaves out whole blocks from the end. The target is a goal, not a guarantee: even the last remaining block can exceed it. **Page fit and omitted blocks** shows the measured page count and recoverable omissions.
+
+- Select **Restore block …** to bring back its exact saved text and source links in their original relative position, keeping surrounding edits.
+- Select **Omit block …** to save a recoverable omission immediately. **Undo omit block …** reverses that last omission; the inventory also offers restoration later.
+- **Remove block …** remains a separate editor deletion, committed only when you save. It does not put the block in the recoverable inventory.
+
+Fitting, omission and restoration create saved revisions that need fresh review. Later edits or restores never cut content automatically, and they can take you above the target. A changed document has no current page measurement until you explicitly fit it again. Use **Load document history** to preview or restore earlier wording; the omission inventory also travels with owner-data exports and imports.
+
+Unsaved edits and historical previews cannot be fitted. A failed or cancelled fit leaves the saved document and application available; an intervening save prevents an old task from publishing cuts. Measurement PDFs are private working data, not downloads. Resolve the displayed error before requesting another fit.
+
 ## Approve the exact version
 
 Once there are no issues:
@@ -87,6 +101,8 @@ Your approval covers that exact saved version. If you change anything afterwards
 The PDF stays downloadable from that saved version until you delete the document's data. It contains your personal details, so store any copy you save carefully. Nothing is sent anywhere.
 
 If rendering fails with a message about glyphs or text the renderer can't preserve, the document contains characters the built-in fonts can't print, for example emoji or Chinese, Japanese or Korean characters. Edit those characters out, save, approve again and retry.
+
+The built-in renderer also compares selectable PDF text with the saved visible content. This is an internal machine-readability check, not certification by an external applicant-tracking system, a visual layout review or a factual check.
 
 ## Look back or restore an earlier version
 
@@ -112,7 +128,7 @@ You need all four:
 
 1. Open **Documents** and choose **Tracked application documents**.
 2. Select **Reload tracked applications** and choose one under **Tracked application**.
-3. Choose a **Writing tone**: **Professional** or **Concise**.
+3. Choose a **Writing tone**: **Professional** or **Concise**. For a new résumé, optionally choose **Initial résumé page target (optional)**; see [page fitting](#fit-a-tailored-résumé-to-one-or-two-pages).
 4. Select **Preview reviewed generation context**. BonaFides shows exactly what it will send to the model, where it will send it, and what it leaves out. See [what the model receives](ai-tailoring.md#what-the-model-receives).
 5. If you're happy with it, tick **I reviewed this exact projection, route, frozen inputs and privacy limitation for this one task**.
 6. Select **Generate résumé and cover letter pair**.

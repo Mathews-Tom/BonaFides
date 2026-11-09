@@ -205,7 +205,9 @@ def enqueue(conn: Connection, owner_id: UUID, kind: str, input_snapshot: dict[st
             else 4
             if kind == "profile_import"
             else 3,
-            "deadline": 900
+            "deadline": 600
+            if pinned.get("mode") == "page_fit"
+            else 900
             if kind == "backup"
             else 480
             if kind in {"posting_extract", "matching"}
@@ -231,6 +233,25 @@ def enqueue(conn: Connection, owner_id: UUID, kind: str, input_snapshot: dict[st
 def source_block_reason(conn: Connection, row: Mapping[str, object]) -> str | None:
     snapshot = cast(dict[str, object], row["input"])
     owner_id = row["owner_id"]
+    if row["kind"] == "document_generate" and snapshot.get("mode") == "page_fit":
+        from bonafides.print_fitting import check_source_pair, pinned_source
+
+        try:
+            pinned_source(
+                conn,
+                cast(UUID, owner_id),
+                UUID(str(snapshot["document_id"])),
+                UUID(str(snapshot["revision_id"])),
+                str(snapshot["content_sha256"]),
+                None,
+                fitting=True,
+            )
+            check_source_pair(conn, cast(UUID, owner_id), snapshot)
+        except Problem as exc:
+            return "source_changed" if exc.code == "revision_mismatch" else "source_unavailable"
+        except (KeyError, ValueError, TypeError):
+            return "source_unavailable"
+        return None
     if row["kind"] == "source_refresh":
         source = (
             conn.execute(
@@ -512,6 +533,7 @@ def get_workflow(conn: Connection, owner_id: UUID, workflow_id: UUID) -> dict[st
         "deterministic_base",
         "tailored_ai",
         "section_regeneration",
+        "page_fit",
     }:
         result["mode"] = row["input"]["mode"]
     if row["kind"] in {"posting_extract", "matching"}:

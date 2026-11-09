@@ -959,6 +959,20 @@ Completion inserts an immutable owner-bound proposal and returns opaque result I
 
 Rendering checks actual painted-font missing-glyph records and selectable text against the escaped visible template content in original order. Extraction may add layout whitespace but cannot erase original word/block boundaries, drop text or introduce words. `render_text_unsupported` rejects unavailable glyphs or degraded text without publishing a ready artifact; correct the characters or use a separately qualified fixed font/template deployment. Latin/other sampled glyph success does not qualify all Unicode, RTL, multilingual layout or PDF-UA. Literal URLs/markup remain escaped text, not fetched resources or active PDF links.
 
+#### Reversible résumé page fitting
+
+Only saved tailored résumés with schema-2 provenance support fitting and recoverable omission. Both routes retain the owner/Origin/CSRF, quoted document `If-Match` and payload-bound idempotency boundary above.
+
+| Route under `/api/v1` | Contract |
+| --- | --- |
+| `POST /documents/{id}/fit` | `{revision_id,content_sha256,page_target:1\|2}` returns `202 Workflow`, existing `document_generate` kind with `mode:"page_fit"`. Bounded sealed-renderer measurements retain at least one block and publish an immutable, unreviewed revision only under the current worker fence and exact live source pins. A target can remain unmet; the result reports actual pages. No model call or measurement artifact is published. |
+| `POST /documents/{id}/omissions` | `{revision_id,content_sha256,operation:"omit"\|"restore",block_key}` returns `200 DocumentRecord`. Saves exact recoverable text/source pins and original relative ordering without replacing edited neighbors. Ordinary Remove/history behavior is unchanged. |
+
+Generation context preview and generation accept optional explicit `page_target`; the preview echoes it outside the unchanged model-context digest. Initial generation first publishes the original pair atomically, then queues a separately pinned child and returns `fit_workflow_id`. The UI follows that child before checking final pair identities; child failure reloads the saved originals and reports the real error. Regenerating an existing résumé, saving edits and historical restoration never automatically refit.
+
+`provenance_snapshot.page_fit` carries target, actual page count/render-input digest, section/block order and exact omissions with `page_target` or `owner` reasons. Visible and hidden content share existing limits and owner-reference validation; inventory participates in the immutable revision digest and portable validation. Changed render inputs clear the measurement, not omissions. New revisions require exact review again; source withdrawal, staleness, cancellation and lease loss cannot authorize publication or export. Worker transactions take the owner lock before workflow locks. Existing missing-glyph and exact normalized-text checks remain the internal machine-readability boundary, not external ATS certification, visual or factual qualification.
+
+
 #### Observed document editing and export local checkpoint — 2026-10-25
 
 Document editing and export is **implemented / live-unqualified**, not genuine model or human acceptance. The main optional route remains empty. Current Linux arm64 image `bonafides:ol012-local-a` has index/local Docker ID `sha256:e3623b002df80c0b10e99bb8b4f43fd4efd04cb7eead93bf0df9eeea702fd93a`, arm64 manifest `sha256:4e8c6a65765df8b4f5dcdb524bbcbfe3c29d9cdbadcd5222756758d6463e090c`, config `sha256:9701cfdcb6c0d0c62ee48e30cc0ca7facf067abde47dec0cb158fc1ab0fdaabe`. Served JS/CSS are `index-IE4BCuKx.js` / `index-BvLcJoQY.css`. All six running application services were independently inspected against that image. The retained old-image `db-access` helper is a test-only fixed TCP relay, not an application service.

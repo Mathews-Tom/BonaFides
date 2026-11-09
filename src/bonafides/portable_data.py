@@ -349,6 +349,16 @@ def _semantic_hashes(archive: PortableArchive) -> None:
     for row in records["document_revisions"]:
         try:
             body = parse_body(row["body"])
+            provenance = cast(dict[str, object], row["provenance_snapshot"])
+            from bonafides.print_fitting import inventory
+
+            hidden = inventory(body, provenance).omissions
+            for item in hidden:
+                if (
+                    not set(item.block.claim_revision_ids) <= claims
+                    or not set(item.block.evidence_revision_ids) <= evidence
+                ):
+                    raise ArchiveError("portable_snapshot_reference_missing")
             for section in body.sections:
                 for block in section.blocks:
                     if (
@@ -356,7 +366,6 @@ def _semantic_hashes(archive: PortableArchive) -> None:
                         or not set(block.evidence_revision_ids) <= evidence
                     ):
                         raise ArchiveError("portable_snapshot_reference_missing")
-            provenance = cast(dict[str, object], row["provenance_snapshot"])
             digest = revision_digest(body, cast(str, row["template_version"]), provenance)
         except ArchiveError:
             raise

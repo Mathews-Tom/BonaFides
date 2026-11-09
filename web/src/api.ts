@@ -111,7 +111,7 @@ export interface InstallationBackups {
 }
 export const MAX_PORTABLE_BYTES = 10_000 * 64 * 1024 * 1024 + 20 * 1024 * 1024;
 export interface Workflow {
-  id: string; version: number; state: WorkflowState; attempt: number; kind?: string; mode?: 'deterministic_base' | 'tailored_ai' | 'section_regeneration';
+  id: string; version: number; state: WorkflowState; attempt: number; kind?: string; mode?: 'deterministic_base' | 'tailored_ai' | 'section_regeneration' | 'page_fit';
   max_attempts: number; next_attempt_at: string | null; last_error_code: string | null;
   created_at: string; updated_at: string; deadline_at: string; cancel_requested_at: string | null;
   lease_expires_at: string | null; last_heartbeat_at: string | null; queue_age_seconds: number | null;
@@ -127,6 +127,7 @@ export interface Workflow {
   result: {
     document_id?: string; revision_id?: string; artifact_id?: string; application_id?: string; model_run_id?: string;
     proposal_id?: string; target_revision_id?: string; section_key?: string;
+    fit_workflow_id?: string; page_target?: 1 | 2; page_count?: number;
     documents?: { kind: DocumentKind; document_id: string; revision_id: string }[];
     source_id?: string; posting_id?: string; profile_revision_id?: string; requirements_revision_id?: string; source_sha256?: string;
     requirements?: Requirement[]; assessments?: Coverage[]; policy_version?: number; fetch_elapsed_ms?: number; posting_count?: number;
@@ -141,9 +142,15 @@ export interface DocumentFact {
   claim_revision_id: string; evidence_revision_id: string | null; claim_text: string; evidence_text: string;
   source: string; claim_sha256: string; evidence_sha256: string | null; status: 'supported' | 'user_asserted' | 'unsupported';
 }
+export interface DocumentPageFit {
+  page_target: 1 | 2 | null; page_count: number | null; measured_content_sha256: string | null;
+  order: { key: string; heading: string; block_keys: string[] }[];
+  omissions: { section_key: string; block: DocumentBlock; reason: 'page_target' | 'owner' }[];
+}
 export interface DocumentProvenance {
   facts?: DocumentFact[]; frame?: Record<string, unknown>; mode?: string; schema_version?: number | string;
   omitted_claims?: { claim_revision_id: string; claim_text: string; code: 'literal_claim_not_grounded' }[];
+  page_fit?: DocumentPageFit;
   model_run?: Record<string, unknown> | null; [key: string]: unknown;
 }
 export interface DocumentIssue { path: string; code: string; statement?: string }
@@ -183,6 +190,7 @@ export interface GenerationContext {
   requirements_revision_id: string; template_version: string; tone: 'professional' | 'concise'; language: 'en';
   context_sha256: string; model_projection: Record<string, unknown>; frame: Record<string, unknown>; generation_route: GenerationRoute;
   withheld_evidence: WithheldEvidence[];
+  page_target?: 1 | 2 | null;
 }
 export interface WithheldEvidence { evidence_revision_id: string; source: string; reasons: ('confidential' | 'employer_owned')[]; claim_revision_ids: string[] }
 export interface SectionRegenerationContext {
@@ -204,11 +212,14 @@ export interface SectionProposalApplyRequest { revision_id: string; content_sha2
 export interface BaseResumeRequest { profile_revision_id: string; template_version: string }
 export interface GenerationRequest extends BaseResumeRequest {
   requirements_revision_id: string; tone: 'professional' | 'concise'; language: 'en'; context_sha256: string;
+  page_target?: 1 | 2;
 }
 export interface DocumentSaveRequest { base_revision_id: string; body: DocumentBody; reason: string }
 export interface DocumentRestoreRequest { revision_id: string; reason: string }
 export interface DocumentReviewRequest { revision_id: string; decision: 'accepted'; content_sha256: string; reviewed_block_keys: string[] }
 export interface DocumentRenderRequest { revision_id: string; content_sha256: string; format: 'pdf' }
+export interface DocumentFitRequest { revision_id: string; content_sha256: string; page_target: 1 | 2 }
+export interface DocumentOmissionRequest { revision_id: string; content_sha256: string; operation: 'omit' | 'restore'; block_key: string }
 export const MAX_IMPORT_BYTES = 10 * 1024 * 1024;
 export type ImportMediaType = 'application/pdf' | 'text/plain';
 export interface ImportSource { source_id: string; start: number; end: number; quote: string }

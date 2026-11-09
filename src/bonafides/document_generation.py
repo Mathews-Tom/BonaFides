@@ -74,6 +74,16 @@ def require_template(version: str) -> None:
 def revision_digest(
     body: documents.DocumentBody, template: str, provenance: dict[str, object]
 ) -> str:
+    if "page_fit" in provenance:
+        if provenance.get("schema_version") != PROTOCOL:
+            raise ValueError("page_fit_requires_supported_revision")
+        from bonafides.print_fitting import inventory, render_digest
+
+        fit = inventory(body, provenance)
+        if fit.measured_content_sha256 is not None and fit.measured_content_sha256 != render_digest(
+            body, provenance, template
+        ):
+            raise ValueError("page_fit_measurement_mismatch")
     if provenance.get("schema_version") != PROTOCOL:
         return documents.body_digest(body)
     content: dict[str, object] = {
@@ -84,6 +94,8 @@ def revision_digest(
     }
     if "omitted_claims" in provenance:
         content["omitted_claims"] = provenance["omitted_claims"]
+    if "page_fit" in provenance:
+        content["page_fit"] = provenance["page_fit"]
     return sha(content)
 
 
@@ -823,7 +835,14 @@ def append_revision(
     revision_id: UUID | None = None,
 ) -> UUID:
     identifier = revision_id or uuid4()
-    provenance = cast(dict[str, object], source["provenance_snapshot"])
+    from bonafides.print_fitting import inventory, reconcile, validate_hidden_references
+
+    try:
+        provenance = reconcile(body, cast(dict[str, object], source["provenance_snapshot"]))
+    except (ValidationError, ValueError) as exc:
+        raise Problem(422, "invalid_page_fit_inventory") from exc
+    if "page_fit" in provenance:
+        validate_hidden_references(conn, owner, inventory(body, provenance))
     template = str(source["template_version"])
     kind = "base" if source["scope"] == "base" else str(source["kind"])
     validation = validation_issues(body, provenance, kind)
@@ -993,7 +1012,31 @@ def publish_pair(
             revision_id=uuid5(task.id, item.kind),
         )
         result.append({"kind": item.kind, "document_id": str(draft), "revision_id": str(revision)})
-    return {"application_id": plan["application_id"], "documents": result, "model_run_id": str(run)}
+    published: dict[str, object] = {
+        "application_id": plan["application_id"],
+        "documents": result,
+        "model_run_id": str(run),
+    }
+    if plan.get("page_target") is not None and "resume" not in targets:
+        from bonafides.print_fitting import PageTarget, queue_fit
+
+        resume = next(item for item in result if item["kind"] == "resume")
+        record = documents._document(
+            conn, task.owner_id, UUID(str(resume["document_id"])), settings
+        )
+        resume_revision = cast(dict[str, object], record["current_revision"])
+        child = queue_fit(
+            conn,
+            task.owner_id,
+            UUID(str(resume["document_id"])),
+            UUID(str(resume["revision_id"])),
+            str(resume_revision["content_sha256"]),
+            cast(PageTarget, plan["page_target"]),
+            pair=result,
+            application=str(plan["application_id"]),
+        )
+        published["fit_workflow_id"] = str(child)
+    return published
 
 
 def revision_view(
@@ -1012,7 +1055,11 @@ def revision_view(
         raise Problem(404, "document_revision_not_found")
     body = documents.parse_body(row["body"])
     provenance = cast(dict[str, object], row["provenance_snapshot"])
-    if revision_digest(body, row["template_version"], provenance) != row["content_sha256"]:
+    try:
+        digest = revision_digest(body, row["template_version"], provenance)
+    except (ValidationError, ValueError, KeyError, TypeError) as exc:
+        raise Problem(409, "document_integrity_failed") from exc
+    if digest != row["content_sha256"]:
         raise Problem(409, "document_integrity_failed")
     validation = validation_issues(
         body, provenance, "base" if row["scope"] == "base" else row["kind"]
@@ -1083,6 +1130,14 @@ class GenerationRequest(BaseRequest):
     tone: Literal["professional", "concise"]
     language: Literal["en"]
     context_sha256: Annotated[str, Field(pattern=r"^[0-9a-f]{64}$")]
+    page_target: Literal[1, 2] | None = None
+
+    @field_validator("page_target", mode="before")
+    @classmethod
+    def strict_page_target(cls, value: object) -> object:
+        if value is not None and type(value) is not int:
+            raise ValueError("invalid_page_target")
+        return value
 
 
 class SaveRequest(documents.StrictModel):
@@ -1114,6 +1169,9 @@ def _response(status: int, result: dict[str, object]) -> Response:
 
 def install_routes(router: APIRouter, db: Database, settings: Settings) -> None:
     document_defaults.install_routes(router, db)
+    from bonafides import print_fitting
+
+    print_fitting.install_routes(router, db, settings)
 
     @router.get("/document-templates")
     def templates(owner: Annotated[Owner, Depends(require_owner)]) -> Response:
@@ -1221,6 +1279,7 @@ def install_routes(router: APIRouter, db: Database, settings: Settings) -> None:
         template_version: str,
         tone: Literal["professional", "concise"] = "professional",
         language: str = "en",
+        page_target: Annotated[int | None, Query(ge=1, le=2)] = None,
     ) -> Response:
         with db.transaction() as conn:
             plan = generation_plan(
@@ -1256,6 +1315,7 @@ def install_routes(router: APIRouter, db: Database, settings: Settings) -> None:
                     **{key: plan[key] for key in keys},
                     "model_projection": plan["context"],
                     "withheld_evidence": withheld,
+                    "page_target": page_target,
                 },
             )
 
@@ -1285,6 +1345,8 @@ def install_routes(router: APIRouter, db: Database, settings: Settings) -> None:
                 raise Problem(409, "generation_context_changed")
             if cast(dict[str, object], plan["generation_route"])["status"] != "qualified":
                 raise Problem(503, "generation_route_unavailable")
+            if body.page_target is not None:
+                plan["page_target"] = body.page_target
             workflow = enqueue(conn, owner.id, "document_generate", plan)
             return 202, get_workflow(conn, owner.id, workflow)
 

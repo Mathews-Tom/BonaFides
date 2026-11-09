@@ -676,3 +676,167 @@ def test_canary_reports_accessible_file_not_falsely_blocked(tmp_path: Path) -> N
     assert result["file_blocked"] is False
     assert result["network_blocked"] is True
     assert isolation_canary(tmp_path / "absent", "127.0.0.1", 0)["file_blocked"] is True
+
+
+def _fit_provenance() -> dict[str, object]:
+    from bonafides.document_frame import PrintableFrame, template_digest
+
+    return {
+        "schema_version": 2,
+        "template_version": "bonafides-evidence-v1",
+        "template_sha256": template_digest("bonafides-evidence-v1"),
+        "frame": PrintableFrame(display_name="Synthetic owner").model_dump(mode="json"),
+    }
+
+
+@pytest.mark.parametrize("restore_order", [("b", "c"), ("c", "b")])
+def test_recoverable_blocks_keep_adjacent_order_exact_pins_and_edited_neighbors(
+    restore_order: tuple[str, str],
+) -> None:
+    from bonafides import print_fitting as fitting
+
+    body, _ = example()
+    block = body.sections[0].blocks[0]
+    body = DocumentBody(
+        title=body.title,
+        sections=[
+            DocumentSection(
+                key="first", heading="First", blocks=[block.model_copy(update={"block_key": "a"})]
+            ),
+            DocumentSection(
+                key="hidden",
+                heading="Original heading",
+                blocks=[block.model_copy(update={"block_key": key}) for key in ("b", "c")],
+            ),
+            DocumentSection(
+                key="last", heading="Last", blocks=[block.model_copy(update={"block_key": "d"})]
+            ),
+        ],
+    )
+    original = body
+    fit = fitting.inventory(body, {})
+    for key in ("b", "c"):
+        body, fit = fitting.change_block(body, fit, "omit", key)
+    edited = body.model_copy(update={"title": "Owner-edited title"})
+    provenance: dict[str, object] = {
+        **_fit_provenance(),
+        "page_fit": fit.model_dump(mode="json"),
+    }
+    provenance = fitting.reconcile(edited, provenance)
+    for key in restore_order:
+        edited, fit = fitting.change_block(
+            edited, fitting.inventory(edited, provenance), "restore", key
+        )
+        provenance = {**provenance, "page_fit": fit.model_dump(mode="json")}
+    assert edited.title == "Owner-edited title" and edited.sections == original.sections
+    with pytest.raises(Problem, match="block_not_omitted"):
+        fitting.change_block(edited, fit, "restore", restore_order[0])
+    assert original.sections[1].blocks == [
+        block.model_copy(update={"block_key": key}) for key in ("b", "c")
+    ]
+
+
+def test_page_fit_uses_bounded_measured_candidates_and_preserves_above_target_floor() -> None:
+    from bonafides import print_fitting as fitting
+
+    body, _ = example()
+    block = body.sections[0].blocks[0]
+    body = DocumentBody(
+        title=body.title,
+        sections=[
+            DocumentSection(
+                key="facts",
+                heading="Evidence",
+                blocks=[block.model_copy(update={"block_key": f"b-{i}"}) for i in range(128)],
+            )
+        ],
+    )
+    provenance = _fit_provenance()
+    measured: list[DocumentBody] = []
+
+    def measure(candidate: DocumentBody) -> int:
+        measured.append(candidate)
+        return (len(candidate.sections[0].blocks) + 19) // 20
+
+    reduced, fit = fitting.reduce_to_target(body, provenance, 2, measure)
+    assert reduced.sections[0].blocks == body.sections[0].blocks[:40]
+    assert fit.page_count == 2 and len(measured) <= 9
+    assert reduced in measured and len(fit.omissions) == 88
+    assert [item.block for item in fit.omissions] == body.sections[0].blocks[40:]
+    stored = {**provenance, "page_fit": fit.model_dump(mode="json")}
+    before = document_generation.revision_digest(reduced, "bonafides-evidence-v1", stored)
+    edited = reduced.model_copy(update={"title": "Changed render input"})
+    cleared = fitting.reconcile(edited, stored)
+    assert fitting.inventory(edited, cleared).page_count is None
+    assert fitting.inventory(reduced, fitting.reconcile(reduced, stored)).page_count == 2
+    assert document_generation.revision_digest(reduced, "bonafides-evidence-v1", stored) == before
+    floor, above = fitting.reduce_to_target(body, provenance, 1, lambda _: 3)
+    assert len(floor.sections[0].blocks) == 1 and above.page_count == 3
+    assert len(body.sections[0].blocks) == 128
+
+
+def test_hidden_inventory_shares_visible_bounds_and_rejects_collisions_and_stale_measurement() -> (
+    None
+):
+    from bonafides import print_fitting as fitting
+
+    body, _ = example()
+    block = body.sections[0].blocks[0]
+    body = DocumentBody(
+        title=body.title,
+        sections=[
+            DocumentSection(
+                key="facts",
+                heading="Evidence",
+                blocks=[block.model_copy(update={"block_key": f"b-{i}"}) for i in range(128)],
+            )
+        ],
+    )
+    reduced, fit = fitting.change_block(body, fitting.inventory(body, {}), "omit", "b-127")
+    provenance: dict[str, object] = {
+        **_fit_provenance(),
+        "page_fit": fit.model_dump(mode="json"),
+    }
+    for key in ("new", "b-127"):
+        changed = DocumentBody(
+            title=body.title,
+            sections=[
+                DocumentSection(
+                    key="facts",
+                    heading="Evidence",
+                    blocks=[
+                        *reduced.sections[0].blocks,
+                        block.model_copy(update={"block_key": key}),
+                    ],
+                )
+            ],
+        )
+        error_type = ValueError if key == "new" else Problem
+        with pytest.raises(error_type):
+            fitting.reconcile(changed, provenance)
+    digest = document_generation.revision_digest(reduced, "bonafides-evidence-v1", provenance)
+    hidden = fit.omissions[0].model_copy(
+        update={"block": fit.omissions[0].block.model_copy(update={"text": "Exact hidden edit"})}
+    )
+    changed_fit = fit.model_copy(update={"omissions": [hidden]})
+    assert (
+        document_generation.revision_digest(
+            reduced,
+            "bonafides-evidence-v1",
+            {**provenance, "page_fit": changed_fit.model_dump(mode="json")},
+        )
+        != digest
+    )
+    bad_measurement = fit.model_copy(update={"page_count": 1, "measured_content_sha256": "0" * 64})
+    with pytest.raises(ValueError, match="page_fit_measurement_mismatch"):
+        document_generation.revision_digest(
+            reduced,
+            "bonafides-evidence-v1",
+            {**provenance, "page_fit": bad_measurement.model_dump(mode="json")},
+        )
+    with pytest.raises(ValueError, match="page_fit_requires_supported_revision"):
+        document_generation.revision_digest(
+            reduced,
+            documents.TEMPLATE_VERSION,
+            {"schema_version": 1, "page_fit": fit.model_dump(mode="json")},
+        )

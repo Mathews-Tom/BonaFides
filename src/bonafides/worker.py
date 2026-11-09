@@ -122,6 +122,10 @@ class Worker:
                         )
                 elif mode in {"tailored_ai", "section_regeneration"}:
                     suitability.execute_model(self.db, self.settings, task, interrupted)
+                elif mode == "page_fit":
+                    from bonafides.print_fitting import execute_fit
+
+                    execute_fit(self.db, self.settings, task, interrupted)
                 else:
                     # Explicitly retained synthetic benchmark protocol, never a production fallback.
                     if self.settings.mode != "benchmark":
