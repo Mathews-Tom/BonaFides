@@ -40,6 +40,7 @@ All notable changes to BonaFides are recorded here. The format follows [Keep a C
 
 ### Fixed
 
+- Installed-lifecycle proof validates every expected migration version and source checksum instead of assuming a one-row ledger; fresh install, stopped reinstall and image swap remain checked against the complete migration history.
 - Reaching the local model's output limit fails only the current pair-generation or section-regeneration task without blocking the stage. Output-limited tasks count against the route's per-stage valid-JSON rate; malformed output after the single corrective retry still blocks its stage. Documents shows the distinct failure and count without replacing saved wording.
 - Literal profile saves and reviewed résumé imports require whole-phrase source grounding, so `SQL` cannot be accepted from `PostgreSQL` alone; refusals name the entry. Unsupported saved entries show **Needs attention**, and base résumés retain supported entries while persistently naming omissions without rewriting profile or document history. Source edits never silently repin entries. Unedited grouped imports validate each emitted statement, including across excluded contact lines; compatible queued base tasks remain usable when no omissions are required.
 - Lifecycle commands report a missing managed installation with setup instructions instead of presenting the missing `.installer-state` as a file-type or symlink problem.
