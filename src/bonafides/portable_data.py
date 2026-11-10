@@ -16,7 +16,7 @@ from sqlalchemy.exc import DBAPIError
 
 from bonafides.commands import canonical_json, lock_installation
 from bonafides.config import Settings
-from bonafides.db import Database
+from bonafides.db import SCHEMA_VERSION, Database, require_baseline, schema_ledger
 from bonafides.document_generation import revision_digest
 from bonafides.documents import parse_body
 from bonafides.installation_control import Control
@@ -35,7 +35,7 @@ from bonafides.portable_archive import (
 )
 from bonafides.portable_columns import COLUMNS
 from bonafides.portable_workspace import FORMAT as WORKSPACE_FORMAT
-from bonafides.portable_workspace import FORMAT_VERSION as WORKSPACE_VERSION
+from bonafides.portable_workspace_v2 import FORMAT_VERSION as WORKSPACE_VERSION
 from bonafides.profiles import ProfileSnapshot, content_hash
 from bonafides.storage import BlobStore
 
@@ -132,8 +132,9 @@ def _collect_owner_data(conn: Connection, blob_root: Path, owner_id: UUID) -> Po
     namespace = conn.execute(
         text("SELECT namespace_id FROM bonafides.installation_state WHERE singleton")
     ).scalar_one()
-    schema = conn.execute(text("SELECT max(version) FROM bonafides.schema_migrations")).scalar_one()
-    if schema != WORKSPACE_RECORD_SCHEMA:
+    ledger = schema_ledger(conn)
+    require_baseline(ledger)
+    if max(ledger, default=None) != SCHEMA_VERSION:
         raise ArchiveError("incompatible_portable_schema")
     profile = conn.execute(
         text("SELECT current_revision_id FROM bonafides.profiles WHERE owner_id=:owner"),
@@ -257,7 +258,7 @@ def _collect_owner_data(conn: Connection, blob_root: Path, owner_id: UUID) -> Po
     manifest = Manifest(
         format=WORKSPACE_FORMAT,
         format_version=WORKSPACE_VERSION,
-        source_schema_version=schema,
+        source_schema_version=WORKSPACE_RECORD_SCHEMA,
         created_at=datetime.now(UTC),
         source_namespace=namespace,
         source_owner_id=owner_id,

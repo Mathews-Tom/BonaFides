@@ -8,10 +8,11 @@ from pathlib import Path
 
 
 def main() -> None:
+    optional_configs = {"local_model_route.json", "evidence_capture.json"}
     mappings = {
         "/state/app-secrets": (
             10001,
-            ("runtime_dsn", "keyring", "bootstrap_token", "local_model_route.json"),
+            ("runtime_dsn", "keyring", "bootstrap_token", *sorted(optional_configs)),
         ),
         "/state/migration-secrets": (10001, ("migrator_dsn",)),
         "/state/db-secrets": (70, ("admin_password", "migrator_password", "runtime_password")),
@@ -29,7 +30,7 @@ def main() -> None:
             try:
                 descriptor = os.open(source, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
             except FileNotFoundError:
-                if name != "local_model_route.json":
+                if name not in optional_configs:
                     raise SystemExit("required secret source is missing") from None
                 # Revocation uses open(), not metadata that a host mount can cache.
                 target.unlink(missing_ok=True)
@@ -41,15 +42,17 @@ def main() -> None:
                 info = os.fstat(incoming.fileno())
                 if not stat.S_ISREG(info.st_mode) or info.st_mode & 0o077:
                     raise SystemExit("secret source must be a private regular file")
-                if name == "local_model_route.json" and info.st_size > 65536:
-                    raise SystemExit("local model route source exceeds the configuration limit")
+                if name in optional_configs and info.st_size > 65536:
+                    raise SystemExit(
+                        "optional configuration source exceeds the configuration limit"
+                    )
                 with temporary.open("wb") as output:
                     temporary.chmod(0o600)
-                    if name == "local_model_route.json":
+                    if name in optional_configs:
                         payload = incoming.read(65537)
                         if len(payload) > 65536:
                             raise SystemExit(
-                                "local model route source exceeds the configuration limit"
+                                "optional configuration source exceeds the configuration limit"
                             )
                         output.write(payload)
                     else:

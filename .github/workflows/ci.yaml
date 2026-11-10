@@ -112,7 +112,7 @@ jobs:
             platform: linux/arm64
             architecture: arm64
     runs-on: ${{ matrix.runner }}
-    timeout-minutes: 45
+    timeout-minutes: 60
     env:
       DOCKER_DEFAULT_PLATFORM: ${{ matrix.platform }}
       BONAFIDES_IMAGE: bonafides:local

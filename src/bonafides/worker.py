@@ -108,6 +108,10 @@ class Worker:
                 imports.execute_import(self.db, self.settings, task, interrupted)
             elif task.kind == "source_refresh":
                 sources.execute_refresh(self.db, task, interrupted)
+            elif task.kind == "integration_sync" and task.input.get("mode") == "evidence_capture":
+                from bonafides.evidence_capture import execute_capture
+
+                execute_capture(self.db, self.settings, task, interrupted)
             elif task.kind in {"posting_extract", "matching"}:
                 suitability.execute_model(self.db, self.settings, task, interrupted)
             elif task.kind == "document_generate":
@@ -185,7 +189,10 @@ class Worker:
         except LeaseLost:
             return
         except Problem as exc:
-            if task.input.get("mode") == "document_archive" and interrupted.is_set():
+            if (
+                task.input.get("mode") in {"document_archive", "evidence_capture"}
+                and interrupted.is_set()
+            ):
                 return
             self._record_failure(task, exc.code, False)
         except RenderFailure as exc:

@@ -376,7 +376,7 @@ export function ProfileEntries({ api, profile, disabled, onProfile, onDirtyChang
       </div>}
     </section>
     <section className="panel" hidden={section !== 'sources'} aria-labelledby="profile-evidence-title"><h2 id="profile-evidence-title">Sources and owner attestations</h2>
-      <p>Manual, versioned source text only. No file import, external verification or provider calls. Archiving removes a source from the active editor, not from immutable historical links.</p>
+      <p>Versioned source text and explicit owner attestations are not external verification. Archiving removes a source from the active editor, not from immutable historical links.</p>
       {profile.evidence.length === 0 ? <p>No saved sources.</p> : <ul>{profile.evidence.map((item, index) => <li key={item.id}><h3>{item.revision.payload.source}</h3><EvidenceProvenanceSummary provenance={item.revision.provenance} /><p>{item.revision.payload.text}</p>
         <small>Revision {item.revision.revision_no} · {item.revision.id} · {item.revision.created_at} · owner {item.revision.author_owner_id}</small>
         <div className="actions"><button className="secondary" disabled={locked || dirty} onClick={() => editEvidence(item)}>Edit source {index + 1}</button><button className="secondary" disabled={locked || dirty} onClick={() => setArchive({ kind: 'evidence', id: item.id, text: item.revision.payload.text })}>Archive source {index + 1}</button></div>

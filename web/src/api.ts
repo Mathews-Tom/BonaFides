@@ -25,14 +25,14 @@ export function literalClaimPayload(claim: PinnedClaim): ClaimPayload {
 }
 export interface RevisionMetadata { id: string; revision_no: number; content_sha256: string; created_at: string; author_owner_id: string }
 export type EvidenceSourceType = 'owner_statement' | 'document' | 'work_sample' | 'web_page' | 'credential' | 'other';
-export type EvidenceOrigin = 'owner_entry' | 'resume_import';
+export type EvidenceOrigin = 'owner_entry' | 'resume_import' | 'evidence_capture';
 export type EvidencePrivacyClass = 'public' | 'private' | 'confidential';
 export interface EvidenceClassification { source_type: EvidenceSourceType; privacy_class: EvidencePrivacyClass; employer_owned: boolean }
 export interface EvidenceProvenance extends EvidenceClassification { origin: EvidenceOrigin }
 export const evidenceSourceTypes: Record<EvidenceSourceType, string> = {
   owner_statement: 'Owner statement', document: 'Document', work_sample: 'Work sample', web_page: 'Web page', credential: 'Credential', other: 'Other',
 };
-export const evidenceOrigins: Record<EvidenceOrigin, string> = { owner_entry: 'Entered by owner', resume_import: 'Résumé import' };
+export const evidenceOrigins: Record<EvidenceOrigin, string> = { owner_entry: 'Entered by owner', resume_import: 'Résumé import', evidence_capture: 'Source capture approved by owner (not independently verified)' };
 export const evidencePrivacyClasses: Record<EvidencePrivacyClass, string> = { public: 'Public', private: 'Private', confidential: 'Confidential' };
 export interface EvidenceRevision extends RevisionMetadata { payload: { text: string; source: string }; provenance: EvidenceProvenance }
 export interface EvidenceLink { evidence_revision_id: string; support_kind: 'direct' | 'user_asserted' | 'context'; excerpt: string }
@@ -116,7 +116,7 @@ export interface DocumentArchivePreview {
 }
 export interface DocumentArchiveRequest { manifest_sha256: string }
 export interface Workflow {
-  id: string; version: number; state: WorkflowState; attempt: number; kind?: string; mode?: 'deterministic_base' | 'tailored_ai' | 'section_regeneration' | 'page_fit' | 'document_archive';
+  id: string; version: number; state: WorkflowState; attempt: number; kind?: string; mode?: 'deterministic_base' | 'tailored_ai' | 'section_regeneration' | 'page_fit' | 'document_archive' | 'evidence_capture';
   progress?: { completed: number; total: number };
   max_attempts: number; next_attempt_at: string | null; last_error_code: string | null;
   created_at: string; updated_at: string; deadline_at: string; cancel_requested_at: string | null;

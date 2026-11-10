@@ -140,7 +140,7 @@ def migrate(settings: MigrationConfig) -> None:
                     "SELECT version,source_sha256 FROM bonafides.schema_migrations ORDER BY version"
                 )
             ).all()
-            names = ("001_baseline.up.sql",)
+            names = ("001_baseline.up.sql", "002_evidence_capture.up.sql")
             if len(rows) != len(names):
                 raise RuntimeError("unsupported migration ledger")
             for row, name in zip(rows, names, strict=True):
@@ -172,6 +172,7 @@ def enqueue(conn: Connection, owner_id: UUID, kind: str, input_snapshot: dict[st
         "source_refresh",
         "posting_extract",
         "matching",
+        "integration_sync",
         "portable_export",
         "portable_import",
         "privacy_delete",
@@ -848,6 +849,7 @@ def claim(conn: Connection, holder: UUID) -> Claim | None:
             "source_refresh",
             "posting_extract",
             "matching",
+            "integration_sync",
         ),
     )
 
@@ -910,7 +912,7 @@ def publish(
     ).scalar_one():
         raise Problem(409, "delivery_reconciliation_required")
     result = effect(conn)
-    if task.kind in {"source_refresh", "posting_extract", "matching"}:
+    if task.kind in {"source_refresh", "posting_extract", "matching", "integration_sync"}:
         # Recheck independently after bounded domain persistence and validation.
         assert_fence(conn, task)
     conn.execute(

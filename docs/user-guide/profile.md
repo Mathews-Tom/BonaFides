@@ -44,6 +44,16 @@ You need at least one source before you can add an entry.
 
 To change a source's privacy class or employer-owned flag later, select **Change classification *N*** under that source, change the values, then select **Save source classification**. This applies straight away to every version of that source.
 
+### Optional local Git sources
+
+An installation operator can optionally configure a read-only local Git repository as a source. This is not a GitHub connection, and there is no capture panel in the workspace yet: scanning, reviewing proposals and approving selected messages use the authenticated owner API described in the [developer guide](../development/README.md#optional-local-git-evidence-capture).
+
+A scan proposes only the 20 most recent commit messages, each limited to 8,000 Unicode scalar values. It does not read working files, run repository hooks or configuration, use the network or call an AI model. A commit message is supporting material supplied by its author, not proof that you performed the work.
+
+The owner reviews the exact saved proposal and chooses its privacy class and employer-owned flag before approving that one message. Approval adds a source, **not a profile entry or claim**. Accepted sources appear in the existing **Sources** section with the label **Source capture approved by owner (not independently verified)** and a reference of `local-git:<source_id>@<full_commit_SHA>`; the full SHA is 40 or 64 hexadecimal characters, never an abbreviated hash.
+
+The same privacy rules above apply: Confidential or employer-owned source text is withheld from models. You can edit or reclassify an accepted source normally; edits preserve its original capture history and existing entry pins. Editing or archiving it does not make that commit eligible for another approval. If capture is unconfigured, disabled or fails, the API reports that state rather than pretending a scan succeeded; no source is saved without your approval.
+
 ## Add an entry
 
 Entries are grouped by kind: **Skills**, **Work experience**, **Projects**, **Education**, **Languages**, **Certifications**, **Identity facts**, **Preferences** and **Other facts**.

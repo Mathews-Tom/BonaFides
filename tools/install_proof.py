@@ -23,6 +23,7 @@ import time
 from pathlib import Path
 from typing import Any
 
+from bonafides.db import SUPPORTED_MIGRATIONS
 from tools.runtime_proof import API, ProbeFailure, require, require_unused_namespace, run
 
 SPA_SHELL_LIMIT_SECONDS = 600
@@ -296,7 +297,13 @@ class InstallProof:
         )
         require(self.require_running(self.image) == first, "first_image_not_running")
         before_owner = self.state()
-        require(before_owner["owners"] == [] and len(before_owner["ledger"]) == 1, "fresh_state")
+        expected_ledger = [
+            f"{version}:{digest}" for version, digest in sorted(SUPPORTED_MIGRATIONS.items())
+        ]
+        require(
+            before_owner["owners"] == [] and before_owner["ledger"] == expected_ledger,
+            "fresh_state",
+        )
         self.checked(
             "fresh_install_and_start_serves_spa_shell",
             install_and_start_to_spa_shell_seconds=first_seconds,

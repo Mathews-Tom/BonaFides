@@ -17,7 +17,7 @@ from bonafides.auth import StrictModel
 SourceType = Literal[
     "owner_statement", "document", "work_sample", "web_page", "credential", "other"
 ]
-Origin = Literal["owner_entry", "resume_import"]
+Origin = Literal["owner_entry", "resume_import", "evidence_capture"]
 PrivacyClass = Literal["public", "private", "confidential"]
 
 
