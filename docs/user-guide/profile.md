@@ -44,15 +44,23 @@ You need at least one source before you can add an entry.
 
 To change a source's privacy class or employer-owned flag later, select **Change classification *N*** under that source, change the values, then select **Save source classification**. This applies straight away to every version of that source.
 
-### Optional local Git sources
+### Capture from configured repositories (optional)
 
-An installation operator can optionally configure a read-only local Git repository as a source. This is not a GitHub connection, and there is no capture panel in the workspace yet: scanning, reviewing proposals and approving selected messages use the authenticated owner API described in the [developer guide](../development/README.md#optional-local-git-evidence-capture).
+Under **Profile → Sources**, **Capture from configured repositories** lists the local Git or GitHub repositories your installation operator has configured. GitHub is disabled unless the operator explicitly enables it. You cannot choose arbitrary repositories or enter credentials in the browser. Operator setup is in the [developer guide](../development/README.md#optional-repository-evidence-capture).
 
-A scan proposes only the 20 most recent commit messages, each limited to 8,000 Unicode scalar values. It does not read working files, run repository hooks or configuration, use the network or call an AI model. A commit message is supporting material supplied by its author, not proof that you performed the work.
+1. Check the source label, whether it is Local git or GitHub, and its privacy/employer-owned preset. Disabled sources cannot be scanned.
+2. Select **Scan *source label***. A scan reads at most the 20 most recent commit messages, not the full history. It saves proposals only: no sources, profile entries or claims are added, and no AI model is called.
+3. Review the exact message, full commit SHA and source reference. A commit message is supporting material supplied by its author, not proof that you performed the work.
+4. Select **Review proposal *full SHA*** for one message. Check **Capture privacy class** and **My employer owns this captured content**; the operator's preset is the starting point, not automatic approval.
+5. Select **Approve selected proposal as source**. This adds exactly one source revision. Other proposals remain unapproved.
 
-The owner reviews the exact saved proposal and chooses its privacy class and employer-owned flag before approving that one message. Approval adds a source, **not a profile entry or claim**. Accepted sources appear in the existing **Sources** section with the label **Source capture approved by owner (not independently verified)** and a reference of `local-git:<source_id>@<full_commit_SHA>`; the full SHA is 40 or 64 hexadecimal characters, never an abbreviated hash.
+Accepted sources appear above the capture panel with **Source capture approved by owner (not independently verified)**. Local references are `local-git:<source_id>@<full_SHA>`; GitHub references are `https://github.com/<owner>/<repository>/commit/<full_SHA>`. Messages are limited to 8,000 characters and SHAs are never abbreviated. Local scans do not read working files, execute repository hooks or configuration, or use the network. GitHub scans send a bounded read request to GitHub, with an optional operator-configured credential, but never upload your profile or evidence.
 
-The same privacy rules above apply: Confidential or employer-owned source text is withheld from models. You can edit or reclassify an accepted source normally; edits preserve its original capture history and existing entry pins. Editing or archiving it does not make that commit eligible for another approval. If capture is unconfigured, disabled or fails, the API reports that state rather than pretending a scan succeeded; no source is saved without your approval.
+Confidential or employer-owned source text is withheld from models. You can edit, reclassify or archive an accepted source normally; edits become owner-authored revisions and retain the original capture history and existing entry pins. Editing or archiving does not allow the same commit to be accepted again.
+
+**Failures and retained reviews:** a failed scan shows an error and saves no source. Missing, forbidden, rate-limited, malformed or oversized responses are not shown as successful empty scans. Check with the operator before starting a new scan; rate limits need time to clear. **Refresh capture sources and status** reloads saved status without scanning upstream. If automatic status checks pause, use that button to continue.
+
+If the profile changed, select **Load latest profile and retain capture review**, close the review, refresh status and review the message again. Changed or disabled configuration also requires a new scan of an enabled source. An uncertain request offers **Retry original scan request** or **Retry original approval request**: these repeat only the exact original request. **Close capture review without retry** does not undo any approval already saved; check Sources and refresh status before making another decision.
 
 ## Add an entry
 

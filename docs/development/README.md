@@ -56,7 +56,7 @@ BonaFides is a self-hosted career workspace in development. The implemented **Ar
 - [Feature contracts](#feature-contracts)
   - [Workspace navigation and focused review](#workspace-navigation-and-focused-review)
   - [Evidence-linked profile contract](#evidence-linked-profile-contract)
-  - [Optional local Git evidence capture](#optional-local-git-evidence-capture)
+  - [Optional repository evidence capture](#optional-repository-evidence-capture)
   - [Reviewed résumé import contract](#reviewed-résumé-import-contract)
   - [Manual posting and reviewed-source contract](#manual-posting-and-reviewed-source-contract)
   - [Durable job catalog contract](#durable-job-catalog-contract)
@@ -571,11 +571,11 @@ Private raw evidence is retained under `.local/ol-005/`: `backend/receipt.json`,
 
 Evidence-linked profiles evidence above remains historical and unchanged. The résumé-import checkpoint is described below; the job-sources deployed contract follows it. No real model run, controlled real-board approval or complete private alpha product is claimed. Native amd64 qualification remains deferred as DFR-001; independent rights review and regeneration/review of the earlier architecture proof exact-artifact inventory remain separate public-distribution work.
 
-#### Optional local Git evidence capture
+#### Optional repository evidence capture
 
-Capture is optional and operator-configured, not a browser repository picker. The current implementation supports only `local_git`; it has no capture panel or GitHub adapter. Accepted evidence is visible in the existing **Sources** UI as **Source capture approved by owner (not independently verified)**. Scans publish persisted proposals through worker `integration_sync` tasks in `evidence_capture` mode, never claims or automatic source acceptance.
+Capture is optional and operator-configured, not a browser repository picker. **Profile → Sources → Capture from configured repositories** supports read-only `local_git` and disabled-by-default `github` sources. Owners scan, inspect exact messages/full SHAs and privacy presets, then explicitly approve one source at a time; accepted evidence appears as **Source capture approved by owner (not independently verified)**. Worker `integration_sync` tasks in `evidence_capture` mode publish persisted proposals, never claims, model calls or automatic source acceptance. See the [user workflow](../user-guide/profile.md#capture-from-configured-repositories-optional).
 
-The private JSON configuration has `version: 1` and up to 20 `sources`, with unique IDs and these required fields:
+The private JSON configuration has `version: 1` and up to 20 `sources` with unique IDs. Local Git keeps its required `enabled` field; GitHub defaults to disabled when `enabled` is omitted:
 
 ```json
 {
@@ -588,11 +588,19 @@ The private JSON configuration has `version: 1` and up to 20 `sources`, with uni
     "enabled": true,
     "privacy_class": "private",
     "employer_owned": false
+  }, {
+    "id": "github-portfolio",
+    "label": "GitHub portfolio",
+    "kind": "github",
+    "repository": "example/portfolio",
+    "enabled": false,
+    "privacy_class": "private",
+    "employer_owned": false
   }]
 }
 ```
 
-`id` matches `[a-z0-9][a-z0-9_-]{0,63}`, `label` is 1–150 characters, `repository` is an absolute container path without `..`, and `privacy_class` is `public`, `private` or `confidential`. Keep this configuration out of version control and API payloads. Place `evidence_capture.json` in the installation's private `secrets/` input directory as a regular, nonsymlink host file, mode `0600`. The existing `prepare` service copies this optional input into `app-secrets` as UID/GID `10001:10001`, mode `0400`; API and worker already mount that volume read-only at `/run/bonafides`. Removing the input and rerunning preparation removes its copied counterpart.
+`id` matches `[a-z0-9][a-z0-9_-]{0,63}`, `label` is 1–150 characters and `privacy_class` is `public`, `private` or `confidential`. Local `repository` is an absolute container path without `..`; GitHub requires an explicit `owner/repository`, canonicalized to lowercase, never a URL or arbitrary host. Set GitHub `enabled: true` only after reviewing that repository. Keep configuration out of version control and API payloads. Place `evidence_capture.json` in the installation's private `secrets/` input directory as a regular nonsymlink file, mode `0600`. The existing `prepare` service copies it into `app-secrets` as UID/GID `10001:10001`, mode `0400`; API and worker already mount that volume read-only at `/run/bonafides`. Removing the input and rerunning preparation removes the copy.
 
 Set `BONAFIDES_EVIDENCE_CAPTURE_CONFIG_FILE=/run/bonafides/evidence_capture.json` for **both API and worker**. Only the worker receives the repository bind mount, read-only and readable/traversable by UID 10001. Do not mount repositories into the API, broaden host repository permissions indiscriminately or give either service write access. The `repository` value names the mount target, not the host path. An operator-owned override can contain:
 
@@ -611,6 +619,31 @@ services:
         read_only: true
         bind:
           create_host_path: false
+  # Add this role only when deliberately enabling GitHub capture.
+  source-egress:
+    user: "${CAPTURE_UID:?set CAPTURE_UID}:${CAPTURE_GID:?set CAPTURE_GID}"
+    environment:
+      BONAFIDES_EVIDENCE_CAPTURE_CONFIG_FILE: /run/capture/evidence_capture.json
+    volumes:
+      - type: bind
+        source: /absolute/installed/bonafides/secrets/evidence_capture.json
+        target: /run/capture/evidence_capture.json
+        read_only: true
+        bind:
+          create_host_path: false
+```
+
+For GitHub, bind only that same private configuration file into `source-egress`, never its parent secrets directory or the `app-secrets` volume. Use a non-root operator account; the wrapper below supplies its UID/GID so private host files stay `0600`, rather than broadening permissions. No new managed volume or installer setting is needed. Without an explicit gateway configuration bind/environment, GitHub reads are refused even if the API configuration enables a source.
+
+Public repositories need no credential. For a private repository, optionally add `"token_file": "/run/capture/github_token"` to its GitHub configuration and add this **single-file** bind under `source-egress.volumes`, replacing the host path. The host file must be regular, nonsymlink, private (`0600`) and readable by the gateway's operator UID; keep the bearer value out of YAML, environment values, logs and version control. API and worker receive only the configuration reference, never the credential file:
+
+```yaml
+      - type: bind
+        source: /absolute/private/path/github_token
+        target: /run/capture/github_token
+        read_only: true
+        bind:
+          create_host_path: false
 ```
 
 Use an already installed target with a locally loaded application image containing this implementation. The installed `start.sh` strips inherited `BONAFIDES_*`/`COMPOSE_*` variables and always selects only its installed base Compose file; exporting a config variable or `COMPOSE_FILE` before calling it does **not** enable this override. Do not edit managed `.env`, Compose assets or invent start flags. Instead, deliberately operate this target with explicit Compose base/override selection below, from a shell without inherited `BONAFIDES_*`/`COMPOSE_*` overrides. Substitute the two absolute paths; these are operator commands, not installer changes:
@@ -620,13 +653,13 @@ install=/absolute/path/to/installed/bonafides
 override=/absolute/path/to/private/capture.override.yaml
 image=$(cat "$install/.installer-image")
 capture_compose() {
-  BONAFIDES_IMAGE="$image" docker compose \
+  CAPTURE_UID="$(id -u)" CAPTURE_GID="$(id -g)" BONAFIDES_IMAGE="$image" docker compose \
     --project-directory "$install" --env-file "$install/.env" \
     -f "$install/compose.yaml" -f "$override" "$@"
 }
 capture_compose stop
-# Remove only stopped one-shot containers so old success cannot skip preparation/migration.
-capture_compose rm -f prepare migrate
+# Reset stopped one-shots and re-create egress file binds after private input replacement.
+capture_compose rm -f prepare migrate source-egress
 capture_compose up --detach --wait --wait-timeout 420
 capture_compose exec -T api python -m bonafides init-bootstrap-if-ownerless
 ```
@@ -637,15 +670,19 @@ All routes below are under `/api/v1/evidence-capture` and require the existing o
 
 | Route | Request/result |
 | --- | --- |
-| `GET /sources` | `{items}` with labels, IDs, enabled state and classification defaults; repository paths are excluded. Unconfigured capture returns an empty list. |
+| `GET /sources` | `{items}` with kinds, labels, IDs, enabled state and classification defaults; repository and token-file fields are excluded. Unconfigured capture returns an empty list. |
 | `POST /sources/{id}/scan` | Empty `{}`; returns `202 {workflow_id}` for a durable scan, not evidence acceptance. |
 | `GET /scans` | Latest 100 owner-scoped scan summaries, including workflow state. |
 | `GET /scans/{workflow}` | `{workflow, proposals, profile_version, source_changed}`; inspect workflow errors and each persisted proposal's exact text, canonical source, provenance and `already_approved` state. |
 | `POST /scans/{workflow}/approve` | `{candidate_id, privacy_class, employer_owned}`; approves one selected stored candidate and returns the updated Profile with its ETag. Refresh the profile version before another distinct approval. |
 
-No API accepts or returns a repository path. Disabled sources remain listed and refuse scanning with `capture_source_disabled`; missing sources return `capture_source_not_found`, malformed protected configuration returns `503 capture_configuration_invalid`, and scan failures remain visible through workflow state/error codes. Approval requires a successful scan, unchanged configuration/namespace and an unapproved stored candidate; `source_changed` tells the owner to rescan rather than approve stale proposals. Configuration/namespace and worker lease fences apply before proposal publication.
+No API accepts repository paths or credentials. The catalogue hides private configuration; proposals deliberately show their canonical local/GitHub source reference. Disabled sources refuse scanning with `capture_source_disabled`; missing sources return `capture_source_not_found`, malformed protected configuration returns `503 capture_configuration_invalid`, and scan failures remain visible through workflow state/error codes. Approval requires a successful scan, unchanged configuration/namespace and an unapproved stored candidate; `source_changed` requires a rescan, not acceptance of stale proposals. Configuration/namespace and worker lease fences apply before publication. The UI retains exact original If-Match/body/idempotency intent for uncertain retries and requires a fresh review after a profile change.
 
 The worker reads only the 20 most recent commit messages from the configured repository's HEAD history. Each message must be valid UTF-8, nonempty, NUL-free and at most 8,000 Unicode scalar values; oversized/invalid content fails rather than silently truncating. Full 40- or 64-character commit SHAs identify candidates and canonical references `local-git:{source_id}@{sha}`. Git runs against an isolated projection of object/ref metadata, not the original repository configuration, hooks or worktree; no repository network operation or model call occurs.
+
+GitHub uses only `GET https://api.github.com/repos/{owner}/{repository}/commits?per_page=20`, with verified TLS/hostname, vetted public DNS answers, a 15-second total deadline, a 1-MiB response bound and the same 20-commit/8,000-scalar message limits. No pagination, redirects, retries, scheduling, OAuth or inferred achievements are added. Every gateway request rereads the current enabled allowlist before DNS or token access. The worker sends only a credential-free fixed internal route and validates repository, full SHA and message envelopes again. Canonical references are `https://github.com/{repository}/commit/{full_sha}`.
+
+Missing/forbidden/rate-limited/invalid/oversized upstream responses become safe visible scan failures, not empty successes; upstream response text, token paths and credentials are never included in those errors. Manual rescan is explicit. Existing Greenhouse and Ollama routes remain available through the same egress role. Constructor-only resolver/TLS/address-map injection is limited to isolated test fixtures; production has no upstream-host override. Installed browser/TLS-fixture, portable replacement and genuine encrypted native restore verification used synthetic data only, not live GitHub.
 
 Approval creates a classified `work_sample` evidence revision with immutable origin `evidence_capture`, never a claim. The owner explicitly chooses classification; Confidential or employer-owned source text remains excluded from model context under existing rules. A later source edit creates an `owner_entry` revision while preserving the original captured revision and existing claim pins. Duplicate detection consults immutable revisions, so edits and archives do not permit accepting the same canonical source again. Native backup/recovery and `bonafides-workspace/2` portability retain the exact capture payload and origin. The frozen workspace-1 contract permits only `owner_entry` and `resume_import` origins and cannot encode or decode `evidence_capture`; it is not relabelled or downgraded.
 

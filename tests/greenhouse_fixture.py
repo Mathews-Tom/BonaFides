@@ -175,7 +175,12 @@ class _FixtureHandler(BaseHTTPRequestHandler):
 
 class FixtureUpstream:
     def __init__(
-        self, *, host: str = "127.0.0.1", port: int = 0, scenario_file: Path | None = None
+        self,
+        *,
+        host: str = "127.0.0.1",
+        port: int = 0,
+        scenario_file: Path | None = None,
+        certificate_host: str = UPSTREAM_HOST,
     ) -> None:
         ipaddress.ip_address(host)
         self.scenario = Scenario()
@@ -188,7 +193,7 @@ class FixtureUpstream:
         self._directory = tempfile.TemporaryDirectory(prefix="bonafides-test-tls-")
         root = Path(self._directory.name)
         key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
-        name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, UPSTREAM_HOST)])
+        name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, certificate_host)])
         now = datetime.now(UTC)
         certificate = (
             x509.CertificateBuilder()
@@ -199,7 +204,7 @@ class FixtureUpstream:
             .not_valid_before(now - timedelta(minutes=1))
             .not_valid_after(now + timedelta(days=1))
             .add_extension(
-                x509.SubjectAlternativeName([x509.DNSName(UPSTREAM_HOST)]), critical=False
+                x509.SubjectAlternativeName([x509.DNSName(certificate_host)]), critical=False
             )
             .add_extension(x509.BasicConstraints(ca=True, path_length=0), critical=True)
             .sign(key, hashes.SHA256())

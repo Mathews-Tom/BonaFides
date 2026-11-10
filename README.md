@@ -12,6 +12,7 @@ BonaFides is a private workspace for your job search that runs on your own compu
 
 - **Keeps your evidence with your facts.** Every fact in your profile is linked to the passage that supports it: a reference letter, a review, a certificate, or your own written statement.
 - **Brings in your existing résumé.** BonaFides reads a PDF or text résumé and proposes entries for you to check. Nothing is added until you approve it.
+- **Reviews repository activity as sources.** Scan a configured local Git repository or explicitly enabled GitHub repository, review the exact commit messages, and approve only the sources you choose. Scanning adds no facts and uses no AI.
 - **Organizes job postings.** Paste in jobs you're interested in, mark the ones worth pursuing, and confirm what each one requires.
 - **Builds résumés you can stand behind.** A base résumé is made directly from your profile, without AI. With an optional AI model on your own computer, BonaFides can also write a résumé and cover letter tailored to one job.
 - **Catches statements you can't support.** Any factual sentence that doesn't come from your profile is flagged and blocks export until you fix it.
@@ -21,7 +22,7 @@ BonaFides is a private workspace for your job search that runs on your own compu
 ## What it won't do
 
 - **It never applies, emails or contacts anyone for you.** You send your applications yourself.
-- **It never sends your data to the cloud.** There's no online account. AI is off unless you set up a model on your own computer or private network, and nothing goes to it without your confirmation each time.
+- **No cloud account or profile uploads.** Optional job-board and GitHub reads contact those services only when configured and requested; they don't upload your professional records. AI is off unless you set up a model on your own computer or private network, and nothing goes to it without your confirmation each time.
 - **It never makes up facts or verifies them.** It checks that your documents match your profile; whether your profile is true is up to you.
 
 ## Is it ready for me?

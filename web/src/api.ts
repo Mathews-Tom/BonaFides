@@ -35,6 +35,11 @@ export const evidenceSourceTypes: Record<EvidenceSourceType, string> = {
 export const evidenceOrigins: Record<EvidenceOrigin, string> = { owner_entry: 'Entered by owner', resume_import: 'Résumé import', evidence_capture: 'Source capture approved by owner (not independently verified)' };
 export const evidencePrivacyClasses: Record<EvidencePrivacyClass, string> = { public: 'Public', private: 'Private', confidential: 'Confidential' };
 export interface EvidenceRevision extends RevisionMetadata { payload: { text: string; source: string }; provenance: EvidenceProvenance }
+export interface CaptureSource { id: string; label: string; kind: 'local_git' | 'github'; enabled: boolean; privacy_class: EvidencePrivacyClass; employer_owned: boolean }
+export interface CaptureProposal { id: string; payload: EvidenceRevision['payload']; provenance: EvidenceClassification; already_approved: boolean }
+export interface CaptureScanSummary { id: string; source_id: string; source_label: string; state: WorkflowState; created_at: string }
+export interface CaptureScan { workflow: Workflow; proposals: CaptureProposal[]; profile_version: number; source_changed: boolean }
+export interface CaptureApproval { candidate_id: string; privacy_class: EvidencePrivacyClass; employer_owned: boolean }
 export interface EvidenceLink { evidence_revision_id: string; support_kind: 'direct' | 'user_asserted' | 'context'; excerpt: string }
 export interface ClaimRevision extends RevisionMetadata { payload: ProfileClaimPayload; evidence_links: (EvidenceLink & { evidence: EvidenceRevision })[] }
 export interface PinnedClaim { id: string; kind: ClaimKind; revision: ClaimRevision; rendering: string; needs_attention: boolean; grounding_issue?: 'literal_claim_not_grounded' | null }

@@ -19,6 +19,7 @@
     "tests/test_claim_mapping.py",
     "tests/test_compliance.py",
     "tests/test_credential_rotation.py",
+    "tests/test_github_capture.py",
     "tests/test_greenhouse.py",
     "tests/test_installation_control.py",
     "tests/test_installed_model.py",
