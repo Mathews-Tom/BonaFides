@@ -25,6 +25,7 @@ from bonafides.commands import append_outbox, canonical_json, command, lock_inst
 from bonafides.config import Settings
 from bonafides.db import Database
 from bonafides.import_parser import (
+    IMPORT_MEDIA_TYPES,
     MAX_TEXT_BYTES,
     MAX_TEXT_SCALARS,
     MAX_UPLOAD_BYTES,
@@ -1369,10 +1370,10 @@ def build_router(db: Database, settings: Settings) -> APIRouter:
             part.strip().lower() for part in request.headers.get("content-type", "").split(";")
         ]
         media_type = parts[0]
-        if media_type not in {"application/pdf", "text/plain"} or (
+        if media_type not in IMPORT_MEDIA_TYPES or (
             len(parts) > 1
             and (
-                media_type != "text/plain"
+                media_type not in {"text/plain", "text/markdown"}
                 or parts[1:] not in [["charset=utf-8"], ['charset="utf-8"']]
             )
         ):

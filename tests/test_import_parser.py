@@ -4,10 +4,13 @@ from __future__ import annotations
 import hashlib
 import io
 import os
+import struct
 import subprocess
 import sys
 import threading
 import time
+import zipfile
+import zlib
 from collections.abc import Callable, Iterator
 from pathlib import Path
 from typing import Any
@@ -223,6 +226,454 @@ def test_plaintext_exact_unicode_normalization_and_digest(parser: ImportParserCl
     _wait_for(lambda: not list(parser.spool.glob("*.request.json")))
     assert not list(parser.spool.glob("*.input"))
     assert not list(parser.spool.glob("*.text"))
+
+
+def _docx(
+    body: str = "<w:p><w:r><w:t>Fictional Engineer</w:t></w:r></w:p>",
+    *,
+    document: bytes | None = None,
+    extras: list[tuple[str | zipfile.ZipInfo, bytes]] | None = None,
+    compression: int = zipfile.ZIP_STORED,
+    content_types: str = "",
+) -> bytes:
+    output = io.BytesIO()
+    with zipfile.ZipFile(output, "w", compression=compression) as archive:
+        archive.writestr(
+            "[Content_Types].xml",
+            '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">'
+            '<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>'
+            '<Default Extension="xml" ContentType="application/xml"/>'
+            '<Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-'
+            'officedocument.wordprocessingml.document.main+xml"/>' + content_types + "</Types>",
+        )
+        archive.writestr(
+            "_rels/.rels",
+            '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+            '<Relationship Id="main" Type="http://schemas.openxmlformats.org/officeDocument/2006/'
+            'relationships/officeDocument" Target="word/document.xml"/></Relationships>',
+        )
+        archive.writestr(
+            "word/document.xml",
+            document
+            if document is not None
+            else (
+                '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">'
+                f"<w:body>{body}</w:body></w:document>"
+            ).encode(),
+        )
+        for name, content in extras or []:
+            archive.writestr(name, content)
+    return output.getvalue()
+
+
+def test_docx_visible_unicode_lists_tables_and_source_quotes(parser: ImportParserClient) -> None:
+    from bonafides.imports import extract_proposals
+
+    result = parser.parse(
+        _docx(
+            "<w:p><w:r><w:t>Skills</w:t></w:r></w:p>"
+            "<w:p><w:pPr><w:numPr><w:numId w:val='1'/></w:numPr></w:pPr>"
+            "<w:r><w:t>Cafe\u0301 Python</w:t></w:r></w:p>"
+            "<w:tbl><w:tr><w:tc><w:p><w:r><w:t>SQL</w:t></w:r></w:p></w:tc>"
+            "<w:tc><w:p><w:r><w:t>Unicode 日本語</w:t></w:r></w:p></w:tc></w:tr></w:tbl>"
+        ),
+        import_parser.DOCX_MEDIA_TYPE,
+    )
+    assert result.text == "Skills\n• Café Python\nSQL\tUnicode 日本語\n"
+    assert result.source_sha256 == hashlib.sha256(result.text.encode()).hexdigest()
+    proposals, _ = extract_proposals(result)
+    assert proposals
+    assert all(result.text[p.source_start : p.source_end] == p.quote for p in proposals)
+    assert result.warnings == []
+
+
+def test_docx_deleted_hidden_and_field_instructions_never_become_facts(
+    parser: ImportParserClient,
+) -> None:
+    result = parser.parse(
+        _docx(
+            "<w:p><w:del><w:r><w:delText>Deleted secret</w:delText></w:r></w:del>"
+            "<w:r><w:rPr><w:vanish/></w:rPr><w:t>Hidden secret</w:t></w:r>"
+            "<w:r><w:instrText>INCLUDETEXT file:///secret</w:instrText></w:r>"
+            "<w:r><w:t>Visible fact</w:t></w:r>"
+            "<w:r><w:tab/><w:t>Exact result</w:t><w:br/><w:t>Next line</w:t></w:r></w:p>"
+        ),
+        import_parser.DOCX_MEDIA_TYPE,
+    )
+    assert result.text == "Visible fact\tExact result\nNext line\n"
+
+
+@pytest.mark.parametrize("encoding", ["utf-8", "utf-16", "utf-32"])
+def test_docx_refuses_encoded_dtd_entities_and_recovers(
+    parser: ImportParserClient, encoding: str
+) -> None:
+    xml = (
+        f'<?xml version="1.0" encoding="{encoding}"?>'
+        '<!DOCTYPE document [<!ENTITY stolen SYSTEM "file:///must-not-read">]>'
+        '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">'
+        "<w:body><w:p><w:r><w:t>&stolen;</w:t></w:r></w:p></w:body></w:document>"
+    ).encode(encoding)
+    with pytest.raises(ImportFailure, match="^import_invalid_docx$"):
+        parser.parse(_docx(document=xml), import_parser.DOCX_MEDIA_TYPE)
+    assert parser.parse(_docx(), import_parser.DOCX_MEDIA_TYPE).text == "Fictional Engineer\n"
+
+
+@pytest.mark.parametrize(
+    ("name", "content", "code"),
+    [
+        ("../escape", b"secret", "import_invalid_docx"),
+        ("/absolute", b"secret", "import_invalid_docx"),
+        ("word\\escape", b"secret", "import_invalid_docx"),
+        ("word/vbaProject.bin", b"macro", "import_unsupported_docx"),
+        ("word/bad.xml", b"<broken", "import_invalid_docx"),
+        ("word/huge", b"x" * (MAX_PAGE_CONTENT_BYTES + 1), "import_content_limit"),
+    ],
+    ids=[
+        "traversal",
+        "absolute-path",
+        "backslash-path",
+        "macro",
+        "malformed-xml",
+        "oversized-part",
+    ],
+)
+def test_docx_hostile_members_fail_with_sanitized_errors(
+    parser: ImportParserClient, name: str, content: bytes, code: str
+) -> None:
+    with pytest.raises(ImportFailure, match=f"^{code}$"):
+        parser.parse(_docx(extras=[(name, content)]), import_parser.DOCX_MEDIA_TYPE)
+
+
+def test_docx_refuses_duplicates_encryption_symlinks_and_expansion(
+    parser: ImportParserClient,
+) -> None:
+    with pytest.warns(UserWarning, match="Duplicate name"):
+        duplicate = _docx(extras=[("word/document.xml", b"<fake/>")])
+    encrypted = bytearray(_docx())
+    encrypted[6] |= 1
+    encrypted[encrypted.index(b"PK\x01\x02") + 8] |= 1
+    link = zipfile.ZipInfo("word/link")
+    link.create_system = 3
+    link.external_attr = 0o120777 << 16
+    for data, code in [
+        (duplicate, "import_invalid_docx"),
+        (bytes(encrypted), "import_encrypted_docx"),
+        (_docx(extras=[(link, b"/secret")]), "import_invalid_docx"),
+        (
+            _docx(extras=[("word/bomb", b"x" * 100_000)], compression=zipfile.ZIP_DEFLATED),
+            "import_content_limit",
+        ),
+        (
+            _docx(extras=[(f"word/entry{i}", b"") for i in range(1024)]),
+            "import_content_limit",
+        ),
+    ]:
+        with pytest.raises(ImportFailure, match=f"^{code}$"):
+            parser.parse(data, import_parser.DOCX_MEDIA_TYPE)
+    assert parser.parse(b"# Recovered", "text/markdown").text == "Recovered"
+
+
+def test_docx_total_inflation_and_xml_depth_are_bounded(parser: ImportParserClient) -> None:
+    block = hashlib.shake_256(b"fictional bounded ZIP fixture").digest(8192) * 256
+    expanded = _docx(
+        extras=[(f"word/resource{i}", block) for i in range(9)],
+        compression=zipfile.ZIP_DEFLATED,
+    )
+    deeply_nested = _docx("<w:sdt>" * 70 + "<w:p/>" + "</w:sdt>" * 70)
+    for data in (expanded, deeply_nested):
+        with pytest.raises(ImportFailure, match="^import_content_limit$"):
+            parser.parse(data, import_parser.DOCX_MEDIA_TYPE)
+
+
+@pytest.mark.parametrize(
+    ("compression", "size", "count", "code"),
+    [
+        (zipfile.ZIP_STORED, 16, 1, "import_invalid_docx"),
+        (zipfile.ZIP_DEFLATED, 1024 * 1024, 18, "import_invalid_docx"),
+        (zipfile.ZIP_DEFLATED, MAX_PAGE_CONTENT_BYTES + 1, 1, "import_content_limit"),
+    ],
+)
+def test_docx_false_sizes_cannot_hide_actual_inflation(
+    parser: ImportParserClient, compression: int, size: int, count: int, code: str
+) -> None:
+    original = _docx(
+        extras=[(f"word/resource{i}.dat", b"A" * size) for i in range(count)],
+        compression=compression,
+    )
+    forged = bytearray(original)
+    with zipfile.ZipFile(io.BytesIO(original)) as archive:
+        central = archive.start_dir
+        for entry in archive.infolist():
+            if entry.filename.startswith("word/resource"):
+                # Both headers and CRC agree on the clipped one-byte fiction.
+                for offset in (entry.header_offset + 14, central + 16):
+                    struct.pack_into("<I", forged, offset, zlib.crc32(b"A"))
+                for offset in (entry.header_offset + 22, central + 24):
+                    struct.pack_into("<I", forged, offset, 1)
+            name_length, extra_length, comment_length = struct.unpack_from(
+                "<HHH", forged, central + 28
+            )
+            central += 46 + name_length + extra_length + comment_length
+    with pytest.raises(ImportFailure, match=f"^{code}$"):
+        parser.parse(bytes(forged), import_parser.DOCX_MEDIA_TYPE)
+    assert parser.parse(_docx(), import_parser.DOCX_MEDIA_TYPE).text == "Fictional Engineer\n"
+
+
+def test_docx_truncated_deflate_stream_is_refused_even_when_output_and_crc_match(
+    parser: ImportParserClient,
+) -> None:
+    original = _docx(extras=[("word/resource.dat", b"Fictional")], compression=zipfile.ZIP_DEFLATED)
+    truncated = bytearray(original)
+    with zipfile.ZipFile(io.BytesIO(original)) as archive:
+        central = archive.start_dir
+        for entry in archive.infolist():
+            if entry.filename == "word/resource.dat":
+                for offset in (entry.header_offset + 18, central + 20):
+                    struct.pack_into("<I", truncated, offset, entry.compress_size - 1)
+            name_length, extra_length, comment_length = struct.unpack_from(
+                "<HHH", truncated, central + 28
+            )
+            central += 46 + name_length + extra_length + comment_length
+    with pytest.raises(ImportFailure, match="^import_invalid_docx$"):
+        parser.parse(bytes(truncated), import_parser.DOCX_MEDIA_TYPE)
+
+
+@pytest.mark.parametrize(
+    ("target", "part"),
+    [
+        ("customStyles.xml", "word/customStyles.xml"),
+        ("/word/customStyles.xml", "word/customStyles.xml"),
+        ("../styles/custom.xml", "styles/custom.xml"),
+    ],
+)
+def test_docx_relationship_selected_hidden_styles_never_become_facts(
+    parser: ImportParserClient, target: str, part: str
+) -> None:
+    styles = (
+        b'<w:styles xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">'
+        b'<w:style w:type="character" w:styleId="Hidden"><w:rPr><w:vanish/>'
+        b"</w:rPr></w:style></w:styles>"
+    )
+    relationships = (
+        '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+        '<Relationship Id="styles" Type="http://schemas.openxmlformats.org/officeDocument/'
+        f'2006/relationships/styles" Target="{target}"/></Relationships>'
+    ).encode()
+    data = _docx(
+        '<w:p><w:r><w:rPr><w:rStyle w:val="Hidden"/></w:rPr>'
+        "<w:t>Hidden fabricated credential</w:t></w:r></w:p>",
+        extras=[(part, styles), ("word/_rels/document.xml.rels", relationships)],
+        content_types=f'<Override PartName="/{part}" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml"/>',
+    )
+    with pytest.raises(ImportFailure, match="^import_unsupported_docx$"):
+        parser.parse(data, import_parser.DOCX_MEDIA_TYPE)
+    assert parser.parse(_docx(), import_parser.DOCX_MEDIA_TYPE).text == "Fictional Engineer\n"
+
+
+@pytest.mark.parametrize(
+    "properties",
+    [
+        '<w15:appearance xmlns:w15="http://schemas.microsoft.com/office/word/2012/wordml"/>',
+        '<w14:checkbox xmlns:w14="http://schemas.microsoft.com/office/word/2010/wordml"/>',
+    ],
+)
+def test_docx_nonvisible_content_control_properties_do_not_hide_visible_text(
+    parser: ImportParserClient, properties: str
+) -> None:
+    result = parser.parse(
+        _docx(
+            f"<w:sdt><w:sdtPr>{properties}</w:sdtPr><w:sdtContent>"
+            "<w:p><w:r><w:t>Visible engineer</w:t></w:r></w:p>"
+            f"</w:sdtContent><w:sdtEndPr>{properties}</w:sdtEndPr></w:sdt>"
+        ),
+        import_parser.DOCX_MEDIA_TYPE,
+    )
+    assert result.text == "Visible engineer\n"
+
+
+def test_docx_refuses_non_ooxml_main_and_crc_corruption(parser: ImportParserClient) -> None:
+    malformed = _docx(document=b"<document><body>not OOXML</body></document>")
+    corrupt = bytearray(_docx())
+    offset = corrupt.index(b"Fictional Engineer")
+    corrupt[offset] = ord("X")
+    for data in (malformed, bytes(corrupt)):
+        with pytest.raises(ImportFailure, match="^import_invalid_docx$"):
+            parser.parse(data, import_parser.DOCX_MEDIA_TYPE)
+
+
+@pytest.mark.parametrize(
+    "content",
+    ["x" * (MAX_TEXT_SCALARS + 1), "\U0001d11e" * 70_000],
+    ids=["unicode-scalar-limit", "utf8-byte-limit"],
+)
+def test_docx_output_scalar_and_utf8_limits_apply_to_extraction(
+    parser: ImportParserClient, content: str
+) -> None:
+    data = _docx(f"<w:p><w:r><w:t>{content}</w:t></w:r></w:p>")
+    with pytest.raises(ImportFailure, match="^import_text_limit$"):
+        parser.parse(data, import_parser.DOCX_MEDIA_TYPE)
+
+
+def test_markdown_never_publishes_a_silently_truncated_nesting_tail(
+    parser: ImportParserClient,
+) -> None:
+    source = "Visible opening\n\n" + "> " * 70 + "Must not disappear\n"
+    with pytest.raises(ImportFailure, match="^import_content_limit$"):
+        parser.parse(source.encode(), "text/markdown")
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        "<w:p><w:r><w:drawing/></w:r></w:p>",
+        "<w:altChunk/>",
+        "<w:p><w:r><w:object/></w:r></w:p>",
+    ],
+)
+def test_docx_never_silently_loses_unsupported_visible_content(
+    parser: ImportParserClient, body: str
+) -> None:
+    with pytest.raises(ImportFailure, match="^import_unsupported_docx$"):
+        parser.parse(_docx(body), import_parser.DOCX_MEDIA_TYPE)
+
+
+def test_docx_omitted_header_has_visible_review_warning(parser: ImportParserClient) -> None:
+    result = parser.parse(
+        _docx(extras=[("word/header1.xml", b"<header>Not included</header>")]),
+        import_parser.DOCX_MEDIA_TYPE,
+    )
+    assert result.text == "Fictional Engineer\n"
+    assert result.warnings == ["docx_layout_requires_review"]
+
+
+def test_markdown_commonmark_visible_text_is_inert_and_normalized(
+    parser: ImportParserClient, tmp_path: Path
+) -> None:
+    marker = tmp_path / "must-not-exist"
+    source = (
+        "# Skills\r\n\r\n- **Cafe\u0301 Python**\r\n- [SQL](https://example.invalid/never-fetch)\r\n"
+        "\r\n```sh\r\ntouch " + str(marker) + "\r\n```\r\n\r\n"
+        "<script>never execute</script>\r\n"
+    )
+    result = parser.parse(source.encode(), "text/markdown")
+    assert result.text == (
+        "Skills\n\n• Café Python\n• SQL\n\ntouch "
+        + str(marker)
+        + "\n\n<script>never execute</script>"
+    )
+    assert result.source_sha256 == hashlib.sha256(result.text.encode()).hexdigest()
+    assert result.warnings == []
+    assert not marker.exists()
+
+
+@pytest.mark.parametrize("marker", ["-", "+", "*", "1."])
+def test_markdown_lists_and_blank_gaps_preserve_review_grouping(
+    parser: ImportParserClient, marker: str
+) -> None:
+    from bonafides.imports import extract_proposals, project_entries
+
+    result = parser.parse(
+        (
+            f"## Skills\n{marker} Languages: Python, Go\n\n"
+            "## Experience\nEngineer | Acme | 2020 - 2022\n"
+            f"{marker} Built billing pipeline\n{marker} Led Postgres migration\n\n"
+            "Independent paragraph."
+        ).encode(),
+        "text/markdown",
+    )
+    proposals, _ = extract_proposals(result)
+    entries = project_entries(result.text, result.source_sha256, proposals)
+    assert [entry.payload.text for entry in entries if entry.kind == "skill"] == ["Python", "Go"]
+    assert [entry.payload.text for entry in entries if entry.kind == "experience"] == [
+        "Engineer | Acme | 2020 - 2022\n• Built billing pipeline\n• Led Postgres migration",
+        "Independent paragraph.",
+    ]
+    assert all(result.text[p.source_start : p.source_end] == p.quote for p in proposals)
+
+
+@pytest.mark.parametrize("inherited", [False, True])
+def test_docx_direct_and_inherited_lists_preserve_review_grouping(
+    parser: ImportParserClient, inherited: bool
+) -> None:
+    from bonafides.imports import extract_proposals, project_entries
+
+    properties = (
+        '<w:pStyle w:val="List"/>' if inherited else '<w:numPr><w:numId w:val="1"/></w:numPr>'
+    )
+    styles = (
+        b'<w:styles xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">'
+        b'<w:style w:type="paragraph" w:styleId="Base"><w:pPr><w:numPr>'
+        b'<w:numId w:val="1"/></w:numPr></w:pPr><w:rPr><w:vanish w:val="false"/>'
+        b'</w:rPr></w:style><w:style w:type="paragraph" w:styleId="List">'
+        b'<w:basedOn w:val="Base"/></w:style></w:styles>'
+    )
+    numbering = (
+        '<w:numbering xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">'
+        '<w:abstractNum w:abstractNumId="0"><w:lvl w:ilvl="0"><w:start w:val="1"/>'
+        '<w:numFmt w:val="bullet"/><w:lvlText w:val="•"/></w:lvl></w:abstractNum>'
+        '<w:num w:numId="1"><w:abstractNumId w:val="0"/></w:num></w:numbering>'
+    ).encode()
+    relationships = (
+        b'<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+        b'<Relationship Id="styles" Type="http://schemas.openxmlformats.org/officeDocument/'
+        b'2006/relationships/styles" Target="styles.xml"/>'
+        b'<Relationship Id="numbering" Type="http://schemas.openxmlformats.org/officeDocument/'
+        b'2006/relationships/numbering" Target="numbering.xml"/></Relationships>'
+    )
+    body = (
+        "<w:p><w:r><w:t>Experience</w:t></w:r></w:p>"
+        "<w:p><w:r><w:t>Engineer | Acme | 2020 - 2022</w:t></w:r></w:p>"
+        f"<w:p><w:pPr>{properties}</w:pPr><w:r><w:t>Built billing pipeline</w:t></w:r></w:p>"
+        f"<w:p><w:pPr>{properties}</w:pPr><w:r><w:t>Led Postgres migration</w:t></w:r></w:p>"
+    )
+    result = parser.parse(
+        _docx(
+            body,
+            extras=[
+                ("word/styles.xml", styles),
+                ("word/numbering.xml", numbering),
+                ("word/_rels/document.xml.rels", relationships),
+            ],
+            content_types=(
+                '<Override PartName="/word/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml"/>'
+                '<Override PartName="/word/numbering.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.numbering+xml"/>'
+            ),
+        ),
+        import_parser.DOCX_MEDIA_TYPE,
+    )
+    proposals, _ = extract_proposals(result)
+    entries = project_entries(result.text, result.source_sha256, proposals)
+    assert [entry.payload.text for entry in entries] == [
+        "Engineer | Acme | 2020 - 2022\n• Built billing pipeline\n• Led Postgres migration"
+    ]
+    assert entries[0].payload.start_date == "2020"
+    assert entries[0].payload.end_date == "2022"
+
+
+@pytest.mark.parametrize(
+    ("data", "media", "code"),
+    [
+        (b"not a Word document", import_parser.DOCX_MEDIA_TYPE, "import_invalid_docx"),
+        (b"%PDF-1.7\nnot Markdown", "text/markdown", "import_invalid_text"),
+        (b"PK\x03\x04not Markdown", "text/markdown", "import_invalid_text"),
+        (b"\xff", "text/markdown", "import_invalid_utf8"),
+        (b"invalid\x00text", "text/markdown", "import_invalid_text"),
+        (b"# " + b"x" * (MAX_TEXT_SCALARS + 1), "text/markdown", "import_text_limit"),
+    ],
+    ids=[
+        "docx-content-mismatch",
+        "markdown-pdf-mismatch",
+        "markdown-zip-mismatch",
+        "invalid-utf8",
+        "control-character",
+        "markdown-text-limit",
+    ],
+)
+def test_new_format_mismatches_and_limits_never_fallback(
+    parser: ImportParserClient, data: bytes, media: str, code: str
+) -> None:
+    with pytest.raises(ImportFailure, match=f"^{code}$"):
+        parser.parse(data, media)
 
 
 def test_real_pdf_extraction_and_normalized_source_digest(parser: ImportParserClient) -> None:

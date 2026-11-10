@@ -19,20 +19,25 @@ import io
 import logging
 import math
 import os
+import posixpath
 import re
 import signal
 import stat
+import struct
 import subprocess
 import sys
 import threading
 import time
 import unicodedata
+import zipfile
+import zlib
 from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
 from types import FrameType
-from typing import TYPE_CHECKING, Annotated, Literal
+from typing import TYPE_CHECKING, Annotated, Literal, cast, get_args
 from uuid import uuid4
+from xml.etree import ElementTree
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -49,6 +54,16 @@ MAX_TEXT_BYTES = 256 * 1024
 MAX_PDF_PAGES = 50
 MAX_PAGE_CONTENT_BYTES = 2 * 1024 * 1024
 MAX_TOTAL_CONTENT_BYTES = 16 * 1024 * 1024
+MAX_DOCX_ENTRIES = 1024
+MAX_DOCX_RATIO = 200
+DOCX_MEDIA_TYPE = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+MediaType = Literal[
+    "application/pdf",
+    "text/plain",
+    "text/markdown",
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+]
+IMPORT_MEDIA_TYPES: frozenset[str] = frozenset(get_args(MediaType))
 MAX_QUEUED_JOBS = 16
 PARSER_TIMEOUT = 30.0
 _REQUEST_BYTES = 2048
@@ -71,6 +86,9 @@ ErrorCode = Literal[
     "import_invalid_text",
     "import_invalid_pdf",
     "import_encrypted_pdf",
+    "import_invalid_docx",
+    "import_unsupported_docx",
+    "import_encrypted_docx",
     "import_page_limit",
     "import_content_limit",
     "import_text_limit",
@@ -91,6 +109,9 @@ _ERRORS: frozenset[str] = frozenset(
         "import_invalid_text",
         "import_invalid_pdf",
         "import_encrypted_pdf",
+        "import_invalid_docx",
+        "import_unsupported_docx",
+        "import_encrypted_docx",
         "import_page_limit",
         "import_content_limit",
         "import_text_limit",
@@ -102,7 +123,11 @@ _ERRORS: frozenset[str] = frozenset(
         "import_failed",
     )
 )
-WarningCode = Literal["pdf_pages_without_selectable_text", "pdf_layout_requires_review"]
+WarningCode = Literal[
+    "pdf_pages_without_selectable_text",
+    "pdf_layout_requires_review",
+    "docx_layout_requires_review",
+]
 Digest = Annotated[str, Field(pattern=r"^[0-9a-f]{64}$")]
 
 
@@ -126,7 +151,7 @@ class _StrictModel(BaseModel):
 
 class _Request(_StrictModel):
     schema_version: Literal[1]
-    media_type: Literal["application/pdf", "text/plain"]
+    media_type: MediaType
     input_sha256: Digest
     input_bytes: Annotated[int, Field(ge=1, le=MAX_UPLOAD_BYTES)]
 
@@ -261,7 +286,7 @@ class ImportParserClient:
         self, data: bytes, media_type: str, interrupted: threading.Event | None = None
     ) -> ParsedImport:
         _check_interrupted(interrupted)
-        if media_type not in ("application/pdf", "text/plain"):
+        if media_type not in IMPORT_MEDIA_TYPES:
             raise ImportFailure("import_invalid_media_type")
         if not isinstance(data, bytes):
             raise ImportFailure("import_invalid_input")
@@ -271,7 +296,7 @@ class ImportParserClient:
             raise ImportFailure("import_empty_text")
         request = _Request(
             schema_version=1,
-            media_type="application/pdf" if media_type == "application/pdf" else "text/plain",
+            media_type=cast(MediaType, media_type),
             input_sha256=_hash(data),
             input_bytes=len(data),
         )
@@ -383,6 +408,365 @@ def _verified_text(output: bytes, receipt: _Receipt) -> str:
         return text
     except (UnicodeError, ImportFailure):
         raise ImportFailure("import_output_invalid") from None
+
+
+class _SafeXmlBuilder(ElementTree.TreeBuilder):
+    """Reject declarations through Expat's encoding-aware XML callbacks."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.depth = 0
+        self.nodes = 0
+
+    def start(self, tag: str, attrs: dict[str, str]) -> ElementTree.Element:
+        self.depth += 1
+        self.nodes += 1
+        if self.depth > 64 or self.nodes > 100_000:
+            raise ImportFailure("import_content_limit")
+        return super().start(tag, attrs)
+
+    def end(self, tag: str) -> ElementTree.Element:
+        self.depth -= 1
+        return super().end(tag)
+
+    def doctype(self, name: str, pubid: str | None, system: str | None) -> None:
+        raise ImportFailure("import_invalid_docx")
+
+
+def _docx_xml(data: bytes) -> ElementTree.Element:
+    try:
+        return ElementTree.fromstring(data, parser=ElementTree.XMLParser(target=_SafeXmlBuilder()))
+    except (ElementTree.ParseError, ValueError):
+        raise ImportFailure("import_invalid_docx") from None
+
+
+def _docx_parts(data: bytes) -> dict[str, ElementTree.Element]:
+    if data.startswith(b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1"):
+        raise ImportFailure("import_encrypted_docx")
+    if not data.startswith(b"PK\x03\x04"):
+        raise ImportFailure("import_invalid_docx")
+    parts: dict[str, ElementTree.Element] = {}
+    try:
+        with zipfile.ZipFile(io.BytesIO(data)) as archive:
+            entries = archive.infolist()
+            if len(entries) > MAX_DOCX_ENTRIES:
+                raise ImportFailure("import_content_limit")
+            names: set[str] = set()
+            total = 0
+            for entry in entries:
+                name = entry.filename
+                path = name.rstrip("/")
+                if (
+                    entry.orig_filename != name
+                    or len(name) > 240
+                    or any(ord(char) < 32 for char in name)
+                    or any(char in name for char in "\\:%")
+                    or any(part in ("", ".", "..") for part in path.split("/"))
+                    or name.casefold() in names
+                    or stat.S_IFMT(entry.external_attr >> 16) not in (0, stat.S_IFREG, stat.S_IFDIR)
+                ):
+                    raise ImportFailure("import_invalid_docx")
+                names.add(name.casefold())
+                if entry.flag_bits & (1 | 64):
+                    raise ImportFailure("import_encrypted_docx")
+                if entry.compress_type not in (zipfile.ZIP_STORED, zipfile.ZIP_DEFLATED):
+                    raise ImportFailure("import_unsupported_docx")
+                total += entry.file_size
+                if (
+                    entry.file_size > MAX_PAGE_CONTENT_BYTES
+                    or total > MAX_TOTAL_CONTENT_BYTES
+                    or entry.file_size > max(entry.compress_size, 1) * MAX_DOCX_RATIO
+                ):
+                    raise ImportFailure("import_content_limit")
+                if name.lower().endswith(".bin"):
+                    raise ImportFailure("import_unsupported_docx")
+            # ZipExtFile clips output to the declared size. Validate local headers
+            # with ZipFile, then bound and CRC-check the actual compressed stream.
+            for entry in entries:
+                with archive.open(entry):
+                    name_length, extra_length = struct.unpack_from(
+                        "<HH", data, entry.header_offset + 26
+                    )
+                    start = entry.header_offset + 30 + name_length + extra_length
+                end = start + entry.compress_size
+                if not 0 <= start <= end <= len(data):
+                    raise ImportFailure("import_invalid_docx")
+                compressed = memoryview(data)[start:end]
+                if entry.compress_type == zipfile.ZIP_DEFLATED:
+                    decoder = zlib.decompressobj(-15)
+                    content = decoder.decompress(compressed, MAX_PAGE_CONTENT_BYTES + 1)
+                    if len(content) > MAX_PAGE_CONTENT_BYTES:
+                        raise ImportFailure("import_content_limit")
+                    if not decoder.eof or decoder.unconsumed_tail or decoder.unused_data:
+                        raise ImportFailure("import_invalid_docx")
+                else:
+                    if len(compressed) > MAX_PAGE_CONTENT_BYTES:
+                        raise ImportFailure("import_content_limit")
+                    content = bytes(compressed)
+                if len(content) != entry.file_size or zlib.crc32(content) != entry.CRC:
+                    raise ImportFailure("import_invalid_docx")
+                if entry.filename.lower().endswith((".xml", ".rels")):
+                    parts[entry.filename] = _docx_xml(content)
+    except ImportFailure:
+        raise
+    except (
+        zipfile.BadZipFile,
+        NotImplementedError,
+        RuntimeError,
+        OSError,
+        EOFError,
+        ValueError,
+        struct.error,
+        zlib.error,
+    ):
+        raise ImportFailure("import_invalid_docx") from None
+    return parts
+
+
+def _docx_text(data: bytes) -> tuple[str, list[WarningCode]]:
+    parts = _docx_parts(data)
+    types_ns = "{http://schemas.openxmlformats.org/package/2006/content-types}"
+    rels_ns = "{http://schemas.openxmlformats.org/package/2006/relationships}"
+    types = parts.get("[Content_Types].xml")
+    rels = parts.get("_rels/.rels")
+    document = parts.get("word/document.xml")
+    if (
+        types is None
+        or types.tag != types_ns + "Types"
+        or rels is None
+        or rels.tag != rels_ns + "Relationships"
+        or document is None
+    ):
+        raise ImportFailure("import_invalid_docx")
+    overrides: dict[str, str] = {}
+    for item in types:
+        content_type = item.get("ContentType", "")
+        if any(word in content_type.lower() for word in ("macro", "vba", "oleobject", "activex")):
+            raise ImportFailure("import_unsupported_docx")
+        if item.tag == types_ns + "Override":
+            name = item.get("PartName", "")
+            if name in overrides:
+                raise ImportFailure("import_invalid_docx")
+            overrides[name] = content_type
+    if overrides.get("/word/document.xml") != (
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"
+    ):
+        raise ImportFailure("import_invalid_docx")
+    main = [item for item in rels if item.get("Type", "").endswith("/officeDocument")]
+    if (
+        len(main) != 1
+        or main[0].tag != rels_ns + "Relationship"
+        or main[0].get("Type")
+        not in (
+            "http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument",
+            "http://purl.oclc.org/ooxml/officeDocument/relationships/officeDocument",
+        )
+        or main[0].get("Target") not in ("word/document.xml", "/word/document.xml")
+        or main[0].get("TargetMode", "Internal") != "Internal"
+    ):
+        raise ImportFailure("import_invalid_docx")
+    namespace = document.tag.removesuffix("document")
+    if (
+        namespace
+        not in (
+            "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}",
+            "{http://purl.oclc.org/ooxml/wordprocessingml/main}",
+        )
+        or document.tag != namespace + "document"
+    ):
+        raise ImportFailure("import_invalid_docx")
+    body = document.find(namespace + "body")
+    if body is None or len(document.findall(namespace + "body")) != 1:
+        raise ImportFailure("import_invalid_docx")
+    styles = parts.get("word/styles.xml")
+    document_rels = parts.get("word/_rels/document.xml.rels")
+    if document_rels is not None:
+        if document_rels.tag != rels_ns + "Relationships":
+            raise ImportFailure("import_invalid_docx")
+        style_rels = [
+            item
+            for item in document_rels
+            if item.tag == rels_ns + "Relationship" and item.get("Type", "").endswith("/styles")
+        ]
+        if len(style_rels) > 1:
+            raise ImportFailure("import_invalid_docx")
+        if style_rels:
+            relationship = style_rels[0]
+            target = relationship.get("Target", "")
+            if (
+                relationship.get("TargetMode", "Internal") != "Internal"
+                or not target
+                or any(char in target for char in "\\:%?#")
+                or any(ord(char) < 32 for char in target)
+            ):
+                raise ImportFailure("import_unsupported_docx")
+            name = posixpath.normpath(target[1:] if target.startswith("/") else "word/" + target)
+            styles = parts.get(name)
+            if styles is None or styles.tag != namespace + "styles":
+                raise ImportFailure("import_unsupported_docx")
+    # Refuse inherited visibility rather than guessing at visibility cascades.
+    if styles is not None and any(
+        node.tag in (namespace + "vanish", namespace + "webHidden")
+        and node.get(namespace + "val", "true") not in ("0", "false", "off")
+        for node in styles.iter()
+    ):
+        raise ImportFailure("import_unsupported_docx")
+    style_by_id = (
+        {style.get(namespace + "styleId"): style for style in styles} if styles is not None else {}
+    )
+    default_style = next(
+        (
+            identifier
+            for identifier, style in style_by_id.items()
+            if style.get(namespace + "type") == "paragraph"
+            and style.get(namespace + "default") in ("1", "true", "on")
+        ),
+        None,
+    )
+    warning = False
+    fragments: list[str] = []
+
+    def visit(node: ElementTree.Element) -> None:
+        nonlocal warning
+        tag = node.tag
+        local = tag.removeprefix(namespace)
+        if local in (
+            "del",
+            "moveFrom",
+            "instrText",
+            "delText",
+            "pPr",
+            "rPr",
+            "tblPr",
+            "tcPr",
+            "sdtPr",
+            "sdtEndPr",
+        ):
+            return
+        if local == "r":
+            properties = node.find(namespace + "rPr")
+            if properties is not None and any(
+                child.tag in (namespace + "vanish", namespace + "webHidden")
+                and child.get(namespace + "val", "true") not in ("0", "false", "off")
+                for child in properties
+            ):
+                return
+        if local in ("headerReference", "footerReference", "footnoteReference", "endnoteReference"):
+            warning = True
+            return
+        if local in (
+            "drawing",
+            "pict",
+            "object",
+            "altChunk",
+            "sym",
+            "contentPart",
+        ) or not tag.startswith(namespace):
+            raise ImportFailure("import_unsupported_docx")
+        if local == "t":
+            fragments.append(node.text or "")
+            return
+        if local in ("tab", "br", "cr"):
+            fragments.append("\t" if local == "tab" else "\n")
+            return
+        if local in ("noBreakHyphen", "softHyphen"):
+            fragments.append("\u2011" if local == "noBreakHyphen" else "\u00ad")
+            return
+        paragraph_start = len(fragments)
+        for child in node:
+            visit(child)
+        if local == "tc":
+            if fragments and fragments[-1] == "\n":
+                fragments.pop()
+            fragments.append("\t")
+        elif local in ("p", "tr"):
+            if local == "p" and any(
+                fragments[index].strip() for index in range(paragraph_start, len(fragments))
+            ):
+                number = node.find(namespace + "pPr/" + namespace + "numPr/" + namespace + "numId")
+                reference = node.find(namespace + "pPr/" + namespace + "pStyle")
+                identifier = (
+                    reference.get(namespace + "val") if reference is not None else default_style
+                )
+                visited: set[str] = set()
+                while number is None and identifier:
+                    if identifier in visited or len(visited) >= 64:
+                        raise ImportFailure("import_unsupported_docx")
+                    visited.add(identifier)
+                    style = style_by_id.get(identifier)
+                    if style is None:
+                        break
+                    number = style.find(
+                        namespace + "pPr/" + namespace + "numPr/" + namespace + "numId"
+                    )
+                    reference = style.find(namespace + "basedOn")
+                    identifier = reference.get(namespace + "val") if reference is not None else None
+                if number is not None and number.get(namespace + "val", "0") not in ("", "0"):
+                    fragments.insert(paragraph_start, "• ")
+            if local == "tr" and fragments and fragments[-1] == "\t":
+                fragments.pop()
+            fragments.append("\n")
+
+    visit(body)
+    if any(
+        name.startswith(("word/header", "word/footer", "word/footnotes", "word/endnotes"))
+        for name in parts
+    ):
+        warning = True
+    text = _normalized("".join(fragments))
+    return text, ["docx_layout_requires_review"] if warning else []
+
+
+def _markdown_text(data: bytes) -> str:
+    from markdown_it import MarkdownIt
+    from markdown_it.token import Token
+
+    try:
+        source = data.decode("utf-8", errors="strict")
+    except UnicodeError:
+        raise ImportFailure("import_invalid_utf8") from None
+    if any(ord(char) < 32 and char not in "\t\r\n" for char in source):
+        raise ImportFailure("import_invalid_text")
+    if data.startswith((b"%PDF-", b"PK\x03\x04", b"\xd0\xcf\x11\xe0")):
+        raise ImportFailure("import_invalid_text")
+    parser = MarkdownIt("commonmark", {"html": False, "maxNesting": 64})
+
+    def inline(tokens: list[Token]) -> str:
+        pieces: list[str] = []
+        for token in tokens:
+            if token.type in ("text", "code_inline"):
+                pieces.append(token.content)
+            elif token.type in ("softbreak", "hardbreak"):
+                pieces.append("\n")
+            elif token.type == "image":
+                pieces.append(inline(token.children or []))
+        return "".join(pieces)
+
+    lines: list[str] = []
+    list_starts: list[int | None] = []
+    previous_end: int | None = None
+    for token in parser.parse(source):
+        # markdown-it skips the remaining block tail at its nesting ceiling.
+        # Refuse such documents instead of publishing incomplete source text.
+        if token.level >= 63:
+            raise ImportFailure("import_content_limit")
+        if token.type == "list_item_open":
+            list_starts.append(token.map[0] if token.map is not None else None)
+        elif token.type == "list_item_close":
+            list_starts.pop()
+        if token.type not in ("inline", "fence", "code_block"):
+            continue
+        content = (
+            inline(token.children or []) if token.type == "inline" else token.content.rstrip("\n")
+        )
+        if token.map is not None:
+            if previous_end is not None and token.map[0] > previous_end:
+                lines.append("")
+            if list_starts and list_starts[-1] == token.map[0]:
+                content = "• " + content
+            previous_end = token.map[1]
+        lines.append(content)
+    return _normalized("\n".join(lines))
 
 
 class _PdfDiagnostics(logging.Handler):
@@ -753,6 +1137,10 @@ def _parse_child(spool: Path, job_id: str) -> None:
             warnings: list[WarningCode] = []
             if request.media_type == "application/pdf":
                 text, warnings = _pdf_text(data)
+            elif request.media_type == DOCX_MEDIA_TYPE:
+                text, warnings = _docx_text(data)
+            elif request.media_type == "text/markdown":
+                text = _markdown_text(data)
             else:
                 try:
                     text = _normalized(data.decode("utf-8", errors="strict"))

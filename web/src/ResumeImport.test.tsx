@@ -405,10 +405,10 @@ describe('local résumé source buffers', () => {
       .mockResolvedValue({ import_id: 'import-one', workflow_id: 'workflow-one' });
     render(<Harness api={api} />);
     const file = new File(['A fictional local résumé.'], 'fictional.txt', { type: 'text/plain' });
-    await user.upload(screen.getByLabelText('Résumé PDF or text file'), file);
+    await user.upload(screen.getByLabelText(/Résumé.*file/), file);
     await user.click(screen.getByRole('button', { name: 'Upload for local extraction' }));
     expect(await screen.findByRole('alert')).toHaveTextContent('server could not be reached');
-    expect(screen.getByLabelText('Résumé PDF or text file')).toHaveProperty('files', expect.objectContaining({ 0: file }));
+    expect(screen.getByLabelText(/Résumé.*file/)).toHaveProperty('files', expect.objectContaining({ 0: file }));
     await user.click(screen.getByRole('button', { name: 'Upload for local extraction' }));
     expect(await screen.findByRole('alert')).toHaveTextContent('session is unavailable');
     expect(screen.getByText(/Selected: fictional.txt/)).toBeVisible();
@@ -416,7 +416,7 @@ describe('local résumé source buffers', () => {
     expect(upload.mock.calls[1]?.[3]).toBe(upload.mock.calls[0]?.[3]);
     await user.click(screen.getByRole('button', { name: 'Upload for local extraction' }));
     expect(await screen.findByText(/Source accepted for isolated local extraction/)).toBeVisible();
-    expect(screen.getByLabelText('Résumé PDF or text file')).toHaveValue(''); expect(state.currentProfile).toBe(profile);
+    expect(screen.getByLabelText(/Résumé.*file/)).toHaveValue(''); expect(state.currentProfile).toBe(profile);
     expect(screen.queryByText(/Import completed/)).not.toBeInTheDocument();
   });
 
@@ -433,7 +433,7 @@ describe('local résumé source buffers', () => {
     await user.click(screen.getByRole('button', { name: 'Upload for local extraction' })); expect(upload.mock.calls[1]?.[3]).toBe(upload.mock.calls[0]?.[3]);
     await user.click(screen.getByRole('button', { name: 'Discard source buffer' }));
     const huge = new File([new Uint8Array(MAX_IMPORT_BYTES + 1)], 'huge.pdf', { type: 'application/pdf' });
-    await user.upload(screen.getByLabelText('Résumé PDF or text file'), huge);
+    await user.upload(screen.getByLabelText(/Résumé.*file/), huge);
     await user.click(screen.getByRole('button', { name: 'Upload for local extraction' }));
     expect(await screen.findByRole('alert')).toHaveTextContent('no larger than 10 MiB'); expect(upload).toHaveBeenCalledTimes(2);
     expect(screen.getByText(/Selected: huge.pdf/)).toBeVisible();

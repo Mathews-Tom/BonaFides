@@ -233,7 +233,7 @@ export interface DocumentRenderRequest { revision_id: string; content_sha256: st
 export interface DocumentFitRequest { revision_id: string; content_sha256: string; page_target: 1 | 2 }
 export interface DocumentOmissionRequest { revision_id: string; content_sha256: string; operation: 'omit' | 'restore'; block_key: string }
 export const MAX_IMPORT_BYTES = 10 * 1024 * 1024;
-export type ImportMediaType = 'application/pdf' | 'text/plain';
+export type ImportMediaType = 'application/pdf' | 'text/plain' | 'text/markdown' | 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
 export interface ImportSource { source_id: string; start: number; end: number; quote: string }
 export interface ImportComparison { status: 'new' | 'unchanged' | 'conflict' | 'needs_attention'; target_claim_id: string | null; candidate_claim_ids: string[] }
 export interface UnparsedPart { text: string; reason: 'unknown_verb' | 'missing_subject' | 'additional_metric' | 'multiple_statements' | 'invalid_value' | 'unplaced_scope' | 'compound_verb' }

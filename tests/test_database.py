@@ -168,7 +168,7 @@ def test_checksum_bound_baseline_and_successor_prefixes_are_supported() -> None:
 
 
 @pytest.mark.postgres
-def test_baseline_upgrade_preserves_existing_profile_and_adds_capture_origin(
+def test_baseline_upgrade_preserves_existing_profile_and_adds_capture_and_import_formats(
     pg_context: PGContext,
 ) -> None:
     config = MigrationSecret(pg_context.migrator.url.render_as_string(hide_password=False))
@@ -182,7 +182,7 @@ def test_baseline_upgrade_preserves_existing_profile_and_adds_capture_origin(
             text("""ALTER TABLE bonafides.evidence_revisions ADD CONSTRAINT evidence_revisions_origin_check
             CHECK (origin IN ('owner_entry','resume_import'))""")
         )
-        conn.execute(text("DELETE FROM bonafides.schema_migrations WHERE version=2"))
+        conn.execute(text("DELETE FROM bonafides.schema_migrations WHERE version>1"))
         conn.execute(
             text("UPDATE bonafides_migrations.alembic_version SET version_num='0001_baseline'")
         )
@@ -236,7 +236,7 @@ def test_pre_baseline_ledger_is_refused_at_migrate_and_readiness_unchanged(
             )
             conn.execute(
                 text("""INSERT INTO bonafides.schema_migrations(version,source_sha256)
-                SELECT version,repeat('b',64) FROM generate_series(3,30) version""")
+                SELECT version,repeat('b',64) FROM generate_series(1,30) version ON CONFLICT(version) DO NOTHING""")
             )
             conn.execute(
                 text(

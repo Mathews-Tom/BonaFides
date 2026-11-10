@@ -44,6 +44,7 @@ const warningLabels: Record<string, string> = {
   ambiguous_section_kept_as_other: 'Some source sections need you to choose where they belong.',
   contact_details_excluded: 'Recognizable contact or reference details were excluded from review.',
   pdf_layout_requires_review: 'Complex PDF layout was preserved in extraction order. Check source line breaks and reading order before accepting facts.',
+  docx_layout_requires_review: 'Word layout, headers, footers and notes are not reproduced. Check the extracted source before accepting facts.',
 };
 const destinations: { value: string; label: string }[] = [
   { value: '', label: 'Needs placement' }, { value: 'display_name', label: 'Personal details · Full name' },
@@ -180,9 +181,13 @@ function entryProblems(entry: ImportEntry, draft: ReviewDraft, profile: Profile)
 }
 function fileMediaType(file: File): ImportMediaType | null {
   const type = file.type.split(';')[0]?.trim().toLowerCase();
-  if (type === 'application/pdf' || type === 'text/plain') return type;
-  if (!type && /\.pdf$/i.test(file.name)) return 'application/pdf';
-  if (!type && /\.txt$/i.test(file.name)) return 'text/plain';
+  if (/\.md$/i.test(file.name) && (!type || type === 'text/plain' || type === 'text/markdown' || type === 'application/octet-stream')) return 'text/markdown';
+  if (type === 'application/pdf' || type === 'text/plain' || type === 'text/markdown' || type === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document') return type;
+  if (!type || type === 'application/octet-stream') {
+    if (/\.pdf$/i.test(file.name)) return 'application/pdf';
+    if (/\.txt$/i.test(file.name)) return 'text/plain';
+    if (/\.docx$/i.test(file.name)) return 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
+  }
   return null;
 }
 
@@ -369,7 +374,7 @@ export function ResumeImport({ api, profile, disabled, onProfile, onDirtyChange,
     void perform(async () => {
       const source = file ?? paste;
       const media = file ? fileMediaType(file) : 'text/plain';
-      if (!media) { setError('Choose a PDF or UTF-8 plain text file. No other file types are accepted.'); return; }
+      if (!media) { setError('Choose a DOCX, Markdown, PDF or UTF-8 plain text file.'); return; }
       const body = file ?? new Blob([paste], { type: 'text/plain;charset=utf-8' });
       if (!body.size || body.size > MAX_IMPORT_BYTES) { setError('Import a non-empty source no larger than 10 MiB. Your selected source remains here.'); return; }
       if (uploadRetry.current?.source !== source || uploadRetry.current.version !== profile.version) {
@@ -683,7 +688,7 @@ export function ResumeImport({ api, profile, disabled, onProfile, onDirtyChange,
     <form onSubmit={upload}>
       <fieldset disabled={locked || reviewDirty || !!acceptedUpload || !!(selected && active(selected))}>
         <legend>Choose a local source</legend>
-        <label>Résumé PDF or text file<input ref={fileInput} type="file" accept="application/pdf,text/plain,.pdf,.txt" disabled={paste.length > 0} onChange={event => { setFile(event.target.files?.[0] ?? null); setError(''); }} /></label>
+        <label>Résumé DOCX, Markdown, PDF or text file<input ref={fileInput} type="file" accept="application/pdf,text/plain,text/markdown,application/vnd.openxmlformats-officedocument.wordprocessingml.document,.pdf,.txt,.md,.docx" disabled={paste.length > 0} onChange={event => { setFile(event.target.files?.[0] ?? null); setError(''); }} /></label>
         {file && <p>Selected: {file.name} · {file.size.toLocaleString()} bytes. The filename is not sent to the server.</p>}
         <label>Or paste résumé text<textarea value={paste} disabled={file !== null} onChange={event => { setPaste(event.target.value); setError(''); }} /></label>
         <div className="actions"><button disabled={!file && !paste.length}>Upload for local extraction</button>
