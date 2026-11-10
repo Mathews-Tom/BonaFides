@@ -1608,6 +1608,40 @@ The lexical baseline (`lexical-content-words-v1`) is fixed and never tuned to a 
 
 The full tier runs it on both architectures, uploads `artifacts/fabrication-benchmark.json` with the gate evidence and appends the Markdown to the job summary.
 
+**Offline benchmark comparison.** The existing `benchmark run` command, its output bytes, corpus, digest algorithm and checker/baseline versions remain unchanged. The following separate commands export context and compare recorded predictions without model calls, network access or owner-data changes:
+
+```sh
+uv run --frozen bonafides benchmark cases tests/fixtures/fabrication --output cases.json
+uv run --frozen bonafides benchmark leaderboard tests/fixtures/fabrication \
+  --result judge.json --result model-a.json --result model-b.json --output comparison.json
+```
+
+`benchmark cases DIRECTORY [--output JSON]` writes canonical JSON to stdout and optionally to a file. Its exact root fields are `schema_version` (integer `1`), `dataset` and `cases`. `dataset` has exactly `files` (the read filenames) and `sha256` (the digest above). Each `cases` entry has exactly `case_id`, `category` and `case`: the category is `honest` or the existing fabrication kind, and `case` is the original validated JSON object, preserving full context such as `others`, `citation` and `fields` when present. No model prompt is invented.
+
+All three benchmark commands share one bounded corpus snapshot: each of the three files is read and validated once for that invocation, and that same snapshot supplies context, IDs, digest and metrics. IDs are `filename:physical-line-number`, starting at 1, for example `honest.jsonl:1`; blank lines leave gaps rather than renumbering later cases. The digest binds the exact corpus bytes, not just parsed cases.
+
+Each recorded result is one JSON object with **exactly** these fields:
+
+- `schema_version`: integer `1`, not a boolean.
+- `dataset_sha256`: the exact exported dataset digest.
+- `kind`: `advisory_judge` or `local_model`.
+- `name`: 1–80 ASCII display characters matching `[A-Za-z0-9][A-Za-z0-9 ._():/+-]{0,79}`; model-tag colons are allowed, Markdown delimiters and controls are not.
+- `capability_sha256`: a claimed identity of exactly 64 lowercase hexadecimal characters.
+- `provenance`: `synthetic` or `owner_recorded`.
+- `predictions`: an array of objects with exactly `case_id` and `verdict`, where the verdict is `accept` or `reject`.
+
+Every exported ID must appear exactly once in each result, including honest cases. Recorded files are bounded by the existing input byte limits and strictly validated: unknown/missing keys, wrong types, duplicate JSON keys, malformed or oversized input, a mismatched digest, missing/duplicate/foreign case IDs and duplicate comparator identities all fail. Comparator identity is `(kind, capability_sha256)`, not its display name or filename. A corpus-byte change therefore invalidates an earlier recording even if its case IDs still match.
+
+`benchmark leaderboard DIRECTORY --result JSON [--result JSON ...] [--output JSON]` requires at least one result file. It prints Markdown and optionally writes canonical report JSON with sorted keys, integer counts, denominators and per-mille rates for honest false rejections and every existing fabrication class. Rejection rates round down; honest false-rejection rates round up, as in `benchmark run`. Every comparator uses the same cases and denominators. The order is checker, lexical baseline, advisory judges, local models, then claimed identities within each recorded kind; result-file order does not affect canonical output. No weighted ranking, placeholder measured rows or qualification-dataset scores are added.
+
+The report root contains `schema_version: 1`, `dataset`, `authority: "comparison_only"`, `recorded_results: "owner_supplied_unverified"`, `capability_hashes: "claimed_not_verified_or_qualification"` and `comparators`. Each comparator carries `kind`, `name`, `version`, `capability_sha256`, `provenance`, `source`, `honest`, `classes` and `checker_disagreements`. Built-in rows have their version, a null capability hash, and `builtin` provenance/source; recorded rows have a null version, the supplied hash/provenance and `owner_supplied_unverified` source.
+
+Each honest/class metric contains `cases` (denominator), `rejected` (count) and `reject_per_mille` (rate, rounded as above). `checker_disagreements` counts `accept_checker_reject` and `reject_checker_accept`, making recorded/checker disagreement explicit without changing either result.
+
+All inputs are validated before either command publishes stdout or its optional output file. Invalid input exits `2` without publishing a report or changing an existing output file; success exits `0`. Unchanged inputs produce byte-identical exports and comparisons.
+
+Every recorded comparator is owner-supplied/unverified, including `owner_recorded` results. Its capability hash is a claim, not verified immutable identity or evidence of a qualified route. Synthetic demonstrations must be labelled synthetic and are not real measured model output; this addition publishes no new real-model benchmark measurement. Advisory-judge disagreement is visible but never blocks, clears, qualifies or authorizes anything. Model qualification still measures correct response format on different stage datasets at the unchanged 95% threshold; receipts, live blocks, checker results and export authority are untouched. The published measurements and the `dropped_qualifier` limitation above remain unchanged.
+
 The unchanged 305-bullet synthetic corpus includes its 64-bullet held-out block. The fixed
 general action inventory was committed before this re-measurement; no further tuning follows.
 
