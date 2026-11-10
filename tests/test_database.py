@@ -14,7 +14,13 @@ from sqlalchemy.engine import make_url
 from sqlalchemy.exc import DBAPIError
 
 from bonafides.commands import command
-from bonafides.db import BASELINE_SHA256, Database, PreBaselineDatabase, require_baseline
+from bonafides.db import (
+    BASELINE_SHA256,
+    SUPPORTED_MIGRATIONS,
+    Database,
+    PreBaselineDatabase,
+    require_baseline,
+)
 from bonafides.problems import Problem
 from bonafides.workflows import migrate
 
@@ -150,14 +156,63 @@ def test_baseline_checksum_pins_the_committed_baseline_source() -> None:
     source = Path(__file__).parents[1] / "migrations" / "sql" / "001_baseline.up.sql"
 
     assert hashlib.sha256(source.read_bytes()).hexdigest() == BASELINE_SHA256
-    assert sorted(path.name for path in source.parent.iterdir()) == [source.name]
+    for version, sha in SUPPORTED_MIGRATIONS.items():
+        paths = list(source.parent.glob(f"{version:03d}_*.up.sql"))
+        assert len(paths) == 1
+        assert hashlib.sha256(paths[0].read_bytes()).hexdigest() == sha
+
+
+def test_checksum_bound_baseline_and_successor_prefixes_are_supported() -> None:
+    require_baseline({1: BASELINE_SHA256})
+    require_baseline(SUPPORTED_MIGRATIONS)
+
+
+@pytest.mark.postgres
+def test_baseline_upgrade_preserves_existing_profile_and_adds_capture_origin(
+    pg_context: PGContext,
+) -> None:
+    config = MigrationSecret(pg_context.migrator.url.render_as_string(hide_password=False))
+    with pg_context.migrator.begin() as conn:
+        conn.execute(
+            text(
+                "ALTER TABLE bonafides.evidence_revisions DROP CONSTRAINT evidence_revisions_origin_check"
+            )
+        )
+        conn.execute(
+            text("""ALTER TABLE bonafides.evidence_revisions ADD CONSTRAINT evidence_revisions_origin_check
+            CHECK (origin IN ('owner_entry','resume_import'))""")
+        )
+        conn.execute(text("DELETE FROM bonafides.schema_migrations WHERE version=2"))
+        conn.execute(
+            text("UPDATE bonafides_migrations.alembic_version SET version_num='0001_baseline'")
+        )
+    migrate(config)
+    with pg_context.runtime.begin() as conn:
+        assert (
+            conn.execute(
+                text("SELECT current_revision_id FROM bonafides.profiles WHERE owner_id=:owner"),
+                {"owner": pg_context.owner_id},
+            ).scalar_one()
+            == pg_context.revision_id
+        )
+        assert {
+            row.version: row.source_sha256
+            for row in conn.execute(
+                text("SELECT version,source_sha256 FROM bonafides.schema_migrations")
+            )
+        } == SUPPORTED_MIGRATIONS
+        constraint = conn.execute(
+            text("""SELECT pg_get_constraintdef(oid) FROM pg_catalog.pg_constraint
+            WHERE conrelid='bonafides.evidence_revisions'::regclass AND conname='evidence_revisions_origin_check'""")
+        ).scalar_one()
+        assert "evidence_capture" in constraint
 
 
 @pytest.mark.parametrize(
     "ledger",
     [{2: BASELINE_SHA256}, {1: BASELINE_SHA256, 2: BASELINE_SHA256}, {1: "f" * 64}],
 )
-def test_only_the_exact_baseline_ledger_is_supported(ledger: dict[int, str]) -> None:
+def test_unknown_tampered_and_noncontiguous_ledgers_are_refused(ledger: dict[int, str]) -> None:
     with pytest.raises(PreBaselineDatabase):
         require_baseline(ledger)
 
@@ -170,6 +225,9 @@ def test_pre_baseline_ledger_is_refused_at_migrate_and_readiness_unchanged(
     alembic = text("SELECT version_num FROM bonafides_migrations.alembic_version")
     config = MigrationSecret(str(pg_context.migrator.url.render_as_string(hide_password=False)))
     runtime = Database(pg_context.runtime.url.render_as_string(hide_password=False))
+    with pg_context.migrator.begin() as conn:
+        original_ledger = conn.execute(ledger).all()
+        original_revision = conn.execute(alembic).scalar_one()
     try:
         with pg_context.migrator.begin() as conn:
             # The shape every database built by the replaced 30-migration chain has.
@@ -178,7 +236,7 @@ def test_pre_baseline_ledger_is_refused_at_migrate_and_readiness_unchanged(
             )
             conn.execute(
                 text("""INSERT INTO bonafides.schema_migrations(version,source_sha256)
-                SELECT version,repeat('b',64) FROM generate_series(2,30) version""")
+                SELECT version,repeat('b',64) FROM generate_series(3,30) version""")
             )
             conn.execute(
                 text(
@@ -199,13 +257,17 @@ def test_pre_baseline_ledger_is_refused_at_migrate_and_readiness_unchanged(
     finally:
         runtime.close()
         with pg_context.migrator.begin() as conn:
-            conn.execute(text("DELETE FROM bonafides.schema_migrations WHERE version > 1"))
+            conn.execute(text("DELETE FROM bonafides.schema_migrations"))
+            for version, sha in original_ledger:
+                conn.execute(
+                    text(
+                        "INSERT INTO bonafides.schema_migrations(version,source_sha256) VALUES(:version,:sha)"
+                    ),
+                    {"version": version, "sha": sha},
+                )
             conn.execute(
-                text("UPDATE bonafides.schema_migrations SET source_sha256=:sha"),
-                {"sha": BASELINE_SHA256},
-            )
-            conn.execute(
-                text("UPDATE bonafides_migrations.alembic_version SET version_num='0001_baseline'")
+                text("UPDATE bonafides_migrations.alembic_version SET version_num=:revision"),
+                {"revision": original_revision},
             )
     restored = Database(pg_context.runtime.url.render_as_string(hide_password=False))
     try:

@@ -18,11 +18,11 @@ BonaFides is a self-hosted career workspace in development. The implemented **Ar
 
 **Task and approval control local implementation** adds one durable task workspace with bounded history, actual attempt/heartbeat observations, safe due retry, explicit local cancellation checkpoints and unknown usage/cost. Exact single-action approvals bind the reviewed owner, payload, destination, projection, revisions, budgets and expiry; changed or replayed intent cannot grant another execution. Hosted transmission controls reserve each attempt without enabling a hosted adapter. Approval is not delivery, factual review, blanket consent or permission to execute an unavailable capability.
 
-**Data portability, erasure and encrypted backup and recovery (local implementation)** adds owner-data portability and erasure, plus operator-controlled encrypted installation backup and isolated restore. Each new backup also carries a verified `bonafides-workspace/1` archive built from the same database snapshot, which imports into a fresh installation. Daily scheduling, verified local copies, retention and explicit restored-target opening are implemented. Local recovery evidence does not establish off-host survival or key custody, genuine human qualification, production readiness or independent rights clearance.
+**Data portability, erasure and encrypted backup and recovery (local implementation)** adds owner-data portability and erasure, plus operator-controlled encrypted installation backup and isolated restore. Each new backup also carries a verified `bonafides-workspace/2` archive built from the same database snapshot, which imports into a fresh installation supporting workspace format 2. Imports also accept the frozen workspace format 1. Daily scheduling, verified local copies, retention and explicit restored-target opening are implemented. Local recovery evidence does not establish off-host survival or key custody, genuine human qualification, production readiness or independent rights clearance.
 
 **Development baseline:** macOS on Apple Silicon with the existing Linux arm64 Docker runtime. The observed architecture proof technical checkpoint permits private-alpha and later implementation in dependency order. Native Linux amd64 qualification is **deferred**, not passed and not a prerequisite for that private work. Independent rights review is a separate pending public-distribution gate; it is not tied to amd64 or waived by this platform decision. See the [development dispositions](#private-milestone-progression).
 
-**Schema baseline (0.1.0):** a fresh install runs one baseline migration. Databases and encrypted backups created before the baseline, and legacy `bonafides-portable` archives, are refused; export a `bonafides-workspace/1` archive from the last pre-baseline build (commit `771776e`) and import it into a fresh install. See [Schema baseline and migration policy](#schema-baseline-and-migration-policy) and [CHANGELOG.md](../../CHANGELOG.md).
+**Schema baseline and successor:** fresh installs apply immutable `001_baseline.up.sql` followed by additive `002_evidence_capture.up.sql`; current database readiness requires schema 2. Pre-baseline databases/backups and legacy `bonafides-portable` archives remain refused; export a `bonafides-workspace/1` archive from the last pre-baseline build (commit `771776e`) and import it into a fresh install. Workspace wire versions 1 and 2 are independent of database schema version: new exports use 2, and imports accept both. See [Schema baseline and migration policy](#schema-baseline-and-migration-policy) and [CHANGELOG.md](../../CHANGELOG.md).
 
 ### Measured results and limits
 
@@ -56,6 +56,7 @@ BonaFides is a self-hosted career workspace in development. The implemented **Ar
 - [Feature contracts](#feature-contracts)
   - [Workspace navigation and focused review](#workspace-navigation-and-focused-review)
   - [Evidence-linked profile contract](#evidence-linked-profile-contract)
+  - [Optional local Git evidence capture](#optional-local-git-evidence-capture)
   - [Reviewed résumé import contract](#reviewed-résumé-import-contract)
   - [Manual posting and reviewed-source contract](#manual-posting-and-reviewed-source-contract)
   - [Durable job catalog contract](#durable-job-catalog-contract)
@@ -569,6 +570,84 @@ Final local image `bonafides:ol005-final` has image/index identity `sha256:0f5ac
 Private raw evidence is retained under `.local/ol-005/`: `backend/receipt.json`, `backend/pytest.log`, `bonafides-proof-ol005-01/receipt.json`, `ui/browser-receipt.json` and `security-responsive/receipt.json`. The browser receipt deliberately retains the pre-repair mobile failure alongside passing post-repair checks. These ignored local artifacts are not a public reproducibility bundle or a runtime/CI dependency.
 
 Evidence-linked profiles evidence above remains historical and unchanged. The résumé-import checkpoint is described below; the job-sources deployed contract follows it. No real model run, controlled real-board approval or complete private alpha product is claimed. Native amd64 qualification remains deferred as DFR-001; independent rights review and regeneration/review of the earlier architecture proof exact-artifact inventory remain separate public-distribution work.
+
+#### Optional local Git evidence capture
+
+Capture is optional and operator-configured, not a browser repository picker. The current implementation supports only `local_git`; it has no capture panel or GitHub adapter. Accepted evidence is visible in the existing **Sources** UI as **Source capture approved by owner (not independently verified)**. Scans publish persisted proposals through worker `integration_sync` tasks in `evidence_capture` mode, never claims or automatic source acceptance.
+
+The private JSON configuration has `version: 1` and up to 20 `sources`, with unique IDs and these required fields:
+
+```json
+{
+  "version": 1,
+  "sources": [{
+    "id": "portfolio",
+    "label": "Local portfolio",
+    "kind": "local_git",
+    "repository": "/evidence/portfolio",
+    "enabled": true,
+    "privacy_class": "private",
+    "employer_owned": false
+  }]
+}
+```
+
+`id` matches `[a-z0-9][a-z0-9_-]{0,63}`, `label` is 1–150 characters, `repository` is an absolute container path without `..`, and `privacy_class` is `public`, `private` or `confidential`. Keep this configuration out of version control and API payloads. Place `evidence_capture.json` in the installation's private `secrets/` input directory as a regular, nonsymlink host file, mode `0600`. The existing `prepare` service copies this optional input into `app-secrets` as UID/GID `10001:10001`, mode `0400`; API and worker already mount that volume read-only at `/run/bonafides`. Removing the input and rerunning preparation removes its copied counterpart.
+
+Set `BONAFIDES_EVIDENCE_CAPTURE_CONFIG_FILE=/run/bonafides/evidence_capture.json` for **both API and worker**. Only the worker receives the repository bind mount, read-only and readable/traversable by UID 10001. Do not mount repositories into the API, broaden host repository permissions indiscriminately or give either service write access. The `repository` value names the mount target, not the host path. An operator-owned override can contain:
+
+```yaml
+services:
+  api:
+    environment:
+      BONAFIDES_EVIDENCE_CAPTURE_CONFIG_FILE: /run/bonafides/evidence_capture.json
+  worker:
+    environment:
+      BONAFIDES_EVIDENCE_CAPTURE_CONFIG_FILE: /run/bonafides/evidence_capture.json
+    volumes:
+      - type: bind
+        source: /absolute/host/path/to/portfolio
+        target: /evidence/portfolio
+        read_only: true
+        bind:
+          create_host_path: false
+```
+
+Use an already installed target with a locally loaded application image containing this implementation. The installed `start.sh` strips inherited `BONAFIDES_*`/`COMPOSE_*` variables and always selects only its installed base Compose file; exporting a config variable or `COMPOSE_FILE` before calling it does **not** enable this override. Do not edit managed `.env`, Compose assets or invent start flags. Instead, deliberately operate this target with explicit Compose base/override selection below, from a shell without inherited `BONAFIDES_*`/`COMPOSE_*` overrides. Substitute the two absolute paths; these are operator commands, not installer changes:
+
+```sh
+install=/absolute/path/to/installed/bonafides
+override=/absolute/path/to/private/capture.override.yaml
+image=$(cat "$install/.installer-image")
+capture_compose() {
+  BONAFIDES_IMAGE="$image" docker compose \
+    --project-directory "$install" --env-file "$install/.env" \
+    -f "$install/compose.yaml" -f "$override" "$@"
+}
+capture_compose stop
+# Remove only stopped one-shot containers so old success cannot skip preparation/migration.
+capture_compose rm -f prepare migrate
+capture_compose up --detach --wait --wait-timeout 420
+capture_compose exec -T api python -m bonafides init-bootstrap-if-ownerless
+```
+
+This follows the installed lifecycle's one-shot reset/start pattern: `prepare` materializes configuration before the database starts, `migrate` uses its separate DDL secret and image entrypoint's `[migrate]` command, and API/worker depend on migration success. Do not skip that dependency chain with `--no-deps`, start the API manually or bypass failed readiness. Keep the same override on subsequent operator startups; ordinary installed `start.sh` does not preserve it. No command here removes data volumes.
+
+All routes below are under `/api/v1/evidence-capture` and require the existing owner session; POSTs also use the same-origin/CSRF boundary, current profile aggregate's quoted integer `If-Match` and a stable, payload-bound `Idempotency-Key`.
+
+| Route | Request/result |
+| --- | --- |
+| `GET /sources` | `{items}` with labels, IDs, enabled state and classification defaults; repository paths are excluded. Unconfigured capture returns an empty list. |
+| `POST /sources/{id}/scan` | Empty `{}`; returns `202 {workflow_id}` for a durable scan, not evidence acceptance. |
+| `GET /scans` | Latest 100 owner-scoped scan summaries, including workflow state. |
+| `GET /scans/{workflow}` | `{workflow, proposals, profile_version, source_changed}`; inspect workflow errors and each persisted proposal's exact text, canonical source, provenance and `already_approved` state. |
+| `POST /scans/{workflow}/approve` | `{candidate_id, privacy_class, employer_owned}`; approves one selected stored candidate and returns the updated Profile with its ETag. Refresh the profile version before another distinct approval. |
+
+No API accepts or returns a repository path. Disabled sources remain listed and refuse scanning with `capture_source_disabled`; missing sources return `capture_source_not_found`, malformed protected configuration returns `503 capture_configuration_invalid`, and scan failures remain visible through workflow state/error codes. Approval requires a successful scan, unchanged configuration/namespace and an unapproved stored candidate; `source_changed` tells the owner to rescan rather than approve stale proposals. Configuration/namespace and worker lease fences apply before proposal publication.
+
+The worker reads only the 20 most recent commit messages from the configured repository's HEAD history. Each message must be valid UTF-8, nonempty, NUL-free and at most 8,000 Unicode scalar values; oversized/invalid content fails rather than silently truncating. Full 40- or 64-character commit SHAs identify candidates and canonical references `local-git:{source_id}@{sha}`. Git runs against an isolated projection of object/ref metadata, not the original repository configuration, hooks or worktree; no repository network operation or model call occurs.
+
+Approval creates a classified `work_sample` evidence revision with immutable origin `evidence_capture`, never a claim. The owner explicitly chooses classification; Confidential or employer-owned source text remains excluded from model context under existing rules. A later source edit creates an `owner_entry` revision while preserving the original captured revision and existing claim pins. Duplicate detection consults immutable revisions, so edits and archives do not permit accepting the same canonical source again. Native backup/recovery and `bonafides-workspace/2` portability retain the exact capture payload and origin. The frozen workspace-1 contract permits only `owner_entry` and `resume_import` origins and cannot encode or decode `evidence_capture`; it is not relabelled or downgraded.
 
 ### Reviewed résumé import contract
 
@@ -1516,9 +1595,11 @@ Schema policy, the portable workspace archive, erasure and encrypted installatio
 
 ### Schema baseline and migration policy
 
-BonaFides 0.1.0 starts from one baseline migration: `migrations/sql/001_baseline.up.sql`, applied by the single Alembic revision `0001_baseline`. It replaces the 30-migration development chain, including that chain's in-place data rewrites, which only applied to databases that already held data. A fresh install records exactly one ledger row (version 1 with the baseline file's SHA-256), and readiness reports `schema_version` 1.
+The immutable baseline `migrations/sql/001_baseline.up.sql` / Alembic `0001_baseline` replaces the historical 30-migration development chain. Additive `002_evidence_capture.up.sql` / `0002_evidence_capture` extends evidence origin to `evidence_capture` without rewriting baseline bytes or existing evidence. Fresh installs apply both; a supported baseline database upgrades in place through 002. Current readiness requires schema version **2** and the complete checksum-bound ledger `{1, 2}`; a valid version-1 prefix is migratable but not ready for this application.
 
-`tools/schema_equivalence.py` proves the baseline. It migrates an empty PostgreSQL 18 database, dumps its `bonafides` and `bonafides_migrations` schemas with the server's own `pg_dump`, normalises the dump and compares it with `migrations/reference/schema-030.sql`, a normalised dump of a fresh database built by the replaced chain. It exits 0 on equality and 1 with a unified diff otherwise. Its docstring lists every normalisation step; ownership, grants, constraints, defaults, triggers and function bodies are compared as dumped, and appended facts compare fresh-install row counts and the runtime role's database `TEMPORARY` privilege. The fast tier runs it in backend shard 1 and the full tier in its backend gate. To run it locally against a disposable database owned by `bonafides_migrator`:
+`src/bonafides/db.py` defines `SUPPORTED_MIGRATIONS`, the supported version-to-SHA-256 mapping. Migration and readiness bind the ledger to those checksums, not merely its highest version. Native backup/restore remains supported with its exact source/schema identity checks: restore requires the backup's ledger to match the selected build's migration files, not just any recognized prefix. Pre-baseline, unknown future, noncontiguous or checksum-tampered ledgers are refused, not silently upgraded or relabelled. New portable archives use `bonafides-workspace/2`, and imports retain support for frozen `bonafides-workspace/1`: the wire-format axis is independent of database schema 2, and `WORKSPACE_RECORD_SCHEMA` remains 1.
+
+`tools/schema_equivalence.py` is explicitly a **historical baseline-only proof**, not proof of the schema-2 successor. It migrates an empty PostgreSQL 18 database only through `0001_baseline`, dumps its `bonafides` and `bonafides_migrations` schemas with the server's own `pg_dump`, normalises the dump and compares it with `migrations/reference/schema-030.sql`, a normalised dump of a fresh database built by the replaced chain. It exits 0 on equality and 1 with a unified diff otherwise. Its docstring lists normalisation steps; ownership, grants, constraints, defaults, triggers and function bodies are compared as dumped, with fresh-install row counts and the runtime role's `TEMPORARY` privilege. Run it only against a disposable empty database:
 
 ```bash
 uv run --frozen python -m tools.schema_equivalence check \
@@ -1528,8 +1609,8 @@ uv run --frozen python -m tools.schema_equivalence check \
 
 Migration policy:
 
-- **Until the first release** the baseline may be regenerated (`schema_equivalence baseline`), and only together with a new reference and a passing equivalence check. This is the edit-in-place rule of [ADR-0003](../decisions/ADR-0003-bonafides-name.md), now limited to the single baseline.
-- **From the first release** migrations are append-only: a schema change adds `002_<name>.up.sql` and one Alembic revision that runs it and records its checksum. Released migration files never change, and `bonafides migrate` refuses a ledger whose recorded checksums differ from the files.
+- Migration files are immutable and append-only, including 001: a schema change adds the next numbered SQL migration and one Alembic revision that runs it and records its checksum.
+- Update the supported checksum mapping and schema readiness version with each successor. `bonafides migrate` refuses unsupported or altered ledger history; do not regenerate 001 or the historical reference to conceal successor changes.
 
 The baseline is a breaking cut. Databases built by the replaced chain (schema 30 and earlier) are never upgraded: `bonafides migrate` and readiness refuse them as `pre_baseline_database` without changing them, and `backup-restore`/`backup-verify` refuse their encrypted backups as `pre_baseline_backup` before any restore work. Both refusals print the operator message: run the last pre-baseline build (commit `771776e`) against the old data, export a `bonafides-workspace/1` archive, then import that archive into a fresh install. Legacy `bonafides-portable` v1/v2 archives are refused as `legacy_portable_format` before any write; convert one by importing it into the last pre-baseline build (commit `771776e`) and exporting a `bonafides-workspace/1` archive there.
 
@@ -1557,7 +1638,7 @@ One live preview per owner bounds retained candidate data. The server streams on
 
 The owner must type `DELETE APPLICATION {exact UUID}`, `DELETE ALL WORKSPACE DATA` or `REPLACE ALL WORKSPACE DATA` as displayed, then confirm the exact envelope. Recent authentication is checked before preview idempotency replay as well as approval. The worker revalidates the immutable plan, reads and checks actual replacement-checkpoint ciphertext again, rechecks the SQL checkpoint cut, consumes the exact approval and begins maintenance in one transaction. Only then can the existing quiescent erasure/import engine execute. Actual installed-image browser and independent SQL/filesystem observations cover these owner paths; earlier conformance receipts retain their original narrower scope.
 
-Open **Owner-data portability** in the authenticated workspace to create an export, observe its durable task and explicitly download it. The server verifies the stored byte count and SHA-256 against saved metadata before streaming the same open file descriptor to the browser’s native download manager; browser JavaScript does not buffer the archive. Check browser downloads for completion or failure. Exports contain saved owner data, not unsaved editor buffers. Unsupported document claims and their validation/provenance remain retrievable even when PDF generation is blocked. The versioned `bonafides-workspace/1` ZIP (see [workspace archive contract](#workspace-archive-contract)) includes explicit profile/evidence/document/posting/application relationship records and referenced blob bytes; credentials, sessions, installation configuration, runtime authority and temporary export copies are excluded. Legacy `bonafides-portable` archives require conversion with the previous release and are refused by this installation.
+Open **Owner-data portability** in the authenticated workspace to create an export, observe its durable task and explicitly download it. The server verifies the stored byte count and SHA-256 against saved metadata before streaming the same open file descriptor to the browser’s native download manager; browser JavaScript does not buffer the archive. Check browser downloads for completion or failure. Exports contain saved owner data, not unsaved editor buffers. Unsupported document claims and their validation/provenance remain retrievable even when PDF generation is blocked. New `bonafides-workspace/2` ZIPs (see [workspace archive contract](#workspace-archive-contract)) include explicit profile/evidence/document/posting/application relationship records and referenced blob bytes; credentials, sessions, installation configuration, runtime authority and temporary export copies are excluded. A destination must support workspace format 2 to read a new export; this installation imports both workspace versions 1 and 2. Legacy `bonafides-portable` archives require conversion with the last pre-baseline build (commit `771776e`) and are refused by this installation.
 
 In **Settings**, **Owner account** displays **Owner account ID** directly from the authenticated session's existing `owner_id`. **Copy owner account ID** writes that value to the browser clipboard and reports success only after the write resolves; denied or unavailable clipboard access reports an error while the read-only field remains selectable for manual copying. No account lookup, authentication/session change, token persistence or archive-derived identity is introduced.
 
@@ -1603,17 +1684,21 @@ Runtime-role PostgreSQL and actual sealed-daemon conformance covers unrelated-ta
 
 #### Workspace archive contract
 
-Every export writes a `bonafides-workspace/1` archive: a stored ZIP whose `manifest.json` has `format: "bonafides-workspace"`, `format_version: 1`, the source namespace and owner, the current profile revision, the manifest SHA-256 (over the canonical manifest without that field), `blob_manifest`, the fixed exclusion list and typed `sections` — `profile`, `claims`, `evidence` (including classification history), `claim_usage` (each document statement's pinned claim revision and status), `documents`, `tracking`, `postings`, `sources` and `provenance`. Each `blobs/<sha256>` member holds the bytes of one listed file. Rows keep the exact identifiers, revision pins, statuses and timestamps the exporting database produced, so an import reproduces them without recomputing anything.
+Every new export writes a `bonafides-workspace/2` archive: a stored ZIP whose `manifest.json` has `format: "bonafides-workspace"`, `format_version: 2`, the source namespace and owner, the current profile revision, the manifest SHA-256 (over the canonical manifest without that field), `blob_manifest`, the fixed exclusion list and typed `sections` — `profile`, `claims`, `evidence` (including classification history), `claim_usage` (each document statement's pinned claim revision and status), `documents`, `tracking`, `postings`, `sources` and `provenance`. Each `blobs/<sha256>` member holds the bytes of one listed file. Rows keep the exact identifiers, revision pins, statuses and timestamps the exporting database produced, so an import reproduces them without recomputing anything. Version 2 retains the version-1 section and field names and reuses unchanged v1 row/section models; its evidence model adds `evidence_capture` to the allowed origins and preserves its exact payload. New exports require a reader supporting version 2.
 
-The contract has its own version axis and carries no database schema number; each release maps its database rows to and from the published sections. The JSON Schema is generated from the Pydantic models and committed at [`docs/schemas/bonafides-workspace-1.schema.json`](../schemas/bonafides-workspace-1.schema.json); regenerate it with `uv run --frozen python -m bonafides.portable_workspace > docs/schemas/bonafides-workspace-1.schema.json`. Tests fail when the committed file differs from the models and when the published v1 bytes change: any change to the models is a new `format_version` with its own schema file and a reader kept for every published version.
+The contract has its own version axis and carries no database schema number; each release maps its database rows to and from the published sections. `WORKSPACE_RECORD_SCHEMA` remains 1, independent of both the archive format and database schema 2. The current JSON Schema is generated from the Pydantic models in `bonafides.portable_workspace_v2` and committed at [`docs/schemas/bonafides-workspace-2.schema.json`](../schemas/bonafides-workspace-2.schema.json). From the repository root, regenerate the current schema with the pinned environment:
 
-The schema and byte pin use Pydantic 2.12.5. If a Pydantic upgrade changes generated output without changing the models, regenerate and update the pin only after confirming the JSON Schema is semantically identical, with reviewer sign-off. A real contract change requires a new `format_version`, not a refreshed v1 pin.
+```bash
+uv run --frozen python -m bonafides.portable_workspace_v2 > docs/schemas/bonafides-workspace-2.schema.json
+```
 
-Import accepts exactly `bonafides-workspace` 1, including archives exported before the schema baseline. A legacy `bonafides-portable` archive (any version) is refused as `legacy_portable_format`, and any other `format` or `format_version` as `incompatible_portable_format`, before any database row or file is written, including staged files. The preview shows the archive's source format.
+The immutable legacy reader models remain in `bonafides.portable_workspace`, with the published [`version-1 schema`](../schemas/bonafides-workspace-1.schema.json). Its schema bytes and SHA-256 pin `29375b648a6fffc31a6494da06ae54685278c2172005a24c91e29d0df9ea96e1` stay unchanged. The schemas use pinned Pydantic 2.12.5. Tests check generated schemas against their models and protect the published v1 bytes; do not regenerate or refresh the v1 pin to accommodate a contract or dependency change. A contract change requires a new `format_version` and schema file, retaining readers for published versions.
+
+Import accepts exactly `bonafides-workspace` versions 1 and 2, dispatching to the corresponding reader, including version-1 archives exported before the schema baseline. Version 1 permits only `owner_entry` and `resume_import` evidence origins; version 2 additionally permits `evidence_capture`. A legacy `bonafides-portable` archive (any version) is refused as `legacy_portable_format`, and any other `format` or `format_version` as `incompatible_portable_format`, before any database row or file is written, including staged files. The preview shows the archive's source format.
 
 ### Streamed owner-data portability — streamed portability migration
 
-Issue #4 removes the former 112 MiB stored-file export ceiling. Exports use stored ZIP64 members and process one referenced file at a time; only `bonafides-workspace/1` archives import after the baseline. Export storage, authenticated native-browser downloads and replacement uploads share a maximum of **671,109,611,520 bytes (625 GiB + 20 MiB)**: at most 10,000 distinct files of at most 64 MiB each, a 16 MiB manifest and 4 MiB ZIP structure allowance. The manifest permits at most 100,000 records. These format guards are not new owner write quotas: attachments retain their 1 GiB owner / 100 MiB application / 10 MiB file limits, accepted import originals retain their 64 MiB owner / 10 MiB file limits, and generated PDFs retain their 64 MiB per-file limit without an aggregate owner PDF quota. Hashes, paths, member sets and relationships are validated before replacement. Sufficient local disk is required for retained exports, upload quarantine and staged replacement files.
+Issue #4 removes the former 112 MiB stored-file export ceiling. Exports use stored ZIP64 members and process one referenced file at a time; current imports accept only `bonafides-workspace/1` and `bonafides-workspace/2` archives. Export storage, authenticated native-browser downloads and replacement uploads share a maximum of **671,109,611,520 bytes (625 GiB + 20 MiB)**: at most 10,000 distinct files of at most 64 MiB each, a 16 MiB manifest and 4 MiB ZIP structure allowance. The manifest permits at most 100,000 records. These format guards are not new owner write quotas: attachments retain their 1 GiB owner / 100 MiB application / 10 MiB file limits, accepted import originals retain their 64 MiB owner / 10 MiB file limits, and generated PDFs retain their 64 MiB per-file limit without an aggregate owner PDF quota. Hashes, paths, member sets and relationships are validated before replacement. Sufficient local disk is required for retained exports, upload quarantine and staged replacement files.
 
 The baseline includes the raised export-store bound and retains replacement candidates as bounded 1 MiB PostgreSQL chunks. Cancellation, expiry, erasure and native recovery clear all chunks through the existing preview lifecycle. The replaced development-chain migration files are retired. Encrypted-backup limits are unchanged.
 
@@ -1627,7 +1712,7 @@ The raw API ingress relay uses a shared, connection-wide 24-hour inactivity limi
 
 `bonafides.installation_backup.capture_installation` now takes a matched native PostgreSQL 18 custom-format dump and referenced immutable blobs under the existing quiescent controller. The runtime role exports only the product schema, not the private migration ledger. A shared migration lock and exported PostgreSQL snapshot bind the dump, table-content fingerprints, references and configuration/key identities to one cut. PostgreSQL bytes are streamed through public-recipient encryption before staging; blob bytes stream into the outer encrypted archive. The detailed manifest is encrypted. Format v1 uses OpenSSL CMS AuthEnvelopedData with streaming BER, AES-256-GCM and RSA-OAEP-SHA256 recipients of at least 3072 bits. Bounds are 4 GiB ciphertext, 2 GiB plaintext dump, 16 MiB manifest and 100,000 data members plus the manifest. Hitting a bound fails rather than truncating or falling back to plaintext.
 
-New backups write manifest format 2: the whole-database dump and blob members are unchanged, and a `workspace/bonafides-workspace-1.zip` member carries the owner's `bonafides-workspace/1` archive with its SHA-256 and byte length in the manifest. The archive is built by the export collector inside the same read-only snapshot as the dump and table fingerprints, so it holds exactly the rows of that cut, and it imports into a fresh installation like any export. Stored files appear twice, once among the blob members and once inside the workspace archive; that duplication is accepted and counts against the unchanged 4 GiB bound, leaving roughly 2 GiB for stored files. The archive is staged as an already-unlinked private file in the staging directory, then added to the authenticated outer envelope. Creation fails closed: if the archive cannot be built (a missing or changed stored file, a portable limit, the bundle bound or a validation failure), `backup-create` exits with `backup_workspace_unavailable` or `backup_size_limit`, publishes no file and records no generation. Format 1 bundles keep their manifest bytes and still recover, verify and restore.
+New backups still write encrypted backup manifest format 2: the whole-database dump and blob members are unchanged, and the stable `workspace/bonafides-workspace-1.zip` attachment path carries the owner's workspace archive with its SHA-256 and byte length in the manifest. The attachment name is independent of the embedded workspace format: existing format-2 backups may carry `bonafides-workspace/1`, while new backups carry `bonafides-workspace/2`; the reader accepts either. The archive is built by the export collector inside the same read-only snapshot as the dump and table fingerprints, so it holds exactly the rows of that cut, and it imports into a fresh installation supporting its workspace format like any export. Stored files appear twice, once among the blob members and once inside the workspace archive; that duplication is accepted and counts against the unchanged 4 GiB bound, leaving roughly 2 GiB for stored files. The archive is staged as an already-unlinked private file in the staging directory, then added to the authenticated outer envelope. Creation fails closed: if the archive cannot be built (a missing or changed stored file, a portable limit, the bundle bound or a validation failure), `backup-create` exits with `backup_workspace_unavailable` or `backup_size_limit`, publishes no file and records no generation. Format 1 bundles keep their manifest bytes and still recover, verify and restore. Native source/schema identity and migration-ledger checks remain unchanged.
 
 `bonafides.backup_archive.recover_bundle` requires an independently trusted ciphertext digest and a separately supplied private key. It copies untrusted ciphertext into private quarantine, verifies the digest and authenticates the complete outer envelope before parsing any tar data. Only exact declared regular members, hashes, sizes, paths and zero end padding are accepted. Both envelopes must use the supported authenticated format; ordinary unauthenticated CMS envelopes are rejected. Decrypted bytes remain in the offline private context and are removed on exit. A format 2 workspace member must match its declared digest and length and decode through the workspace reader for the source owner, without writing anything; otherwise recovery stops with `backup_member_hash_mismatch` or `invalid_backup_workspace`.
 

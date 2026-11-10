@@ -283,7 +283,7 @@ def _approved_import(context: SourceContext, digest: str) -> Prepared:
 
 
 def _assert_manifest(manifest: Manifest, inventory: BlobInventory) -> None:
-    assert (manifest.format, manifest.format_version) == ("bonafides-workspace", 1)
+    assert (manifest.format, manifest.format_version) == ("bonafides-workspace", 2)
     assert {
         member.blob_id: (member.sha256, member.byte_length) for member in manifest.blob_manifest
     } == {

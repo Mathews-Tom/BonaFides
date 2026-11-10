@@ -10,9 +10,13 @@ from sqlalchemy.engine import make_url
 from bonafides.config import Settings
 from bonafides.execution_guard import ExecutionGuard
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 # Checksum of migrations/sql/001_baseline.up.sql; every supported ledger starts with it.
 BASELINE_SHA256 = "d59f2522f5e4be27f5ad367c23bc3b0979af4c9d48831249b36697df8992d3d8"
+SUPPORTED_MIGRATIONS = {
+    1: BASELINE_SHA256,
+    2: "bd5e9c062f266e7787b94dd1688c6ba9fc849b0f319dab99a44c7fb1f3282557",
+}
 PRE_BASELINE_GUIDANCE = (
     "This data predates the 0.1.0 schema baseline and is never upgraded in place. "
     "Run the last pre-baseline BonaFides build (commit 771776e) against it, export a "
@@ -39,8 +43,11 @@ def schema_ledger(conn: Connection) -> dict[int, str]:
 
 
 def require_baseline(ledger: dict[int, str]) -> None:
-    """Refuse every non-empty ledger other than this baseline's single row."""
-    if ledger and ledger != {SCHEMA_VERSION: BASELINE_SHA256}:
+    """Accept only contiguous, checksum-bound prefixes of the supported baseline chain."""
+    if ledger and (
+        set(ledger) != set(range(1, len(ledger) + 1))
+        or any(SUPPORTED_MIGRATIONS.get(version) != sha for version, sha in ledger.items())
+    ):
         raise PreBaselineDatabase
 
 

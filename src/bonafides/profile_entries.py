@@ -355,8 +355,15 @@ def _active_record(
 
 
 def write_evidence(
-    conn: Connection, owner_id: UUID, body: EvidenceWrite | EvidenceCreate, entity_id: UUID | None
+    conn: Connection,
+    owner_id: UUID,
+    body: EvidenceWrite | EvidenceCreate,
+    entity_id: UUID | None,
+    *,
+    origin: Literal["owner_entry", "evidence_capture"] = "owner_entry",
 ) -> dict[str, object]:
+    if origin == "evidence_capture" and entity_id is not None:
+        raise ValueError("captured origin is only valid for new evidence")
     creating = entity_id is None
     if entity_id is None:
         count = conn.execute(
@@ -393,7 +400,7 @@ def write_evidence(
         text("""INSERT INTO bonafides.evidence_revisions(owner_id,id,evidence_id,revision_no,payload,content_sha256,
         source_type,origin)
         SELECT :owner,:revision,:id,COALESCE(max(revision_no),0)+1,CAST(:payload AS jsonb),:sha,
-        :source_type,'owner_entry'
+        :source_type,:origin
         FROM bonafides.evidence_revisions WHERE owner_id=:owner AND evidence_id=:id"""),
         {
             "owner": owner_id,
@@ -401,6 +408,7 @@ def write_evidence(
             "id": entity_id,
             "payload": canonical(payload),
             "sha": content_hash(payload),
+            "origin": origin,
             **body.provenance.model_dump(),
         },
     )

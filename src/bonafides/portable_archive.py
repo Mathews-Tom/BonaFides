@@ -24,7 +24,6 @@ from pydantic import AwareDatetime, Field, JsonValue, ValidationError
 
 from bonafides.commands import canonical_json
 from bonafides.portable_workspace import FORMAT as WORKSPACE_FORMAT
-from bonafides.portable_workspace import FORMAT_VERSION as WORKSPACE_VERSION
 from bonafides.portable_workspace import MAX_BLOB_BYTES as MAX_BLOB_BYTES
 from bonafides.portable_workspace import MAX_BLOBS as MAX_BLOBS
 from bonafides.portable_workspace import (
@@ -34,6 +33,8 @@ from bonafides.portable_workspace import (
     WorkspaceManifest,
 )
 from bonafides.portable_workspace import BlobMember as BlobMember
+from bonafides.portable_workspace_v2 import FORMAT_VERSION as WORKSPACE_VERSION
+from bonafides.portable_workspace_v2 import WorkspaceManifest as WorkspaceManifestV2
 from bonafides.problems import Problem
 
 MAX_MANIFEST_BYTES = 16 * 1024 * 1024
@@ -53,8 +54,12 @@ EXCLUSIONS = (
 # last pre-baseline build (commit 771776e). They're refused, like every unsupported
 # format, before any write.
 LEGACY_FORMAT = "bonafides-portable"
-# Exactly these wire formats are read; anything else is refused before any write.
-SUPPORTED_FORMATS = frozenset({(WORKSPACE_FORMAT, WORKSPACE_VERSION)})
+# Readers stay bound to their published contracts; new exports select version 2.
+_WORKSPACE_READERS: dict[int, type[WorkspaceManifest] | type[WorkspaceManifestV2]] = {
+    1: WorkspaceManifest,
+    WORKSPACE_VERSION: WorkspaceManifestV2,
+}
+SUPPORTED_FORMATS = frozenset((WORKSPACE_FORMAT, version) for version in _WORKSPACE_READERS)
 # The database schema whose portable rows the workspace sections carry. A migration
 # that changes exported columns changes this mapping, never the published contract.
 WORKSPACE_RECORD_SCHEMA = 1
@@ -73,7 +78,7 @@ class Manifest(ArchiveModel):
     """
 
     format: Literal["bonafides-workspace"]
-    format_version: Literal[1]
+    format_version: Literal[1, 2]
     source_schema_version: Annotated[int, Field(ge=1)]
     created_at: AwareDatetime
     source_namespace: UUID
@@ -107,9 +112,9 @@ class PortableArchive:
         self.close()
 
 
-def _workspace(manifest: Manifest) -> WorkspaceManifest:
-    """Group the record view into published sections, validating every row's type."""
-    if manifest.format_version != WORKSPACE_VERSION or (
+def _workspace(manifest: Manifest) -> WorkspaceManifest | WorkspaceManifestV2:
+    """Group the record view into its published version, validating every row."""
+    if (manifest.format, manifest.format_version) not in SUPPORTED_FORMATS or (
         manifest.source_schema_version != WORKSPACE_RECORD_SCHEMA
     ):
         raise ArchiveError("incompatible_portable_format")
@@ -123,14 +128,14 @@ def _workspace(manifest: Manifest) -> WorkspaceManifest:
         raise ArchiveError("incompatible_portable_schema")
     wire = manifest.model_dump(mode="json", exclude={"records", "source_schema_version"})
     try:
-        return WorkspaceManifest.model_validate_json(
+        return _WORKSPACE_READERS[manifest.format_version].model_validate_json(
             canonical_json({**wire, "sections": sections}), strict=True
         )
     except (ValidationError, Problem, ValueError) as exc:
         raise ArchiveError("invalid_portable_manifest") from exc
 
 
-def _records(workspace: WorkspaceManifest) -> Manifest:
+def _records(workspace: WorkspaceManifest | WorkspaceManifestV2) -> Manifest:
     sections = workspace.sections.model_dump(mode="json")
     return Manifest(
         format=workspace.format,
@@ -147,11 +152,11 @@ def _records(workspace: WorkspaceManifest) -> Manifest:
     )
 
 
-def _wire(manifest: Manifest) -> WorkspaceManifest:
+def _wire(manifest: Manifest) -> WorkspaceManifest | WorkspaceManifestV2:
     return _workspace(manifest)
 
 
-def _digest(wire: WorkspaceManifest) -> str:
+def _digest(wire: WorkspaceManifest | WorkspaceManifestV2) -> str:
     value = wire.model_dump(mode="json", exclude={"manifest_sha256"})
     return hashlib.sha256(canonical_json(value).encode()).hexdigest()
 
@@ -196,7 +201,9 @@ def _manifest(data: bytes, expected_source_owner: UUID) -> Manifest:
             or (raw["format"], raw["format_version"]) not in SUPPORTED_FORMATS
         ):
             raise ArchiveError("incompatible_portable_format")
-        wire = WorkspaceManifest.model_validate_json(canonical_json(raw), strict=True)
+        wire = _WORKSPACE_READERS[raw["format_version"]].model_validate_json(
+            canonical_json(raw), strict=True
+        )
         manifest = _records(wire)
     except ArchiveError:
         raise

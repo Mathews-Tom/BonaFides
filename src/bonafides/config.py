@@ -86,6 +86,7 @@ class Settings:
     max_body_bytes: int = 1048576
     local_model_route_file: Path | None = None
     backup_capture_config_file: Path | None = None
+    evidence_capture_config_file: Path | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "database_dsn", _dsn(self.database_dsn, "database_dsn"))
@@ -175,6 +176,9 @@ class Settings:
             else None,
             backup_capture_config_file=Path(values["BONAFIDES_BACKUP_CAPTURE_CONFIG_FILE"])
             if values.get("BONAFIDES_BACKUP_CAPTURE_CONFIG_FILE")
+            else None,
+            evidence_capture_config_file=Path(values["BONAFIDES_EVIDENCE_CAPTURE_CONFIG_FILE"])
+            if values.get("BONAFIDES_EVIDENCE_CAPTURE_CONFIG_FILE")
             else None,
         )
 

@@ -37,7 +37,7 @@ def _export(context: SourceContext) -> PortableArchive:
     manifest = export_owner_data(
         context.runtime, context.identity.settings, context.owner_id, output
     )
-    assert (manifest.format, manifest.format_version) == ("bonafides-workspace", 1)
+    assert (manifest.format, manifest.format_version) == ("bonafides-workspace", 2)
     return decode_archive(output, expected_source_owner=context.owner_id)
 
 

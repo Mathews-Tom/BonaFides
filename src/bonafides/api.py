@@ -481,6 +481,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         backup_configuration,
         claim_usage,
         documents,
+        evidence_capture,
         imports,
         portable_exports,
         portable_previews,
@@ -500,6 +501,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(claim_usage.build_router(db))
     app.include_router(imports.build_router(db, resolved))
     app.include_router(sources.build_router(db, resolved))
+    app.include_router(evidence_capture.build_router(db, resolved))
     app.include_router(suitability.build_router(db, resolved))
     app.include_router(tracking.build_router(db, resolved))
     if (resolved.web_dist / "index.html").is_file():

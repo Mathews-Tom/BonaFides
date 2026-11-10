@@ -1,9 +1,9 @@
 # SPDX-License-Identifier: MIT OR Apache-2.0
-"""Prove that the committed migrations build the schema of the committed reference.
+"""Prove that the immutable baseline builds the schema of its committed reference.
 
-The script migrates one empty PostgreSQL 18 database with ``bonafides migrate``'s
-code path, dumps its schema with the server's own ``pg_dump`` inside the database
-container, normalises the dump and compares it with the reference byte for byte.
+The script builds revision 0001 in one empty PostgreSQL 18 database, dumps its
+schema with the server's own ``pg_dump`` inside the database container, normalises
+the dump and compares it with the historical reference byte for byte.
 
 Normalisation removes only what is not schema, or what differs between two dumps of
 the same schema:
@@ -36,11 +36,12 @@ import sys
 from collections.abc import Sequence
 from pathlib import Path
 
+from alembic import command as alembic_command
+from alembic.config import Config
 from sqlalchemy import Connection, create_engine, text
 from sqlalchemy.engine import make_url
 
-from bonafides.config import MigrationSettings, read_secret
-from bonafides.workflows import migrate
+from bonafides.config import read_secret
 
 SCHEMAS = ("bonafides", "bonafides_migrations")
 LEDGER_TABLES = frozenset({"bonafides.schema_migrations", "bonafides_migrations.alembic_version"})
@@ -201,6 +202,25 @@ def _facts(url: str) -> str:
         engine.dispose()
 
 
+def _migrate_baseline(url: str) -> None:
+    """The schema-030 reference proves only 0001, not additive successor changes."""
+    engine = create_engine(url, connect_args={"connect_timeout": 5})
+    try:
+        with engine.begin() as conn:
+            version = int(conn.execute(text("SHOW server_version_num")).scalar_one())
+            if not 180000 <= version < 190000:
+                raise EquivalenceError("PostgreSQL 18 is required")
+            conn.execute(text("CREATE SCHEMA bonafides_migrations"))
+            conn.execute(
+                text("REVOKE ALL ON SCHEMA bonafides_migrations FROM PUBLIC,bonafides_runtime")
+            )
+            config = Config("alembic.ini")
+            config.attributes["connection"] = conn
+            alembic_command.upgrade(config, "0001_baseline")
+    finally:
+        engine.dispose()
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Compare the migrated schema with a reference.")
     parser.add_argument("mode", choices=("check", "reference", "baseline"))
@@ -218,7 +238,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         parser.error(f"{arguments.mode} requires --output")
     url = _connection_url(arguments.migration_dsn_file)
     _require_empty(url)
-    migrate(MigrationSettings(url))
+    _migrate_baseline(url)
     if arguments.mode == "baseline":
         arguments.output.write_text(
             baseline(_dump(arguments.container, arguments.database, SCHEMAS[:1]))

@@ -38,6 +38,8 @@
     "tests/test_claims.py",
     "tests/test_document_defaults.py",
     "tests/test_documents.py",
+    "tests/test_evidence_capture.py",
+    "tests/test_evidence_capture_sources.py",
     "tests/test_evidence_provenance.py",
     "tests/test_execution_guard.py",
     "tests/test_portable_previews.py",
