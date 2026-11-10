@@ -43,9 +43,11 @@ function PrivateComparison({ value }: { value: ApplicationDetail }) {
       <h5>Saved attachments</h5><ul>{value.attachments.map(item => <li key={item.id}>{item.display_name} · {item.byte_length} bytes</li>)}</ul>
     </details></>;
 }
-export function Tracking({ api, disabled = false, onDirtyChange, onBusyChange }: {
-  api: Api; disabled?: boolean; onDirtyChange?: (value: boolean) => void; onBusyChange?: (value: boolean) => void;
+export function Tracking({ api, active, disabled = false, onDirtyChange, onBusyChange }: {
+  api: Api; active: boolean; disabled?: boolean; onDirtyChange?: (value: boolean) => void; onBusyChange?: (value: boolean) => void;
 }) {
+  const [viewsOpened, setViewsOpened] = useState(active);
+  useEffect(() => { if (active) setViewsOpened(true); }, [active]);
   const [filters, setFilters] = useState<Filters>(emptyFilters);
   const [appliedFilters, setAppliedFilters] = useState<Filters>(emptyFilters);
   const [page, setPage] = useState<ApplicationPage | null>(null);
@@ -271,8 +273,8 @@ export function Tracking({ api, disabled = false, onDirtyChange, onBusyChange }:
         {grouped ? <PipelineBoard api={api} revision={viewRevision} q={appliedFilters.q} archived={appliedFilters.archived} locked={locked} open={(id, editStage) => { void selectApplication(id, editStage); }} /> : !page.items.length ? <p>No applications in this loaded scope. Clear filters or track a saved posting below.</p> : <ul className="tracking-list">{page.items.map(applicationRow)}</ul>}
         {!grouped && page.next_cursor && <button className="secondary" disabled={locked || listLoading} onClick={() => { void loadList(appliedFilters, page.next_cursor!); }}>Load more applications</button>}</>}
     </section>
-    <PipelineReports api={api} revision={viewRevision} locked={locked} open={id => { void selectApplication(id); }} />
-    <PipelineCalendar api={api} revision={viewRevision} locked={locked} open={id => { void selectApplication(id); }} />
+    {(active || viewsOpened) && <><PipelineReports api={api} revision={viewRevision} locked={locked} open={id => { void selectApplication(id); }} />
+    <PipelineCalendar api={api} revision={viewRevision} locked={locked} open={id => { void selectApplication(id); }} /></>}
     <details><summary>Track a saved posting manually</summary><p>This opens the latest existing attempt, or creates the first Preparing attempt. Saving a posting alone does not create an application. No model or sending provider is needed.</p>
       <button className="secondary" disabled={locked || dirty} onClick={() => { void loadSaved(); }}>Load saved postings for tracking</button>
       {savedError && <p role="status" className="error">Saved posting choices unavailable. {savedError} {saved ? 'Earlier choices may be stale.' : 'No empty result is assumed.'}</p>}

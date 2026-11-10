@@ -70,7 +70,7 @@ You can't schedule anything on a Rejected or Withdrawn application. Reopen it fi
 
 ## View your local calendar
 
-**Local application calendar** shows interviews and follow-ups from active applications without connecting an outside calendar. Completed and cancelled entries remain labelled; earlier appointments say **Passed**.
+**Local application calendar** shows interviews and follow-ups from active applications without connecting an outside calendar. Reports and calendar load when you first open **Applications**, then keep their chosen view while you move between workspace pages. Completed and cancelled entries remain labelled; earlier appointments say **Passed**.
 
 Choose **Calendar month**, **Previous month**, **Next month** or **Today**. Use **Calendar view** to switch between **Month** and **Day**, then select a day. With a day focused, Left/Right moves one day and Up/Down moves one week, including across month boundaries.
 
