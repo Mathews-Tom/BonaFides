@@ -2,6 +2,7 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { Api, errorText, literalClaimPayload, type ClaimKind, type ClaimPayload, type ClaimPeriodSeparator, type ClaimPeriodStyle, type ClaimRateWording, type ClaimRecord, type ClaimRendering, type ClaimVocabulary, type StructuredClaim, type EvidenceLink, type EvidencePrivacyClass, type EvidenceProvenance, evidenceOrigins, type EvidenceRecord, type EvidenceRevision, type EvidenceSourceType, evidencePrivacyClasses, evidenceSourceTypes, type PinnedClaim, type Profile, type ProfileRevision, type ProfileRevisionSummary, type RevisionPage } from './api';
 import { ClaimUsedIn } from './ClaimUsage';
+import { EvidenceCapture } from './EvidenceCapture';
 import './ProfileEntries.css';
 
 const kinds: { value: ClaimKind; label: string }[] = [
@@ -148,7 +149,9 @@ export function ProfileEntries({ api, profile, disabled, onProfile, onDirtyChang
   const [evidence, setEvidence] = useState<EvidenceDraft | null>(null);
   const [classification, setClassification] = useState<ClassificationDraft | null>(null);
   const [archive, setArchive] = useState<ArchiveChoice | null>(null);
-  const [busy, setBusy] = useState(false);
+  const [entryBusy, setBusy] = useState(false);
+  const [captureBusy, setCaptureBusy] = useState(false);
+  const [captureDirty, setCaptureDirty] = useState(false);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
   const [comparison, setComparison] = useState<Profile | null>(null);
@@ -194,7 +197,9 @@ export function ProfileEntries({ api, profile, disabled, onProfile, onDirtyChang
     return () => controller.abort();
   }, [api, renderable, structuredDraft]);
   useEffect(() => { if (evidenceOpen) evidenceInput.current?.focus(); }, [evidenceOpen]);
-  const dirty = !!(claim || evidence || classification || archive);
+  const localDirty = !!(claim || evidence || classification || archive);
+  const dirty = localDirty || captureDirty;
+  const busy = entryBusy || captureBusy;
   const locked = busy || disabled;
   useEffect(() => { onDirtyChange(dirty); }, [dirty, onDirtyChange]);
   useEffect(() => { onBusyChange(busy); }, [busy, onBusyChange]);
@@ -400,6 +405,7 @@ export function ProfileEntries({ api, profile, disabled, onProfile, onDirtyChang
         <label className="check"><input type="checkbox" aria-describedby="evidence-classification-hint" checked={classification.employer_owned} onChange={event => setClassification({ ...classification, employer_owned: event.target.checked })} />My employer owns this content</label>
         <div className="actions"><button>Save source classification</button><button type="button" className="secondary" onClick={() => { setClassification(null); setError(''); }}>Discard classification changes</button></div>
       </fieldset></form>}
+      <EvidenceCapture key={profile.id} api={api} profile={profile} active={section === 'sources'} disabled={disabled || entryBusy || localDirty} onProfileChange={onProfile} onDirtyChange={setCaptureDirty} onBusyChange={setCaptureBusy} />
     </section>
     <section className="panel" hidden={section !== 'history'} aria-labelledby="profile-history-title"><h2 id="profile-history-title">Immutable profile history</h2>
       <p>Preview exact saved statements, evidence and owner authorship. Restore appends a new revision; it never overwrites history or existing documents.</p>

@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: MIT OR Apache-2.0
-"""Secret-free fixed-route egress relay; no application settings or DB imports.
+"""Fixed-route egress relay; no application settings or DB access.
 
 Deployment grants only the dedicated internal worker network and outbound bridge.
 The normal module entry point always constructs the production TLS client.
@@ -9,13 +9,25 @@ from __future__ import annotations
 
 import contextlib
 import json
+import os
 import re
 import select
 import socket
 import socketserver
 import threading
+from pathlib import Path
 from typing import cast
 
+from bonafides.evidence_capture_config import (
+    GitHubSource,
+    load_sources,
+    validate_github_repository,
+)
+from bonafides.github_capture import (
+    GitHubClient,
+    deserialize_commits,
+    serialize_commits,
+)
 from bonafides.greenhouse import (
     TOTAL_TIMEOUT,
     BoardRead,
@@ -34,6 +46,9 @@ GATEWAY_PORT = 8766
 MAX_IN_FLIGHT = 4
 _REQUEST_LIMIT = 4096
 _ROUTE = re.compile(rb"GET /v1/boards/([A-Za-z0-9_-]{1,120})/jobs\?content=true HTTP/1\.[01]\Z")
+_GITHUB_ROUTE = re.compile(
+    rb"GET /v1/github/([A-Za-z0-9_.-]{1,39}/[A-Za-z0-9_.-]{1,100})/commits\?per_page=20 HTTP/1\.[01]\Z"
+)
 _STATUS = {
     "source_invalid_token": 400,
     "source_forbidden": 403,
@@ -72,10 +87,36 @@ class SourceGatewayServer(socketserver.ThreadingMixIn, socketserver.TCPServer):
     block_on_close = False
     request_queue_size = 8
 
-    def __init__(self, address: tuple[str, int], client: GreenhouseClient) -> None:
+    def __init__(
+        self,
+        address: tuple[str, int],
+        client: GreenhouseClient,
+        *,
+        github_client: GitHubClient | None = None,
+        capture_config_file: Path | None = None,
+    ) -> None:
         self.client = client
+        self.github_client = github_client or GitHubClient()
+        self.capture_config_file = capture_config_file
         self._slots = threading.BoundedSemaphore(MAX_IN_FLIGHT)
         super().__init__(address, _Handler)
+
+    def github_read(self, repository: str, interrupted: threading.Event) -> bytes:
+        # Re-read the private allowlist before any upstream DNS/socket/token access.
+        # The worker supplies only an inert repository, never a path or credential.
+        try:
+            sources = load_sources(self.capture_config_file)
+        except Exception:
+            raise SourceFailure("source_invalid_response") from None
+        allowed = [
+            source
+            for source in sources.values()
+            if isinstance(source, GitHubSource) and source.repository == repository
+        ]
+        if len(allowed) != 1 or not allowed[0].enabled:
+            raise SourceFailure("source_forbidden")
+        commits = self.github_client.read(repository, allowed[0].token_file, interrupted)
+        return serialize_commits(repository, commits)
 
     def process_request(
         self, request: socket.socket | tuple[bytes, socket.socket], client_address: tuple[str, int]
@@ -116,10 +157,11 @@ class SourceGatewayServer(socketserver.ThreadingMixIn, socketserver.TCPServer):
         del request, client_address
 
 
-def _request_token(wire: _Wire) -> str:
+def _request_source(wire: _Wire) -> tuple[str, str]:
     first = wire.line(512)
     match = _ROUTE.fullmatch(first)
-    if match is None:
+    github_match = _GITHUB_ROUTE.fullmatch(first)
+    if match is None and github_match is None:
         raise SourceFailure("source_invalid_token")
     size = len(first) + 2
     headers: dict[str, str] = {}
@@ -141,7 +183,17 @@ def _request_token(wire: _Wire) -> str:
                 or "expect" in headers
             ):
                 raise SourceFailure("source_invalid_response")
-            return validate_board_token(match[1].decode("ascii"))
+            if match is not None:
+                return "greenhouse", validate_board_token(match[1].decode("ascii"))
+            assert github_match is not None
+            repository = github_match[1].decode("ascii")
+            # Require the canonical spelling in the internal protocol.
+            try:
+                if validate_github_repository(repository) != repository:
+                    raise ValueError
+            except ValueError:
+                raise SourceFailure("source_invalid_token") from None
+            return "github", repository
         key, separator, value = line.partition(b":")
         if (
             not separator
@@ -165,7 +217,7 @@ class _Handler(socketserver.BaseRequestHandler):
         completed = threading.Event()
         watcher: threading.Thread | None = None
         try:
-            token = _request_token(wire)
+            kind, identity = _request_source(wire)
             wire.budget = _Budget(None, seconds=TOTAL_TIMEOUT + 1.0)
 
             def disconnect_watch() -> None:
@@ -189,10 +241,16 @@ class _Handler(socketserver.BaseRequestHandler):
             )
             watcher.start()
             server = cast(SourceGatewayServer, self.server)
-            board: BoardRead = server.client.read(token, interrupted)
-            payload = serialize_board(board)
-            # Independently verify the exact relay envelope before publishing it.
-            deserialize_board(payload, wire.budget)
+            if kind == "github":
+                payload = server.github_read(identity, interrupted)
+                deserialize_commits(payload, identity, wire.budget)
+            else:
+                board: BoardRead = server.client.read(identity, interrupted)
+                payload = serialize_board(board)
+                # Independently verify the exact relay envelope before publishing it.
+                deserialize_board(payload, wire.budget)
+            if interrupted.is_set():
+                raise SourceFailure("source_cancelled")
             _reply(wire, 200, payload)
         except SourceFailure as failure:
             # Never include upstream exception, request path, headers, or content.
@@ -219,10 +277,18 @@ def serve(
 ) -> None:
     if port != GATEWAY_PORT or host not in {"0.0.0.0", "127.0.0.1"}:
         raise ValueError("source_gateway_address_denied")
+    configured = os.environ.get("BONAFIDES_EVIDENCE_CAPTURE_CONFIG_FILE")
+    if configured is not None and not configured:
+        raise ValueError("capture_configuration_invalid")
+    capture_config_file = Path(configured) if configured is not None else None
     # Bind both roles before accepting anything. One accept loop also means an
     # unexpected listener failure cannot silently leave the other role running.
     with (
-        SourceGatewayServer((host, port), client or GreenhouseClient()) as source,
+        SourceGatewayServer(
+            (host, port),
+            client or GreenhouseClient(),
+            capture_config_file=capture_config_file,
+        ) as source,
         ModelGatewayServer((host, MODEL_GATEWAY_PORT)) as model,
     ):
         servers = (source, model)

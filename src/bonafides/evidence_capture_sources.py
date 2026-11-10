@@ -1,10 +1,9 @@
 # SPDX-License-Identifier: MIT OR Apache-2.0
-"""Read configured repositories, never their config, hooks, worktree or network."""
+"""Bounded exact commit proposals from configured local or gateway repositories."""
 
 from __future__ import annotations
 
 import hashlib
-import json
 import os
 import re
 import selectors
@@ -16,87 +15,27 @@ import time
 from contextlib import ExitStack
 from pathlib import Path
 from threading import Event
-from typing import Literal
 
-from pydantic import Field, StrictBool, field_validator
+from pydantic import Field
 
+from bonafides import evidence_capture_config as capture_config
 from bonafides.auth import StrictModel
-from bonafides.commands import canonical_json
-from bonafides.config import Settings, read_secret
-from bonafides.evidence_provenance import InitialEvidenceProvenance, PrivacyClass
+from bonafides.evidence_provenance import InitialEvidenceProvenance
+from bonafides.github_capture import GitHubGatewayClient
+from bonafides.greenhouse import SourceFailure
 from bonafides.problems import Problem
 from bonafides.profile_entries import EvidencePayload
 from bonafides.storage import directory, subdirectory
 
-MAX_COMMITS = 20
-MAX_TEXT = 8000
 _MAX_OUTPUT = 1024 * 1024
 _SHA = re.compile(r"(?:[0-9a-f]{40}|[0-9a-f]{64})\Z")
 _PACK = re.compile(r"pack-(?:[0-9a-f]{40}|[0-9a-f]{64})\.(?:pack|idx|rev)\Z")
-
-
-class CaptureSource(StrictModel):
-    id: str = Field(pattern=r"^[a-z0-9][a-z0-9_-]{0,63}$")
-    label: str = Field(min_length=1, max_length=150)
-    kind: Literal["local_git"]
-    repository: Path
-    enabled: StrictBool
-    privacy_class: PrivacyClass
-    employer_owned: StrictBool
-
-    @field_validator("repository")
-    @classmethod
-    def absolute_repository(cls, value: Path) -> Path:
-        if not value.is_absolute() or ".." in value.parts or "\x00" in str(value):
-            raise ValueError("absolute repository required")
-        return value
-
-    @property
-    def identity_sha256(self) -> str:
-        return hashlib.sha256(canonical_json(self.model_dump(mode="json")).encode()).hexdigest()
-
-    def public(self) -> dict[str, object]:
-        return self.model_dump(mode="json", exclude={"repository"})
 
 
 class CaptureCandidate(StrictModel):
     id: str = Field(pattern=r"^(?:[0-9a-f]{40}|[0-9a-f]{64})$")
     payload: EvidencePayload
     provenance: InitialEvidenceProvenance
-
-
-class _Configuration(StrictModel):
-    version: Literal[1]
-    sources: list[CaptureSource] = Field(max_length=20)
-
-
-def _object(pairs: list[tuple[str, object]]) -> dict[str, object]:
-    result: dict[str, object] = {}
-    for key, value in pairs:
-        if key in result:
-            raise ValueError("duplicate configuration key")
-        result[key] = value
-    return result
-
-
-def load_sources(settings: Settings) -> dict[str, CaptureSource]:
-    path = settings.evidence_capture_config_file
-    if path is None:
-        return {}
-    try:
-        if not path.is_absolute() or ".." in path.parts:
-            raise ValueError("absolute configuration required")
-        config = _Configuration.model_validate(
-            json.loads(
-                read_secret(path, "evidence capture configuration"), object_pairs_hook=_object
-            )
-        )
-        sources = {source.id: source for source in config.sources}
-        if len(sources) != len(config.sources):
-            raise ValueError("duplicate source identity")
-        return sources
-    except (OSError, ValueError, TypeError) as error:
-        raise Problem(503, "capture_configuration_invalid") from error
 
 
 def _read_file(root: Path, name: str, limit: int = 65536) -> bytes:
@@ -228,10 +167,62 @@ def _git(
             process.stdout.close()
 
 
-def collect_commits(source: CaptureSource, interrupted: Event) -> list[CaptureCandidate]:
+def _candidate(source: capture_config.CaptureSource, sha: str, message: str) -> CaptureCandidate:
+    if (
+        not message.strip()
+        or len(message) > capture_config.MAX_TEXT
+        or "\x00" in message
+        or any(0xD800 <= ord(character) <= 0xDFFF for character in message)
+    ):
+        raise Problem(422, "capture_content_invalid")
+    return CaptureCandidate(
+        id=sha,
+        payload=EvidencePayload(text=message, source=capture_config.capture_reference(source, sha)),
+        provenance=InitialEvidenceProvenance(
+            source_type="work_sample",
+            privacy_class=source.privacy_class,
+            employer_owned=source.employer_owned,
+        ),
+    )
+
+
+def _github_commits(
+    source: capture_config.GitHubSource, interrupted: Event, deadline: float
+) -> list[CaptureCandidate]:
+    try:
+        commits = GitHubGatewayClient().read(source.repository, interrupted)
+        _check(interrupted, deadline)
+        if len(commits) > capture_config.MAX_COMMITS or len({item.sha for item in commits}) != len(
+            commits
+        ):
+            raise SourceFailure("source_invalid_response")
+        candidates = [_candidate(source, item.sha, item.message) for item in commits]
+        _check(interrupted, deadline)
+        return candidates
+    except SourceFailure as error:
+        status = {
+            "source_rate_limited": 429,
+            "source_forbidden": 403,
+            "source_not_found": 404,
+            "source_timeout": 504,
+            "source_cancelled": 409,
+            "source_gateway_busy": 503,
+            "source_gateway_unavailable": 503,
+        }.get(error.code, 502)
+        raise Problem(status, error.code) from None
+    except ValueError:
+        raise Problem(502, "source_invalid_response") from None
+
+
+def collect_commits(
+    source: capture_config.CaptureSource, interrupted: Event
+) -> list[CaptureCandidate]:
     if not source.enabled:
         raise Problem(409, "capture_source_disabled")
     deadline = time.monotonic() + 15
+    _check(interrupted, deadline)
+    if source.kind == "github":
+        return _github_commits(source, interrupted, deadline)
     try:
         root = source.repository
         with directory(root):
@@ -257,14 +248,22 @@ def collect_commits(source: CaptureSource, interrupted: Event) -> list[CaptureCa
             ids = (
                 _git(
                     isolated,
-                    ["log", "--format=%H", f"--max-count={MAX_COMMITS}", "HEAD", "--"],
+                    [
+                        "log",
+                        "--format=%H",
+                        f"--max-count={capture_config.MAX_COMMITS}",
+                        "HEAD",
+                        "--",
+                    ],
                     interrupted,
                     deadline,
                 )
                 .decode("ascii")
                 .splitlines()
             )
-            if len(ids) > MAX_COMMITS or any(not _SHA.fullmatch(value) for value in ids):
+            if len(ids) > capture_config.MAX_COMMITS or any(
+                not _SHA.fullmatch(value) for value in ids
+            ):
                 raise ValueError("invalid commit inventory")
             raw = _git(
                 isolated,
@@ -295,19 +294,7 @@ def collect_commits(source: CaptureSource, interrupted: Event) -> list[CaptureCa
             if actual != commit:
                 raise ValueError("commit hash mismatch")
             message = content.split(b"\n\n", 1)[1].decode("utf-8")
-            if not message.strip() or len(message) > MAX_TEXT or "\x00" in message:
-                raise Problem(422, "capture_content_invalid")
-            result.append(
-                CaptureCandidate(
-                    id=commit,
-                    payload=EvidencePayload(text=message, source=f"local-git:{source.id}@{commit}"),
-                    provenance=InitialEvidenceProvenance(
-                        source_type="work_sample",
-                        privacy_class=source.privacy_class,
-                        employer_owned=source.employer_owned,
-                    ),
-                )
-            )
+            result.append(_candidate(source, commit, message))
         if offset != len(raw):
             raise ValueError("unexpected commit output")
         _check(interrupted, deadline)

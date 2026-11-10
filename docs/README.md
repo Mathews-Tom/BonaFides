@@ -9,7 +9,7 @@ The [user guide](user-guide/README.md) explains how BonaFides works and how to u
 | Guide | Covers |
 |---|---|
 | [Getting started](user-guide/getting-started.md) | Installing, starting and creating your account. |
-| [Build your profile](user-guide/profile.md) | Personal details, sources and profile entries. |
+| [Build your profile](user-guide/profile.md) | Personal details, sources, optional local Git/GitHub capture and profile entries. |
 | [Import an existing résumé](user-guide/resume-import.md) | Turning a résumé you already have into profile entries. |
 | [Find and review jobs](user-guide/opportunities.md) | Adding postings, deciding what to pursue and reviewing requirements. |
 | [Create résumés and cover letters](user-guide/documents.md) | Building, checking, approving and exporting documents. |

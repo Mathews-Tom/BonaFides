@@ -11,11 +11,12 @@ BonaFides has no online account, no cloud copy and no tracking. The developers c
 
 ## What can leave your computer
 
-By default, nothing. Three things send data out, and each one is your choice:
+By default, nothing. The following actions send data out, and each one is your choice:
 
 | What | What is sent | When |
 |---|---|---|
 | **Job-board reads** | A request for one employer's public job list. None of your personal data is included. | Only for boards you've configured, reviewed and enabled, and only when you select **Refresh … board** for that employer. See [Read job boards automatically](opportunities.md#read-job-boards-automatically-optional). |
+| **GitHub source capture** | The configured repository identifier and a commit-list request to GitHub; an optional operator-configured bearer credential is sent only to GitHub. Your profile and evidence are not uploaded. | Disabled by default. Only for an explicitly enabled repository when you select **Scan …** under **Profile → Sources**. Local Git scans use no network. See [Repository capture](profile.md#capture-from-configured-repositories-optional). |
 | **AI tailoring** | The posting, its requirements and the relevant profile entries, as shown in the preview. Your contact details, notes and attachments are never included. | Only if a model has been set up, only to that model, and only after you've reviewed the preview and confirmed each task. The model has to run on your own computer or private network; BonaFides refuses public internet addresses. See [Optional AI tailoring](ai-tailoring.md). |
 | **Files you download** | Exported PDFs and data exports. | When you save them. After that, they're your responsibility. |
 
@@ -39,7 +40,7 @@ You can download all your saved data as a single ZIP file. Use it as a personal 
 
 The export contains your profile and evidence history, postings, applications, notes, document versions and the files they refer to. It doesn't include unsaved text, your password or the installation's keys.
 
-New exports use workspace format 2, which preserves the exact source text and origin of owner-approved local captures. To bring a new export into another installation, that installation must support workspace format 2; a reader that supports only format 1 cannot import it. This installation accepts workspace formats 1 and 2, including older workspace-1 exports.
+New exports use workspace format 2, which preserves the exact source text and origin of owner-approved local Git and GitHub captures, including historical revisions. To bring a new export into another installation, that installation must support workspace format 2; a reader that supports only format 1 cannot import it. This installation accepts workspace formats 1 and 2, including older workspace-1 exports.
 
 Keep in mind:
 

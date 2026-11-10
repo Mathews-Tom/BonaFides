@@ -593,7 +593,7 @@ describe('focused profile sections', () => {
   it('edits source content with source type only, without changing claim pins', async () => {
     const user = userEvent.setup(); const api = new Api(); const onProfile = vi.fn();
     const saved = { ...profile, version: 2 };
-    const request = vi.spyOn(api, 'request').mockResolvedValue(saved);
+    const request = vi.spyOn(api, 'request').mockImplementation(async <T,>(path: string) => (path === '/evidence-capture/sources' || path === '/evidence-capture/scans' ? { items: [] } : saved) as T);
     render(<ProfileEntries api={api} profile={profile} disabled={false} onProfile={onProfile} onDirtyChange={vi.fn()} onBusyChange={vi.fn()} />);
     await user.click(screen.getByRole('button', { name: 'Sources' }));
     expect(within(screen.getByRole('region', { name: 'Sources and owner attestations' })).getByText(/Privacy: Private/)).toBeVisible();
@@ -604,7 +604,8 @@ describe('focused profile sections', () => {
     await user.type(screen.getByLabelText('Source text'), ' Revised.');
     await user.selectOptions(screen.getByLabelText('Source type'), 'work_sample');
     await user.click(screen.getByRole('button', { name: 'Save source revision' }));
-    expect(request).toHaveBeenCalledExactlyOnceWith('/evidence/source', 'PUT', {
+    expect(request.mock.calls.filter(call => call[1] === 'PUT')).toHaveLength(1);
+    expect(request).toHaveBeenCalledWith('/evidence/source', 'PUT', {
       payload: { text: 'Synthetic workshop notes. Revised.', source: 'Owner attestation' },
       provenance: { source_type: 'work_sample' },
     }, profile.version, expect.any(String));
@@ -621,7 +622,7 @@ describe('focused profile sections', () => {
         evidence_links: claim.revision.evidence_links.map(link => ({ ...link, evidence: { ...link.evidence, provenance } })),
       } })),
     } };
-    const request = vi.spyOn(api, 'request').mockResolvedValue(saved);
+    const request = vi.spyOn(api, 'request').mockImplementation(async <T,>(path: string) => (path === '/evidence-capture/sources' || path === '/evidence-capture/scans' ? { items: [] } : saved) as T);
     const view = render(<ProfileEntries api={api} profile={profile} disabled={false} onProfile={onProfile} onDirtyChange={onDirtyChange} onBusyChange={vi.fn()} />);
     await user.click(screen.getByRole('button', { name: 'Sources' }));
     await user.click(screen.getByRole('button', { name: 'Change classification 1' }));
@@ -636,7 +637,8 @@ describe('focused profile sections', () => {
     await user.selectOptions(screen.getByLabelText('Privacy class'), 'confidential');
     await user.click(screen.getByLabelText('My employer owns this content'));
     await user.click(screen.getByRole('button', { name: 'Save source classification' }));
-    expect(request).toHaveBeenCalledExactlyOnceWith('/evidence/source/classification', 'PUT',
+    expect(request.mock.calls.filter(call => call[1] === 'PUT')).toHaveLength(1);
+    expect(request).toHaveBeenCalledWith('/evidence/source/classification', 'PUT',
       { privacy_class: 'confidential', employer_owned: true }, profile.version, expect.any(String));
     expect(onProfile).toHaveBeenCalledWith(saved);
     expect(screen.getByText('Source classification updated. Source revisions and claim pins are unchanged.')).toBeVisible();

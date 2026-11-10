@@ -18,12 +18,13 @@ from bonafides.auth import Owner, StrictModel, require_owner
 from bonafides.commands import canonical_json, command
 from bonafides.config import Settings
 from bonafides.db import Database
-from bonafides.evidence_capture_sources import (
-    CaptureCandidate,
+from bonafides.evidence_capture_config import (
+    MAX_COMMITS,
     CaptureSource,
-    collect_commits,
+    capture_reference,
     load_sources,
 )
+from bonafides.evidence_capture_sources import CaptureCandidate, collect_commits
 from bonafides.evidence_provenance import EvidenceClassification, InitialEvidenceProvenance
 from bonafides.model_context import lock_evidence_write
 from bonafides.problems import Problem
@@ -40,7 +41,7 @@ class CaptureApproval(EvidenceClassification):
 
 
 def _configuration(settings: Settings) -> tuple[dict[str, CaptureSource], str]:
-    sources = load_sources(settings)
+    sources = load_sources(settings.evidence_capture_config_file)
     digest = hashlib.sha256(
         canonical_json({key: source.identity_sha256 for key, source in sources.items()}).encode()
     ).hexdigest()
@@ -107,7 +108,7 @@ def execute_capture(db: Database, settings: Settings, task: Claim, interrupted: 
     with db.transaction() as conn:
         assert_fence(conn, task)
         source = _current_source(conn, settings, task.input)
-    # No SQL transaction/owner lock is held during bounded filesystem work.
+    # No SQL transaction/owner lock is held during bounded filesystem/network work.
     candidates = collect_commits(source, interrupted)
     if interrupted.is_set():
         raise Problem(409, "capture_interrupted")
@@ -118,7 +119,7 @@ def execute_capture(db: Database, settings: Settings, task: Claim, interrupted: 
             raise Problem(409, "capture_interrupted")
         return {
             "proposals": [candidate.model_dump(mode="json") for candidate in candidates],
-            "window_limit": 20,
+            "window_limit": MAX_COMMITS,
         }
 
     with db.transaction() as conn:
@@ -272,7 +273,7 @@ def build_router(db: Database, settings: Settings) -> APIRouter:
                 if candidate is None:
                     raise Problem(404, "capture_candidate_not_found")
                 if (
-                    candidate.payload.source != f"local-git:{source.id}@{candidate.id}"
+                    candidate.payload.source != capture_reference(source, candidate.id)
                     or candidate.provenance.privacy_class != source.privacy_class
                     or candidate.provenance.employer_owned != source.employer_owned
                     or candidate.provenance.source_type != "work_sample"
