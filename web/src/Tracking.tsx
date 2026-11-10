@@ -2,10 +2,12 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react';
 import { Api, ApiError, errorText, type PostingPage, type PostingSummary } from './api';
 import { ApplicationClaimsUsed } from './ClaimUsage';
+import { PipelineBoard, PipelineCalendar, PipelineReports } from './PipelineViews';
 import { MAX_ATTACHMENT_BYTES, attachmentDigest, stageName, stages, uploadAttachment, type ApplicationCounts, type ApplicationDetail, type ApplicationPage, type ApplicationSummary, type Appointment, type AppointmentWrite, type AttentionPage, type Stage, type StageEvent, type StagePage } from './tracking-api';
 
 type Draft =
   | { kind: 'stage'; stage: Stage; effective: string; reason: string; correction: string; retained: string[] }
+  | { kind: 'undo'; eventId: string; version: number; previous: Stage }
   | { kind: 'note'; id?: string; body: string }
   | { kind: 'contact'; id?: string; name: string; email: string; role: string }
   | { kind: 'appointment'; id?: string; actionKind: Appointment['kind']; title: string; start: string; end: string; zone: string; startOffset: string; endOffset: string }
@@ -50,6 +52,8 @@ export function Tracking({ api, disabled = false, onDirtyChange, onBusyChange }:
   const [listLoading, setListLoading] = useState(false);
   const [listError, setListError] = useState('');
   const [grouped, setGrouped] = useState(false);
+  const [viewRevision, setViewRevision] = useState(0);
+  const pendingStageEditor = useRef(false);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [detail, setDetail] = useState<ApplicationDetail | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
@@ -149,18 +153,18 @@ export function Tracking({ api, disabled = false, onDirtyChange, onBusyChange }:
     } catch (failure) { if (!aborted(failure) && selection.current.id === id && selection.current.epoch === epoch) setHistoryError(errorText(failure)); }
     finally { if (mounted.current && selection.current.id === id && selection.current.epoch === epoch) setHistoryLoading(false); }
   }
-  async function selectApplication(id: string) {
+  async function selectApplication(id: string, editStage = false) {
     if (operation.current || disabled) return;
-    if (live.current.draft) { setPendingSelection(id); return; }
+    if (live.current.draft) { pendingStageEditor.current = editStage; setPendingSelection(id); return; }
     const epoch = selection.current.epoch + 1; selection.current = { id, epoch };
     setSelectedId(id); setDetail(null); setDetailError(''); setDetailLoading(true); setHistory(null); setHistoryCursor(null); setHistoryError('');
     setComparison(null); setConflict(false); setPendingSelection(null); setError(''); setNotice('');
     void loadHistory(id, epoch);
-    try { const value = await request<ApplicationDetail>(`/applications/${encodeURIComponent(id)}`); if (selection.current.id === id && selection.current.epoch === epoch) { setDetail(value); live.current.detail = value; } }
+    try { const value = await request<ApplicationDetail>(`/applications/${encodeURIComponent(id)}`); if (selection.current.id === id && selection.current.epoch === epoch) { setDetail(value); live.current.detail = value; if (editStage) begin({ kind: 'stage', stage: value.current_stage, effective: nowInput(), reason: '', correction: '', retained: [] }); } }
     catch (failure) { if (!aborted(failure) && selection.current.id === id && selection.current.epoch === epoch) setDetailError(errorText(failure)); }
     finally { if (mounted.current && selection.current.id === id && selection.current.epoch === epoch) setDetailLoading(false); }
   }
-  function begin(value: Draft) { if (locked || dirty) return; setDraft(value); live.current.draft = value; setConfirmed(false); setReconfirm(false); setConflict(false); setComparison(null); setError(''); setNotice(''); }
+  function begin(value: Draft) { if (locked || live.current.draft) return; setDraft(value); live.current.draft = value; setConfirmed(false); setReconfirm(false); setConflict(false); setComparison(null); setError(''); setNotice(''); }
   function change(value: Draft) { setDraft(value); live.current.draft = value; setConfirmed(false); }
   function discard() { setDraft(null); live.current.draft = null; setConfirmed(false); setReconfirm(false); setConflict(false); setComparison(null); mutation.current = null; fileIdentity.current = null; setError(''); detailHeading.current?.focus(); }
   async function compareCurrent() {
@@ -203,6 +207,7 @@ export function Tracking({ api, disabled = false, onDirtyChange, onBusyChange }:
       selection.current = { id: value.id, epoch: epoch + 1 }; setSelectedId(value.id); setDetail(value); live.current.detail = value; setDetailError('');
       setNotice(value.created === false ? 'Existing latest attempt opened. No new application or delivery was created.' : 'Manual tracking saved. No message, application or calendar event was sent.');
       void loadHistory(value.id, epoch + 1); void loadList(appliedFilters); void loadCounts(countPeriod); void loadAttention();
+      setViewRevision(value => value + 1);
       window.setTimeout(() => detailHeading.current?.focus(), 0);
     } catch (failure) {
       if (!aborted(failure) && selection.current.id === selected && selection.current.epoch === epoch) { setError(errorText(failure)); if (failure instanceof ApiError && failure.status === 412) { setConflict(true); setConfirmed(false); setComparison(null); } }
@@ -215,6 +220,7 @@ export function Tracking({ api, disabled = false, onDirtyChange, onBusyChange }:
       case 'note': void mutate(`${base}/notes${draft.id ? `/${encodeURIComponent(draft.id)}` : ''}`, draft.id ? 'PUT' : 'POST', { body: draft.body }, detail.version); break;
       case 'contact': void mutate(`${base}/contacts${draft.id ? `/${encodeURIComponent(draft.id)}` : ''}`, draft.id ? 'PUT' : 'POST', { display_name: draft.name, email: draft.email || null, role_label: draft.role || null }, detail.version); break;
       case 'stage': if (confirmed) void mutate(`${base}/stage`, 'POST', { to_stage: draft.stage, effective_at: `${withSeconds(draft.effective)}Z`, reason: draft.reason, correction_of: draft.correction || null, retain_follow_up_ids: draft.retained }, detail.version); break;
+      case 'undo': if (confirmed) void mutate(`${base}/stage/undo`, 'POST', { event_id: draft.eventId }, draft.version); break;
       case 'appointment': {
         const body: AppointmentWrite = { kind: draft.actionKind, title: draft.title, local_start: withSeconds(draft.start), local_end: draft.end ? withSeconds(draft.end) : null, timezone: draft.zone,
           ...(draft.startOffset === '' ? {} : { utc_offset_minutes: Number(draft.startOffset) }), ...(draft.endOffset === '' ? {} : { end_utc_offset_minutes: Number(draft.endOffset) }) };
@@ -235,6 +241,7 @@ export function Tracking({ api, disabled = false, onDirtyChange, onBusyChange }:
     begin({ kind: 'appointment', id: value.id, actionKind: value.kind, title: value.title, start: value.local_start, end: value.local_end ?? '', zone: value.timezone, startOffset: '', endOffset: '' });
   }
   const superseded = new Set(history?.flatMap(item => item.correction_of ? [item.correction_of] : []) ?? []);
+  const undoable = history?.find(item => item.id === detail?.current_stage_event_id && item.from_stage && !item.correction_of && item.sequence === Math.max(...(history?.map(event => event.sequence) ?? [])));
   const correctionTarget = draft?.kind === 'stage' ? history?.find(item => item.id === draft.correction) : undefined;
   const historicalCorrection = !!correctionTarget && correctionTarget.id !== detail?.current_stage_event_id;
   const closingStage = draft?.kind === 'stage' && closed(draft.stage) && !historicalCorrection;
@@ -245,8 +252,8 @@ export function Tracking({ api, disabled = false, onDirtyChange, onBusyChange }:
     return <li key={item.id}>{applicationButton(item)}<p>{stageName(item.current_stage)} · attempt {item.attempt_no} · {item.archived_at ? 'Archived' : 'Active'}</p>
       {item.next_action && <p>Next action: {item.next_action.title} · {item.next_action.display_start} ({item.next_action.display_timezone})</p>}<small>Created {item.created_at}; updated {item.updated_at}</small></li>;
   }
-  const editorTitle = draft?.kind === 'stage' ? 'Record stage or historical correction' : draft?.kind === 'note' ? 'Private note editor' : draft?.kind === 'contact' ? 'Contact editor' : draft?.kind === 'appointment' ? 'Local schedule editor' : draft?.kind === 'timezone' ? 'Change display timezone only' : draft?.kind === 'status' ? 'Confirm action status' : draft?.kind === 'archive' ? (draft.archived ? 'Archive this attempt' : 'Reactivate this attempt') : draft?.kind === 'repeat' ? 'Create a separate repeat attempt' : 'Retain an inert attachment';
-  const needsConfirmation = draft && ['stage', 'status', 'archive', 'repeat'].includes(draft.kind);
+  const editorTitle = draft?.kind === 'undo' ? 'Undo exact stage event' : draft?.kind === 'stage' ? 'Record stage or historical correction' : draft?.kind === 'note' ? 'Private note editor' : draft?.kind === 'contact' ? 'Contact editor' : draft?.kind === 'appointment' ? 'Local schedule editor' : draft?.kind === 'timezone' ? 'Change display timezone only' : draft?.kind === 'status' ? 'Confirm action status' : draft?.kind === 'archive' ? (draft.archived ? 'Archive this attempt' : 'Reactivate this attempt') : draft?.kind === 'repeat' ? 'Create a separate repeat attempt' : 'Retain an inert attachment';
+  const needsConfirmation = draft && ['undo', 'stage', 'status', 'archive', 'repeat'].includes(draft.kind);
   return <section className="panel tracking" aria-labelledby="tracking-title"><h2 id="tracking-title">Applications and activity</h2>
     <p>Your manual application dossier. Recording Applied does not send anything. Notes stay out of routine model context. Contacts and attachments may contain other people's personal data; add only what you have a lawful reason to keep.</p>
     <div ref={errorRef} role="alert" className="error" tabIndex={-1} hidden={!error}>{error}</div><p role="status" aria-label="Tracking confirmation" className="status">{notice}</p>
@@ -260,10 +267,12 @@ export function Tracking({ api, disabled = false, onDirtyChange, onBusyChange }:
       {listError && <p className="error" role="status">Application list unavailable. {listError} {page ? 'Previously loaded rows remain visible and are stale; their scope is unchanged.' : 'This is not an empty list.'}</p>}
       {listLoading && <p role="status">Loading applications…</p>}
       {page && <><p>{page.items.length} loaded applications; {appliedFilters.archived} archive scope, {appliedFilters.stage || 'all stages'}, search {appliedFilters.q || 'not restricted'}. Snapshot {page.as_of}. Loaded rows are not an all-owner total.</p>
-        <label className="check"><input type="checkbox" checked={grouped} onChange={event => setGrouped(event.target.checked)} />Group loaded subset by stage (not a complete board)</label>
-        {!page.items.length ? <p>No applications in this loaded scope. Clear filters or track a saved posting below.</p> : grouped ? <div className="tracking-board" aria-label="Stage groups of loaded subset">{stages.map(stage => <section key={stage}><h4>{stageName(stage)} · {page.items.filter(item => item.current_stage === stage).length} loaded</h4><ul>{page.items.filter(item => item.current_stage === stage).map(applicationRow)}</ul></section>)}</div> : <ul className="tracking-list">{page.items.map(applicationRow)}</ul>}
-        {page.next_cursor && <button className="secondary" disabled={locked || listLoading} onClick={() => { void loadList(appliedFilters, page.next_cursor!); }}>Load more applications</button>}</>}
+        <label className="check"><input type="checkbox" checked={grouped} onChange={event => setGrouped(event.target.checked)} />Show independently paginated stage board</label>
+        {grouped ? <PipelineBoard api={api} revision={viewRevision} q={appliedFilters.q} archived={appliedFilters.archived} locked={locked} open={(id, editStage) => { void selectApplication(id, editStage); }} /> : !page.items.length ? <p>No applications in this loaded scope. Clear filters or track a saved posting below.</p> : <ul className="tracking-list">{page.items.map(applicationRow)}</ul>}
+        {!grouped && page.next_cursor && <button className="secondary" disabled={locked || listLoading} onClick={() => { void loadList(appliedFilters, page.next_cursor!); }}>Load more applications</button>}</>}
     </section>
+    <PipelineReports api={api} revision={viewRevision} locked={locked} open={id => { void selectApplication(id); }} />
+    <PipelineCalendar api={api} revision={viewRevision} locked={locked} open={id => { void selectApplication(id); }} />
     <details><summary>Track a saved posting manually</summary><p>This opens the latest existing attempt, or creates the first Preparing attempt. Saving a posting alone does not create an application. No model or sending provider is needed.</p>
       <button className="secondary" disabled={locked || dirty} onClick={() => { void loadSaved(); }}>Load saved postings for tracking</button>
       {savedError && <p role="status" className="error">Saved posting choices unavailable. {savedError} {saved ? 'Earlier choices may be stale.' : 'No empty result is assumed.'}</p>}
@@ -283,13 +292,14 @@ export function Tracking({ api, disabled = false, onDirtyChange, onBusyChange }:
       {attentionError && <p className="error" role="status">Attention unavailable, not empty. {attentionError} {attention ? 'Earlier reminders below may be stale.' : ''}</p>}
       {attention && <><p>Server snapshot {attention.as_of}. Bounded attention list, not an all-owner total.</p>{!attention.items.length ? <p>No due actions or upcoming interviews in this attention response.</p> : <ul>{attention.items.map(item => <li key={item.appointment.id}>{applicationButton({ id: item.application_id, title: item.title, company: item.company })}<p>{Date.parse(item.appointment.starts_at) <= Date.parse(attention.as_of) ? 'Due action' : 'Upcoming interview'}</p><AppointmentWords value={item.appointment} /></li>)}</ul>}</>}
     </details>
-    {pendingSelection && <section className="disclosure" aria-label="Unsaved tracking selection"><h3>Keep or discard this tracking buffer</h3><p>Your unsaved editor is still attached to this attempt. Changing selection cannot silently discard it.</p><div className="actions"><button className="secondary" disabled={locked} onClick={() => setPendingSelection(null)}>Keep editing this attempt</button><button disabled={locked} onClick={() => { const id = pendingSelection; discard(); setPendingSelection(null); void selectApplication(id); }}>Discard buffer and open selected application</button></div></section>}
+    {pendingSelection && <section className="disclosure" aria-label="Unsaved tracking selection"><h3>Keep or discard this tracking buffer</h3><p>Your unsaved editor is still attached to this attempt. Changing selection cannot silently discard it.</p><div className="actions"><button className="secondary" disabled={locked} onClick={() => setPendingSelection(null)}>Keep editing this attempt</button><button disabled={locked} onClick={() => { const id = pendingSelection; const editStage = pendingStageEditor.current; discard(); setPendingSelection(null); void selectApplication(id, editStage); }}>Discard buffer and open selected application</button></div></section>}
     {selectedId && <section className="tracking-dossier" aria-labelledby="tracking-detail-title"><h3 id="tracking-detail-title" ref={detailHeading} tabIndex={-1}>{detail ? `${detail.title} at ${detail.company} · attempt ${detail.attempt_no}` : 'Selected application'}</h3>
       {detailLoading && <p role="status">Loading saved application…</p>}{detailError && <p role="status" className="error">Application detail unavailable. {detailError}</p>}
       {!detail && !detailLoading && <button className="secondary" disabled={locked || dirty} onClick={() => { void selectApplication(selectedId); }}>Retry selected application</button>}
       {detail && <><p><strong>{stageName(detail.current_stage)}</strong> · {detail.archived_at ? `Archived ${detail.archived_at}` : 'Active'} · saved version {detail.version}.</p><p>Application {detail.id}. Created {detail.created_at}; updated {detail.updated_at}.</p>
         <div className="actions"><button className="secondary" disabled={locked} onClick={() => { void compareCurrent(); }}>{dirty ? 'Load current application for comparison' : 'Refresh selected application'}</button>
           <button disabled={locked || dirty} onClick={() => begin({ kind: 'stage', stage: detail.current_stage, effective: nowInput(), reason: '', correction: '', retained: [] })}>Change stage or reopen same attempt</button>
+          {undoable && <button className="secondary" disabled={locked || dirty || historyLoading || !!historyError} onClick={() => begin({ kind: 'undo', eventId: undoable.id, version: detail.version, previous: undoable.from_stage! })}>Undo latest stage change</button>}
           <button className="secondary" disabled={locked || dirty} onClick={() => begin({ kind: 'repeat' })}>Start a separate repeat attempt</button>
           <button className="secondary" disabled={locked || dirty} onClick={() => begin({ kind: 'archive', archived: !detail.archived_at })}>{detail.archived_at ? 'Reactivate archived attempt' : 'Archive attempt'}</button></div>
         <p className="hint">Reopening is a stage change on this same attempt. A repeat is a separately confirmed new Preparing pursuit. Reactivation changes archive visibility only, never the stage.</p>
@@ -314,6 +324,8 @@ export function Tracking({ api, disabled = false, onDirtyChange, onBusyChange }:
         </section>
         {draft && <section className="tracking-editor" aria-labelledby="tracking-editor-title"><h4 id="tracking-editor-title" ref={editorHeading} tabIndex={-1}>{editorTitle}</h4><p>Editing attempt {detail.attempt_no}; save precondition version {detail.version}. Offline failures retain this buffer for this visit; copy it before closing the browser.</p>
           <form onSubmit={submit}><fieldset disabled={locked}><legend>{editorTitle}</legend>
+            {draft.kind === 'undo' && <p>Undo event {draft.eventId}, captured at version {draft.version}, returning to {stageName(draft.previous)}. This appends a correction; it does not reinstate cancelled appointments. This exact event and version cannot be rebased. If the application changed, discard this buffer and refresh before choosing a new undo.</p>}
+            {draft.kind === 'undo' && closed(draft.previous) && <p className="disclosure">Undo is refused while work is scheduled on this application. Discard this buffer and use <strong>Change stage or reopen same attempt</strong> to review cancellation and which follow-ups to retain before closing it.</p>}
             {draft.kind === 'stage' && <><label>Stage event to correct<select value={draft.correction} onChange={event => { const target = history?.find(item => item.id === event.target.value); change({ ...draft, correction: event.target.value, stage: target?.to_stage ?? detail.current_stage, effective: target ? utcInput(new Date(target.effective_at).toISOString()) : nowInput(), retained: [] }); }}><option value="">New stage change / reopen this same attempt</option>{history?.map(item => <option key={item.id} value={item.id} disabled={superseded.has(item.id)}>Event {item.sequence}: {stageName(item.to_stage)} effective {item.effective_at}{superseded.has(item.id) ? ' (superseded)' : ''}</option>)}</select></label><p>Load older history pages to select any earlier unsuperseded event. A historical Applied correction can change period counts while the current Interview stage stays unchanged.</p>
               <label>Recorded stage<select value={draft.stage} onChange={event => change({ ...draft, stage: event.target.value as Stage, retained: [] })}>{stages.map(stage => <option key={stage} value={stage}>{stageName(stage)}</option>)}</select></label>
               <label>Effective date and time (UTC)<input type="datetime-local" step={60} required value={draft.effective} onChange={event => change({ ...draft, effective: event.target.value })} /></label><p>{historicalCorrection ? 'This correction changes historical reporting only, not the current stage or pending actions.' : 'This event changes the current stage of this same attempt.'}</p>
@@ -334,10 +346,10 @@ export function Tracking({ api, disabled = false, onDirtyChange, onBusyChange }:
             {draft.kind === 'repeat' && <p>Create a new, separate Preparing attempt for this saved opportunity. The current attempt, stage, history and children stay retained. This is not a same-attempt reopen. If a newer repeat already exists, reload rather than creating another accidentally.</p>}
             {draft.kind === 'attachment' && <><label>Attachment file<input type="file" onChange={event => change({ ...draft, file: event.target.files?.[0] ?? null })} /></label>{draft.file && <p>Selected: {draft.file.name} · {draft.file.size} bytes. No preview is generated.</p>}<p>PDF and literal UTF-8 text only. Maximum 10 MiB; no empty files, executable/archive content or unsafe filenames. Content remains private and is not added to routine model input.</p></>}
             {(needsConfirmation || reconfirm) && <label className="check"><input type="checkbox" checked={confirmed} onChange={event => setConfirmed(event.target.checked)} />{reconfirm ? 'I compared the current saved version and reconfirm this exact retained change' : 'I confirm this exact manual tracking action; it sends nothing'}</label>}
-            {conflict && <p className="error">The application changed elsewhere. Your buffer remains here. Load a comparison and explicitly rebase before reconfirming.</p>}
+            {conflict && <p className="error">{draft.kind === 'undo' ? 'The application changed elsewhere. This exact undo cannot be rebound to a newer version. Discard this buffer, then refresh and inspect the latest event.' : 'The application changed elsewhere. Your buffer remains here. Load a comparison and explicitly rebase before reconfirming.'}</p>}
             <div className="actions"><button disabled={conflict || ((needsConfirmation || reconfirm) && !confirmed) || (draft.kind === 'attachment' && !draft.file)}>Save manual tracking change</button><button type="button" className="secondary" onClick={discard}>Discard tracking buffer</button><button type="button" className="secondary" onClick={() => { void compareCurrent(); }}>Load current application for comparison</button></div>
           </fieldset></form>
-          {comparison && <section className="comparison" aria-labelledby="tracking-comparison-title"><h5 id="tracking-comparison-title">Current saved application · version {comparison.version}</h5><PrivateComparison value={comparison} /><p>Your local editor above is unchanged. Selecting this version keeps your text and schedule, but clears confirmation; review and reconfirm before saving. Newly conflicting historical targets or retained follow-ups are validated again by the server.</p><button className="secondary" disabled={locked} onClick={() => { const latest = comparison; setDetail(latest); live.current.detail = latest; setComparison(null); setConflict(false); setReconfirm(true); setConfirmed(false); mutation.current = null; setNotice('Current application version selected explicitly. Your retained buffer needs fresh confirmation.'); }}>Use current version and retain my tracking buffer</button></section>}
+          {comparison && <section className="comparison" aria-labelledby="tracking-comparison-title"><h5 id="tracking-comparison-title">Current saved application · version {comparison.version}</h5><PrivateComparison value={comparison} /><p>{draft.kind === 'undo' ? 'Comparison only. This undo stays bound to its captured event and version. Discard it before refreshing and choosing a new action.' : 'Your local editor above is unchanged. Selecting this version keeps your text and schedule, but clears confirmation; review and reconfirm before saving. Newly conflicting historical targets or retained follow-ups are validated again by the server.'}</p><button className="secondary" disabled={locked || draft.kind === 'undo'} onClick={() => { if (draft.kind === 'undo') return; const latest = comparison; setDetail(latest); live.current.detail = latest; setComparison(null); setConflict(false); setReconfirm(true); setConfirmed(false); mutation.current = null; setNotice('Current application version selected explicitly. Your retained buffer needs fresh confirmation.'); }}>Use current version and retain my tracking buffer</button></section>}
         </section>}
       </>}
     </section>}

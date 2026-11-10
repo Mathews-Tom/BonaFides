@@ -1,11 +1,12 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
-import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { webcrypto } from 'node:crypto';
 import { Api, ApiError, type Profile } from './api';
 import { App } from './App';
 import { Tracking } from './Tracking';
-import { MAX_ATTACHMENT_BYTES, stages, type ApplicationCounts, type ApplicationDetail, type Appointment, type StageEvent } from './tracking-api';
+import { PipelineBoard, PipelineCalendar, PipelineReports } from './PipelineViews';
+import { MAX_ATTACHMENT_BYTES, stages, type ApplicationCounts, type ApplicationDetail, type Appointment, type CalendarPage, type PipelineInsights, type StageEvent } from './tracking-api';
 
 const timestamp = '2026-10-25T12:00:00Z';
 function application(id = 'application-one', title = 'Engineer'): ApplicationDetail {
@@ -24,6 +25,14 @@ function countResponse(path: string): ApplicationCounts {
   const zero = Object.fromEntries(stages.map(stage => [stage, 0])) as ApplicationCounts['current_by_stage'];
   return { period_start: query.get('period_start')!, period_end: query.get('period_end')!, current_by_stage: { ...zero, interview: 7 }, archived_by_stage: { ...zero, rejected: 4 }, created_in_period: 2, stage_reached_in_period: { ...zero, applied: 3 }, query_elapsed_ms: 1 };
 }
+function insights(path: string): PipelineInsights {
+  const query = new URLSearchParams(path.split('?')[1]);
+  return { as_of: timestamp, cohort: query.get('cohort') as PipelineInsights['cohort'], quiet_days: Number(query.get('quiet_days')), cohort_counts: { application_count: 0, archived_application_count: 0, current_by_stage: Object.fromEntries(stages.map(stage => [stage, 0])) as ApplicationCounts['current_by_stage'], no_progression_count: 0, inferred_applied_from_rejection: 0, stages: [{ stage: 'applied', reached_count: 0, rate: null }] }, weeks: Array.from({ length: 52 }, (_, i) => ({ week_start: `week-${i}`, created: 0, recorded_applied: 0 })), next: { items: [], has_more: false } };
+}
+function calendarPage(path: string): CalendarPage {
+  const query = new URLSearchParams(path.split('?')[1]);
+  return { month: query.get('month')!, timezone: query.get('timezone')!, as_of: timestamp, items: [], next_cursor: null };
+}
 type Handler = (path: string, method: string, body: unknown, version: number | undefined, key: boolean | string) => Promise<unknown>;
 function connected(overrides?: Handler, items = [application()]) {
   const api = new Api(); api.csrf = 'synthetic-csrf';
@@ -32,6 +41,9 @@ function connected(overrides?: Handler, items = [application()]) {
     if (path === '/applications') return { items, next_cursor: null, query_elapsed_ms: 1, as_of: timestamp } as T;
     if (path.startsWith('/applications/counts?')) return countResponse(path) as T;
     if (path === '/applications/attention') return { items: [], query_elapsed_ms: 1, as_of: timestamp } as T;
+    if (path.startsWith('/applications/insights?')) return insights(path) as T;
+    if (path.startsWith('/applications/calendar?')) return calendarPage(path) as T;
+    if (path.startsWith('/applications?stage=')) { const stage = new URLSearchParams(path.split('?')[1]).get('stage'); return { items: items.filter(item => item.current_stage === stage), next_cursor: null, as_of: timestamp, query_elapsed_ms: 1 } as T; }
     if (path.endsWith('/stage-events')) return { items: events, next_cursor: null } as T;
     if (method === 'GET' && items.some(item => path === `/applications/${item.id}`)) return items.find(item => path === `/applications/${item.id}`) as T;
     throw new ApiError(404, 'not_found');
@@ -40,7 +52,7 @@ function connected(overrides?: Handler, items = [application()]) {
 }
 async function openFirst() { fireEvent.click(await screen.findByRole('button', { name: 'Open Engineer at Synthetic North' })); await screen.findByRole('heading', { name: 'Engineer at Synthetic North · attempt 1' }); }
 function deferred<T>() { let resolve!: (value: T) => void; const promise = new Promise<T>(done => { resolve = done; }); return { promise, resolve }; }
-afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks(); window.history.replaceState(null, '', '/'); });
+afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks(); localStorage.clear(); window.history.replaceState(null, '', '/'); });
 
 describe('manual application buffers and selection boundaries', () => {
   it('retains an offline private note, fences selection and reuses only unchanged payload/version keys', async () => {
@@ -170,13 +182,20 @@ describe('tracking history, totals and explicit attempt identity', () => {
     expect(request.mock.calls.some(call => call[0] === '/applications?stage=rejected&archived=all')).toBe(true);
   });
 
-  it('loads successive cursor pages and exposes only a labelled loaded-subset board', async () => {
+  it('loads list cursor pages and independently paginates all eight board stages into the explicit editor', async () => {
     const { api, request } = connected(async path => {
       if (path === '/applications') return { items: [application()], next_cursor: 'opaque-page-two', query_elapsed_ms: 1, as_of: timestamp };
       if (path === '/applications?cursor=opaque-page-two') return { items: [application('application-two', 'Analyst')], next_cursor: null, query_elapsed_ms: 1, as_of: timestamp };
+      if (path === '/applications?stage=interview&archived=active') return { items: [application()], next_cursor: 'stage-page-two', query_elapsed_ms: 1, as_of: timestamp };
+      if (path === '/applications?stage=interview&archived=active&cursor=stage-page-two') return { items: [application('application-two', 'Analyst')], next_cursor: null, query_elapsed_ms: 1, as_of: timestamp };
     });
     render(<Tracking api={api} />); fireEvent.click(await screen.findByRole('button', { name: 'Load more applications' })); expect(await screen.findByRole('button', { name: 'Open Analyst at Synthetic North' })).toBeVisible();
-    expect(screen.getByText(/2 loaded applications/)).toHaveTextContent('not an all-owner total'); fireEvent.click(screen.getByLabelText('Group loaded subset by stage (not a complete board)')); expect(screen.getByLabelText('Stage groups of loaded subset')).toHaveTextContent('Interview · 2 loaded'); expect(request.mock.calls.some(call => call[0] === '/applications?cursor=opaque-page-two')).toBe(true);
+    expect(screen.getByText(/2 loaded applications/)).toHaveTextContent('not an all-owner total'); fireEvent.click(screen.getByLabelText('Show independently paginated stage board'));
+    const board = screen.getByLabelText('Application pipeline board'); await within(board).findByRole('button', { name: 'Load more Interview applications' });
+    expect(stages.every(stage => request.mock.calls.some(call => call[0] === `/applications?stage=${stage}&archived=active`))).toBe(true);
+    fireEvent.click(within(board).getByRole('button', { name: 'Load more Interview applications' })); expect(await within(board).findByRole('button', { name: 'Open Analyst at Synthetic North' })).toBeVisible();
+    const action = within(board).getByRole('button', { name: 'Change stage for Engineer' }); action.focus(); fireEvent.click(action);
+    expect(await screen.findByLabelText('Recorded stage')).toHaveValue('interview'); expect(request.mock.calls.filter(call => call[1] === 'POST')).toHaveLength(0);
   });
 
   it('creates from a saved posting, distinguishes repeat from reopen, and preserves closed outcomes when archived', async () => {
@@ -324,5 +343,81 @@ describe('local time, closure and inert attachment boundaries', () => {
     expect(screen.getByLabelText('Local start date and time')).toHaveValue('2026-11-02T23:30'); expect(screen.getByLabelText('Local end date and time (required)')).toHaveValue('2026-11-03T00:30');
     fireEvent.click(screen.getByRole('button', { name: 'Discard tracking buffer' })); expect(screen.getByText(/Original intent: 2026-11-01T01:30:00/)).toBeVisible();
     fireEvent.click(screen.getByRole('button', { name: 'Edit schedule Fictional panel' })); expect(screen.getByLabelText('Local start date and time')).toHaveValue('2026-11-01T01:30');
+  });
+});
+
+describe('pipeline view identity and exact undo', () => {
+  it('rejects late board columns from an earlier search and retains failed refreshes as stale', async () => {
+    const late = deferred<{ items: ApplicationDetail[]; next_cursor: null; as_of: string; query_elapsed_ms: number }>(); let failed = false;
+    const { api } = connected(async path => {
+      if (path.startsWith('/applications?stage=interview')) {
+        if (path.includes('q=Old')) return late.promise;
+        if (failed) throw new TypeError('offline');
+        return { items: [application('new-application', 'New result')], next_cursor: null, as_of: timestamp, query_elapsed_ms: 1 };
+      }
+    });
+    const props = { api, revision: 0, archived: 'active', locked: false, open: vi.fn() };
+    const { rerender } = render(<PipelineBoard {...props} q="Old" />); rerender(<PipelineBoard {...props} q="New" />);
+    expect(await screen.findByRole('button', { name: 'Open New result at Synthetic North' })).toBeVisible();
+    await act(async () => { late.resolve({ items: [application('old-application', 'Old result')], next_cursor: null, as_of: timestamp, query_elapsed_ms: 1 }); }); expect(screen.queryByRole('button', { name: 'Open Old result at Synthetic North' })).not.toBeInTheDocument();
+    failed = true; fireEvent.click(screen.getByRole('button', { name: 'Refresh Interview column' })); expect(await within(screen.getByRole('region', { name: 'Interview board column' })).findByText(/View unavailable, not empty/)).toHaveTextContent('stale'); expect(screen.getByRole('button', { name: 'Open New result at Synthetic North' })).toBeVisible();
+  });
+  it('never rebinds an offline or conflicted undo to a newer version', async () => {
+    let reads = 0; let attempts = 0;
+    const { api, request } = connected(async (path, method) => {
+      if (path === '/applications/application-one' && method === 'GET') return { ...application(), version: ++reads === 1 ? 3 : 4 };
+      if (path.endsWith('/stage/undo')) { if (++attempts === 1) throw new TypeError('offline'); throw new ApiError(412, 'version_conflict'); }
+    });
+    render(<Tracking api={api} />); await openFirst(); fireEvent.click(await screen.findByRole('button', { name: 'Undo latest stage change' }));
+    expect(screen.getByText(/does not reinstate cancelled appointments/)).toBeVisible();
+    fireEvent.click(screen.getByLabelText('I confirm this exact manual tracking action; it sends nothing')); fireEvent.click(screen.getByRole('button', { name: 'Save manual tracking change' }));
+    expect(await screen.findByRole('alert')).toHaveTextContent('server could not be reached'); expect(screen.getByRole('heading', { name: 'Undo exact stage event' })).toBeVisible();
+    fireEvent.click(screen.getByRole('button', { name: 'Save manual tracking change' })); await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent('newer revision'));
+    fireEvent.click(screen.getAllByRole('button', { name: 'Load current application for comparison' })[0]!); await screen.findByRole('heading', { name: 'Current saved application · version 4' });
+    expect(screen.getByRole('button', { name: 'Use current version and retain my tracking buffer' })).toBeDisabled(); expect(screen.getByRole('button', { name: 'Save manual tracking change' })).toBeDisabled();
+    const writes = request.mock.calls.filter(call => call[0].endsWith('/stage/undo')); expect(writes).toHaveLength(2); expect(writes.map(call => call[3])).toEqual([3, 3]); expect(writes[0]?.[4]).toBe(writes[1]?.[4]); expect(writes[1]?.[2]).toEqual({ event_id: 'event-interview' });
+  });
+
+
+  it('fences late cohort responses, persists quiet preference and distinguishes unavailable from empty', async () => {
+    const late = deferred<PipelineInsights>(); let failed = false;
+    const { api } = connected(async path => {
+      if (path.startsWith('/applications/insights?')) { if (new URLSearchParams(path.split('?')[1]).get('cohort') === 'all') return late.promise; if (failed) throw new TypeError('offline'); return insights(path); }
+    });
+    render(<PipelineReports api={api} revision={0} locked={false} open={vi.fn()} />);
+    fireEvent.change(screen.getByLabelText('Creation cohort'), { target: { value: '30' } }); expect(await screen.findByText('Unavailable (no cohort)')).toBeVisible();
+    fireEvent.change(screen.getByLabelText('Quiet application threshold'), { target: { value: '14' } });
+    await waitFor(() => expect(localStorage.getItem('bonafides.pipeline.quiet.v1')).toBe('14'));
+    await act(async () => { late.resolve({ ...insights('/?cohort=all&quiet_days=7'), cohort_counts: { ...insights('/?cohort=all&quiet_days=7').cohort_counts, application_count: 999 } }); });
+    expect(screen.queryByText(/999 attempts/)).not.toBeInTheDocument(); expect(screen.getByText(/Creation cohort: last 30 days/)).toBeVisible();
+    fireEvent.click(screen.getByText('52-week activity (UTC)')); expect(within(screen.getByRole('table', { name: 'Weekly created and recorded Applied' })).getAllByRole('row')).toHaveLength(53);
+    failed = true; await waitFor(() => expect(screen.getByRole('button', { name: 'Refresh pipeline insights' })).toBeEnabled()); fireEvent.click(screen.getByRole('button', { name: 'Refresh pipeline insights' }));
+    expect(await screen.findByText(/View unavailable, not empty/)).toHaveTextContent('stale'); expect(screen.queryByText('No next actions in this snapshot.')).not.toBeInTheDocument();
+  });
+
+  it('navigates calendar days and weeks across months, fences late months, and uses the exact keyset cursor', async () => {
+    const late = deferred<CalendarPage>(); const open = vi.fn(); let january = false;
+    const { api, request } = connected(async path => {
+      if (!path.startsWith('/applications/calendar?')) return;
+      const value = calendarPage(path); const query = new URLSearchParams(path.split('?')[1]);
+      if (value.month === '2026-01' && january) return late.promise;
+      if (value.month === '2026-01') january = true;
+      if (value.month === '2026-02' && !query.has('after_id')) return { ...value, next_cursor: { starts_at: '2026-02-02T01:00:00Z', id: 'cursor-appointment' } };
+      if (value.month === '2026-02') return { ...value, items: [{ application_id: 'calendar-application', title: 'Calendar role', company: 'Synthetic West', appointment_id: 'calendar-appointment', appointment_title: 'Retained cancelled panel', kind: 'interview', status: 'cancelled', starts_at: '2026-02-02T01:00:00Z', ends_at: null, display_start: '2026-02-01T20:00:00-05:00', display_end: null }] };
+      return value;
+    });
+    render(<PipelineCalendar api={api} revision={0} locked={false} open={open} />);
+    fireEvent.change(screen.getByLabelText('Calendar month'), { target: { value: '2026-01' } }); await screen.findByText(/end of month results/);
+    const lastDay = screen.getByRole('button', { name: 'Select 2026-01-31' }); fireEvent.click(lastDay); fireEvent.keyDown(lastDay, { key: 'ArrowRight' });
+    expect(screen.getByRole('button', { name: 'Select 2026-02-01' })).toHaveFocus();
+    fireEvent.keyDown(screen.getByRole('button', { name: 'Select 2026-02-01' }), { key: 'ArrowDown' }); expect(screen.getByRole('button', { name: 'Select 2026-02-08' })).toHaveFocus();
+    fireEvent.change(screen.getByLabelText('Calendar IANA timezone'), { target: { value: 'America/New_York' } }); fireEvent.click(screen.getByRole('button', { name: 'Apply calendar timezone' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Load more month appointments' })); expect(await screen.findByText('Retained cancelled panel')).toBeVisible(); expect(screen.getByText('Interview · cancelled · Passed')).toBeVisible();
+    expect(request.mock.calls.some(call => call[0].includes('timezone=America%2FNew_York') && call[0].includes('after_start=2026-02-02T01%3A00%3A00Z&after_id=cursor-appointment'))).toBe(true);
+    fireEvent.click(screen.getByRole('button', { name: 'Open Calendar role at Synthetic West' })); expect(open).toHaveBeenCalledWith('calendar-application');
+    fireEvent.change(screen.getByLabelText('Calendar view'), { target: { value: 'day' } }); expect(screen.queryByText('Retained cancelled panel')).not.toBeInTheDocument(); fireEvent.click(screen.getByRole('button', { name: 'Select 2026-02-01' })); expect(screen.getByText('Retained cancelled panel')).toBeVisible();
+    fireEvent.click(screen.getByRole('button', { name: 'Previous month' })); fireEvent.click(screen.getByRole('button', { name: 'Next month' }));
+    await act(async () => { late.resolve({ ...calendarPage('/?month=2026-01&timezone=UTC'), items: [] }); }); expect(screen.getByLabelText('Calendar month')).toHaveValue('2026-02');
+    fireEvent.click(screen.getByRole('button', { name: 'Today' })); const parts = new Intl.DateTimeFormat('en', { timeZone: 'America/New_York', year: 'numeric', month: '2-digit' }).formatToParts(new Date()); expect(screen.getByLabelText('Calendar month')).toHaveValue(`${parts.find(part => part.type === 'year')!.value}-${parts.find(part => part.type === 'month')!.value}`);
   });
 });

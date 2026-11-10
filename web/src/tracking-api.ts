@@ -36,6 +36,17 @@ export interface AppointmentWrite {
   kind: Appointment['kind']; title: string; local_start: string; timezone: string; utc_offset_minutes?: number;
   local_end: string | null; end_utc_offset_minutes?: number;
 }
+export interface PipelineInsights {
+  as_of: string; cohort: 'all' | '30' | '90'; quiet_days: number;
+  cohort_counts: { application_count: number; archived_application_count: number; current_by_stage: Record<Stage, number>; no_progression_count: number; inferred_applied_from_rejection: number; stages: { stage: Stage; reached_count: number; rate: number | null }[] };
+  weeks: { week_start: string; created: number; recorded_applied: number }[];
+  next: { items: { application_id: string; title: string; company: string; reason: string; starts_at: string | null }[]; has_more: boolean };
+}
+export interface CalendarPage {
+  month: string; timezone: string; as_of: string;
+  items: { application_id: string; title: string; company: string; appointment_id: string; appointment_title: string; kind: Appointment['kind']; status: Appointment['status']; starts_at: string; ends_at: string | null; display_start: string; display_end: string | null }[];
+  next_cursor: { starts_at: string; id: string } | null;
+}
 export const MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024;
 
 export async function attachmentDigest(file: File): Promise<string> {
