@@ -4,7 +4,7 @@ If you already have a résumé, BonaFides can read it and propose profile entrie
 
 ## What it can read
 
-- A **Word DOCX**, **Markdown (`.md`)**, **PDF with selectable text** (if you can highlight words, it has selectable text), or **UTF-8 plain-text file**: up to 10 MiB and about 80,000 extracted characters (also limited to 256 KiB of UTF-8 text). PDFs are limited to 50 pages. Password-protected files aren't accepted.
+- A **Word DOCX**, **UTF-8 Markdown (`.md`)**, **PDF with selectable text** (if you can highlight words, it has selectable text), or **UTF-8 plain-text file**: up to 10 MiB and about 80,000 extracted characters (also limited to 256 KiB of UTF-8 text). PDFs are limited to 50 pages. Password-protected files aren't accepted.
 - Or text you paste in directly, with the same text limit.
 
 Reading happens entirely on your computer, in a sealed-off part of BonaFides with no network access. There's no AI and no OCR (text recognition), so a scanned résumé saved as a picture won't work. Paste its text in instead.

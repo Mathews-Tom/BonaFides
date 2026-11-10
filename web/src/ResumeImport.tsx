@@ -181,7 +181,7 @@ function entryProblems(entry: ImportEntry, draft: ReviewDraft, profile: Profile)
 }
 function fileMediaType(file: File): ImportMediaType | null {
   const type = file.type.split(';')[0]?.trim().toLowerCase();
-  if (/\.md$/i.test(file.name) && (!type || type === 'text/plain' || type === 'text/markdown' || type === 'application/octet-stream')) return 'text/markdown';
+  if (/\.md$/i.test(file.name) && (!type || type === 'text/plain' || type === 'text/markdown' || type === 'text/x-markdown' || type === 'application/octet-stream')) return 'text/markdown';
   if (type === 'application/pdf' || type === 'text/plain' || type === 'text/markdown' || type === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document') return type;
   if (!type || type === 'application/octet-stream') {
     if (/\.pdf$/i.test(file.name)) return 'application/pdf';
@@ -679,7 +679,7 @@ export function ResumeImport({ api, profile, disabled, onProfile, onDirtyChange,
     <ol className="import-steps" aria-label="Import progress">{['Choose source', 'Extract', 'Review', 'Complete'].map((label, index) => <li key={label} aria-current={stage === index ? 'step' : undefined} className={stage > index ? 'is-complete' : undefined}>
       <span aria-hidden="true">{stage > index ? '✓' : index + 1}</span><span>{label}</span>
     </li>)}</ol>
-    <p className="hint">Local extraction only. PDF with selectable text or UTF-8 plain text, up to 10 MiB. No OCR, AI interpretation or hosted fallback. Embedded instructions remain inert; extracted facts are not independently verified.</p>
+    <p className="hint">Local extraction only. DOCX, UTF-8 Markdown or plain text, or PDF with selectable text, up to 10 MiB. No OCR, AI interpretation or hosted fallback. Embedded instructions remain inert; extracted facts are not independently verified.</p>
     {disabled && <p className="disclosure">Save or discard changes in the other profile editor before uploading or approving an import. Your import buffers remain here.</p>}
     <div className="error" ref={errorRef} tabIndex={-1} role="alert" hidden={!error}>{error}</div>
     <p className="status" role="status">{notice}</p>

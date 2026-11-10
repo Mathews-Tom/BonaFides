@@ -399,6 +399,22 @@ describe('structured résumé review', () => {
 });
 
 describe('local résumé source buffers', () => {
+  it('accepts legacy Markdown MIME only with a Markdown filename and recovers after rejecting another extension', async () => {
+    const user = userEvent.setup(); const { api } = server({ ...staged(), state: 'pending', text: null, entries: [], source_sha256: null });
+    const upload = vi.spyOn(api, 'uploadImport').mockResolvedValue({ import_id: 'import-one', workflow_id: 'workflow-one' });
+    render(<Harness api={api} />);
+    const input = screen.getByLabelText(/Résumé.*file/);
+    fireEvent.change(input, { target: { files: [new File(['# Skills\n- Rust'], 'resume.txt', { type: 'text/x-markdown' })] } });
+    await user.click(screen.getByRole('button', { name: 'Upload for local extraction' }));
+    expect(await screen.findByRole('alert')).toBeVisible(); expect(upload).not.toHaveBeenCalled();
+    const markdown = new File(['# Skills\n- Rust'], 'resume.MD', { type: 'text/x-markdown' });
+    fireEvent.change(input, { target: { files: [markdown] } });
+    await user.click(screen.getByRole('button', { name: 'Upload for local extraction' }));
+    expect(await screen.findByText(/Source accepted for isolated local extraction/)).toBeVisible();
+    expect(upload.mock.calls[0]?.slice(0, 2)).toEqual([markdown, 'text/markdown']);
+    expect(screen.getByLabelText(/Résumé.*file/)).toHaveValue('');
+  });
+
   it('keeps the actual raw file and its retry identity through network and session failures', async () => {
     const user = userEvent.setup(); const { api, state } = server({ ...staged(), state: 'pending', text: null, entries: [], source_sha256: null });
     const upload = vi.spyOn(api, 'uploadImport').mockRejectedValueOnce(new TypeError('offline')).mockRejectedValueOnce(new ApiError(401, 'session_required'))
