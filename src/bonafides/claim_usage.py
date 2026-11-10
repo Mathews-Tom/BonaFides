@@ -17,6 +17,7 @@ from sqlalchemy import Connection, RowMapping, text
 from bonafides.auth import Owner, require_owner
 from bonafides.claims import claim_text
 from bonafides.db import Database
+from bonafides.pipeline_views import PROGRESSION_STAGES
 from bonafides.problems import Problem
 
 _USAGE = """WITH used AS (
@@ -44,7 +45,6 @@ LEFT JOIN bonafides.saved_opportunities o ON o.owner_id=:owner AND o.id=a.opport
 LEFT JOIN bonafides.job_postings p ON p.owner_id=:owner AND p.id=o.posting_id
 ORDER BY d.scope,a.created_at,a.id,d.kind DESC,r.revision_no DESC,c.created_at,c.id,cr.revision_no"""
 
-_OUTCOME_STAGES = ("applied", "screening", "interview", "offer", "accepted")
 _SMALL_SAMPLE_THRESHOLD = 5
 
 
@@ -115,7 +115,7 @@ def claim_usage(
         if row["application_id"] in applications and row["application_archived_at"] is not None
     }
     application_count = len(applications)
-    furthest = [0] * len(_OUTCOME_STAGES)
+    furthest = [0] * len(PROGRESSION_STAGES)
     inferred_applied = 0
     if applications:
         # Like tracking.counts(), a replacement invalidates its target even when
@@ -137,7 +137,7 @@ def claim_usage(
             {
                 "owner": owner_id,
                 "applications": list(applications),
-                "stages": list(_OUTCOME_STAGES),
+                "stages": list(PROGRESSION_STAGES),
             },
         ).mappings():
             peak = int(row["peak"])
@@ -146,7 +146,7 @@ def claim_usage(
             inferred_applied += int(row["inferred"])
     stages = []
     reached = sum(furthest)
-    for stage, count in zip(_OUTCOME_STAGES, furthest, strict=True):
+    for stage, count in zip(PROGRESSION_STAGES, furthest, strict=True):
         stages.append(
             {
                 "stage": stage,

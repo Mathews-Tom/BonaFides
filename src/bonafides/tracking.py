@@ -17,7 +17,7 @@ import json
 import re
 import unicodedata
 from collections.abc import Callable
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from time import perf_counter_ns
 from typing import Annotated, Literal, cast
 from urllib.parse import quote
@@ -31,6 +31,7 @@ from sqlalchemy import Connection, text
 from sqlalchemy.engine import RowMapping
 from starlette.concurrency import run_in_threadpool
 
+from bonafides import pipeline_views
 from bonafides.auth import Owner, StrictModel, require_owner
 from bonafides.commands import append_outbox, canonical_json, command
 from bonafides.config import Settings
@@ -113,6 +114,10 @@ class StageWrite(StrictModel):
         if len(set(self.retain_follow_up_ids)) != len(self.retain_follow_up_ids):
             raise ValueError("retained actions must be distinct")
         return self
+
+
+class StageUndoWrite(StrictModel):
+    event_id: UUID
 
 
 class NoteWrite(StrictModel):
@@ -210,6 +215,36 @@ def _zone(value: str) -> ZoneInfo:
 
 class TimezoneWrite(StrictModel):
     timezone: str = Field(min_length=1, max_length=200)
+
+
+class InsightsQuery(StrictModel):
+    cohort: Literal["all", "30", "90"] = "all"
+    quiet_days: int = 7
+
+    @field_validator("quiet_days")
+    @classmethod
+    def valid_quiet_days(cls, value: int) -> int:
+        if value not in {3, 5, 7, 10, 14, 21, 30}:
+            raise ValueError("unsupported quiet threshold")
+        return value
+
+
+class CalendarQuery(TimezoneWrite):
+    month: str = Field(pattern=r"^[0-9]{4}-(0[1-9]|1[0-2])$")
+    after_start: AwareDatetime | None = None
+    after_id: UUID | None = None
+    limit: int = Field(default=100, ge=1, le=200)
+
+    @model_validator(mode="after")
+    def valid_calendar(self) -> CalendarQuery:
+        try:
+            start = date.fromisoformat(f"{self.month}-01")
+            (start.replace(day=28) + timedelta(days=4)).replace(day=1)
+        except (ValueError, OverflowError) as exc:
+            raise ValueError("calendar month outside supported date range") from exc
+        if (self.after_start is None) != (self.after_id is None):
+            raise ValueError("provide both calendar cursor parts")
+        return self
 
 
 class AppointmentStatusWrite(StrictModel):
@@ -644,6 +679,91 @@ def _bump(conn: Connection, owner_id: UUID, application_id: UUID) -> int:
     )
 
 
+def _record_stage_event(
+    conn: Connection,
+    owner_id: UUID,
+    application_id: UUID,
+    body: StageWrite,
+    from_stage: str | None,
+    projection: bool,
+) -> None:
+    params: dict[str, object] = {"owner": owner_id, "app": application_id}
+    sequence = conn.execute(
+        text(
+            "SELECT coalesce(max(sequence),0)+1 FROM bonafides.application_stage_events WHERE owner_id=:owner AND application_id=:app"
+        ),
+        params,
+    ).scalar_one()
+    event_id = uuid4()
+    conn.execute(
+        text("""INSERT INTO bonafides.application_stage_events
+        (owner_id,id,application_id,from_stage,to_stage,effective_at,reason,correction_of,sequence,affects_current_stage)
+        VALUES(:owner,:id,:app,:from_stage,:to_stage,:effective,:reason,:correction,:sequence,:projection)"""),
+        {
+            **params,
+            "id": event_id,
+            "from_stage": from_stage,
+            "to_stage": body.to_stage,
+            "effective": body.effective_at,
+            "reason": body.reason,
+            "correction": body.correction_of,
+            "sequence": sequence,
+            "projection": projection,
+        },
+    )
+    if projection:
+        conn.execute(
+            text(
+                "UPDATE bonafides.applications SET current_stage=:stage,current_stage_event_id=:event WHERE owner_id=:owner AND id=:app"
+            ),
+            {**params, "stage": body.to_stage, "event": event_id},
+        )
+
+
+def undo_stage(
+    conn: Connection, owner_id: UUID, application_id: UUID, body: StageUndoWrite
+) -> None:
+    target = (
+        conn.execute(
+            text("""SELECT e.from_stage,e.effective_at FROM bonafides.applications a
+            JOIN bonafides.application_stage_events e
+              ON e.owner_id=a.owner_id AND e.application_id=a.id AND e.id=a.current_stage_event_id
+            WHERE a.owner_id=:owner AND a.id=:app AND e.id=:event
+              AND e.correction_of IS NULL AND e.from_stage IS NOT NULL
+              AND NOT EXISTS(SELECT 1 FROM bonafides.application_stage_events later
+                WHERE later.owner_id=e.owner_id AND later.application_id=e.application_id
+                  AND later.sequence>e.sequence)"""),
+            {"owner": owner_id, "app": application_id, "event": body.event_id},
+        )
+        .mappings()
+        .one_or_none()
+    )
+    if target is None:
+        raise Problem(409, "stale_stage_undo")
+    if (
+        target["from_stage"] in {"rejected", "withdrawn"}
+        and conn.execute(
+            text("""SELECT EXISTS(SELECT 1 FROM bonafides.appointments
+        WHERE owner_id=:owner AND application_id=:app AND status='scheduled')"""),
+            {"owner": owner_id, "app": application_id},
+        ).scalar_one()
+    ):
+        raise Problem(409, "undo_requires_closing_review")
+    _record_stage_event(
+        conn,
+        owner_id,
+        application_id,
+        StageWrite(
+            to_stage=target["from_stage"],
+            effective_at=target["effective_at"],
+            reason="Undo latest manual stage change",
+            correction_of=body.event_id,
+        ),
+        target["from_stage"],
+        True,
+    )
+
+
 def change_stage(conn: Connection, owner_id: UUID, application_id: UUID, body: StageWrite) -> None:
     params: dict[str, object] = {"owner": owner_id, "app": application_id}
     app = (
@@ -687,36 +807,7 @@ def change_stage(conn: Connection, owner_id: UUID, application_id: UUID, body: S
         ).scalar_one_or_none()
         if valid is None:
             raise Problem(422, "invalid_retained_follow_up")
-    sequence = conn.execute(
-        text(
-            "SELECT coalesce(max(sequence),0)+1 FROM bonafides.application_stage_events WHERE owner_id=:owner AND application_id=:app"
-        ),
-        params,
-    ).scalar_one()
-    event_id = uuid4()
-    conn.execute(
-        text("""INSERT INTO bonafides.application_stage_events
-        (owner_id,id,application_id,from_stage,to_stage,effective_at,reason,correction_of,sequence,affects_current_stage)
-        VALUES(:owner,:id,:app,:from_stage,:to_stage,:effective,:reason,:correction,:sequence,:projection)"""),
-        {
-            **params,
-            "id": event_id,
-            "from_stage": from_stage,
-            "to_stage": body.to_stage,
-            "effective": body.effective_at,
-            "reason": body.reason,
-            "correction": body.correction_of,
-            "sequence": sequence,
-            "projection": projection,
-        },
-    )
-    if projection:
-        conn.execute(
-            text(
-                "UPDATE bonafides.applications SET current_stage=:stage,current_stage_event_id=:event WHERE owner_id=:owner AND id=:app"
-            ),
-            {**params, "stage": body.to_stage, "event": event_id},
-        )
+    _record_stage_event(conn, owner_id, application_id, body, from_stage, projection)
     if closing:
         conn.execute(
             text("""UPDATE bonafides.appointments SET status='cancelled',cancelled_at=clock_timestamp(),version=version+1
@@ -1265,6 +1356,30 @@ def build_router(db: Database, settings: Settings) -> APIRouter:
         with db.transaction() as conn:
             return attention(conn, owner.id, limit)
 
+    @router.get("/applications/insights")
+    def application_insights(
+        owner: OwnerDependency, query: Annotated[InsightsQuery, Query()]
+    ) -> dict[str, object]:
+        with db.transaction() as conn:
+            conn.execute(text("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY"))
+            return pipeline_views.insights(conn, owner.id, query.cohort, query.quiet_days)
+
+    @router.get("/applications/calendar")
+    def application_calendar(
+        owner: OwnerDependency, query: Annotated[CalendarQuery, Query()]
+    ) -> dict[str, object]:
+        with db.transaction() as conn:
+            conn.execute(text("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY"))
+            return pipeline_views.calendar(
+                conn,
+                owner.id,
+                date.fromisoformat(f"{query.month}-01"),
+                _zone(query.timezone),
+                after_start=query.after_start,
+                after_id=query.after_id,
+                limit=query.limit,
+            )
+
     @router.get("/applications/{application_id}")
     def detail(application_id: UUID, owner: OwnerDependency) -> JSONResponse:
         with db.transaction() as conn:
@@ -1364,6 +1479,26 @@ def build_router(db: Database, settings: Settings) -> APIRouter:
             idempotency_key,
             lambda conn: change_stage(conn, owner.id, application_id, body),
             stage_timing=True,
+        )
+
+    @router.post("/applications/{application_id}/stage/undo")
+    def stage_undo(
+        application_id: UUID,
+        body: StageUndoWrite,
+        owner: OwnerDependency,
+        if_match: MatchHeader = None,
+        idempotency_key: KeyHeader = None,
+    ) -> JSONResponse:
+        return _mutate(
+            db,
+            owner,
+            application_id,
+            "POST",
+            "/applications/{application_id}/stage/undo",
+            body,
+            if_match,
+            idempotency_key,
+            lambda conn: undo_stage(conn, owner.id, application_id, body),
         )
 
     @router.get("/applications/{application_id}/stage-events")

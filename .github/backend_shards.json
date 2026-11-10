@@ -54,6 +54,7 @@
     "tests/test_database.py",
     "tests/test_identity.py",
     "tests/test_inflation_documents.py",
+    "tests/test_pipeline_views.py",
     "tests/test_portable_data.py",
     "tests/test_portable_import.py",
     "tests/test_portable_quotas.py",

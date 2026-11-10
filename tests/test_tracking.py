@@ -1429,3 +1429,99 @@ def test_unicode_scalar_note_limit_and_literal_text_survive_reload(catalog: Sour
         headers={**catalog.headers(app["version"]), "Content-Type": "application/json"},
     )
     assert response.status_code == 422 and "\\ud800" not in response.text
+
+
+@pytest.mark.postgres
+def test_stage_undo_binds_latest_event_version_and_preserves_history(
+    catalog: SourceContext,
+) -> None:
+    app = _application(catalog)
+    _write(catalog, app, "stage/undo", {"event_id": app["current_stage_event_id"]}, expected=409)
+    app = _stage(catalog, app, "applied")
+    target = app["current_stage_event_id"]
+    original = _history(catalog, app)["items"]
+    path = f"/api/v1/applications/{app['id']}/stage/undo"
+    headers = catalog.headers(app["version"])
+    response = catalog.client.post(path, json={"event_id": target}, headers=headers)
+    assert response.status_code == 200, response.text
+    restored = response.json()
+    assert restored["current_stage"] == "preparing"
+    events = _history(catalog, restored)["items"]
+    assert events[0]["correction_of"] == target and events[0]["to_stage"] == "preparing"
+    assert events[1:] == original
+    replay = catalog.client.post(path, json={"event_id": target}, headers=headers)
+    assert replay.json() == restored and _history(catalog, restored)["items"] == events
+    _write(
+        catalog,
+        restored,
+        "stage/undo",
+        {"event_id": restored["current_stage_event_id"]},
+        expected=409,
+    )
+    app = _stage(catalog, restored, "screening")
+    old = dict(app)
+    app = _stage(catalog, app, "interview")
+    _write(catalog, old, "stage/undo", {"event_id": old["current_stage_event_id"]}, expected=412)
+    _write(catalog, app, "stage/undo", {"event_id": old["current_stage_event_id"]}, expected=409)
+    foreign = _stage(
+        catalog,
+        _application(catalog, canonical_url="https://careers.fictional-employer.com/foreign-undo"),
+        "offer",
+    )
+    _write(
+        catalog, app, "stage/undo", {"event_id": foreign["current_stage_event_id"]}, expected=409
+    )
+    before_correction = app["current_stage_event_id"]
+    app = _stage(catalog, app, "applied", correction_of=old["current_stage_event_id"])
+    _write(catalog, app, "stage/undo", {"event_id": before_correction}, expected=409)
+    assert _get(catalog, app)["current_stage"] == "interview"
+
+
+@pytest.mark.postgres
+def test_stage_undo_does_not_reactivate_cancelled_appointments(catalog: SourceContext) -> None:
+    app = _stage(catalog, _application(catalog), "applied")
+    app = _write(catalog, app, "appointments", _appointment())
+    appointment_id = app["appointments"][0]["id"]
+    app = _stage(catalog, app, "rejected")
+    cancelled = _get(catalog, app)["appointments"][0]
+    assert cancelled["id"] == appointment_id and cancelled["status"] == "cancelled"
+    restored = _write(
+        catalog,
+        app,
+        "stage/undo",
+        {"event_id": app["current_stage_event_id"]},
+    )
+    assert restored["current_stage"] == "applied"
+    assert _get(catalog, restored)["appointments"][0] == cancelled
+
+
+@pytest.mark.postgres
+@pytest.mark.parametrize("closed_stage", ["rejected", "withdrawn"])
+def test_stage_undo_requires_closing_review_for_new_scheduled_work(
+    catalog: SourceContext, closed_stage: str
+) -> None:
+    app = _stage(catalog, _application(catalog), closed_stage)
+    app = _stage(catalog, app, "interview")
+    reopen_event = app["current_stage_event_id"]
+    app = _write(catalog, app, "appointments", _appointment())
+    app = _write(catalog, app, "appointments", _appointment(kind="follow_up"))
+    before = _history(catalog, app)
+    refused = _write(
+        catalog,
+        app,
+        "stage/undo",
+        {"event_id": reopen_event},
+        expected=409,
+    )
+    assert refused["code"] == "undo_requires_closing_review"
+    assert _get(catalog, app) == app and _history(catalog, app) == before
+    for appointment, status in zip(app["appointments"], ("completed", "cancelled"), strict=True):
+        app = _write(
+            catalog,
+            app,
+            f"appointments/{appointment['id']}/status",
+            {"status": status},
+        )
+    restored = _write(catalog, app, "stage/undo", {"event_id": reopen_event})
+    assert restored["current_stage"] == closed_stage
+    assert {item["status"] for item in restored["appointments"]} == {"completed", "cancelled"}
