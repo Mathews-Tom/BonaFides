@@ -54,6 +54,32 @@ Results on a Mac with Apple silicon using [Ollama](https://ollama.com) 0.40.13. 
 
 Neither model's writing has been reviewed by people for accuracy. Your installation must produce its own genuine receipts; these results don't qualify a different installation.
 
+## Compare recorded answers offline
+
+The fabrication benchmark compares the checker and a fixed word-matching baseline with recorded accept/reject answers from an advisory judge and each local model you supply. It uses made-up cases, not your profile. **These commands do not run models or contact a judge.** From a source checkout with the [developer setup](../development/README.md), export the corpus context:
+
+```sh
+uv run --frozen bonafides benchmark cases tests/fixtures/fabrication --output cases.json
+```
+
+`cases.json` contains the dataset fingerprint and each case's ID, category and full original context, including any other claims, citations and reviewed fields. It is synthetic corpus context, not a ready-made model prompt. Arrange your own recording process, then supply one result JSON file per comparator using the [developer contract](../development/README.md). Each file must carry the exact exported dataset fingerprint and one verdict for **every exported ID**. This is only an illustrative fragment, **not a complete result file**:
+
+```json
+{"predictions": [{"case_id": "honest.jsonl:1", "verdict": "accept"}]}
+```
+
+Once you have complete recorded files, compare them:
+
+```sh
+uv run --frozen bonafides benchmark leaderboard tests/fixtures/fabrication \
+  --result judge.json --result model-a.json --result model-b.json --output comparison.json
+```
+
+The terminal shows a Markdown comparison; `comparison.json` saves the canonical report. Supply at least one `--result`, repeating it for each recorded comparator. The report includes wrongly rejected honest cases as well as rejection counts and rates for every fabrication class; it does not pick an overall winner.
+
+All supplied results are owner-supplied and unverified. Their claimed model fingerprints do not prove identity or qualify a model. Mark fabricated demonstration predictions `synthetic`, not `owner_recorded`: synthetic proof is not a real model measurement. An advisory judge never blocks or clears a document, and disagreement cannot override the checker. This comparison leaves the separate 95% qualification tests, receipts and export rules unchanged; it does not fix the dropped-qualifier limitation above.
+
+
 ## Setting it up
 
 Use the installed management scripts in your installation folder (normally `~/bonafides`). Docker and an already-running local [Ollama](https://ollama.com) with `qwen2.5:7b-instruct` are prerequisites. Check `ollama list` first. If the model is missing, install it yourself after reviewing its license; BonaFides never downloads it. No host Python or uv is needed.

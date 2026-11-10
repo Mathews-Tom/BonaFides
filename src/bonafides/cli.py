@@ -71,6 +71,9 @@ def main(argv: list[str] | None = None) -> int:
         "the inflation rules' false-block and per-kind block rates on synthetic case sets; "
         "bonafides benchmark run <dir> [--output <file>] reports checker and lexical-baseline "
         "block rates per fabrication temptation class with the dataset digest; "
+        "bonafides benchmark cases <dir> exports full case context; "
+        "bonafides benchmark leaderboard <dir> --result <file> [--result <file> ...] compares "
+        "owner-supplied unverified recordings offline without changing any gate; "
         "bonafides demo load loads synthetic profile, evidence and claims into an existing, "
         "empty owner profile",
     )
