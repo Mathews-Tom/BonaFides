@@ -106,6 +106,30 @@ def _entries(source: str) -> list[imports.ImportEntry]:
     return imports.project_entries(parsed.text, parsed.source_sha256, raw)
 
 
+@pytest.mark.parametrize(
+    "source,label,kind,field",
+    [
+        ("Product Manager", "experience", "experience", None),
+        ("Summary\nProduct Manager", "experience", "experience", None),
+        ("Unclassified fragment.", "other", None, None),
+        ("Mira Example", "identity", "identity", "display_name"),
+        ("Summary\nProduct Manager", "identity", "identity", "headline"),
+        ("Mira Example", "other", "identity", "display_name"),
+    ],
+)
+def test_model_labels_preserve_identity_and_uncertain_placement(
+    source: str, label: str, kind: str | None, field: str | None
+) -> None:
+    parsed = _parsed(source)
+    raw, _ = imports.extract_proposals(parsed)
+    raw = [item.model_copy(update={"kind": label}) for item in raw]
+    (entry,) = imports.project_entries(
+        parsed.text, parsed.source_sha256, raw, model_classified=True
+    )
+    assert (entry.kind, entry.identity_field) == (kind, field)
+    assert entry.issues == (["needs_placement"] if kind is None else [])
+
+
 @pytest.mark.parametrize("character", ["a", "🚀"])
 def test_extracted_headline_limit_keeps_overlong_literal_available_for_review(
     character: str,
@@ -451,19 +475,12 @@ def test_model_import_classifies_exact_source_without_publishing_until_review(
         self: Any, stage: str, context: dict[str, object], *args: Any
     ) -> local_model.ModelResult:
         calls.append(context)
-        units = cast(list[dict[str, object]], context["units"])
+        items = [
+            {"source_id": str(uuid4()) if invalid else unit["source_id"], "kind": "experience"}
+            for unit in cast(list[dict[str, object]], context["units"])
+        ]
         return local_model.ModelResult(
-            {
-                "schema_version": "1",
-                "stage": stage,
-                "items": [
-                    {
-                        "source_id": str(uuid4()) if invalid else unit["source_id"],
-                        "kind": "experience",
-                    }
-                    for unit in units
-                ],
-            },
+            {"schema_version": "1", "stage": stage, "items": items},
             {"usage_status": "unknown"},
         )
 

@@ -11,7 +11,7 @@ AI is an optional extra. Once it's set up, it can:
 
 Every suggestion is shown to you before it's used, and every factual sentence it writes is checked against your profile.
 
-Unless stated otherwise, this page describes document tailoring. [Optional résumé import structuring](resume-import.md#optional-local-model-structuring) instead sends the non-contact source fragments disclosed before upload, which can include names or sensitive text; it never sends the raw file or supplies new facts.
+Unless stated otherwise, this page describes document tailoring. [Optional résumé import structuring](resume-import.md#optional-local-model-structuring) instead sends non-contact source fragments selected after upload and before the model call. They can include names or sensitive text: check your source before opting in. It never sends the raw file or supplies new facts.
 
 ## What AI never does in BonaFides
 

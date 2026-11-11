@@ -320,7 +320,7 @@ def project_entries(
             cast(ClaimKind, section) if section not in (None, "headline", "other") else None
         )
         if model_classified or section is None and proposal.kind != "other":
-            kind = proposal.kind
+            kind = proposal.kind if proposal.kind != "other" else None
         if (
             kind == "project"
             and not _BULLET.match(proposal.quote)
@@ -330,11 +330,13 @@ def project_entries(
             and re.search(r"\s[–—-]\s", proposals[index + 1].quote)
         ):
             kind = None
+        identity_allowed = not model_classified or proposal.kind in ("identity", "other")
         identity_field: IdentityField | None = None
-        if index == 0 and section is None and _name_like(proposal.quote):
+        if identity_allowed and index == 0 and section is None and _name_like(proposal.quote):
             kind, identity_field = "identity", "display_name"
         elif (
-            section == "headline"
+            identity_allowed
+            and section == "headline"
             and section_seen == 0
             and len(proposal.quote) <= MAX_HEADLINE_LENGTH
         ):
