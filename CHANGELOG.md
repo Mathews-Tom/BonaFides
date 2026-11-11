@@ -44,6 +44,7 @@ All notable changes to BonaFides are recorded here. The format follows [Keep a C
 
 ### Fixed
 
+- The runtime image requires `krb5-libs` 1.22.3-r0 or newer, replacing the vulnerable transitive version while preserving the pinned base image and vulnerability gates.
 - Installed-lifecycle proof validates every expected migration version and source checksum instead of assuming a one-row ledger; fresh install, stopped reinstall and image swap remain checked against the complete migration history.
 - Native full CI allows 60 minutes for the complete backend suite, scans and runtime proofs, preventing the final core-loop check from being cancelled at the former 45-minute job limit; no check is skipped or downgraded.
 - Reaching the local model's output limit fails only the current pair-generation or section-regeneration task without blocking the stage. Output-limited tasks count against the route's per-stage valid-JSON rate; malformed output after the single corrective retry still blocks its stage. Documents shows the distinct failure and count without replacing saved wording.
