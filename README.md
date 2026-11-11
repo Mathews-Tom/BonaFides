@@ -11,7 +11,7 @@ BonaFides is a private workspace for your job search that runs on your own compu
 ## What it does
 
 - **Keeps your evidence with your facts.** Every fact in your profile is linked to the passage that supports it: a reference letter, a review, a certificate, or your own written statement.
-- **Brings in your existing résumé.** BonaFides reads a PDF or text résumé and proposes entries for you to check. Nothing is added until you approve it.
+- **Brings in your existing résumé.** BonaFides reads a Word DOCX, Markdown, PDF or text résumé and proposes entries for you to check. Nothing is added until you approve it.
 - **Reviews repository activity as sources.** Scan a configured local Git repository or explicitly enabled GitHub repository, review the exact commit messages, and approve only the sources you choose. Scanning adds no facts and uses no AI.
 - **Organizes job postings.** Paste in jobs you're interested in, mark the ones worth pursuing, and confirm what each one requires.
 - **Builds résumés you can stand behind.** A base résumé is made directly from your profile, without AI. With an optional AI model on your own computer, BonaFides can also write a résumé and cover letter tailored to one job.

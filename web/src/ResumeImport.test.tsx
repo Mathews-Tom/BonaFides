@@ -399,16 +399,32 @@ describe('structured résumé review', () => {
 });
 
 describe('local résumé source buffers', () => {
+  it('accepts legacy Markdown MIME only with a Markdown filename and recovers after rejecting another extension', async () => {
+    const user = userEvent.setup(); const { api } = server({ ...staged(), state: 'pending', text: null, entries: [], source_sha256: null });
+    const upload = vi.spyOn(api, 'uploadImport').mockResolvedValue({ import_id: 'import-one', workflow_id: 'workflow-one' });
+    render(<Harness api={api} />);
+    const input = screen.getByLabelText(/Résumé.*file/);
+    fireEvent.change(input, { target: { files: [new File(['# Skills\n- Rust'], 'resume.txt', { type: 'text/x-markdown' })] } });
+    await user.click(screen.getByRole('button', { name: 'Upload for local extraction' }));
+    expect(await screen.findByRole('alert')).toBeVisible(); expect(upload).not.toHaveBeenCalled();
+    const markdown = new File(['# Skills\n- Rust'], 'resume.MD', { type: 'text/x-markdown' });
+    fireEvent.change(input, { target: { files: [markdown] } });
+    await user.click(screen.getByRole('button', { name: 'Upload for local extraction' }));
+    expect(await screen.findByText(/Source accepted for isolated local extraction/)).toBeVisible();
+    expect(upload.mock.calls[0]?.slice(0, 2)).toEqual([markdown, 'text/markdown']);
+    expect(screen.getByLabelText(/Résumé.*file/)).toHaveValue('');
+  });
+
   it('keeps the actual raw file and its retry identity through network and session failures', async () => {
     const user = userEvent.setup(); const { api, state } = server({ ...staged(), state: 'pending', text: null, entries: [], source_sha256: null });
     const upload = vi.spyOn(api, 'uploadImport').mockRejectedValueOnce(new TypeError('offline')).mockRejectedValueOnce(new ApiError(401, 'session_required'))
       .mockResolvedValue({ import_id: 'import-one', workflow_id: 'workflow-one' });
     render(<Harness api={api} />);
     const file = new File(['A fictional local résumé.'], 'fictional.txt', { type: 'text/plain' });
-    await user.upload(screen.getByLabelText('Résumé PDF or text file'), file);
+    await user.upload(screen.getByLabelText(/Résumé.*file/), file);
     await user.click(screen.getByRole('button', { name: 'Upload for local extraction' }));
     expect(await screen.findByRole('alert')).toHaveTextContent('server could not be reached');
-    expect(screen.getByLabelText('Résumé PDF or text file')).toHaveProperty('files', expect.objectContaining({ 0: file }));
+    expect(screen.getByLabelText(/Résumé.*file/)).toHaveProperty('files', expect.objectContaining({ 0: file }));
     await user.click(screen.getByRole('button', { name: 'Upload for local extraction' }));
     expect(await screen.findByRole('alert')).toHaveTextContent('session is unavailable');
     expect(screen.getByText(/Selected: fictional.txt/)).toBeVisible();
@@ -416,7 +432,7 @@ describe('local résumé source buffers', () => {
     expect(upload.mock.calls[1]?.[3]).toBe(upload.mock.calls[0]?.[3]);
     await user.click(screen.getByRole('button', { name: 'Upload for local extraction' }));
     expect(await screen.findByText(/Source accepted for isolated local extraction/)).toBeVisible();
-    expect(screen.getByLabelText('Résumé PDF or text file')).toHaveValue(''); expect(state.currentProfile).toBe(profile);
+    expect(screen.getByLabelText(/Résumé.*file/)).toHaveValue(''); expect(state.currentProfile).toBe(profile);
     expect(screen.queryByText(/Import completed/)).not.toBeInTheDocument();
   });
 
@@ -433,7 +449,7 @@ describe('local résumé source buffers', () => {
     await user.click(screen.getByRole('button', { name: 'Upload for local extraction' })); expect(upload.mock.calls[1]?.[3]).toBe(upload.mock.calls[0]?.[3]);
     await user.click(screen.getByRole('button', { name: 'Discard source buffer' }));
     const huge = new File([new Uint8Array(MAX_IMPORT_BYTES + 1)], 'huge.pdf', { type: 'application/pdf' });
-    await user.upload(screen.getByLabelText('Résumé PDF or text file'), huge);
+    await user.upload(screen.getByLabelText(/Résumé.*file/), huge);
     await user.click(screen.getByRole('button', { name: 'Upload for local extraction' }));
     expect(await screen.findByRole('alert')).toHaveTextContent('no larger than 10 MiB'); expect(upload).toHaveBeenCalledTimes(2);
     expect(screen.getByText(/Selected: huge.pdf/)).toBeVisible();

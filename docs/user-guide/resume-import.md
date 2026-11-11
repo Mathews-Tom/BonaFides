@@ -4,10 +4,14 @@ If you already have a résumé, BonaFides can read it and propose profile entrie
 
 ## What it can read
 
-- A **PDF with selectable text** (if you can highlight words in it, it has selectable text), or a **plain-text file**: up to 10 MiB, 50 pages and about 80,000 characters of text. Password-protected PDFs aren't accepted.
+- A **Word DOCX**, **UTF-8 Markdown (`.md`)**, **PDF with selectable text** (if you can highlight words, it has selectable text), or **UTF-8 plain-text file**: up to 10 MiB and about 80,000 extracted characters (also limited to 256 KiB of UTF-8 text). PDFs are limited to 50 pages. Password-protected files aren't accepted.
 - Or text you paste in directly, with the same text limit.
 
 Reading happens entirely on your computer, in a sealed-off part of BonaFides with no network access. There's no AI and no OCR (text recognition), so a scanned résumé saved as a picture won't work. Paste its text in instead.
+
+Word imports read visible body paragraphs and table cells, not page layout. Headers, footers and notes are omitted with a review warning. Macros, embedded objects and unsupported content are refused; copy the text into the paste field instead. Markdown headings, lists, emphasis, link labels and code become plain source text. Links and images are never fetched, and HTML stays inert. Check the extracted reading order before accepting any facts.
+
+Word and Markdown list markers become ordinary bullets in the extracted preview; original numbering and layout are not preserved. Blank paragraph gaps in Markdown remain separate, so a later paragraph is not silently attached to a previous job. Check numbered lists against your original document before approving.
 
 Recognizable contact details (email addresses, phone numbers and similar) are left out of the review. Add them under [Personal details](profile.md#personal-details) yourself.
 
@@ -18,7 +22,7 @@ Imported entries are *your* statements. Each one keeps the résumé text it came
 The progress bar along the top shows where you are: **Choose source → Extract → Review → Complete**.
 
 1. Open **Profile** and choose the **Résumé imports** tab.
-2. Under **Choose a local source**, either pick a file under **Résumé PDF or text file**, or paste into **Or paste résumé text**. Use one or the other, not both.
+2. Under **Choose a local source**, either pick a file under **Résumé DOCX, Markdown, PDF or text file**, or paste into **Or paste résumé text**. Use one or the other, not both.
 3. Select **Upload for local extraction**.
 4. Wait while BonaFides reads it. You can leave the page and come back; nothing has been added to your profile yet.
 5. When reading finishes, **Complete profile preview** appears. Go through the proposed entries (see below), selecting **Edit** on any entry you want to open.
@@ -71,9 +75,11 @@ You can have up to four imports in progress at once.
 
 | Message | What to do |
 |---|---|
-| "Choose a PDF or UTF-8 plain text file. No other file types are accepted." | Save your résumé as PDF or plain text first, or paste its text. |
+| "Choose a DOCX, Markdown, PDF or UTF-8 plain text file." | Save your résumé in one of those formats, or paste its text. |
 | "Import a non-empty source no larger than 10 MiB…" | The file is empty or too big. Paste the text instead. |
 | "No entries were extracted. Nothing can be saved…" | BonaFides found no readable text, which is usual for scanned PDFs. Cancel the import and paste the text instead. |
 | "A newer profile needs comparison…" | Your profile changed while you were reviewing. Select **Load current profile for comparison**, then **Use latest profile and retain review**. Your review choices are kept. |
 | "Save or discard changes in the other profile editor before uploading or approving an import." | You have unsaved changes on the **Profile details** tab. Save or discard them first. |
 | "Import stopped (…). A failed import does not partially update your profile." | Nothing was changed. Try again, or paste the text instead of uploading. |
+| `import_invalid_docx`, `import_unsupported_docx` or `import_encrypted_docx` | The Word file is damaged, password-protected or contains unsupported content. Open it yourself and paste its visible text instead; renaming another format to `.docx` does not convert it. |
+| `import_content_limit` or `import_text_limit` | The document's extracted content exceeds a safety limit. Reduce the document or paste a shorter source; nothing is silently cut or partially saved. |

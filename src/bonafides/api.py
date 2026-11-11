@@ -24,7 +24,7 @@ from starlette.types import ASGIApp, Message, Receive, Scope, Send
 from bonafides import __version__, auth, installation_control, profiles
 from bonafides.config import Settings
 from bonafides.db import SCHEMA_VERSION, Database, PreBaselineDatabase
-from bonafides.import_parser import MAX_UPLOAD_BYTES
+from bonafides.import_parser import IMPORT_MEDIA_TYPES, MAX_UPLOAD_BYTES
 from bonafides.maintenance import finish_activity, start_api_activity
 from bonafides.portable_archive import MAX_ARCHIVE_BYTES
 from bonafides.problems import Problem, problem_response
@@ -292,7 +292,7 @@ class BrowserBoundary:
             content_type = request.headers.get("content-type", "").split(";", 1)[0].strip().lower()
             if request.method in {"POST", "PUT", "PATCH"}:
                 allowed = (
-                    {"application/pdf", "text/plain"}
+                    IMPORT_MEDIA_TYPES
                     if is_import
                     else {"application/octet-stream"}
                     if is_attachment

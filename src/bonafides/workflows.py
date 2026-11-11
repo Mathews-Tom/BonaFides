@@ -140,7 +140,11 @@ def migrate(settings: MigrationConfig) -> None:
                     "SELECT version,source_sha256 FROM bonafides.schema_migrations ORDER BY version"
                 )
             ).all()
-            names = ("001_baseline.up.sql", "002_evidence_capture.up.sql")
+            names = (
+                "001_baseline.up.sql",
+                "002_evidence_capture.up.sql",
+                "003_import_formats.up.sql",
+            )
             if len(rows) != len(names):
                 raise RuntimeError("unsupported migration ledger")
             for row, name in zip(rows, names, strict=True):

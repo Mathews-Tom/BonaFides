@@ -18,7 +18,7 @@ COPY --from=uv /uv /usr/local/bin/uv
 # Match the supported PostgreSQL 18 server for genuine custom-format recovery.
 # OpenSSL CMS supplies a standard authenticated recipient-encryption envelope.
 RUN test "$(python --version)" = 'Python 3.12.15' \
- && apk add --no-cache libpq libpq-dev postgresql18-client openssl binutils pango harfbuzz-subset libjpeg-turbo openjpeg libffi fontconfig font-dejavu ca-certificates git \
+ && apk add --no-cache libpq libpq-dev 'krb5-libs>=1.22.3-r0' postgresql18-client openssl binutils pango harfbuzz-subset libjpeg-turbo openjpeg libffi fontconfig font-dejavu ca-certificates git \
  && mkdir -p /usr/share/bonafides /data/blobs /spool /import-spool /run/bonafides \
  && apk info -v > /usr/share/bonafides/native-packages.txt \
  && fc-list > /usr/share/bonafides/fonts.txt \
