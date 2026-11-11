@@ -23,6 +23,7 @@ const skillStart = Array.from(source.slice(0, source.indexOf('Fictional SQL'))).
 function staged(): ImportBatch {
   return { id: 'import-one', workflow_id: 'workflow-one', state: 'waiting_for_approval', version: 4, media_type: 'text/plain', byte_size: 150,
     created_at: '2026-01-01', source_sha256: 'b'.repeat(64), text: source, profile_version: 1, comparison_profile_version: 1, error_code: null,
+    structuring_mode: 'literal', structuring_provenance: null,
     warnings: ['deterministic_literal_extraction', 'evidence_is_owner_asserted_not_independently_verified'], entries: [
       { entry_id: 'entry-work', kind: 'experience', identity_field: null, payload: { text: quote, organization: 'Fictional North', role: 'Analyst', start_date: '2020' }, sources: [{ source_id: 'source-work', start, end: start + Array.from(quote).length, quote }], issues: [], comparison: { status: 'new', target_claim_id: null, candidate_claim_ids: [] } },
       { entry_id: 'entry-skill', kind: 'skill', identity_field: null, payload: { text: 'Fictional SQL' }, sources: [{ source_id: 'source-skill', start: skillStart, end: skillStart + 13, quote: 'Fictional SQL' }], issues: [], comparison: { status: 'new', target_claim_id: null, candidate_claim_ids: [] } },
@@ -86,7 +87,7 @@ async function exclude(user: ReturnType<typeof userEvent.setup>, number = 2) {
 }
 function attest() { return screen.getByLabelText('I approve this assembled profile and confirm its values are accurate owner assertions, not independent verification'); }
 function approve() { return screen.getByRole('button', { name: /^Save profile$|^Complete import without profile changes$/ }); }
-afterEach(() => { vi.useRealTimers(); vi.restoreAllMocks(); });
+afterEach(() => { vi.useRealTimers(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
 describe('structured résumé review', () => {
   it.each(['new', 'conflict'] as const)('warns before accepting a structured target as text for a %s replacement or source attachment, even when keeping its description', async status => {
@@ -399,6 +400,98 @@ describe('structured résumé review', () => {
 });
 
 describe('local résumé source buffers', () => {
+  it('retries the exact upload envelope, but mode changes and explicit discard create new intent', async () => {
+    const user = userEvent.setup(); const api = new Api();
+    const fetcher = vi.fn<typeof fetch>().mockRejectedValue(new TypeError('offline')); vi.stubGlobal('fetch', fetcher);
+    render(<Harness api={api} />);
+    const optIn = screen.getByRole('checkbox', { name: /Use qualified local model structuring/ });
+    const submit = () => user.click(screen.getByRole('button', { name: 'Upload for local extraction' }));
+    expect(optIn).not.toBeChecked();
+    await user.type(screen.getByLabelText('Or paste résumé text'), 'Fictional source.');
+    await submit(); await screen.findByRole('alert'); await submit();
+    expect(fetcher).toHaveBeenCalledTimes(2);
+    const literal = fetcher.mock.calls[0]!;
+    expect(literal[0]).toBe('/api/v1/imports');
+    expect(fetcher.mock.calls[1]).toEqual(literal);
+    expect(fetcher.mock.calls[1]?.[1]?.body).toBe(literal[1]?.body);
+    await user.click(optIn); await submit();
+    const model = fetcher.mock.calls[2]!;
+    expect(model[0]).toBe('/api/v1/imports?mode=model');
+    const key = (call: typeof model) => (call[1]?.headers as Record<string, string>)['Idempotency-Key'];
+    expect(key(model)).not.toBe(key(literal));
+    await submit(); expect(fetcher.mock.calls[3]).toEqual(model);
+    expect(fetcher.mock.calls[3]?.[1]?.body).toBe(model[1]?.body);
+    await user.click(optIn); await user.click(optIn); await submit();
+    expect(key(fetcher.mock.calls[4]!)).not.toBe(key(model));
+    await user.click(screen.getByRole('button', { name: 'Discard source buffer' }));
+    expect(optIn).not.toBeChecked(); expect(screen.getByLabelText('Or paste résumé text')).toHaveValue('');
+    await user.type(screen.getByLabelText('Or paste résumé text'), 'Fictional source.');
+    await submit();
+    expect(fetcher.mock.calls[5]?.[0]).toBe('/api/v1/imports');
+    expect(key(fetcher.mock.calls[5]!)).not.toBe(key(literal));
+    expect(screen.getByLabelText('Loaded profile revision')).toHaveTextContent('1');
+  });
+
+  it('binds a retained model upload to its source and profile version without automatically resubmitting', async () => {
+    const user = userEvent.setup(); const api = new Api();
+    const fetcher = vi.fn<typeof fetch>().mockRejectedValue(new TypeError('offline')); vi.stubGlobal('fetch', fetcher);
+    const onProfile = vi.fn();
+    const view = render(<ResumeImport api={api} profile={profile} disabled={false} onProfile={onProfile} />);
+    await user.click(screen.getByRole('checkbox', { name: /Use qualified local model structuring/ }));
+    await user.type(screen.getByLabelText('Or paste résumé text'), 'Original source.');
+    const submit = () => user.click(screen.getByRole('button', { name: 'Upload for local extraction' }));
+    await submit(); await screen.findByRole('alert');
+    await user.type(screen.getByLabelText('Or paste résumé text'), ' Edited.');
+    expect(fetcher).toHaveBeenCalledTimes(1);
+    await submit();
+    const first = fetcher.mock.calls[0]?.[1]; const edited = fetcher.mock.calls[1]?.[1];
+    expect(edited?.body).not.toBe(first?.body);
+    expect(edited?.headers).not.toEqual(first?.headers);
+    view.rerender(<ResumeImport api={api} profile={{ ...profile, version: 2 }} disabled={false} onProfile={onProfile} />);
+    expect(fetcher).toHaveBeenCalledTimes(2);
+    await submit(); const updated = fetcher.mock.calls[2]?.[1];
+    expect(updated?.headers).toMatchObject({ 'If-Match': '"2"' });
+    expect((updated?.headers as Record<string, string>)['Idempotency-Key']).not.toBe((edited?.headers as Record<string, string>)['Idempotency-Key']);
+    expect(fetcher.mock.calls.map(call => call[0])).toEqual(Array(3).fill('/api/v1/imports?mode=model'));
+    expect(screen.getByLabelText('Or paste résumé text')).toHaveValue('Original source. Edited.');
+    expect(onProfile).not.toHaveBeenCalled();
+  });
+
+  it('retains opted-in text when the model route is unavailable or unqualified without sending a literal fallback', async () => {
+    const user = userEvent.setup(); const { api, state } = server();
+    const fetcher = vi.fn<typeof fetch>().mockResolvedValue(new Response(JSON.stringify({ code: 'model_route_unavailable' }), { status: 503 }));
+    vi.stubGlobal('fetch', fetcher); render(<Harness api={api} />);
+    await user.type(screen.getByLabelText('Or paste résumé text'), 'Sensitive fictional source.');
+    await user.click(screen.getByRole('checkbox', { name: /Use qualified local model structuring/ }));
+    await user.click(screen.getByRole('button', { name: 'Upload for local extraction' }));
+    expect(await screen.findByRole('alert')).toHaveTextContent('model_route_unavailable');
+    expect(fetcher).toHaveBeenCalledTimes(1); expect(fetcher.mock.calls[0]?.[0]).toBe('/api/v1/imports?mode=model');
+    expect(screen.getByLabelText('Or paste résumé text')).toHaveValue('Sensitive fictional source.');
+    expect(screen.getByRole('checkbox', { name: /Use qualified local model structuring/ })).toBeChecked();
+    expect(screen.queryByRole('heading', { name: 'Import import-one' })).not.toBeInTheDocument();
+    expect(state.currentProfile).toBe(profile); expect(state.submissions).toEqual([]);
+  });
+
+  it.each(['literal', 'model'] as const)('shows immutable saved %s mode and recorded model provenance without approving facts', async mode => {
+    const user = userEvent.setup();
+    const provenance = { model_run_id: 'saved-run-42', route_identity: { route_id: 'saved-route-17', model: 'synthetic-classifier' },
+      prompt_version: 'saved-import-prompt-3', source_sha256: 'd'.repeat(64) };
+    const { api, state } = server({ ...staged(), structuring_mode: mode, structuring_provenance: mode === 'model' ? provenance : null,
+      warnings: mode === 'model' ? ['model_source_classification_requires_review'] : staged().warnings });
+    render(<Harness api={api} />); await open(user);
+    const savedMode = mode === 'model' ? /Structuring: Requested local model structuring/ : /Structuring: Literal local extraction/;
+    expect(screen.getByText(savedMode)).toBeVisible(); expect(approve()).toBeDisabled();
+    if (mode === 'model') {
+      await user.click(screen.getByText('Model structuring provenance', { selector: 'summary' }));
+      for (const value of [provenance.model_run_id, provenance.prompt_version, provenance.source_sha256]) expect(screen.getByText(value)).toBeVisible();
+      expect(screen.getByText(/"route_id": "saved-route-17"/)).toBeVisible();
+    } else expect(screen.queryByText('Model structuring provenance')).not.toBeInTheDocument();
+    await user.click(screen.getByText('Choose a local source', { selector: 'summary' }));
+    await user.click(screen.getByRole('checkbox', { name: /Use qualified local model structuring/ }));
+    expect(screen.getByText(savedMode)).toBeVisible();
+    expect(state.currentProfile).toBe(profile); expect(state.submissions).toEqual([]);
+  });
+
   it('accepts legacy Markdown MIME only with a Markdown filename and recovers after rejecting another extension', async () => {
     const user = userEvent.setup(); const { api } = server({ ...staged(), state: 'pending', text: null, entries: [], source_sha256: null });
     const upload = vi.spyOn(api, 'uploadImport').mockResolvedValue({ import_id: 'import-one', workflow_id: 'workflow-one' });

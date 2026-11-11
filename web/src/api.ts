@@ -239,7 +239,7 @@ export interface ImportComparison { status: 'new' | 'unchanged' | 'conflict' | '
 export interface UnparsedPart { text: string; reason: 'unknown_verb' | 'missing_subject' | 'additional_metric' | 'multiple_statements' | 'invalid_value' | 'unplaced_scope' | 'compound_verb' }
 export interface ClaimLineProposal { source_id: string; quote: string; claim: StructuredClaim | null; rendering: string | null; unparsed: UnparsedPart[] }
 export interface ImportEntry { entry_id: string; kind: ClaimKind | null; identity_field: 'display_name' | 'headline' | null; payload: ClaimPayload; sources: ImportSource[]; issues: string[]; claim_proposals?: ClaimLineProposal[]; comparison: ImportComparison }
-export interface ImportBatch { id: string; workflow_id: string; state: WorkflowState; version: number; media_type: ImportMediaType; byte_size: number; created_at: string; source_sha256: string | null; text: string | null; entries: ImportEntry[]; warnings: string[]; profile_version: number; comparison_profile_version: number; error_code: string | null }
+export interface ImportBatch { id: string; workflow_id: string; state: WorkflowState; version: number; media_type: ImportMediaType; structuring_mode: 'literal' | 'model'; structuring_provenance: { model_run_id: string; route_identity: Record<string, unknown>; prompt_version: string; source_sha256: string } | null; byte_size: number; created_at: string; source_sha256: string | null; text: string | null; entries: ImportEntry[]; warnings: string[]; profile_version: number; comparison_profile_version: number; error_code: string | null }
 export interface ImportDecision { source_ids: string[]; action: 'skip' | 'add' | 'replace' | 'unchanged'; claim_id?: string; kind: ClaimKind | null; identity_field: ImportEntry['identity_field']; payload: ClaimPayload }
 export interface ImportMergeRequest { mode: 'merge' | 'replace_all'; replace_all_confirmed: boolean; decisions: ImportDecision[] }
 export interface ImportAccepted { import_id: string; workflow_id: string }
@@ -375,8 +375,8 @@ export class Api {
         'If-Match': `"${version}"`, 'Idempotency-Key': key, ...extraHeaders },
     });
   }
-  async uploadImport(body: Blob, mediaType: ImportMediaType, profileVersion: number, idempotencyKey: string): Promise<ImportAccepted> {
-    return this.upload<ImportAccepted>('/imports', body, mediaType, profileVersion, idempotencyKey);
+  async uploadImport(body: Blob, mediaType: ImportMediaType, profileVersion: number, idempotencyKey: string, mode: ImportBatch['structuring_mode']): Promise<ImportAccepted> {
+    return this.upload<ImportAccepted>(mode === 'model' ? '/imports?mode=model' : '/imports', body, mediaType, profileVersion, idempotencyKey);
   }
   async uploadPortable(body: Blob, workspaceVersion: number, idempotencyKey: string, sourceOwner?: string, signal?: AbortSignal): Promise<PortablePreview> {
     return this.upload<PortablePreview>('/portable-previews/import', body, 'application/zip', workspaceVersion, idempotencyKey, signal, sourceOwner ? { 'X-Source-Owner': sourceOwner } : {});

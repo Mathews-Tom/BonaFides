@@ -144,6 +144,7 @@ def migrate(settings: MigrationConfig) -> None:
                 "001_baseline.up.sql",
                 "002_evidence_capture.up.sql",
                 "003_import_formats.up.sql",
+                "004_import_structuring.up.sql",
             )
             if len(rows) != len(names):
                 raise RuntimeError("unsupported migration ledger")
@@ -217,6 +218,7 @@ def enqueue(conn: Connection, owner_id: UUID, kind: str, input_snapshot: dict[st
             else 480
             if kind in {"posting_extract", "matching"}
             or pinned.get("mode") in {"tailored_ai", "section_regeneration"}
+            or pinned.get("model_pending") is True
             else 180,
             "source": pinned.get("source_id") if kind == "source_refresh" else None,
             "policy_version": pinned.get("policy_version") if kind == "source_refresh" else None,
@@ -395,10 +397,11 @@ def _retry_block_reason(conn: Connection, row: RowMapping) -> str | None:
     if not row["retry_due"]:
         return "retry_not_due"
     snapshot = cast(dict[str, object], row["input"])
-    model_task = row["kind"] in {"posting_extract", "matching"} or snapshot.get("mode") in {
-        "tailored_ai",
-        "section_regeneration",
-    }
+    model_task = (
+        row["kind"] in {"posting_extract", "matching"}
+        or snapshot.get("mode") in {"tailored_ai", "section_regeneration"}
+        or snapshot.get("model_pending") is True
+    )
     if model_task and row["model_network_attempts"] >= 2:
         return "model_attempts_exhausted"
     if (row["token_budget"] > 0 and row["tokens_used"] >= row["token_budget"]) or (
@@ -511,10 +514,11 @@ def get_workflow(conn: Connection, owner_id: UUID, workflow_id: UUID) -> dict[st
     count = int(usage["model_runs"])
     known = count > 0 and usage["unknown_usage"] == 0
     snapshot = row["input"]
-    model_task = row["kind"] in {"posting_extract", "matching"} or snapshot.get("mode") in {
-        "tailored_ai",
-        "section_regeneration",
-    }
+    model_task = (
+        row["kind"] in {"posting_extract", "matching"}
+        or snapshot.get("mode") in {"tailored_ai", "section_regeneration"}
+        or (row["kind"] == "profile_import" and snapshot.get("stage") == "structure_import")
+    )
     result["usage"] = {
         "status": "not_applicable"
         if count == 0 and row["model_network_attempts"] == 0
@@ -815,7 +819,8 @@ def _claim(
         AND w.cancel_requested_at IS NULL AND w.attempt<w.max_attempts
         AND (w.token_budget=0 OR w.tokens_used<w.token_budget)
         AND (w.cost_budget_microunits=0 OR w.cost_used_microunits<w.cost_budget_microunits)
-        AND (NOT(w.kind IN ('posting_extract','matching') OR coalesce(w.input->>'mode','') IN ('tailored_ai','section_regeneration'))
+        AND (NOT(w.kind IN ('posting_extract','matching') OR coalesce(w.input->>'mode','') IN ('tailored_ai','section_regeneration')
+                 OR coalesce(w.input->>'model_pending','false')='true')
              OR w.model_network_attempts<2)
         AND NOT EXISTS(SELECT 1 FROM bonafides.workflow_steps s WHERE s.owner_id=w.owner_id AND s.workflow_run_id=w.id AND s.delivery_state='unknown')
         ORDER BY w.next_attempt_at,w.created_at,w.id FOR UPDATE OF w SKIP LOCKED LIMIT 1)
@@ -978,7 +983,8 @@ def fail(
                 extract(epoch FROM deadline_at-clock_timestamp()) AS remaining_seconds,
                 (token_budget>0 AND tokens_used>=token_budget)
                 OR (cost_budget_microunits>0 AND cost_used_microunits>=cost_budget_microunits)
-                OR ((kind IN ('posting_extract','matching') OR coalesce(input->>'mode','') IN ('tailored_ai','section_regeneration'))
+                OR ((kind IN ('posting_extract','matching') OR coalesce(input->>'mode','') IN ('tailored_ai','section_regeneration')
+                     OR coalesce(input->>'model_pending','false')='true')
                     AND model_network_attempts>=2) AS budgets_exhausted,
                 EXISTS(SELECT 1 FROM bonafides.workflow_steps s WHERE s.owner_id=w.owner_id
                 AND s.workflow_run_id=w.id AND s.delivery_state='unknown') AS unknown_delivery
@@ -1069,7 +1075,8 @@ def reap(conn: Connection) -> int:
             text("""SELECT w.*,EXISTS(SELECT 1 FROM bonafides.workflow_steps s
         WHERE s.owner_id=w.owner_id AND s.workflow_run_id=w.id AND s.delivery_state='unknown') AS unknown_delivery,
         w.deadline_at<=clock_timestamp() AS deadline_passed,
-        ((w.kind IN ('posting_extract','matching') OR coalesce(w.input->>'mode','') IN ('tailored_ai','section_regeneration'))
+        ((w.kind IN ('posting_extract','matching') OR coalesce(w.input->>'mode','') IN ('tailored_ai','section_regeneration')
+          OR coalesce(w.input->>'model_pending','false')='true')
             AND w.model_network_attempts>=2) AS model_exhausted,
         ((w.token_budget>0 AND w.tokens_used>=w.token_budget)
             OR (w.cost_budget_microunits>0 AND w.cost_used_microunits>=w.cost_budget_microunits)) AS budget_exhausted
@@ -1083,7 +1090,8 @@ def reap(conn: Connection) -> int:
         OR (w.state IN ('pending','retryable_failure') AND (
             w.attempt>=w.max_attempts OR (w.token_budget>0 AND w.tokens_used>=w.token_budget)
             OR (w.cost_budget_microunits>0 AND w.cost_used_microunits>=w.cost_budget_microunits)
-            OR ((w.kind IN ('posting_extract','matching') OR coalesce(w.input->>'mode','') IN ('tailored_ai','section_regeneration'))
+            OR ((w.kind IN ('posting_extract','matching') OR coalesce(w.input->>'mode','') IN ('tailored_ai','section_regeneration')
+                 OR coalesce(w.input->>'model_pending','false')='true')
                 AND w.model_network_attempts>=2)))
         OR ((w.state<>'waiting_for_approval' OR w.last_error_code IS DISTINCT FROM 'delivery_reconciliation_required')
             AND EXISTS(SELECT 1 FROM bonafides.workflow_steps s

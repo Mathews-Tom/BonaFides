@@ -351,7 +351,7 @@ def receipt_details(
             "qualified": False,
             "reason": None,
         }
-        for stage in local_model.QUALIFICATION_STAGES
+        for stage in ("generate_documents", "regenerate_section")
     }
     if identity is None:
         return missing
@@ -361,7 +361,7 @@ def receipt_details(
         return missing
     if route is None or route.identity() != identity:
         return missing
-    details = route.receipt_details()
+    details = {stage: item for stage, item in route.receipt_details().items() if stage in missing}
     blocked = conn.execute(
         text("""SELECT stage FROM bonafides.local_model_route_blocks
             WHERE owner_id=:owner AND route_sha256 IN (:capability,:legacy)"""),

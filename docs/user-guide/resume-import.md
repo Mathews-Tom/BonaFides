@@ -7,7 +7,7 @@ If you already have a résumé, BonaFides can read it and propose profile entrie
 - A **Word DOCX**, **UTF-8 Markdown (`.md`)**, **PDF with selectable text** (if you can highlight words, it has selectable text), or **UTF-8 plain-text file**: up to 10 MiB and about 80,000 extracted characters (also limited to 256 KiB of UTF-8 text). PDFs are limited to 50 pages. Password-protected files aren't accepted.
 - Or text you paste in directly, with the same text limit.
 
-Reading happens entirely on your computer, in a sealed-off part of BonaFides with no network access. There's no AI and no OCR (text recognition), so a scanned résumé saved as a picture won't work. Paste its text in instead.
+Extraction happens entirely on your computer, in a sealed-off part of BonaFides with no network access or AI. There's no OCR (text recognition), so a scanned résumé saved as a picture won't work. Optional model structuring happens separately, only with your explicit choice below.
 
 Word imports read visible body paragraphs and table cells, not page layout. Headers, footers and notes are omitted with a review warning. Macros, embedded objects and unsupported content are refused; copy the text into the paste field instead. Markdown headings, lists, emphasis, link labels and code become plain source text. Links and images are never fetched, and HTML stays inert. Check the extracted reading order before accepting any facts.
 
@@ -17,13 +17,21 @@ Recognizable contact details (email addresses, phone numbers and similar) are le
 
 Imported entries are *your* statements. Each one keeps the résumé text it came from as its source, recorded as your own assertion, not independent verification.
 
+## Optional local model structuring
+
+**Use qualified local model structuring (optional)** is off by default. Leave it off for extraction with no model calls. If your operator has enabled and separately qualified this feature, you can turn it on before uploading to suggest where exact source fragments belong.
+
+Recognizable contact details are excluded, but fragments can still contain names or sensitive text: check your source before opting in. Only those fragments and their labels go to the configured local route, never the raw file. The model cannot supply replacement facts or verify your statements; you still review and approve the assembled profile.
+
+Unavailable, unqualified, stale or live-blocked routes fail without automatic literal fallback. **Model structuring provenance** records the route used. The choice and provenance stay with that saved import; changing the choice requires a new upload. Start a separate import with the option off to choose model-free extraction instead.
+
 ## Import step by step
 
 The progress bar along the top shows where you are: **Choose source → Extract → Review → Complete**.
 
 1. Open **Profile** and choose the **Résumé imports** tab.
 2. Under **Choose a local source**, either pick a file under **Résumé DOCX, Markdown, PDF or text file**, or paste into **Or paste résumé text**. Use one or the other, not both.
-3. Select **Upload for local extraction**.
+3. Leave **Use qualified local model structuring (optional)** off, or explicitly choose it after reading the disclosure, then select **Upload for local extraction**.
 4. Wait while BonaFides reads it. You can leave the page and come back; nothing has been added to your profile yet.
 5. When reading finishes, **Complete profile preview** appears. Go through the proposed entries (see below), selecting **Edit** on any entry you want to open.
 6. Under **Approve assembled profile**, choose an **Import mode**:
@@ -83,3 +91,4 @@ You can have up to four imports in progress at once.
 | "Import stopped (…). A failed import does not partially update your profile." | Nothing was changed. Try again, or paste the text instead of uploading. |
 | `import_invalid_docx`, `import_unsupported_docx` or `import_encrypted_docx` | The Word file is damaged, password-protected or contains unsupported content. Open it yourself and paste its visible text instead; renaming another format to `.docx` does not convert it. |
 | `import_content_limit` or `import_text_limit` | The document's extracted content exceeds a safety limit. Reduce the document or paste a shorter source; nothing is silently cut or partially saved. |
+| `import_structuring_input_limit` or `model_output_limit` | The model input or answer exceeded its limit. Nothing is truncated into a successful import. Shorten the source or ask the operator about the route; a failed import adds no facts. |

@@ -45,6 +45,7 @@ const warningLabels: Record<string, string> = {
   contact_details_excluded: 'Recognizable contact or reference details were excluded from review.',
   pdf_layout_requires_review: 'Complex PDF layout was preserved in extraction order. Check source line breaks and reading order before accepting facts.',
   docx_layout_requires_review: 'Word layout, headers, footers and notes are not reproduced. Check the extracted source before accepting facts.',
+  model_source_classification_requires_review: 'A separately qualified local model suggested destinations for exact source fragments. Review every placement; it did not verify these facts.',
 };
 const destinations: { value: string; label: string }[] = [
   { value: '', label: 'Needs placement' }, { value: 'display_name', label: 'Personal details · Full name' },
@@ -194,6 +195,7 @@ function fileMediaType(file: File): ImportMediaType | null {
 export function ResumeImport({ api, profile, disabled, onProfile, onDirtyChange, onBusyChange }: ResumeImportProps) {
   const [file, setFile] = useState<File | null>(null);
   const [paste, setPaste] = useState('');
+  const [structuringMode, setStructuringMode] = useState<ImportBatch['structuring_mode']>('literal');
   const [batches, setBatches] = useState<ImportSummary[] | null>(null);
   const [selected, setSelected] = useState<ImportBatch | null>(null);
   const [entries, setEntries] = useState<ImportEntry[]>([]);
@@ -221,7 +223,7 @@ export function ResumeImport({ api, profile, disabled, onProfile, onDirtyChange,
   const [notice, setNotice] = useState('');
   const fileInput = useRef<HTMLInputElement>(null);
   const errorRef = useRef<HTMLDivElement>(null);
-  const uploadRetry = useRef<{ source: File | string; version: number; key: string } | null>(null);
+  const uploadRetry = useRef<{ source: File | string; version: number; mode: ImportBatch['structuring_mode']; body: Blob; media: ImportMediaType; key: string } | null>(null);
   const mergeRetry = useRef<{ fingerprint: string; key: string } | null>(null);
   const cancelRetry = useRef<{ workflow: string; version: number; key: string } | null>(null);
   const reviewBatchId = useRef<string | null>(null);
@@ -351,7 +353,7 @@ export function ResumeImport({ api, profile, disabled, onProfile, onDirtyChange,
     } finally { setOperation(false); }
   }
   function clearUpload() {
-    setFile(null); setPaste(''); uploadRetry.current = null;
+    setFile(null); setPaste(''); setStructuringMode('literal'); uploadRetry.current = null;
     if (fileInput.current) fileInput.current.value = '';
   }
   async function openBatch(id: string) {
@@ -375,18 +377,19 @@ export function ResumeImport({ api, profile, disabled, onProfile, onDirtyChange,
       const source = file ?? paste;
       const media = file ? fileMediaType(file) : 'text/plain';
       if (!media) { setError('Choose a DOCX, Markdown, PDF or UTF-8 plain text file.'); return; }
-      const body = file ?? new Blob([paste], { type: 'text/plain;charset=utf-8' });
-      if (!body.size || body.size > MAX_IMPORT_BYTES) { setError('Import a non-empty source no larger than 10 MiB. Your selected source remains here.'); return; }
-      if (uploadRetry.current?.source !== source || uploadRetry.current.version !== profile.version) {
-        uploadRetry.current = { source, version: profile.version, key: crypto.randomUUID() };
+      if (uploadRetry.current?.source !== source || uploadRetry.current.version !== profile.version || uploadRetry.current.mode !== structuringMode) {
+        const body = file ?? new Blob([paste], { type: 'text/plain;charset=utf-8' });
+        if (!body.size || body.size > MAX_IMPORT_BYTES) { setError('Import a non-empty source no larger than 10 MiB. Your selected source remains here.'); return; }
+        uploadRetry.current = { source, version: profile.version, mode: structuringMode, body, media, key: crypto.randomUUID() };
       }
-      const accepted = await api.uploadImport(body, media, profile.version, uploadRetry.current.key);
+      const intent = uploadRetry.current;
+      const accepted = await api.uploadImport(intent.body, intent.media, intent.version, intent.key, intent.mode);
       setAcceptedUpload(accepted); setSelected(null); setDrafts({}); setReviewProfile(profile); setComparison(null);
       setEntryIndex(0); setEntries([]); reviewBatchId.current = null; setSourceExpanded(false);
       setReviewDirty(false); setAttested(false); setMode('merge'); setReplaceConfirmed(false); setConflict(false);
       const batch = await api.request<ImportBatch>(`/imports/${encodeURIComponent(accepted.import_id)}`);
       receiveBatch(batch); setAcceptedUpload(null); clearUpload(); setPollPaused(false); setPollRun(value => value + 1);
-      setNotice('Source accepted for isolated local extraction. No profile facts have been accepted.');
+      setNotice(intent.mode === 'model' ? 'Source accepted for isolated extraction and opted-in model classification. No profile facts have been accepted.' : 'Source accepted for isolated local extraction. No profile facts have been accepted.');
     });
   }
   function updateDraft(id: string, update: (draft: ReviewDraft) => ReviewDraft) {
@@ -679,7 +682,7 @@ export function ResumeImport({ api, profile, disabled, onProfile, onDirtyChange,
     <ol className="import-steps" aria-label="Import progress">{['Choose source', 'Extract', 'Review', 'Complete'].map((label, index) => <li key={label} aria-current={stage === index ? 'step' : undefined} className={stage > index ? 'is-complete' : undefined}>
       <span aria-hidden="true">{stage > index ? '✓' : index + 1}</span><span>{label}</span>
     </li>)}</ol>
-    <p className="hint">Local extraction only. DOCX, UTF-8 Markdown or plain text, or PDF with selectable text, up to 10 MiB. No OCR, AI interpretation or hosted fallback. Embedded instructions remain inert; extracted facts are not independently verified.</p>
+    <p className="hint">DOCX, UTF-8 Markdown or plain text, or PDF with selectable text, up to 10 MiB. By default, local extraction makes no model calls. No OCR or hosted fallback. Embedded instructions remain inert; extracted facts are not independently verified.</p>
     {disabled && <p className="disclosure">Save or discard changes in the other profile editor before uploading or approving an import. Your import buffers remain here.</p>}
     <div className="error" ref={errorRef} tabIndex={-1} role="alert" hidden={!error}>{error}</div>
     <p className="status" role="status">{notice}</p>
@@ -691,6 +694,8 @@ export function ResumeImport({ api, profile, disabled, onProfile, onDirtyChange,
         <label>Résumé DOCX, Markdown, PDF or text file<input ref={fileInput} type="file" accept="application/pdf,text/plain,text/markdown,application/vnd.openxmlformats-officedocument.wordprocessingml.document,.pdf,.txt,.md,.docx" disabled={paste.length > 0} onChange={event => { setFile(event.target.files?.[0] ?? null); setError(''); }} /></label>
         {file && <p>Selected: {file.name} · {file.size.toLocaleString()} bytes. The filename is not sent to the server.</p>}
         <label>Or paste résumé text<textarea value={paste} disabled={file !== null} onChange={event => { setPaste(event.target.value); setError(''); }} /></label>
+        <label><input type="checkbox" checked={structuringMode === 'model'} onChange={event => { setStructuringMode(event.target.checked ? 'model' : 'literal'); uploadRetry.current = null; }} />Use qualified local model structuring (optional)</label>
+        <p className="hint">Off: local extraction only, with no model calls. On: exact non-contact source fragments and their labels go only to the configured, independently qualified local route to suggest destinations. Recognizable contact details are excluded, but fragments may still contain sensitive text: check your source before opting in. No raw file is sent to the model. This is not factual verification. Unavailable or unqualified routes fail, with no automatic fallback. Every fact still requires your review and approval.</p>
         <div className="actions"><button disabled={!file && !paste.length}>Upload for local extraction</button>
           <button type="button" className="secondary" disabled={!file && !paste.length} onClick={clearUpload}>Discard source buffer</button></div>
       </fieldset>
@@ -722,6 +727,13 @@ export function ResumeImport({ api, profile, disabled, onProfile, onDirtyChange,
     {selected && <article className="task" aria-labelledby="selected-import-title"><h3 id="selected-import-title">Import {selected.id}</h3>
       <p>State: {selected.state.replaceAll('_', ' ')} · workflow version {selected.version} · {selected.byte_size.toLocaleString()} bytes</p>
       <p className="hint">Workflow {selected.workflow_id} · source accepted {selected.created_at} · profile version {selected.profile_version}</p>
+      <p>Structuring: {selected.structuring_mode === 'model' ? 'Requested local model structuring' : 'Literal local extraction (no model calls)'}</p>
+      {selected.structuring_provenance ? <details className="import-provenance"><summary>Model structuring provenance</summary>
+        <p>Model run: <code>{selected.structuring_provenance.model_run_id}</code></p>
+        <p>Prompt version: <code>{selected.structuring_provenance.prompt_version}</code></p>
+        <p>Structuring source SHA-256: <code>{selected.structuring_provenance.source_sha256}</code></p>
+        <p>Recorded route identity:</p><pre className="import-source">{JSON.stringify(selected.structuring_provenance.route_identity, null, 2)}</pre>
+      </details> : selected.structuring_mode === 'model' && <p className="hint">No completed model structuring run is recorded.</p>}
       {selected.error_code && <p className="disclosure">Import stopped ({selected.error_code}). A failed import does not partially update your profile.</p>}
       {selected.text === null && !terminal(selected.state) && <p className="disclosure">Extracting your source. You can leave this screen and return; no profile facts have been accepted.</p>}
       {selected.state === 'succeeded' && <p className="disclosure">{completionRefreshing || needsCompletionRefresh ? 'Merge completed. Loading the updated profile before releasing other editors.' : 'Complete. The updated profile is loaded; earlier history is retained.'}</p>}

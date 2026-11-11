@@ -452,7 +452,11 @@ def _policy(conn: Connection, owner_id: UUID, settings: Settings) -> dict[str, o
     return {
         "policy_version": POLICY_VERSION,
         "template_version": TEMPLATE_VERSION,
-        "prompt_versions": dict(local_model.PROMPT_VERSIONS),
+        "prompt_versions": {
+            stage: version
+            for stage, version in local_model.PROMPT_VERSIONS.items()
+            if stage != "structure_import"
+        },
         "model_route": _route_status(conn, owner_id, settings),
     }
 
@@ -1136,6 +1140,11 @@ def _check_workflow_context(
 
         check_context(conn, task, settings)
         return None
+    if task.kind == "profile_import":
+        from bonafides.imports import check_import_context
+
+        check_import_context(conn, task)
+        return None
     assert_fence(conn, task)
     posting = _posting(conn, task.owner_id, UUID(str(task.input["posting_id"])))
     if task.input.get("posting_content_sha256") != _posting_digest(posting):
@@ -1177,6 +1186,8 @@ class ModelClient(Protocol):
 def _reserve_call(
     conn: Connection, task: Claim, settings: Settings, seconds: int, *, correction: bool = False
 ) -> UUID | None:
+    if task.input.get("stage") == "structure_import":
+        seconds = min(seconds, 180)
     lock_installation(conn)
     _check_workflow_context(conn, task, settings)
     row = (
@@ -1345,8 +1356,9 @@ def _execute_reserved_model(
         route = _route(conn, task.owner_id, settings, stage)
     if route.identity() != task.input.get("route_identity"):
         raise Problem(409, "stale_model_route")
-    seconds = (
-        min(route.deadline_seconds, 120) if stage == "extract_posting" else route.deadline_seconds
+    seconds = min(
+        route.deadline_seconds,
+        120 if stage == "extract_posting" else route.deadline_seconds,
     )
     run_id: UUID | None = None
     # Wait inside the worker lease, not as a network attempt or an owner-held DB lock.
@@ -1404,6 +1416,21 @@ def _execute_reserved_model(
                 )
                 run_id = runs[-1]
                 output_valid = True
+            elif stage == "structure_import":
+                from bonafides.import_structuring import checked_units
+
+                labels, result = _checked_call(
+                    db,
+                    settings,
+                    task,
+                    interrupted,
+                    client,
+                    active_route,
+                    runs,
+                    lambda output: checked_units(output, context),
+                )
+                run_id = runs[-1]
+                output_valid = True
             else:
                 result = (
                     client
@@ -1427,6 +1454,8 @@ def _execute_reserved_model(
                 proposal = pair.model_dump(mode="json")
             elif stage == "regenerate_section":
                 proposal = section_candidate.model_dump(mode="json")
+            elif stage == "structure_import":
+                proposal = dict(labels)
             else:
                 matching = MatchingOutput.model_validate_json(canonical_json(result.output))
                 proposal = matching.model_dump(mode="json")
@@ -1437,7 +1466,7 @@ def _execute_reserved_model(
                 raise Problem(422, "invalid_model_output") from exc
             raise
         with db.transaction() as conn:
-            if stage in CHECKED_STAGES:
+            if stage in CHECKED_STAGES or stage == "structure_import":
                 from bonafides.document_generation import lock_workspace
 
                 lock_workspace(conn, task.owner_id)
@@ -1486,6 +1515,11 @@ def _execute_reserved_model(
                     return publish_proposal(
                         active, task, settings, section_candidate, run_id, result.metadata
                     )
+                if stage == "structure_import":
+                    from bonafides.imports import publish_structured
+
+                    assert run_id is not None
+                    return publish_structured(active, task, labels, run_id)
                 return {
                     **proposal,
                     "posting_id": task.input["posting_id"],
@@ -1504,7 +1538,10 @@ def _execute_reserved_model(
                     },
                 }
 
-            publish(conn, task, effect)
+            if stage == "structure_import":
+                effect(conn)
+            else:
+                publish(conn, task, effect)
     except (local_model.ModelFailure, Problem, DBAPIError) as exc:
         code = "workflow_publication_fenced" if isinstance(exc, DBAPIError) else exc.code
         failed: dict[str, object] = {"usage_status": "unknown", "error_code": code}

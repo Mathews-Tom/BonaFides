@@ -24,7 +24,8 @@ describe('same-origin API transport', () => {
     const bytes = new Blob(['private buffer']);
     for (const operation of [
       () => api.request('/profile', 'PUT', { headline: 'unsaved' }, 9, 'saved-command'),
-      () => api.uploadImport(bytes, 'text/plain', 9, 'import-command'),
+      () => api.uploadImport(bytes, 'text/plain', 9, 'import-command', 'literal'),
+      () => api.uploadImport(bytes, 'text/plain', 9, 'model-import-command', 'model'),
       () => api.uploadPortable(bytes, 9, 'replacement-command'),
       () => api.upload('/applications/current/attachments', bytes, 'application/octet-stream', 9, 'attachment-command'),
     ]) await expect(operation()).rejects.toEqual(new ApiError(409, 'workspace_reconnect_required'));
@@ -68,7 +69,8 @@ describe('same-origin API transport', () => {
     expect(observed).toEqual([rejected]);
     for (const operation of [
       () => api.request('/profile', 'PUT', body, 9, 'retained-command-key'),
-      () => api.uploadImport(bytes, 'text/plain', 9, 'retained-import-key'),
+      () => api.uploadImport(bytes, 'text/plain', 9, 'retained-import-key', 'literal'),
+      () => api.uploadImport(bytes, 'text/plain', 9, 'retained-model-import-key', 'model'),
       () => api.uploadPortable(bytes, 9, 'retained-replacement-key'),
       () => api.upload('/applications/current/attachments', bytes, 'application/octet-stream', 9, 'retained-attachment-key'),
     ]) await expect(operation()).rejects.toEqual(new ApiError(409, 'workspace_reconnect_required'));

@@ -6,7 +6,7 @@ from __future__ import annotations
 import hashlib
 import re
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from threading import Event
 from typing import Annotated, Literal, cast
 from uuid import NAMESPACE_URL, UUID, uuid4, uuid5
@@ -18,6 +18,7 @@ from sqlalchemy import Connection, text
 from sqlalchemy.engine import RowMapping
 from starlette.concurrency import run_in_threadpool
 
+from bonafides import import_structuring, local_model
 from bonafides.auth import Owner, StrictModel, require_owner
 from bonafides.claim_mapping import UnparsedPart, map_line, statement_text
 from bonafides.claims import STRUCTURED_KINDS, StructuredClaim, contains_statement, literal_grounded
@@ -52,6 +53,7 @@ MAX_IMPORT_BYTES = 64 * 1024 * 1024
 MAX_ACTIVE_IMPORTS = 4
 MAX_PROPOSALS = 100
 MAX_IMPORT_SOURCES = 1000
+StructuringMode = Literal["literal", "model"]
 
 _HEADINGS: dict[str, ClaimKind] = {
     "experience": "experience",
@@ -272,7 +274,11 @@ _DATE_RANGE = re.compile(
 
 
 def project_entries(
-    source: str, source_sha256: str, proposals: list[ImportProposal]
+    source: str,
+    source_sha256: str,
+    proposals: list[ImportProposal],
+    *,
+    model_classified: bool = False,
 ) -> list[ImportEntry]:
     """Read-only, bounded projection of immutable literal fragments, never a reparse."""
     if (
@@ -313,8 +319,8 @@ def project_entries(
         kind: ClaimKind | None = (
             cast(ClaimKind, section) if section not in (None, "headline", "other") else None
         )
-        if section is None and proposal.kind != "other":
-            kind = proposal.kind
+        if model_classified or section is None and proposal.kind != "other":
+            kind = proposal.kind if proposal.kind != "other" else None
         if (
             kind == "project"
             and not _BULLET.match(proposal.quote)
@@ -324,11 +330,13 @@ def project_entries(
             and re.search(r"\s[–—-]\s", proposals[index + 1].quote)
         ):
             kind = None
+        identity_allowed = not model_classified or proposal.kind in ("identity", "other")
         identity_field: IdentityField | None = None
-        if index == 0 and section is None and _name_like(proposal.quote):
+        if identity_allowed and index == 0 and section is None and _name_like(proposal.quote):
             kind, identity_field = "identity", "display_name"
         elif (
-            section == "headline"
+            identity_allowed
+            and section == "headline"
             and section_seen == 0
             and len(proposal.quote) <= MAX_HEADLINE_LENGTH
         ):
@@ -621,6 +629,8 @@ def get_batch(conn: Connection, owner_id: UUID, import_id: UUID) -> dict[str, ob
         "version": int(row["version"]),
         "media_type": row["media_type"],
         "byte_size": int(row["byte_size"]),
+        "structuring_mode": row["structuring_mode"],
+        "structuring_provenance": row["structuring_provenance"],
         "created_at": row["created_at"].isoformat(),
         "source_sha256": row["source_sha256"],
         "text": row["parsed_text"],
@@ -634,6 +644,7 @@ def get_batch(conn: Connection, owner_id: UUID, import_id: UUID) -> dict[str, ob
                     row["parsed_text"],
                     row["source_sha256"],
                     [ImportProposal.model_validate(value) for value in row["proposals"]],
+                    model_classified=row["structuring_mode"] == "model",
                 )
                 if row["parsed_text"] is not None
                 else []
@@ -700,6 +711,7 @@ def _validate_review(
         batch["parsed_text"],
         batch["source_sha256"],
         [ImportProposal.model_validate(value) for value in batch["proposals"]],
+        model_classified=batch["structuring_mode"] == "model",
     )
     sources = {part.source_id: part for entry in entries for part in entry.sources}
     by_sources = {frozenset(part.source_id for part in entry.sources): entry for entry in entries}
@@ -856,11 +868,65 @@ def _validate_review(
     return replacements, unchanged_targets
 
 
+def _import_projection(parsed: ParsedImport) -> dict[str, object]:
+    proposals, _ = extract_proposals(parsed)
+    return import_structuring.projection(
+        parsed.source_sha256,
+        [
+            {"source_id": str(item.proposal_id), "text": item.quote, "kind": item.kind}
+            for item in proposals
+        ],
+    )
+
+
+def _parsed_task(task: Claim) -> ParsedImport:
+    return ParsedImport(
+        cast(str, task.input["parsed_text"]),
+        cast(str, task.input["source_sha256"]),
+        cast(list[str], task.input["parsed_warnings"]),
+    )
+
+
+def check_import_context(conn: Connection, task: Claim) -> None:
+    lock_installation(conn)
+    assert_fence(conn, task)
+    batch = _batch_for_task(conn, task)
+    if (
+        batch["structuring_mode"] != "model"
+        or batch["parsed_text"] is not None
+        or task.input.get("stage") != "structure_import"
+        or task.input.get("prompt_version") != local_model.PROMPT_VERSIONS["structure_import"]
+        or task.input.get("context") != _import_projection(_parsed_task(task))
+    ):
+        raise Problem(409, "stale_import_context")
+
+
+def publish_structured(
+    conn: Connection, task: Claim, labels: dict[str, str], run_id: UUID
+) -> dict[str, object]:
+    stage_parsed(
+        conn,
+        task,
+        _parsed_task(task),
+        elapsed_ms=cast(int, task.input["parse_elapsed_ms"]),
+        labels=labels,
+        provenance={
+            "model_run_id": str(run_id),
+            "route_identity": task.input["route_identity"],
+            "prompt_version": task.input["prompt_version"],
+            "source_sha256": task.input["source_sha256"],
+        },
+    )
+    return {"import_id": task.input["import_id"], "review_required": True}
+
+
 def stage_parsed(
     conn: Connection,
     task: Claim,
     parsed: ParsedImport,
     *,
+    labels: dict[str, str] | None = None,
+    provenance: dict[str, object] | None = None,
     elapsed_ms: int | None = None,
 ) -> None:
     lock_installation(conn)
@@ -870,14 +936,26 @@ def stage_parsed(
     )
     assert_fence(conn, task)
     proposals, warnings = extract_proposals(parsed)
-    project_entries(parsed.text, parsed.source_sha256, proposals)
     batch = _batch_for_task(conn, task)
+    if (batch["structuring_mode"] == "model") != (labels is not None and provenance is not None):
+        raise Problem(409, "import_structuring_mode_mismatch")
+    if labels is not None:
+        proposals = [
+            item.model_copy(update={"kind": cast(ClaimKind, labels[str(item.proposal_id)])})
+            for item in proposals
+        ]
+        warnings.remove("deterministic_literal_extraction")
+        warnings.append("model_source_classification_requires_review")
+    project_entries(
+        parsed.text, parsed.source_sha256, proposals, model_classified=labels is not None
+    )
     if batch["parsed_text"] is not None:
         raise Problem(409, "import_already_staged")
     expiry = conn.execute(text("SELECT clock_timestamp()+interval '7 days'")).scalar_one()
     conn.execute(
         text("""UPDATE bonafides.import_batches SET parsed_text=:source,source_sha256=:sha,
-        proposals=CAST(:proposals AS jsonb),warnings=CAST(:warnings AS jsonb),review_expires_at=:expiry
+        proposals=CAST(:proposals AS jsonb),warnings=CAST(:warnings AS jsonb),review_expires_at=:expiry,
+        structuring_provenance=CAST(:provenance AS jsonb)
         WHERE owner_id=:owner AND id=:id"""),
         {
             "owner": task.owner_id,
@@ -886,12 +964,14 @@ def stage_parsed(
             "sha": parsed.source_sha256,
             "proposals": canonical_json([item.model_dump(mode="json") for item in proposals]),
             "warnings": canonical_json(warnings),
+            "provenance": canonical_json(provenance) if provenance is not None else None,
             "expiry": expiry,
         },
     )
     version = conn.execute(
         text("""UPDATE bonafides.workflow_runs SET state='waiting_for_approval',
         lease_holder=NULL,lease_expires_at=NULL,deadline_at=:expiry,version=version+1,
+        input=input-'model_pending',
         updated_at=clock_timestamp(),last_error_code=NULL WHERE owner_id=:owner AND id=:id RETURNING version"""),
         {"owner": task.owner_id, "id": task.id, "expiry": expiry},
     ).scalar_one()
@@ -1056,6 +1136,7 @@ def merge_reviewed(conn: Connection, task: Claim) -> dict[str, object]:
         batch["parsed_text"],
         batch["source_sha256"],
         [ImportProposal.model_validate(value) for value in batch["proposals"]],
+        model_classified=batch["structuring_mode"] == "model",
     )
     sources = {part.source_id: part for entry in projected for part in entry.sources}
     entries = {frozenset(part.source_id for part in entry.sources): entry for entry in projected}
@@ -1113,6 +1194,9 @@ def merge_reviewed(conn: Connection, task: Claim) -> dict[str, object]:
             "extraction": "deterministic_literal",
             "assertion": "owner_asserted_not_independently_verified",
         }
+        if batch["structuring_mode"] == "model":
+            source_payload["structuring_mode"] = "model"
+            source_payload["structuring_provenance"] = batch["structuring_provenance"]
         if decision.kind == "identity":
             source_payload["identity_field"] = decision.identity_field
         conn.execute(
@@ -1257,6 +1341,11 @@ def execute_import(db: Database, settings: Settings, task: Claim, interrupted: E
     # Approval never resets attempts, provider counters or the total cap.
     if task.attempt > 3:
         raise Problem(422, "import_parse_attempts_exhausted")
+    if batch["structuring_mode"] == "model" and "parsed_text" in task.input:
+        from bonafides.suitability import execute_model
+
+        execute_model(db, settings, task, interrupted)
+        return
     try:
         data = BlobStore(settings.blob_root).read(
             task.owner_id, batch["storage_key"], batch["sha256"], int(batch["byte_length"])
@@ -1267,6 +1356,28 @@ def execute_import(db: Database, settings: Settings, task: Claim, interrupted: E
     parsed = ImportParserClient(settings.import_spool).parse(data, batch["media_type"], interrupted)
     if interrupted.is_set():
         raise ImportFailure("import_interrupted")
+    if batch["structuring_mode"] == "model":
+        from bonafides.suitability import execute_model
+
+        snapshot = {
+            **task.input,
+            "parsed_text": parsed.text,
+            "source_sha256": parsed.source_sha256,
+            "parsed_warnings": parsed.warnings,
+            "context": _import_projection(parsed),
+            "parse_elapsed_ms": int((time.monotonic() - started) * 1000),
+        }
+        with db.transaction() as conn:
+            lock_installation(conn)
+            assert_fence(conn, task)
+            conn.execute(
+                text(
+                    "UPDATE bonafides.workflow_runs SET input=CAST(:input AS jsonb) WHERE owner_id=:owner AND id=:id"
+                ),
+                {"owner": task.owner_id, "id": task.id, "input": canonical_json(snapshot)},
+            )
+        execute_model(db, settings, replace(task, input=snapshot), interrupted)
+        return
     with db.transaction() as conn:
         stage_parsed(conn, task, parsed, elapsed_ms=int((time.monotonic() - started) * 1000))
 
@@ -1280,6 +1391,7 @@ def build_router(db: Database, settings: Settings) -> APIRouter:
         media_type: str,
         if_match: str | None,
         idempotency_key: str | None,
+        structuring_mode: StructuringMode,
     ) -> tuple[int, dict[str, object]]:
         if not data:
             raise Problem(422, "empty_import")
@@ -1309,6 +1421,18 @@ def build_router(db: Database, settings: Settings) -> APIRouter:
                     or counts["active"] >= MAX_ACTIVE_IMPORTS
                 ):
                     raise Problem(422, "import_quota_exceeded")
+                import_id = uuid4()
+                snapshot: dict[str, object] = {"import_id": str(import_id)}
+                if structuring_mode == "model":
+                    from bonafides.suitability import _route
+
+                    route = _route(active, owner_id, settings, "structure_import")
+                    snapshot.update(
+                        stage="structure_import",
+                        route_identity=route.identity(),
+                        prompt_version=local_model.PROMPT_VERSIONS["structure_import"],
+                        model_pending=True,
+                    )
                 try:
                     blob = BlobStore(settings.blob_root).put_bytes(owner_id, data)
                 except (OSError, ValueError) as exc:
@@ -1326,14 +1450,11 @@ def build_router(db: Database, settings: Settings) -> APIRouter:
                         "key": blob.storage_key,
                     },
                 ).scalar_one()
-                import_id = uuid4()
-                workflow_id = enqueue(
-                    active, owner_id, "profile_import", {"import_id": str(import_id)}
-                )
+                workflow_id = enqueue(active, owner_id, "profile_import", snapshot)
                 active.execute(
                     text("""INSERT INTO bonafides.import_batches
-                    (owner_id,id,workflow_run_id,blob_id,media_type,byte_size,profile_version)
-                    SELECT :owner,:id,:workflow,:blob,:media,:size,version FROM bonafides.profiles WHERE owner_id=:owner"""),
+                    (owner_id,id,workflow_run_id,blob_id,media_type,byte_size,profile_version,structuring_mode)
+                    SELECT :owner,:id,:workflow,:blob,:media,:size,version,:mode FROM bonafides.profiles WHERE owner_id=:owner"""),
                     {
                         "owner": owner_id,
                         "id": import_id,
@@ -1341,6 +1462,7 @@ def build_router(db: Database, settings: Settings) -> APIRouter:
                         "blob": blob_id,
                         "media": media_type,
                         "size": len(data),
+                        "mode": structuring_mode,
                     },
                 )
                 return 202, {"import_id": str(import_id), "workflow_id": str(workflow_id)}
@@ -1350,7 +1472,7 @@ def build_router(db: Database, settings: Settings) -> APIRouter:
                 owner_id,
                 "POST",
                 "/imports",
-                {},
+                {"mode": "model"} if structuring_mode == "model" else {},
                 {"source_sha256": digest, "byte_size": len(data), "media_type": media_type},
                 if_match,
                 idempotency_key,
@@ -1363,6 +1485,7 @@ def build_router(db: Database, settings: Settings) -> APIRouter:
     async def create_import(
         request: Request,
         owner: Annotated[Owner, Depends(require_owner)],
+        mode: StructuringMode = "literal",
         if_match: Annotated[str | None, Header()] = None,
         idempotency_key: Annotated[str | None, Header()] = None,
     ) -> JSONResponse:
@@ -1380,7 +1503,7 @@ def build_router(db: Database, settings: Settings) -> APIRouter:
             raise Problem(415, "unsupported_import_media")
         data = await request.body()
         status, result = await run_in_threadpool(
-            upload, owner.id, data, media_type, if_match, idempotency_key
+            upload, owner.id, data, media_type, if_match, idempotency_key, mode
         )
         return JSONResponse(
             result,

@@ -71,7 +71,7 @@ def route_file(tmp_path: Path, data: dict[str, object]) -> Path:
 def fixture_receipt(
     capability_sha256: str, *, stage: str = "generate_documents", **overrides: object
 ) -> dict[str, object]:
-    if stage not in ("generate_documents", "regenerate_section"):
+    if stage not in ("generate_documents", "regenerate_section", "structure_import"):
         return {
             "status": "passed",
             "capability_sha256": capability_sha256,
@@ -93,12 +93,17 @@ def fixture_receipt(
                 "failed_before_check": 0,
             },
             "valid_rate_per_mille": 1000,
-            "usable_statement_rate_per_mille": 1000,
+            **(
+                {"unit_count": 40, "correct_kind_count": 40, "correct_kind_rate_per_mille": 1000}
+                if stage == "structure_import"
+                else {"usable_statement_rate_per_mille": 1000}
+            ),
             "dataset_sha256": hashlib.sha256(b"synthetic-test-only").hexdigest(),
             "case_count": 20,
             "duration_ms": 1,
             **overrides,
-        }
+        },
+        stage=stage,
     )
 
 
@@ -107,7 +112,9 @@ def qualified_route(tmp_path: Path, data: dict[str, object]) -> LocalRoute:
     initial = load_route(route_file(tmp_path, data))
     assert initial is not None
     data["qualification_receipts"] = {
-        stage: fixture_receipt(initial.capability_sha256, stage=stage) for stage in PROMPT_VERSIONS
+        stage: fixture_receipt(initial.capability_sha256, stage=stage)
+        for stage in PROMPT_VERSIONS
+        if stage != "structure_import" or data.get("import_structuring") is True
     }
     result = load_route(route_file(tmp_path, data))
     assert result is not None
@@ -145,7 +152,7 @@ def response_body(**overrides: object) -> bytes:
 
 @contextmanager
 def fixture_server(
-    body: bytes | None = None,
+    body: bytes | list[bytes] | None = None,
     status: int = 200,
     delay: float = 0,
     tls: ssl.SSLContext | None = None,
@@ -170,15 +177,20 @@ def fixture_server(
             requests.append(self.rfile.read(int(self.headers["Content-Length"])))
             if on_inference is not None:
                 on_inference()
+            payload = (
+                result_body[min(len(requests) - 1, len(result_body) - 1)]
+                if isinstance(result_body, list)
+                else result_body
+            )
             time.sleep(delay)
             try:
                 self.send_response(status)
                 self.send_header("Content-Type", "application/json")
-                self.send_header("Content-Length", str(len(result_body)))
+                self.send_header("Content-Length", str(len(payload)))
                 for key, value in (headers or {}).items():
                     self.send_header(key, value)
                 self.end_headers()
-                self.wfile.write(result_body)
+                self.wfile.write(payload)
             except (BrokenPipeError, ConnectionResetError, ssl.SSLError):
                 pass
 
@@ -1379,6 +1391,8 @@ def test_invalid_reviewer_codes_distinguish_cli_and_stored_receipts(
     with pytest.raises(ModelFailure, match="model_route_invalid"):
         fixture_receipt("a" * 64, reviewed_by=reviewer)
     data = route_data("http://127.0.0.1:1")
+    if stage == "structure_import":
+        data["import_structuring"] = True
     qualified_route(tmp_path, data)
     receipts = cast(dict[str, dict[str, object]], data["qualification_receipts"])
     receipts[stage]["reviewed_by"] = reviewer
@@ -1486,3 +1500,87 @@ def test_qualification_execution_is_explicit_and_stage_scoped(tmp_path: Path) ->
         )
         assert result.output == output and len(requests) == 1
         assert not route.qualified_for("regenerate_section")
+
+
+@pytest.mark.parametrize("correction", [None, ["items: invalid_source_classification"]])
+def test_import_full_wire_limit_refuses_before_transport(
+    tmp_path: Path, correction: list[str] | None
+) -> None:
+    from bonafides import import_structuring
+
+    context = import_structuring.projection(
+        "a" * 64,
+        [
+            {
+                "source_id": "11111111-1111-4111-8111-111111111111",
+                "text": "é" * 8000,
+                "kind": "other",
+            }
+        ],
+    )
+    with fixture_server() as (endpoint, requests):
+        route = qualified_route(tmp_path, {**route_data(endpoint), "import_structuring": True})
+        with pytest.raises(ModelFailure, match="model_context_limit"):
+            OllamaClient(route).call(
+                "structure_import",
+                context,
+                PROMPT_VERSIONS["structure_import"],
+                correction=correction,
+            )
+        assert requests == []
+
+
+@pytest.mark.parametrize("qualified", [False, True])
+def test_import_disabled_or_unqualified_route_never_transmits(
+    tmp_path: Path, qualified: bool
+) -> None:
+    with fixture_server() as (endpoint, requests):
+        data = route_data(endpoint)
+        route: LocalRoute | None
+        if qualified:
+            route = qualified_route(tmp_path, data)
+        else:
+            data["import_structuring"] = True
+            route = load_route(route_file(tmp_path, data))
+        assert route is not None
+        with pytest.raises(ModelFailure, match="model_route_unavailable"):
+            OllamaClient(route).call("structure_import", {}, PROMPT_VERSIONS["structure_import"])
+        assert requests == []
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        {"status": "failed"},
+        {"valid_rate_per_mille": 999},
+        {"correct_kind_rate_per_mille": 999},
+        {"case_count": 21},
+        {"unit_count": 19},
+        {"correct_kind_count": True},
+        {"unit_count": 2001},
+    ],
+)
+def test_import_receipt_rejects_inconsistent_measurements(mutation: dict[str, object]) -> None:
+    receipt = fixture_receipt("a" * 64, stage="structure_import")
+    with pytest.raises(ModelFailure, match="model_route_invalid"):
+        qualification_receipt({**receipt, **mutation}, stage="structure_import")
+
+
+def test_import_receipt_cannot_credit_units_from_invalid_cases() -> None:
+    receipt = fixture_receipt("a" * 64, stage="structure_import")
+    receipt.update(
+        {
+            "counts": {
+                "valid_first": 18,
+                "valid_after_correction": 0,
+                "invalid_after_correction": 2,
+                "failed_before_check": 0,
+            },
+            "status": "failed",
+            "valid_rate_per_mille": 900,
+            "correct_kind_count": 39,
+            "correct_kind_rate_per_mille": 975,
+        }
+    )
+    with pytest.raises(ModelFailure, match="model_route_invalid"):
+        qualification_receipt(receipt, stage="structure_import")

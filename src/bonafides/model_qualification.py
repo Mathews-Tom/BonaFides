@@ -18,23 +18,50 @@ from uuid import UUID, uuid4
 from pydantic import ValidationError
 
 from bonafides import document_generation as generation
-from bonafides import documents, local_model, model_calls, model_projections, section_regeneration
+from bonafides import (
+    documents,
+    import_structuring,
+    local_model,
+    model_calls,
+    model_projections,
+    section_regeneration,
+)
 from bonafides.commands import canonical_json
 from bonafides.config import ConfigurationError, read_secret
 from bonafides.fabrication_benchmark import digest
 from bonafides.problems import Problem
 from bonafides.statement_check import check_statements
 
-STAGES = ("generate_documents", "regenerate_section")
+STAGES = local_model.QUALIFICATION_STAGES
 
 
 def load_cases(directory: Path, stage: str) -> tuple[list[dict[str, object]], str]:
+    if stage not in STAGES:
+        raise ValueError("qualification_stage_invalid")
     raw = (directory / f"{stage}.jsonl").read_bytes()
     if len(raw) > 4 * 1024 * 1024:
         raise ValueError("qualification_dataset_too_large")
     cases: list[dict[str, object]] = []
     for line in raw.splitlines():
         case = json.loads(line)
+        if stage == "structure_import":
+            if not isinstance(case, dict) or set(case) != {
+                "id",
+                "source_sha256",
+                "units",
+                "expected",
+            }:
+                raise ValueError("qualification_case_invalid")
+            if not isinstance(case["id"], str) or not case["id"].strip():
+                raise ValueError("qualification_case_invalid")
+            context = projection(case, stage)
+            expected = import_structuring.checked_units(
+                {"schema_version": "1", "stage": stage, "items": case["expected"]}, context
+            )
+            if not expected:
+                raise ValueError("qualification_case_invalid")
+            cases.append(case)
+            continue
         if not isinstance(case, dict) or set(case) != {
             "id",
             "posting",
@@ -57,10 +84,28 @@ def load_cases(directory: Path, stage: str) -> tuple[list[dict[str, object]], st
         cases.append(case)
     if not 20 <= len(cases) <= 1000 or len({str(case["id"]) for case in cases}) != len(cases):
         raise ValueError("qualification_case_count_invalid")
+    if stage == "structure_import":
+        if len(cases) != 20:
+            raise ValueError("qualification_case_count_invalid")
+        distinct = {
+            canonical_json(
+                [
+                    {"text": item["text"], "kind": item["kind"]}
+                    for item in cast(list[dict[str, object]], case["units"])
+                ]
+            )
+            for case in cases
+        }
+        if len(distinct) != len(cases):
+            raise ValueError("qualification_cases_not_distinct")
     return cases, digest({f"{stage}.jsonl": raw})
 
 
 def projection(case: dict[str, object], stage: str) -> dict[str, object]:
+    if stage == "structure_import":
+        return import_structuring.projection(
+            cast(str, case["source_sha256"]), cast(list[dict[str, object]], case["units"])
+        )
     args = (
         cast(dict[str, object], case["posting"]),
         cast(list[dict[str, object]], case["requirements"]),
@@ -139,6 +184,9 @@ def qualify(
     dataset_sha256: str,
     reviewed_by: str,
 ) -> dict[str, object]:
+    local_model.validate_reviewer(reviewed_by)
+    if stage == "structure_import" and len(cases) != 20:
+        raise ValueError("qualification_case_count_invalid")
     client = local_model.OllamaClient(route, qualification_stage=stage)
     interrupted = Event()
     counts = dict.fromkeys(
@@ -150,32 +198,44 @@ def qualify(
         ),
         0,
     )
+    unit_count = correct_kind_count = 0
     factual = usable = 0
     started = monotonic()
     for case in cases:
         context = projection(case, stage)
-        posting = cast(dict[str, object], context["posting"])
-        plan = {
-            "context": context,
-            "facts": case["facts"],
-            "frame": {"role": posting["title"], "organization": posting["organization"]},
-        }
-        target = cast(dict[str, object], case["target"])
-        try:
-            bodies, _, corrected = model_calls.checked_call(
-                partial(
-                    client.call, stage, context, local_model.PROMPT_VERSIONS[stage], interrupted
-                ),
-                partial(
-                    checked_bodies,
-                    stage=stage,
-                    plan=plan,
-                    target=target,
-                    base_body=documents.parse_body(case["base_body"])
-                    if stage == "regenerate_section"
-                    else None,
-                ),
+        if stage == "structure_import":
+            expected = import_structuring.checked_units(
+                {"schema_version": "1", "stage": stage, "items": case["expected"]}, context
             )
+            unit_count += len(expected)
+            validate = partial(import_structuring.checked_units, context=context)
+        else:
+            posting = cast(dict[str, object], context["posting"])
+            plan = {
+                "context": context,
+                "facts": case["facts"],
+                "frame": {"role": posting["title"], "organization": posting["organization"]},
+            }
+            target = cast(dict[str, object], case["target"])
+        try:
+            call = partial(
+                client.call, stage, context, local_model.PROMPT_VERSIONS[stage], interrupted
+            )
+            if stage == "structure_import":
+                kinds, _, corrected = model_calls.checked_call(call, validate)
+            else:
+                bodies, _, corrected = model_calls.checked_call(
+                    call,
+                    partial(
+                        checked_bodies,
+                        stage=stage,
+                        plan=plan,
+                        target=target,
+                        base_body=documents.parse_body(case["base_body"])
+                        if stage == "regenerate_section"
+                        else None,
+                    ),
+                )
         except local_model.ModelFailure as exc:
             if exc.code not in {
                 "model_incomplete",
@@ -183,7 +243,7 @@ def qualify(
                 "model_response_limit",
                 "model_usage_limit",
                 "model_refused",
-            }:
+            } and not (stage == "structure_import" and exc.code == "model_output_limit"):
                 raise
             counts["failed_before_check"] += 1
             continue
@@ -193,23 +253,41 @@ def qualify(
             counts["invalid_after_correction"] += 1
             continue
         counts["valid_after_correction" if corrected else "valid_first"] += 1
-        total, supported = statement_counts(bodies, plan)
-        factual += total
-        usable += supported
+        if stage == "structure_import":
+            correct_kind_count += sum(kind == expected[key] for key, kind in kinds.items())
+        else:
+            total, supported = statement_counts(bodies, plan)
+            factual += total
+            usable += supported
     valid = counts["valid_first"] + counts["valid_after_correction"]
+    metrics: dict[str, object] = (
+        {
+            "unit_count": unit_count,
+            "correct_kind_count": correct_kind_count,
+            "correct_kind_rate_per_mille": correct_kind_count * 1000 // unit_count,
+        }
+        if stage == "structure_import"
+        else {"usable_statement_rate_per_mille": usable * 1000 // factual if factual else 0}
+    )
     return local_model.qualification_receipt(
         {
-            "status": "passed" if valid * 100 >= len(cases) * 95 else "failed",
+            "status": "passed"
+            if (
+                valid * 100 >= len(cases) * 95
+                and (stage != "structure_import" or correct_kind_count * 100 >= unit_count * 95)
+            )
+            else "failed",
             "capability_sha256": route.capability_sha256,
             "reviewed_by": reviewed_by,
             "reviewed_at": datetime.now(UTC).isoformat(),
             "counts": counts,
             "valid_rate_per_mille": valid * 1000 // len(cases),
-            "usable_statement_rate_per_mille": usable * 1000 // factual if factual else 0,
+            **metrics,
             "dataset_sha256": dataset_sha256,
             "case_count": len(cases),
             "duration_ms": int((monotonic() - started) * 1000),
-        }
+        },
+        stage=stage,
     )
 
 

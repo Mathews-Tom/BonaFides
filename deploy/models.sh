@@ -8,13 +8,14 @@ failure_status=2
 dir=$script_dir
 [ $# -gt 0 ] || fail "usage: models.sh attach|qualify|remove [--dir DIR] [options]"
 operation=$1; shift
-model=; license=; authorized=no; stage=; reviewer=
+model=; license=; authorized=no; stage=; reviewer=; import_structuring=
 while [ $# -gt 0 ]; do
   case $1 in
     --dir) [ $# -ge 2 ] || fail "--dir requires a directory"; dir=$2; shift 2 ;;
     --model) [ $# -ge 2 ] || fail "--model requires a name"; model=$2; shift 2 ;;
     --model-license) [ $# -ge 2 ] || fail "--model-license requires a license"; license=$2; shift 2 ;;
     --authorize-local-model) authorized=yes; shift ;;
+    --import-structuring) import_structuring=--import-structuring; shift ;;
     --stage) [ $# -ge 2 ] || fail "--stage requires a stage"; stage=$2; shift 2 ;;
     --reviewed-by) [ $# -ge 2 ] || fail "--reviewed-by requires a name"; reviewer=$2; shift 2 ;;
     *) fail "unknown option: $1" ;;
@@ -25,11 +26,11 @@ case $operation in
     [ -n "$model" ] && [ -n "$license" ] && [ "$authorized" = yes ] || fail "attach requires --model, --model-license and --authorize-local-model"
     [ -z "$stage$reviewer" ] || fail "stage/reviewer belong to qualify" ;;
   qualify)
-    case $stage in generate_documents|regenerate_section) ;; *) fail "choose generate_documents or regenerate_section" ;; esac
+    case $stage in generate_documents|regenerate_section|structure_import) ;; *) fail "choose generate_documents, regenerate_section or structure_import" ;; esac
     [ -n "$reviewer" ] || fail "qualify requires --reviewed-by"
-    [ -z "$model$license" ] && [ "$authorized" = no ] || fail "model/authorization belong to attach" ;;
+    [ -z "$model$license$import_structuring" ] && [ "$authorized" = no ] || fail "model/authorization/import-structuring belong to attach" ;;
   remove)
-    [ -z "$model$license$stage$reviewer" ] && [ "$authorized" = no ] || fail "remove accepts only --dir" ;;
+    [ -z "$model$license$stage$reviewer$import_structuring" ] && [ "$authorized" = no ] || fail "remove accepts only --dir" ;;
   *) fail "choose attach, qualify or remove" ;;
 esac
 clean_environment
@@ -89,7 +90,7 @@ if [ "$operation" != remove ]; then
   sh "$dir/start.sh" >/dev/null || fail "installation could not start; result was not applied"
   if [ "$operation" = attach ]; then
     run_model -m bonafides.installed_model attach --route /work/route.json \
-      --model "$model" --model-license "$license" --authorize-local-model || exit $?
+      --model "$model" --model-license "$license" --authorize-local-model ${import_structuring:+"$import_structuring"} || exit $?
   else
     run_model -m bonafides models qualify --route /work/route.json --stage "$stage" \
       --dataset /app/qualification --reviewed-by "$reviewer" || result=$?

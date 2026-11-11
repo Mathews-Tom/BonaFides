@@ -15,6 +15,7 @@ from pathlib import Path
 from threading import Event, Thread, Timer
 
 from bonafides.local_model import (
+    QUALIFICATION_STAGES,
     LocalRoute,
     ModelFailure,
     _decode,
@@ -84,7 +85,14 @@ def _metadata(route: LocalRoute, path: str) -> dict[str, object]:
         connection.close()
 
 
-def attach(route_path: Path, model: str, model_license: str, *, authorized: bool) -> None:
+def attach(
+    route_path: Path,
+    model: str,
+    model_license: str,
+    *,
+    authorized: bool,
+    import_structuring: bool = False,
+) -> None:
     """Publish a validated, unqualified route without replacing any existing entry."""
     if not authorized:
         raise ModelFailure("local_model_authorization_required")
@@ -113,6 +121,8 @@ def attach(route_path: Path, model: str, model_license: str, *, authorized: bool
         "framing_token_overhead": 2048,
         "qualification_receipts": {},
     }
+    if import_structuring:
+        data["import_structuring"] = True
     # A private staging file lets the existing validator enforce the entire schema,
     # including model/tag/license policy, before any metadata request or publication.
     directory = os.open(route_path.parent, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
@@ -191,18 +201,21 @@ def main(argv: list[str] | None = None) -> int:
     command.add_argument("--model", required=True)
     command.add_argument("--model-license", required=True)
     command.add_argument("--authorize-local-model", action="store_true")
+    command.add_argument("--import-structuring", action="store_true")
     check = commands.add_parser("verify-result", help="verify a completed qualification result")
     check.add_argument("--route", required=True, type=Path)
     check.add_argument("--original", required=True, type=Path)
-    check.add_argument(
-        "--stage", required=True, choices=("generate_documents", "regenerate_section")
-    )
+    check.add_argument("--stage", required=True, choices=QUALIFICATION_STAGES)
     check.add_argument("--result", required=True, type=int, choices=(0, 1))
     args = parser.parse_args(argv)
     try:
         if args.command == "attach":
             attach(
-                args.route, args.model, args.model_license, authorized=args.authorize_local_model
+                args.route,
+                args.model,
+                args.model_license,
+                authorized=args.authorize_local_model,
+                import_structuring=args.import_structuring,
             )
         else:
             verify_result(args.route, args.original, args.stage, args.result)
