@@ -16,6 +16,7 @@ Use the theme switch in the top bar: **System theme** follows your computer's se
 |---|---|
 | **Your workspace, your authority** | A summary of what BonaFides will and won't do. |
 | **Owner account** | Find your **Owner account ID** and select **Copy owner account ID** before moving an export to another installation. |
+| **Operations** | Inspect version/schema/database health and optionally check official release notices. See [Check health and release notices](manage-installation.md#check-health-and-release-notices). |
 | **Privacy, backup and portable data** | Export your data, move it to another installation, or delete it. See [Your data and privacy](your-data.md). |
 | **Advanced diagnostic tools** | Tools for developers. You don't need them. |
 | **Confirm owner identity** | Re-enter your password before a sensitive action (see below). |

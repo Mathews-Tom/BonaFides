@@ -43,6 +43,7 @@
     "tests/test_evidence_capture_sources.py",
     "tests/test_evidence_provenance.py",
     "tests/test_execution_guard.py",
+    "tests/test_operations.py",
     "tests/test_portable_previews.py",
     "tests/test_provider_execution.py",
     "tests/test_sources.py",

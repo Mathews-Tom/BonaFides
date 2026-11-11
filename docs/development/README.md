@@ -34,9 +34,9 @@ BonaFides is a self-hosted career workspace in development. The implemented **Ar
 
 - Same-origin React/TypeScript UI; Python/FastAPI/Pydantic API; PostgreSQL 18 durable queue/outbox; private blobs.
 - API and worker use a restricted runtime role. A separate one-shot migrator owns DDL. PostgreSQL is not published to the host by the ordinary Compose file.
-- A credential-free fixed TCP ingress publishes the API on loopback only; API/worker/PostgreSQL have no general outbound network. The worker also joins an internal source network, reaching a separate fixed-route Greenhouse/GitHub transport relay on an outbound bridge. Only that relay can read the optional GitHub token file; it has no database network, keyring, blobs, work spools or host publication. Separate renderer and import-parser services have **no network, database, keyring or blob mount** and read-only roots; untrusted parsing never runs in the API or worker.
+- A credential-free fixed TCP ingress publishes the API on loopback only; API/worker/PostgreSQL have no general outbound network. The API and worker reach the fixed-route Greenhouse/GitHub/release-metadata transport relay on internal source networks; only the relay joins an outbound bridge. Only that relay can read the optional GitHub token file; it has no database network, keyring, blobs, work spools or host publication. Separate renderer and import-parser services have **no network, database, keyring or blob mount** and read-only roots; untrusted parsing never runs in the API or worker.
 - Secure `__Host-` session cookies, exact Origin/CSRF checks, explicit review of the current document revision, and owner-authorized artifact access are part of the proof.
-- No mail/calendar adapters, arbitrary website fetching, autonomous employer actions, job submissions, remote TLS deployment or multi-user support are included. The opt-in local-model adapter requires separate explicit endpoint/model/data/cap authorization and genuine qualification; no hosted fallback is provided. The source HTTP listener permits only the official configured-board Greenhouse list GET and `GET /v1/github/{owner}/{repository}/commits?per_page=20` for enabled repositories allowlisted in the private capture configuration; manual paste never fetches its reference URL.
+- No mail/calendar adapters, arbitrary website fetching, autonomous employer actions, job submissions, remote TLS deployment or multi-user support are included. The opt-in local-model adapter requires separate explicit endpoint/model/data/cap authorization and genuine qualification; no hosted fallback is provided. The source HTTP listener admits the official configured-board Greenhouse list GET, `GET /v1/github/{owner}/{repository}/commits?per_page=20` for enabled allowlisted repositories, and `GET /v1/releases/latest` for this repository's official release metadata. Manual paste never fetches its reference URL.
 
 ## Contents
 
@@ -245,6 +245,15 @@ Do not substitute your ordinary installation's project name or volumes into thes
 ## Install, images and releases
 
 How the user-facing install scripts work underneath, how images are built and labelled, and what blocks a release.
+
+### Installation health and release notices
+
+Settings **Operations** reads `GET /api/v1/operations`: application version, schema and database readiness, not model/PDF/mail/proxy qualification. Update controls use authenticated, CSRF-protected `/operations/updates` endpoints. Release checks default disabled. Opt-in permits only the fixed relay's official `api.github.com/repos/Mathews-Tom/BonaFides/releases/latest` HTTPS request, with a shared ten-second deadline, bounded response, TLS/address validation and no redirects or caller-selected destination. It sends no professional data, credentials or installation identifier; the remote host still observes network metadata.
+
+Automatic checks are considered on first Settings admission and reserved at most once per UTC day before I/O. Manual checks are explicit. Concurrent checks and changed preference revisions cannot publish stale responses. Stable version/tag and exact official release URL are validated; missing releases, failures and a current version remain distinct. Failed checks retain earlier recognized release information without claiming a new successful result. Dismissal binds the exact displayed version. Nothing downloads or installs software.
+
+The additive installation-local update state is not part of frozen career-workspace formats; ordinary workspace replacement leaves these preferences alone. Native recovery disables opt-in and clears in-flight authority before reopening the isolated target. Profile/evidence reclassification, archive and historical restore do not alter release metadata or its checks, and checks never rewrite career revisions, document pins, approval inputs or model-run history.
+
 
 ### Noninteractive application installation
 

@@ -313,6 +313,15 @@ export interface RequirementsView {
   latest_assessment: Assessment | null;
 }
 export interface SuitabilityAccepted { workflow_id: string; posting_id: string }
+export interface UpdateState {
+  enabled: boolean; version: number; last_checked_at: string | null;
+  outcome: 'never' | 'checking' | 'newer' | 'current' | 'no_release' | 'unknown';
+  latest_version: string | null; latest_url: string | null; dismissed_version: string | null;
+  notice: boolean; error_code: string | null;
+}
+export interface OperationsHealth {
+  version: string; schema_version: number; database: 'ready' | 'unavailable'; updates: UpdateState;
+}
 export class ApiError extends Error {
   constructor(readonly status: number, readonly code: string, readonly fields: FieldError[] = [], readonly retryAfterSeconds?: number, readonly detail?: string) { super(code); }
 }
@@ -327,6 +336,18 @@ export class Api {
     if (version !== undefined) headers['If-Match'] = `"${version}"`;
     if (idempotent) headers['Idempotency-Key'] = typeof idempotent === 'string' ? idempotent : crypto.randomUUID();
     return this.send<T>(path, { method, headers, ...(signal ? { signal } : {}), ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
+  }
+  getOperations(signal?: AbortSignal): Promise<OperationsHealth> {
+    return this.request('/operations', 'GET', undefined, undefined, false, signal);
+  }
+  setUpdatePreference(enabled: boolean, version: number, signal?: AbortSignal): Promise<UpdateState> {
+    return this.request('/operations/updates', 'PUT', { enabled, version }, undefined, false, signal);
+  }
+  checkUpdates(automatic: boolean, signal?: AbortSignal): Promise<UpdateState> {
+    return this.request('/operations/updates/check', 'POST', { automatic }, undefined, false, signal);
+  }
+  dismissUpdate(version: string, signal?: AbortSignal): Promise<UpdateState> {
+    return this.request('/operations/updates/dismiss', 'POST', { version }, undefined, false, signal);
   }
   async previewDocumentArchive(signal?: AbortSignal): Promise<DocumentArchivePreview> {
     return this.request<DocumentArchivePreview>('/document-archives/preview', 'GET', undefined, undefined, false, signal);

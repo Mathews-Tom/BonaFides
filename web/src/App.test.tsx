@@ -34,6 +34,7 @@ afterEach(() => { window.history.replaceState(null, '', '/'); });
 function mockRequest(api: Api, handler: (path: string, method: string, body?: unknown) => Promise<unknown>, baseDocument: DocumentRecord | null = null, applications: ApplicationDetail[] = [], maintenance: () => Promise<InstallationStatus> = async () => installation) {
   return vi.spyOn(api, 'request').mockImplementation(async <T,>(path: string, method = 'GET', body?: unknown) => {
     if (method === 'GET' && path === '/maintenance') return await maintenance() as T;
+    if (method === 'GET' && path === '/operations') return { version: '0.1.0', schema_version: 5, database: 'ready', updates: { enabled: false, version: 1, last_checked_at: null, outcome: 'never', latest_version: null, latest_url: null, dismissed_version: null, notice: false, error_code: null } } as T;
     if (method === 'GET' && path === '/document-templates') return { items: [{ version: 'bonafides-evidence-v1', label: 'Evidence', language: 'en', paper: 'A4' }, { version: 'bonafides-compact-v1', label: 'Compact', language: 'en', paper: 'A4' }] } as T;
     if (method === 'GET' && path === '/document-defaults') return { version: 1, template_version: 'bonafides-evidence-v1', tone: 'professional', language: 'en', revision_retention: 'until_owner_erasure', task_input_retention_seconds: 86400, temporary_export_retention_seconds: 86400, extension_supported: false } as T;
     if (method === 'GET' && path === '/profile/base-resume') { if (baseDocument) return baseDocument as T; throw new ApiError(404, 'base_resume_not_found'); }

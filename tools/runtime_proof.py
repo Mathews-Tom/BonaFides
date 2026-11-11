@@ -411,7 +411,7 @@ class Proof:
             networks = set(info["NetworkSettings"]["Networks"])
             if service in ("api", "worker", "db"):
                 expected_networks = {self.project + "_private"}
-                if service == "worker":
+                if service in ("api", "worker"):
                     expected_networks.add(self.project + "_sources")
                 require(networks == expected_networks, "private_service_network_escape")
                 require(not host.get("PortBindings"), "private_service_host_publication")

@@ -483,6 +483,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         documents,
         evidence_capture,
         imports,
+        operations,
         portable_exports,
         portable_previews,
         sources,
@@ -495,6 +496,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(approvals.build_router(db))
     app.include_router(installation_control.build_router(db))
     app.include_router(backup_configuration.build_router(db, resolved))
+    app.include_router(operations.build_router(db))
     app.include_router(portable_exports.build_router(db, resolved))
     app.include_router(portable_previews.build_router(db, resolved))
     app.include_router(documents.build_router(db, resolved))

@@ -243,6 +243,12 @@ def _revoke_restored_authority(conn: Connection, namespace: UUID, operation: UUI
     conn.execute(
         text("UPDATE bonafides.sessions SET revoked_at=clock_timestamp() WHERE revoked_at IS NULL")
     )
+    conn.execute(
+        text("""UPDATE bonafides.installation_updates SET enabled=false,version=version+1,
+        outcome=CASE WHEN lease_id IS NOT NULL THEN 'unknown' ELSE outcome END,
+        error_code=CASE WHEN lease_id IS NOT NULL THEN 'source_cancelled' ELSE error_code END,
+        lease_id=NULL,lease_until=NULL""")
+    )
     conn.execute(text("DELETE FROM bonafides.auth_challenges"))
     conn.execute(
         text("""WITH revoked AS (
