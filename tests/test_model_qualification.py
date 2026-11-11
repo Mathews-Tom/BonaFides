@@ -3,20 +3,23 @@
 
 from __future__ import annotations
 
+import copy
 import json
 from pathlib import Path
 from typing import cast
+from uuid import UUID
 
 import pytest
 from test_local_model import (
     fixture_receipt,
     fixture_server,
     qualified_route,
+    response_body,
     route_data,
     route_file,
 )
 
-from bonafides import documents, local_model, model_calls
+from bonafides import documents, import_structuring, local_model, model_calls
 from bonafides import model_qualification as qualification
 from bonafides.commands import canonical_json
 from bonafides.config import ConfigurationError, read_secret
@@ -46,7 +49,7 @@ def output(case: dict[str, object], stage: str) -> dict[str, object]:
     }
 
 
-@pytest.mark.parametrize("stage", qualification.STAGES)
+@pytest.mark.parametrize("stage", ("generate_documents", "regenerate_section"))
 @pytest.mark.parametrize(("valid", "expected"), [(19, "passed"), (18, "failed")])
 def test_qualification_counts_threshold_and_checker(
     tmp_path: Path,
@@ -144,7 +147,7 @@ def test_atomic_write_preserves_other_stage_and_refuses_edits(tmp_path: Path) ->
     original = read_secret(path, "route")
     qualification.write_receipt(path, original, "generate_documents", receipt)
     assert json.loads(path.read_text())["qualification_receipts"] == dict.fromkeys(
-        qualification.STAGES, receipt
+        ("generate_documents", "regenerate_section"), receipt
     )
     assert path.stat().st_mode & 0o777 == 0o600
     with pytest.raises(ValueError, match="qualification_route_changed"):
@@ -337,3 +340,255 @@ def test_missing_section_target_is_rejected_before_inference(
     )
     assert "qualification_target_missing" in capsys.readouterr().err
     assert route.read_bytes() == original
+
+
+def _import_response(items: object) -> bytes:
+    output = {"schema_version": "1", "stage": "structure_import", "items": items}
+    return response_body(message={"role": "assistant", "content": canonical_json(output)})
+
+
+def _qualify_import(path: Path) -> int:
+    return qualification.main(
+        [
+            "qualify",
+            "--route",
+            str(path),
+            "--stage",
+            "structure_import",
+            "--dataset",
+            str(DATASET),
+            "--reviewed-by",
+            "synthetic-only",
+        ]
+    )
+
+
+def test_import_projection_preserves_literal_units_and_enforces_byte_limit() -> None:
+    cases, _ = qualification.load_cases(DATASET, "structure_import")
+    case = cases[0]
+    units = cast(list[dict[str, object]], copy.deepcopy(case["units"]))
+    units[0]["text"] = "é" * 7999
+    units[1]["text"] = "é"
+    context = import_structuring.projection(str(case["source_sha256"]), units)
+    assert context["units"] == units and set(context) == {"source_sha256", "units"}
+    units[1]["text"] = "éé"
+    with pytest.raises(local_model.ModelFailure, match="import_structuring_input_limit"):
+        import_structuring.projection(str(case["source_sha256"]), units)
+    with pytest.raises(local_model.ModelFailure, match="import_structuring_projection_unavailable"):
+        import_structuring.projection(str(case["source_sha256"]), [])
+    units[1]["text"] = "literal"
+    units[1]["email"] = "private@example.invalid"
+    with pytest.raises(local_model.ModelFailure, match="model_context_invalid"):
+        import_structuring.projection(str(case["source_sha256"]), units)
+
+
+@pytest.mark.parametrize(
+    "mutation", ("foreign", "duplicate", "omitted", "kind", "invented_text", "metadata")
+)
+def test_import_checker_rejects_invention_and_incomplete_classification(mutation: str) -> None:
+    cases, _ = qualification.load_cases(DATASET, "structure_import")
+    context = qualification.projection(cases[0], "structure_import")
+    items = cast(list[dict[str, object]], copy.deepcopy(cases[0]["expected"]))
+    result: dict[str, object] = {"schema_version": "1", "stage": "structure_import", "items": items}
+    assert import_structuring.checked_units(result, context) == {
+        str(item["source_id"]): str(item["kind"]) for item in items
+    }
+    if mutation == "foreign":
+        items[0]["source_id"] = "00000000-0000-4000-8000-000000000000"
+    elif mutation == "duplicate":
+        items[1]["source_id"] = items[0]["source_id"]
+    elif mutation == "omitted":
+        items.pop()
+    elif mutation == "kind":
+        items[0]["kind"] = "invented employer"
+    elif mutation == "invented_text":
+        items[0]["text"] = "Fabricated a new qualification."
+    else:
+        result["warnings"] = ["Owner data must never leak through errors."]
+    with pytest.raises(model_calls.OutputMismatch) as error:
+        import_structuring.checked_units(result, context)
+    assert error.value.summary == ["items: invalid_source_classification"]
+
+
+def test_import_opt_in_preserves_disabled_capability_and_never_carries_receipts(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    data = route_data("http://127.0.0.1:11434")
+    old = qualified_route(tmp_path, data)
+    with monkeypatch.context() as patch:
+        patch.setattr(
+            local_model,
+            "PROMPT_VERSIONS",
+            {
+                key: value
+                for key, value in local_model.PROMPT_VERSIONS.items()
+                if key != "structure_import"
+            },
+        )
+        unchanged = local_model.load_route(route_file(tmp_path, data))
+        assert unchanged is not None and unchanged.identity() == old.identity()
+    data["import_structuring"] = False
+    disabled = local_model.load_route(route_file(tmp_path, data))
+    assert disabled is not None and disabled.identity() == old.identity()
+    assert disabled.receipt_details() == old.receipt_details()
+    assert disabled._receipts_json == old._receipts_json
+    with pytest.raises(local_model.ModelFailure, match="model_route_unavailable"):
+        local_model.OllamaClient(disabled, qualification_stage="structure_import")
+    data["import_structuring"] = True
+    enabled = local_model.load_route(route_file(tmp_path, data))
+    assert enabled is not None and enabled.capability_sha256 != old.capability_sha256
+    assert not any(enabled.qualified_for(stage) for stage in local_model.PROMPT_VERSIONS)
+    receipts = cast(dict[str, object], data["qualification_receipts"])
+    receipts["generate_documents"] = fixture_receipt(enabled.capability_sha256)
+    enabled = local_model.load_route(route_file(tmp_path, data))
+    assert enabled is not None and enabled.qualified_for("generate_documents")
+    assert not enabled.qualified_for("structure_import")
+    receipts["structure_import"] = fixture_receipt(
+        enabled.capability_sha256, stage="extract_posting"
+    )
+    with pytest.raises(local_model.ModelFailure, match="model_route_invalid"):
+        local_model.load_route(route_file(tmp_path, data))
+    receipts["structure_import"] = fixture_receipt(
+        enabled.capability_sha256, stage="structure_import"
+    )
+    qualified = local_model.load_route(route_file(tmp_path, data))
+    assert qualified is not None and qualified.qualified_for("structure_import")
+    assert qualified.qualified_for("generate_documents")
+    assert not qualified.qualified_for("regenerate_section")
+    data["import_structuring"] = False
+    disabled = local_model.load_route(route_file(tmp_path, data))
+    assert disabled is not None and not disabled.qualified_for("structure_import")
+
+
+@pytest.mark.parametrize("flag", (None, 0, 1, "true", [], {}))
+def test_import_route_flag_is_strict_boolean(tmp_path: Path, flag: object) -> None:
+    data = {**route_data("http://127.0.0.1:11434"), "import_structuring": flag}
+    with pytest.raises(local_model.ModelFailure, match="model_route_invalid"):
+        local_model.load_route(route_file(tmp_path, data))
+
+
+@pytest.mark.parametrize("wrong_kind", (False, True))
+def test_import_qualification_measures_classification_and_one_correction(
+    tmp_path: Path, wrong_kind: bool
+) -> None:
+    cases, sha = qualification.load_cases(DATASET, "structure_import")
+    responses: list[bytes] = []
+    for case in cases:
+        items = cast(list[dict[str, object]], copy.deepcopy(case["expected"]))
+        if wrong_kind:
+            for item in items:
+                item["kind"] = "other" if item["kind"] == "identity" else "identity"
+        responses.extend(
+            [response_body(message={"role": "assistant", "content": "{}"}), _import_response(items)]
+        )
+    with fixture_server(body=responses) as (endpoint, requests):
+        route = local_model.load_route(
+            route_file(tmp_path, {**route_data(endpoint), "import_structuring": True})
+        )
+        assert route is not None
+        receipt = qualification.qualify(route, "structure_import", cases, sha, "synthetic-only")
+        assert len(requests) == 40
+        first, corrected = (json.loads(request) for request in requests[:2])
+        assert first["format"] == corrected["format"]
+        assert len(first["messages"]) == 2 and len(corrected["messages"]) == 3
+        assert first["messages"] == corrected["messages"][:2]
+    assert receipt["counts"] == {
+        "valid_first": 0,
+        "valid_after_correction": 20,
+        "invalid_after_correction": 0,
+        "failed_before_check": 0,
+    }
+    assert receipt["unit_count"] == 40
+    assert receipt["correct_kind_count"] == (0 if wrong_kind else 40)
+    assert receipt["correct_kind_rate_per_mille"] == (0 if wrong_kind else 1000)
+    assert receipt["status"] == ("failed" if wrong_kind else "passed")
+    assert "usable_statement_rate_per_mille" not in receipt
+
+
+def test_import_measured_cli_uses_real_transport_and_checked_source_ids(
+    tmp_path: Path,
+) -> None:
+    cases, _ = qualification.load_cases(DATASET, "structure_import")
+    body = _import_response(cases[0]["expected"])
+    with fixture_server(body=body) as (endpoint, requests):
+        path = route_file(tmp_path, {**route_data(endpoint), "import_structuring": True})
+        assert _qualify_import(path) == 1
+        route = local_model.load_route(path)
+        assert route is not None and not route.qualified_for("structure_import")
+        receipt = json.loads(path.read_text())["qualification_receipts"]["structure_import"]
+        assert receipt["counts"]["valid_first"] == 1
+        assert receipt["counts"]["invalid_after_correction"] == 19
+        assert len(requests) == 39
+        assert json.loads(
+            json.loads(requests[0])["messages"][1]["content"]
+        ) == qualification.projection(cases[0], "structure_import")
+
+
+@pytest.mark.parametrize(
+    ("valid", "wrong_units", "status"),
+    [
+        (20, 2, "passed"),
+        (20, 3, "failed"),
+        (19, 0, "passed"),
+        (18, 0, "failed"),
+    ],
+)
+def test_import_cli_measures_both_independent_thresholds(
+    tmp_path: Path, valid: int, wrong_units: int, status: str
+) -> None:
+    cases, _ = qualification.load_cases(DATASET, "structure_import")
+    responses: list[bytes] = []
+    remaining = wrong_units
+    for index, case in enumerate(cases):
+        if index >= valid:
+            responses.extend([response_body(message={"role": "assistant", "content": "{}"})] * 2)
+            continue
+        items = cast(list[dict[str, object]], copy.deepcopy(case["expected"]))
+        for item in items:
+            if remaining:
+                item["kind"] = "identity" if item["kind"] != "identity" else "other"
+                remaining -= 1
+        responses.append(_import_response(items))
+    with fixture_server(body=responses) as (endpoint, requests):
+        path = route_file(tmp_path, {**route_data(endpoint), "import_structuring": True})
+        result = _qualify_import(path)
+        assert result == (0 if status == "passed" else 1)
+        assert len(requests) == valid + (20 - valid) * 2
+        receipt = json.loads(path.read_text())["qualification_receipts"]["structure_import"]
+        assert receipt["status"] == status
+        assert receipt["valid_rate_per_mille"] == valid * 50
+        assert receipt["correct_kind_count"] == valid * 2 - wrong_units
+        assert receipt["correct_kind_rate_per_mille"] == (valid * 2 - wrong_units) * 25
+        assert receipt == local_model.qualification_receipt(receipt, stage="structure_import")
+        route = local_model.load_route(path)
+        assert route is not None and route.qualified_for("structure_import") == (status == "passed")
+        assert not route.qualified_for("generate_documents")
+
+
+@pytest.mark.parametrize("count", [19, 21])
+def test_import_dataset_requires_exactly_twenty_cases(tmp_path: Path, count: int) -> None:
+    cases, _ = qualification.load_cases(DATASET, "structure_import")
+    if count == 19:
+        cases.pop()
+    else:
+        cases.append({**cases[0], "id": "extra-case"})
+    (tmp_path / "structure_import.jsonl").write_text(
+        "\n".join(canonical_json(case) for case in cases) + "\n"
+    )
+    with pytest.raises(ValueError, match="qualification_case_count_invalid"):
+        qualification.load_cases(tmp_path, "structure_import")
+
+
+def test_import_projection_is_a_complete_detached_snapshot() -> None:
+    cases, _ = qualification.load_cases(DATASET, "structure_import")
+    units = cast(list[dict[str, object]], copy.deepcopy(cases[0]["units"]))
+    context = import_structuring.projection(str(cases[0]["source_sha256"]), units)
+    before = canonical_json(context)
+    units[0]["text"] = "changed after projection"
+    assert canonical_json(context) == before
+    units = [
+        {"source_id": str(UUID(int=index + 1)), "text": "x", "kind": "other"}
+        for index in range(101)
+    ]
+    with pytest.raises(local_model.ModelFailure, match="import_structuring_input_limit"):
+        import_structuring.projection("a" * 64, units)

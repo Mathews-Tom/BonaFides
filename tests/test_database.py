@@ -168,7 +168,7 @@ def test_checksum_bound_baseline_and_successor_prefixes_are_supported() -> None:
 
 
 @pytest.mark.postgres
-def test_baseline_upgrade_preserves_existing_profile_and_adds_capture_and_import_formats(
+def test_baseline_upgrade_preserves_existing_profile_and_adds_capture_and_import_structuring(
     pg_context: PGContext,
 ) -> None:
     config = MigrationSecret(pg_context.migrator.url.render_as_string(hide_password=False))
@@ -181,6 +181,11 @@ def test_baseline_upgrade_preserves_existing_profile_and_adds_capture_and_import
         conn.execute(
             text("""ALTER TABLE bonafides.evidence_revisions ADD CONSTRAINT evidence_revisions_origin_check
             CHECK (origin IN ('owner_entry','resume_import'))""")
+        )
+        conn.execute(
+            text(
+                "ALTER TABLE bonafides.import_batches DROP COLUMN structuring_mode CASCADE, DROP COLUMN structuring_provenance CASCADE"
+            )
         )
         conn.execute(text("DELETE FROM bonafides.schema_migrations WHERE version>1"))
         conn.execute(

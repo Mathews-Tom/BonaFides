@@ -47,8 +47,12 @@ def metadata(monkeypatch: pytest.MonkeyPatch) -> Metadata:
     return documents
 
 
-def invoke(path: Path, model: str = MODEL, authorized: bool = True) -> int:
+def invoke(
+    path: Path, model: str = MODEL, authorized: bool = True, *, import_structuring: bool = False
+) -> int:
     args = ["attach", "--route", str(path), "--model", model, "--model-license", "Apache-2.0"]
+    if import_structuring:
+        args.append("--import-structuring")
     return installed_model.main(args + (["--authorize-local-model"] if authorized else []))
 
 
@@ -63,6 +67,17 @@ def test_attaches_real_manifest_and_runtime_without_qualification(
     assert json.loads(path.read_text())["qualification_receipts"] == {}
     assert stat.S_IMODE(path.stat().st_mode) == 0o600
     assert list(tmp_path.iterdir()) == [path]
+
+
+def test_attached_import_opt_in_requires_its_own_measurement(
+    tmp_path: Path, metadata: Metadata
+) -> None:
+    path = tmp_path / "route.json"
+    assert invoke(path, import_structuring=True) == 0
+    route = load_route(path)
+    assert route is not None and route.import_structuring
+    assert not route.qualified_for("structure_import")
+    assert json.loads(path.read_text())["qualification_receipts"] == {}
 
 
 @pytest.mark.parametrize("failure", ["absent", "digest", "version", "cloud", "duplicate", "models"])
@@ -166,6 +181,9 @@ def test_process_exit_without_new_receipt_is_not_a_completed_result(
     "stage,status,result,publication",
     [
         ("generate_documents", "passed", 0, "first"),
+        ("structure_import", "passed", 0, "first"),
+        ("structure_import", "failed", 1, "replacement"),
+        ("structure_import", "passed", 0, "formatting"),
         ("regenerate_section", "failed", 1, "replacement"),
         ("regenerate_section", "failed", 1, "formatting"),
         ("generate_documents", "passed", 0, "other_stage"),
@@ -175,7 +193,7 @@ def test_result_requires_changed_selected_stage_receipt(
     tmp_path: Path, metadata: Metadata, stage: str, status: str, result: int, publication: str
 ) -> None:
     path, original = tmp_path / "route.json", tmp_path / "original"
-    assert invoke(path) == 0
+    assert invoke(path, import_structuring=stage == "structure_import") == 0
     original.write_bytes(path.read_bytes())
     route = load_route(path)
     assert route is not None
@@ -193,18 +211,27 @@ def test_result_requires_changed_selected_stage_receipt(
                 "failed_before_check": 0,
             },
             "valid_rate_per_mille": 1000 if result == 0 else 0,
-            "usable_statement_rate_per_mille": 0,
+            **(
+                {
+                    "unit_count": 40,
+                    "correct_kind_count": 40 if result == 0 else 0,
+                    "correct_kind_rate_per_mille": 1000 if result == 0 else 0,
+                }
+                if stage == "structure_import"
+                else {"usable_statement_rate_per_mille": 0}
+            ),
             "dataset_sha256": "cd" * 32,
             "case_count": 20,
             "duration_ms": 1000,
-        }
+        },
+        stage=stage,
     )
     if publication != "first":
         original.write_text(json.dumps(data))
         if publication == "replacement":
             receipt = data["qualification_receipts"][stage]
             data["qualification_receipts"][stage] = qualification_receipt(
-                {**receipt, "reviewed_at": "2026-11-08T00:00:01+00:00"}
+                {**receipt, "reviewed_at": "2026-11-08T00:00:01+00:00"}, stage=stage
             )
         elif publication == "other_stage":
             other_stage = (

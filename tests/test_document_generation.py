@@ -1580,7 +1580,10 @@ def test_qualification_never_lifts_permanent_route_block(
         assert block["route_sha256"] == route.capability_sha256
     with catalog.runtime.transaction() as conn:
         rates = generation.claim_json_rates(conn, catalog.owner_id, original_identity)
-    cases = {stage: qualification.load_cases(DATASET, stage)[0] for stage in qualification.STAGES}
+    cases = {
+        stage: qualification.load_cases(DATASET, stage)[0]
+        for stage in ("generate_documents", "regenerate_section")
+    }
 
     def call(
         self: local_model.OllamaClient, stage: str, context: dict[str, object], *_args: object
@@ -1645,7 +1648,7 @@ def _legacy_receipt_route(
     initial = load_route(route_file(tmp_path, data))
     assert initial is not None
     stages = (
-        tuple(local_model.PROMPT_VERSIONS)
+        tuple(stage for stage in local_model.PROMPT_VERSIONS if stage != "structure_import")
         if document_receipts
         else ("extract_posting", "match_requirements")
     )
@@ -1654,7 +1657,7 @@ def _legacy_receipt_route(
         for stage in stages
     }
 
-    def legacy_receipt(item: dict[str, object]) -> dict[str, object]:
+    def legacy_receipt(item: dict[str, object], *, stage: str) -> dict[str, object]:
         assert set(item) == {
             "status",
             "capability_sha256",
@@ -1745,7 +1748,7 @@ def test_unmapped_suitability_block_uses_only_unchanged_legacy_identity(
         with pytest.raises(local_model.ModelFailure, match="model_route_invalid"):
             load_route(path)
         data = json.loads(path.read_text())
-        for stage in qualification.STAGES:
+        for stage in ("generate_documents", "regenerate_section"):
             del data["qualification_receipts"][stage]
         route_file(tmp_path, data)
         current = _measure_fixture_stage(monkeypatch, path, "generate_documents")

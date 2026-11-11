@@ -393,6 +393,173 @@ def _counts(context: ImportContext) -> tuple[int, int, int, int]:
         )
 
 
+@pytest.mark.postgres
+def test_import_mode_binds_retry_intent_and_refuses_unqualified_before_storage(
+    importing: ImportContext, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from bonafides import local_model
+
+    def no_model(*args: object, **kwargs: object) -> None:
+        pytest.fail("literal or unqualified import called the model")
+
+    monkeypatch.setattr(local_model.OllamaClient, "call", no_model)
+    key = uuid4().hex
+    headers = {**importing.headers(1, key), "Content-Type": "text/plain"}
+    accepted = importing.client.post("/api/v1/imports", content=SOURCE, headers=headers)
+    assert accepted.status_code == 202
+    same = importing.client.post("/api/v1/imports?mode=literal", content=SOURCE, headers=headers)
+    assert same.status_code == 202 and same.json() == accepted.json()
+    changed = importing.client.post("/api/v1/imports?mode=model", content=SOURCE, headers=headers)
+    assert changed.status_code == 409
+    headers["Idempotency-Key"] = uuid4().hex
+    refused = importing.client.post("/api/v1/imports?mode=model", content=SOURCE, headers=headers)
+    assert refused.status_code == 503
+    assert (
+        importing.client.post(
+            "/api/v1/imports?mode=true", content=SOURCE, headers=headers
+        ).status_code
+        == 422
+    )
+    with importing.identity.admin.transaction() as conn:
+        assert [
+            conn.execute(text(f"SELECT count(*) FROM bonafides.{table}")).scalar_one()
+            for table in ("blobs", "import_batches", "workflow_runs")
+        ] == [1, 1, 1]
+    importing.run()
+    batch = importing.batch(accepted.json()["import_id"])
+    assert batch["state"] == "waiting_for_approval"
+    assert batch["structuring_mode"] == "literal" and batch["structuring_provenance"] is None
+    assert _counts(importing) == (1, 0, 0, 0)
+
+
+@pytest.mark.postgres
+@pytest.mark.parametrize("invalid", [False, True])
+def test_model_import_classifies_exact_source_without_publishing_until_review(
+    importing: ImportContext, monkeypatch: pytest.MonkeyPatch, tmp_path: Any, invalid: bool
+) -> None:
+    from test_local_model import qualified_route, route_data
+
+    from bonafides import local_model
+
+    data = route_data("http://127.0.0.1:1")
+    data.update(import_structuring=True, deadline_seconds=300)
+    route = qualified_route(tmp_path, data)
+    monkeypatch.setattr(local_model, "load_route", lambda path: route)
+    calls: list[dict[str, object]] = []
+
+    def call(
+        self: Any, stage: str, context: dict[str, object], *args: Any
+    ) -> local_model.ModelResult:
+        calls.append(context)
+        units = cast(list[dict[str, object]], context["units"])
+        return local_model.ModelResult(
+            {
+                "schema_version": "1",
+                "stage": stage,
+                "items": [
+                    {
+                        "source_id": str(uuid4()) if invalid else unit["source_id"],
+                        "kind": "experience",
+                    }
+                    for unit in units
+                ],
+            },
+            {"usage_status": "unknown"},
+        )
+
+    monkeypatch.setattr(local_model.OllamaClient, "call", call)
+    source = "Skills\nMaintained fictional Linux services\nContact information\nprivate@example.invalid\n"
+    response = importing.client.post(
+        "/api/v1/imports?mode=model",
+        content=source,
+        headers={**importing.headers(1), "Content-Type": "text/plain"},
+    )
+    assert response.status_code == 202, response.text
+    with importing.identity.admin.transaction() as conn:
+        conn.execute(
+            text(
+                "UPDATE bonafides.workflow_runs SET deadline_at=clock_timestamp()+interval '230 seconds' WHERE id=:id"
+            ),
+            {"id": UUID(response.json()["workflow_id"])},
+        )
+    importing.run()
+    batch = importing.batch(response.json()["import_id"])
+    assert _counts(importing) == (1, 0, 0, 0)
+    assert len(calls) == (2 if invalid else 1)
+    assert all("private@example.invalid" not in canonical_json(context) for context in calls)
+    if invalid:
+        assert batch["state"] == "permanent_failure" and batch["text"] is None
+        assert batch["structuring_provenance"] is None
+        with importing.identity.admin.transaction() as conn:
+            assert (
+                conn.execute(
+                    text(
+                        "SELECT error_code FROM bonafides.local_model_route_blocks WHERE stage='structure_import'"
+                    )
+                ).scalar_one()
+                == "model_output_invalid_after_correction"
+            )
+        return
+    assert batch["state"] == "waiting_for_approval" and batch["text"] == source
+    assert batch["entries"][0]["kind"] == "experience"
+    literal = "Maintained fictional Linux services"
+    assert batch["entries"][0]["payload"]["text"] == literal
+    assert batch["entries"][0]["sources"][0]["quote"] == literal
+    assert (
+        batch["structuring_provenance"]["source_sha256"]
+        == hashlib.sha256(source.encode()).hexdigest()
+    )
+    with importing.identity.admin.transaction() as conn:
+        # Earlier failed reservations can spend the ordinary-call budget before staging.
+        conn.execute(
+            text("UPDATE bonafides.workflow_runs SET model_network_attempts=2 WHERE id=:id"),
+            {"id": UUID(batch["workflow_id"])},
+        )
+    assert importing.approve(batch).status_code == 202
+    importing.run()
+    assert len(calls) == 1
+    assert importing.batch(batch["id"])["state"] == "succeeded"
+    profile = importing.profile()
+    assert profile["version"] == 2 and len(profile["current_revision"]["claims"]) == 1
+    evidence = profile["evidence"][0]["revision"]["payload"]
+    assert evidence["text"] == literal and evidence["structuring_mode"] == "model"
+    assert evidence["structuring_provenance"] == batch["structuring_provenance"]
+
+
+@pytest.mark.postgres
+def test_exhausted_model_import_cannot_be_claimed_before_review(
+    importing: ImportContext, monkeypatch: pytest.MonkeyPatch, tmp_path: Any
+) -> None:
+    from test_local_model import qualified_route, route_data
+
+    from bonafides import local_model
+
+    route = qualified_route(
+        tmp_path, {**route_data("http://127.0.0.1:1"), "import_structuring": True}
+    )
+    monkeypatch.setattr(local_model, "load_route", lambda path: route)
+    response = importing.client.post(
+        "/api/v1/imports?mode=model",
+        content=SOURCE,
+        headers={**importing.headers(1), "Content-Type": "text/plain"},
+    )
+    assert response.status_code == 202
+    identifier = UUID(response.json()["workflow_id"])
+    with importing.identity.admin.transaction() as conn:
+        conn.execute(
+            text("UPDATE bonafides.workflow_runs SET model_network_attempts=2 WHERE id=:id"),
+            {"id": identifier},
+        )
+    with importing.runtime.transaction() as conn:
+        assert claim(conn, uuid4()) is None
+        assert reap(conn) == 1
+    batch = importing.batch(response.json()["import_id"])
+    assert (
+        batch["state"] == "permanent_failure" and batch["error_code"] == "model_attempts_exhausted"
+    )
+    assert _counts(importing) == (1, 0, 0, 0)
+
+
 def _unchanged_review(batch: dict[str, Any], mode: str = "merge") -> dict[str, object]:
     review = _review(batch, mode)
     for decision, entry in zip(_decisions(review), batch["entries"], strict=True):
@@ -1335,6 +1502,17 @@ def test_staged_source_and_review_are_immutable_database_phases(importing: Impor
             ),
             {"owner": importing.owner_id, "id": UUID(batch["id"])},
         )
+    for update in (
+        "structuring_mode='model',structuring_provenance='{}'",
+        "structuring_provenance='{}'",
+    ):
+        with pytest.raises(DBAPIError), importing.runtime.transaction() as conn:
+            conn.execute(
+                text(
+                    f"UPDATE bonafides.import_batches SET {update} WHERE owner_id=:owner AND id=:id"
+                ),
+                {"owner": importing.owner_id, "id": UUID(batch["id"])},
+            )
     assert importing.approve(batch).status_code == 202
     with pytest.raises(DBAPIError), importing.runtime.transaction() as conn:
         conn.execute(

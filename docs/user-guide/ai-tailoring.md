@@ -11,6 +11,8 @@ AI is an optional extra. Once it's set up, it can:
 
 Every suggestion is shown to you before it's used, and every factual sentence it writes is checked against your profile.
 
+Unless stated otherwise, this page describes document tailoring. [Optional résumé import structuring](resume-import.md#optional-local-model-structuring) instead sends the non-contact source fragments disclosed before upload, which can include names or sensitive text; it never sends the raw file or supplies new facts.
+
 ## What AI never does in BonaFides
 
 - **It never uses a cloud service.** The model must run on your own computer or private network, under your control. BonaFides refuses public internet addresses and never falls back to a hosted service.
@@ -42,7 +44,7 @@ The checker compares wording. It can't tell whether a sentence is well written, 
 
 ## Which models have been tested
 
-Before an installation can use a model, that exact model has to pass a qualification test on that installation. Each task is qualified separately: at least 95% of its test cases must produce the right format after at most one correction. Factual statements are checked and reported separately; qualification doesn't judge writing quality or prove accuracy.
+Before an installation can use a model, that exact model has to pass a qualification test on that installation. Each task is qualified separately: at least 95% of its test cases must produce the right format after at most one correction. Import structuring additionally requires at least 95% correct destination labels. Factual statements are checked and reported separately; qualification doesn't judge writing quality or prove accuracy.
 
 Results on a Mac with Apple silicon using [Ollama](https://ollama.com) 0.40.13. Qwen was tested through the installed commands on 8 November 2026; Gemma's result is from 2 November:
 
@@ -97,11 +99,13 @@ sh models.sh qualify --stage regenerate_section --reviewed-by 'Local owner'
 
 Replace `Local owner` with the name to record as the reviewer. Attaching authorizes metadata reads and unencrypted HTTP on this computer's private Docker network, using the named model under your control with cloud use disabled. It records the installed model and Ollama version but does not send inference or claim that a test passed. Each qualification command sends only the bundled made-up examples, never your profile, and can take several minutes. Keep Ollama running and do not change its model while a test runs.
 
+To enable optional import structuring, remove an existing route first, then add `--import-structuring` to the attachment command above and run `sh models.sh qualify --stage structure_import --reviewed-by 'Local owner'`. Enabling changes the route's capabilities: rerun both document qualifications too; older receipts cannot carry over. A passed import test does not authorize document tasks or opt in any upload. This new stage has synthetic integration coverage, not a measured real-model result.
+
 Each completed test saves its real result and restarts this installation to apply it. Exit status 0 means passed and applied; 1 means failed and applied, with its failed receipt saved; 2 means a setup, connection or application problem. Failures before publication leave earlier receipts unchanged. If configuration was saved but restarting failed, the error says so: resolve the reported problem and run `sh start.sh`. A failed test is not permission to use that stage. Only one model command can run at a time.
 
 If interrupted attachment or removal leaves a disabled managed route, run `sh models.sh remove` again before attaching another model. A lock left by an interrupted command requires [safe manual recovery](../development/README.md#optional-operator-controlled-local-model-route); do not force-unlock a running command.
 
-Open **Documents** for an application. **Generation route:** and the qualification receipts show each stage's real status. Writing a pair and rewriting a section qualify separately; a passed receipt cannot override a block caused by a malformed live answer. No model task runs until you preview its input and explicitly approve that task.
+Open **Documents** for an application. **Generation route:** and the qualification receipts show each stage's real status. Writing a pair and rewriting a section qualify separately; a passed receipt cannot override a block caused by a malformed live answer. No document model task runs until you preview its input and explicitly approve that task.
 
 To disable AI and remove its managed route:
 
