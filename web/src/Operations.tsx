@@ -56,7 +56,10 @@ export function Operations({ api, active, disabled }: { api: Api; active: boolea
     current.current = null; automaticConsidered.current = false; setHealth(null); setError('');
   }, [api]);
   useEffect(() => {
-    if (!active || disabled) { setBusy(null); return; }
+    if (!active || disabled) {
+      if (disabled) setHealth(null);
+      setBusy(null); return;
+    }
     void run('load').then(updates => {
       if (!updates || automaticConsidered.current) return;
       automaticConsidered.current = true;

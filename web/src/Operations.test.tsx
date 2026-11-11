@@ -133,6 +133,21 @@ it('does not show readiness when the health endpoint fails', async () => {
   expect(screen.queryByLabelText('Enable release checks')).not.toBeInTheDocument();
 });
 
+it('withholds readiness while the connection is paused and until fresh health succeeds', async () => {
+  const { api, state } = server();
+  const { rerender } = render(<Operations api={api} active disabled={false} />);
+  await screen.findByText('Ready');
+  rerender(<Operations api={api} active disabled />);
+  expect(screen.queryByText('Ready')).not.toBeInTheDocument();
+  expect(screen.getByRole('button', { name: 'Refresh operations health' })).toBeDisabled();
+  const pending = deferred<OperationsHealth>();
+  vi.spyOn(api, 'getOperations').mockReturnValueOnce(pending.promise);
+  rerender(<Operations api={api} active disabled={false} />);
+  expect(screen.queryByText('Ready')).not.toBeInTheDocument();
+  await act(async () => pending.resolve(state));
+  expect(screen.getByText('Ready')).toBeInTheDocument();
+});
+
 it('retains the recognized release after an indeterminate check and fences a closed Settings request', async () => {
   const { api, request } = server({ ...release, outcome: 'unknown', error_code: 'release_unavailable' });
   const { rerender } = render(<Operations api={api} active disabled={false} />);
