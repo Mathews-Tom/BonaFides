@@ -1,0 +1,174 @@
+<!doctype html>
+<!-- SPDX-License-Identifier: MIT OR Apache-2.0 -->
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Keep your experience, its evidence, reviewed résumés and applications together. BonaFides is an early-stage, self-hosted job-search workspace for Mac and Linux.">
+  <meta name="color-scheme" content="light">
+  <title>BonaFides — Your experience, with the evidence attached</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <a class="skip" href="#main">Skip to content</a>
+  <header class="site-header wrap">
+    <a class="brand" href="#main" aria-label="BonaFides home">BonaFides</a>
+    <nav aria-label="Main navigation">
+      <a href="#workflow">How it works</a>
+      <a href="#install">Install locally</a>
+      <a href="#benchmark">The evidence</a>
+      <a href="https://github.com/Mathews-Tom/BonaFides/blob/ebe4b5d9c78030a665d7879b8dcedeced9223a8b/docs/user-guide/README.md">User guide</a>
+    </nav>
+  </header>
+  <main id="main" class="wrap" tabindex="-1">
+    <section class="hero" aria-labelledby="intro-heading">
+      <div class="hero-copy">
+        <p class="stage">Early-stage software · not yet publicly released</p>
+        <h1 id="intro-heading">Your experience, with the evidence attached.</h1>
+        <p class="lead">Build a résumé you can stand behind. Keep the sources behind your experience, review what goes into your documents, and follow each application in one private workspace.</p>
+        <div class="actions">
+          <a class="button" href="#install">Install on your computer</a>
+          <a class="text-link" href="#workflow">See the workflow</a>
+        </div>
+        <p class="hero-note">For Mac and Linux. Runs locally with Docker. You review the work and send your own applications.</p>
+      </div>
+      <figure class="hero-proof">
+        <img src="assets/review.png" width="720" height="450" alt="BonaFides document review showing a fictional résumé and its review controls.">
+        <figcaption>Real interface, fictional experience. This review screen comes from the synthetic-data walkthrough; a test stand-in supplies the AI output, not a real model.</figcaption>
+        <a class="figure-link" href="assets/review.png">Open the review screenshot at full size</a>
+      </figure>
+    </section>
+
+    <aside class="boundary" aria-label="What the checks cannot promise">
+      <strong>Evidence-linked does not mean independently verified.</strong>
+      <p>BonaFides checks wording against the profile you approved, not whether your experience is true. Automated checks can miss things. Read every document before you approve or send it.</p>
+    </aside>
+
+    <section id="workflow" class="section" aria-labelledby="workflow-heading">
+      <div class="section-intro">
+        <h2 id="workflow-heading">From what you did to what you send.</h2>
+        <p>Keep the original evidence close, even as the document changes.</p>
+      </div>
+      <ol class="workflow">
+        <li class="workflow-step">
+          <div class="step-copy">
+            <h3>Keep the source with the fact</h3>
+            <p>Bring in your résumé or add experience yourself. Review each proposed fact and the passage that supports it before adding it to your profile.</p>
+          </div>
+          <figure>
+            <img src="assets/evidence.png" width="720" height="450" loading="lazy" alt="Profile screen showing fictional experience with the source evidence behind it.">
+            <figcaption>Real profile screen with synthetic facts and sources; no owner's records are shown.</figcaption>
+            <a class="figure-link" href="assets/evidence.png">Open the evidence screenshot at full size</a>
+          </figure>
+        </li>
+        <li class="workflow-step text-step">
+          <div class="step-copy">
+            <h3>Review the résumé, then export the PDF</h3>
+            <p>Create a base résumé without AI. For optional AI tailoring, confirm exactly what a configured local or private-network model receives. Review the result and its linked claims before exporting the version you approved.</p>
+            <p>Unsupported wording can block export. The checks are a safeguard, not a substitute for your judgment.</p>
+          </div>
+          <div class="source-seam">
+            <p><strong>Your source</strong><br>A reference, review, certificate or statement you supplied.</p>
+            <p><strong>Your approved fact</strong><br>A profile entry linked to that source.</p>
+            <p><strong>Your reviewed document</strong><br>The exact version you choose to approve and export.</p>
+          </div>
+        </li>
+        <li class="workflow-step">
+          <div class="step-copy">
+            <h3>Keep the application in view</h3>
+            <p>Record the job, application stage, notes, contacts and next follow-up. Keep the reviewed documents alongside the application they belong to.</p>
+            <p>BonaFides never applies, emails or contacts an employer for you.</p>
+          </div>
+          <figure>
+            <img src="assets/application.png" width="720" height="450" loading="lazy" alt="A saved application in BonaFides with its stage and follow-up information, using fictional demo data.">
+            <figcaption>Real application screen with a fictional job and synthetic records from the walkthrough.</figcaption>
+            <a class="figure-link" href="assets/application.png">Open the application screenshot at full size</a>
+          </figure>
+        </li>
+      </ol>
+      <div class="walkthrough">
+        <div>
+          <h3>Watch the complete workflow</h3>
+          <p>The screenshots above are a still alternative. Nothing animates on this page. The recording uses synthetic data and an explicit test model; it is not evidence of AI quality.</p>
+        </div>
+        <a class="button secondary" href="assets/bonafides-workflow.gif">Open the animated walkthrough (GIF)</a>
+      </div>
+    </section>
+
+    <section id="install" class="section install" aria-labelledby="install-heading">
+      <div class="section-intro">
+        <h2 id="install-heading">A workspace on your computer.</h2>
+        <p>Install from source, then start it separately. The first install builds the software locally and downloads its dependencies; it can take a while.</p>
+      </div>
+      <div class="install-layout">
+        <div>
+          <h3>Before you start</h3>
+          <ul>
+            <li>A Mac or Linux computer; Windows is not supported. Testing has mainly been on Apple-silicon Macs.</li>
+            <li>Running Docker Desktop, or Docker Engine on Linux with Compose and Buildx.</li>
+            <li>Git and a web browser. Chromium-based browsers are tested.</li>
+            <li>A terminal to paste the commands below. No Python or Node installation is needed.</li>
+          </ul>
+          <p>AI tailoring and encrypted backups need extra technical setup. There is no published release image or download offered here.</p>
+        </div>
+        <div class="install-commands">
+          <h3>Download, install, start</h3>
+          <pre tabindex="0" aria-label="Copyable source installation commands"><code>git clone https://github.com/Mathews-Tom/BonaFides.git
+cd BonaFides
+sh install.sh
+sh start.sh</code></pre>
+          <p><code>install.sh</code> prepares the installation without starting it. <code>start.sh</code> starts it and prints the browser address, usually <code>http://localhost:8000</code>.</p>
+          <p>Later, use <code>sh stop.sh</code> to stop it and <code>sh start.sh</code> to return. Your saved data stays between sessions.</p>
+        </div>
+      </div>
+      <div class="owner-setup">
+        <h3>Create the first owner account privately</h3>
+        <p>In your own terminal, use the command printed by <code>start.sh</code> to read your one-time setup code. It is valid for 15 minutes. Open the printed <code>localhost</code> address, enter the code and choose your login and a password of 15–128 characters. If the code expires before account creation, run <code>sh start.sh</code> again.</p>
+        <p>Never put the setup code or your secrets folder in a chat, screenshot or support request. Each installation has one owner account.</p>
+        <a class="text-link" href="https://github.com/Mathews-Tom/BonaFides/blob/ebe4b5d9c78030a665d7879b8dcedeced9223a8b/docs/user-guide/getting-started.md">Follow the complete installation and first-account guide</a>
+      </div>
+    </section>
+
+    <section id="privacy" class="section privacy" aria-labelledby="privacy-heading">
+      <h2 id="privacy-heading">Local by default. Not a promise of no network.</h2>
+      <div class="privacy-columns">
+        <p>Your professional records live in your installation's Docker storage. There is no BonaFides cloud account, profile upload or tracking. Keep your installation keys private and make a recovery plan: the developers cannot recover your data.</p>
+        <p>Installation and updates download software. Optional job-board and GitHub reads contact configured services when requested. Optional AI tasks send the previewed job and profile context only to your configured local or private-network model, after your confirmation. Downloaded PDFs and exports are your responsibility.</p>
+      </div>
+      <a class="text-link" href="https://github.com/Mathews-Tom/BonaFides/blob/ebe4b5d9c78030a665d7879b8dcedeced9223a8b/docs/user-guide/your-data.md">Read what is stored, what can leave, and how to back up or delete it</a>
+    </section>
+
+    <div class="evidence-intro section">
+      <h2>What has actually been measured?</h2>
+      <p>Separate the automated checker's test results from a model's historical qualification. Neither is independent user testing or a human assessment of document accuracy.</p>
+    </div>
+    <section id="benchmark" class="evidence-section" aria-label="Honesty checker comparison">
+@@BENCHMARK@@
+    </section>
+    <p class="report-link"><a href="benchmark.json" download>Download this build's benchmark data (JSON)</a></p>
+    <section id="qualification" class="evidence-section" aria-label="Historical model qualification and measured durations">
+@@QUALIFICATION@@
+    </section>
+
+    <aside class="boundary closing" aria-label="Early-stage limitations">
+      <strong>Try it thoughtfully.</strong>
+      <p>BonaFides is unreleased, early-stage software. It has not been independently tested with users, and AI-written documents have not received human accuracy review. The checker has known gaps; historical model qualification does not qualify a changed model, dataset or runtime.</p>
+      <a class="text-link" href="#install">Start with the local installation guide</a>
+    </aside>
+  </main>
+  <footer class="site-footer wrap">
+    <div>
+      <strong>BonaFides</strong>
+      <p>Your job search. Your data. Your AI.</p>
+      <p>MIT or Apache-2.0, at your choice. Public distribution remains subject to the pending rights review.</p>
+    </div>
+    <nav aria-label="Project and legal links">
+      <a href="https://github.com/Mathews-Tom/BonaFides">Source and build instructions</a>
+      <a href="https://github.com/Mathews-Tom/BonaFides/blob/ebe4b5d9c78030a665d7879b8dcedeced9223a8b/LICENSE-MIT">MIT license</a>
+      <a href="https://github.com/Mathews-Tom/BonaFides/blob/ebe4b5d9c78030a665d7879b8dcedeced9223a8b/LICENSE-APACHE">Apache-2.0 license</a>
+      <a href="#privacy">Privacy boundaries</a>
+      <a href="https://github.com/Mathews-Tom/BonaFides/blob/ebe4b5d9c78030a665d7879b8dcedeced9223a8b/docs/compliance/release-compliance-checklist.md">Release and rights review</a>
+    </nav>
+  </footer>
+</body>
+</html>

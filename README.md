@@ -66,6 +66,7 @@ The [getting started guide](docs/user-guide/getting-started.md) covers each step
 - [Optional AI tailoring](docs/user-guide/ai-tailoring.md): what the AI receives and how it's kept honest.
 - [Manage your installation](docs/user-guide/manage-installation.md): updating, a second installation and uninstalling.
 - [Troubleshooting](docs/user-guide/troubleshooting.md).
+- [Project-site preview](docs/development/README.md#preview-the-project-site): build the static workflow tour, checker comparison and historical model measurements locally. The site is not published yet.
 
 ## How well the checks work
 
