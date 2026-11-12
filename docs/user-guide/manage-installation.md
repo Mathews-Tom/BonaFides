@@ -50,6 +50,8 @@ sh start.sh
 
 For a container-based proxy, also pass `--proxy-network NAME` to `install.sh`. The network must already exist on the same Docker node and allow standalone containers to attach. Only the credential-free ingress joins it; API, worker, database, renderer and parser remain private. The installer saves its immutable Docker ID and refuses a replacement network with the same name. It never creates or removes the external network. Host publication remains loopback.
 
+Choose a private, trusted network between the TLS proxy and ingress, excluding LAN/public clients and untrusted workloads. This connection uses plaintext port 8000 and carries authentication credentials and owner data; binding the host port to loopback does not restrict peers on the external network.
+
 | Platform | Template and operator action |
 |---|---|
 | Ubuntu | Customize [`ubuntu.conf`](../../deploy/operations/ubuntu.conf) with your domain, certificate paths and selected loopback port. Install it as `/etc/nginx/conf.d/bonafides.conf`; run `sudo nginx -t && sudo systemctl reload nginx`. |
@@ -58,6 +60,8 @@ For a container-based proxy, also pass `--proxy-network NAME` to `install.sh`. T
 | CapRover | On the same Docker node as the proxy, inspect `docker network inspect --format '{{.Id}} {{.Attachable}}' captain-overlay-network`; use `--proxy-network captain-overlay-network` only if attachable. Install customized [`caprover.conf`](../../deploy/operations/caprover.conf) as `/captain/data/nginx-shared/bonafides.conf` and place the operator-managed certificates alongside it. Preserve the existing base NGINX template and add `include /nginx-shared/bonafides.conf;` inside its `http` block through server settings. |
 
 Replace every example domain, certificate path and resolver. Container-proxy templates target `bonafides-ingress:8000`; use `NAME-ingress:8000` for `--project NAME`. Keep the custom configuration persistent through platform regeneration. These adapters use an existing proxy, not another BonaFides installation or a dummy platform application. A non-attachable overlay requires a separately managed attachable proxy network; the installer never changes the platform network.
+
+The NGINX templates allow 25 hours between upstream reads so they do not preempt the ingress relay's 24-hour silent archive-verification budget. Keep any platform-level proxy timeouts compatible with that budget.
 
 Use the printed HTTPS address exactly. Stop before reinstalling. Repeating `sh install.sh` reuses the saved origin, network, account, data and credentials. A conflicting origin or network is refused; do not edit `.env` to retarget an installation.
 
