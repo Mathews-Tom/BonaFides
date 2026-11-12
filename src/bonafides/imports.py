@@ -36,7 +36,13 @@ from bonafides.import_parser import (
 )
 from bonafides.model_context import lock_evidence_write
 from bonafides.problems import Problem
-from bonafides.profile_entries import ClaimKind, ClaimPayload, StructuredClaimPayload, _snapshot
+from bonafides.profile_entries import (
+    ClaimKind,
+    ClaimPayload,
+    StructuredClaimPayload,
+    _snapshot,
+    apply_date_order,
+)
 from bonafides.profiles import MAX_HEADLINE_LENGTH, _save, content_hash
 from bonafides.storage import BlobStore
 from bonafides.workflows import (
@@ -538,7 +544,7 @@ def _saved_claims(conn: Connection, owner_id: UUID, ids: list[UUID]) -> list[_Sa
     rows = conn.execute(
         text("""SELECT c.id,c.kind,r.payload FROM bonafides.professional_claims c
         JOIN bonafides.claim_revisions r ON r.owner_id=c.owner_id AND r.id=c.current_revision_id
-        WHERE c.owner_id=:owner AND c.archived_at IS NULL
+        WHERE c.owner_id=:owner AND c.archived_at IS NULL AND c.kind NOT IN ('publication','writing_fact')
         AND r.id=ANY(CAST(:ids AS uuid[])) ORDER BY c.created_at,c.id"""),
         {"owner": owner_id, "ids": ids},
     ).mappings()
@@ -730,6 +736,14 @@ def _validate_review(
     saved = _saved_claims(conn, owner_id, snapshot.claim_revision_ids)
     identity_fields: set[IdentityField] = set()
     for decision in review.decisions:
+        if decision.kind in {"writing_fact", "publication"}:
+            raise Problem(422, "import_destination_invalid")
+        if decision.payload.model_fields_set & {
+            "citation_markup",
+            "citation_url",
+            "include_in_resume",
+        }:
+            raise Problem(422, "import_destination_invalid")
         if decision.identity_field is not None and decision.kind != "identity":
             raise Problem(422, "import_destination_invalid")
         if decision.action == "skip":
@@ -824,7 +838,7 @@ def _validate_review(
                 unchanged_targets.add(target)
     claim_count = conn.execute(
         text("""SELECT count(*) FROM bonafides.professional_claims
-        WHERE owner_id=:owner AND archived_at IS NULL
+        WHERE owner_id=:owner AND archived_at IS NULL AND kind<>'writing_fact'
         AND (:replace_all=false OR kind='identity' OR id=ANY(CAST(:targets AS uuid[])))"""),
         {
             "owner": owner_id,
@@ -839,7 +853,7 @@ def _validate_review(
         ON c.owner_id=l.owner_id AND c.current_revision_id=l.claim_revision_id
         JOIN bonafides.evidence_revisions r ON r.owner_id=l.owner_id AND r.id=l.evidence_revision_id
         WHERE c.owner_id=e.owner_id AND c.archived_at IS NULL
-        AND (c.kind='identity' OR c.id=ANY(CAST(:unchanged AS uuid[]))) AND r.evidence_id=e.id)
+        AND (c.kind IN ('identity','writing_fact') OR c.id=ANY(CAST(:unchanged AS uuid[]))) AND r.evidence_id=e.id)
         OR EXISTS(SELECT 1 FROM bonafides.evidence_revisions r WHERE r.owner_id=e.owner_id
         AND r.id=e.current_revision_id AND r.payload->>'identity_field' IN ('display_name','headline')))"""),
         {
@@ -1144,16 +1158,19 @@ def merge_reviewed(conn: Connection, task: Claim) -> dict[str, object]:
     claim_ids = list(snapshot.claim_revision_ids)
     identity_updates: dict[str, object] = {}
     if review.mode == "replace_all":
+        identity_updates["ordering_modes"] = {
+            kind: "date" for kind in ("experience", "project", "education")
+        }
         conn.execute(
             text("""UPDATE bonafides.professional_claims SET archived_at=clock_timestamp(),version=version+1
-            WHERE owner_id=:owner AND archived_at IS NULL AND kind<>'identity'
+            WHERE owner_id=:owner AND archived_at IS NULL AND kind NOT IN ('identity','writing_fact')
             AND NOT(id=ANY(CAST(:targets AS uuid[])))"""),
             {"owner": task.owner_id, "targets": list(replacements)},
         )
         active = list(
             conn.execute(
                 text("""SELECT current_revision_id FROM bonafides.professional_claims
-            WHERE owner_id=:owner AND archived_at IS NULL ORDER BY created_at,id"""),
+            WHERE owner_id=:owner AND archived_at IS NULL AND kind<>'writing_fact' ORDER BY created_at,id"""),
                 {"owner": task.owner_id},
             ).scalars()
         )
@@ -1169,7 +1186,7 @@ def merge_reviewed(conn: Connection, task: Claim) -> dict[str, object]:
             ON c.owner_id=l.owner_id AND c.current_revision_id=l.claim_revision_id
             JOIN bonafides.evidence_revisions r ON r.owner_id=l.owner_id AND r.id=l.evidence_revision_id
             WHERE c.owner_id=e.owner_id AND c.archived_at IS NULL
-            AND (c.kind='identity' OR c.id=ANY(CAST(:unchanged AS uuid[]))) AND r.evidence_id=e.id)
+            AND (c.kind IN ('identity','writing_fact') OR c.id=ANY(CAST(:unchanged AS uuid[]))) AND r.evidence_id=e.id)
             AND NOT EXISTS(SELECT 1 FROM bonafides.evidence_revisions r WHERE r.owner_id=e.owner_id
             AND r.id=e.current_revision_id AND r.payload->>'identity_field' IN ('display_name','headline'))"""),
             {
@@ -1275,10 +1292,13 @@ def merge_reviewed(conn: Connection, task: Claim) -> dict[str, object]:
         revision_id = str(profile["current_revision_id"])
         profile_version = int(profile["version"])
     else:
+        snapshot = snapshot.model_copy(update={"claim_revision_ids": claim_ids, **identity_updates})
+        for kind in ("experience", "project", "education"):
+            apply_date_order(conn, task.owner_id, snapshot, kind)
         result = _save(
             conn,
             task.owner_id,
-            snapshot.model_copy(update={"claim_revision_ids": claim_ids, **identity_updates}),
+            snapshot,
             "import_reviewed_merge",
         )
         revision = cast(dict[str, object], result["current_revision"])

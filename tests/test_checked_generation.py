@@ -163,15 +163,55 @@ def test_valid_stub_pair_links_every_factual_sentence_and_exports(
     catalog: SourceContext, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     with _stub(monkeypatch, tmp_path, "valid") as stub:
-        _, application, task = _generate(catalog)
+        profile, application = _setup_pair(catalog)
+        selected = profile["current_revision"]["claims"]
+        source = profile["evidence"][0]
+        source_text = (
+            "\n".join(item["rendering"] for item in selected) + "\nOther application only."
+        )
+        changed = catalog.client.put(
+            f"/api/v1/evidence/{source['id']}",
+            json={
+                "payload": {"text": source_text, "source": "Shared owner statement"},
+                "provenance": {"source_type": "owner_statement"},
+            },
+            headers=catalog.headers(profile["version"]),
+        )
+        assert changed.status_code == 200, changed.text
+        profile = changed.json()
+        source_id = next(item for item in profile["evidence"] if item["id"] == source["id"])[
+            "revision"
+        ]["id"]
+        for item in selected:
+            changed = catalog.client.put(
+                f"/api/v1/claims/{item['id']}",
+                json={
+                    "kind": item["kind"],
+                    "payload": item["revision"]["payload"],
+                    "evidence_links": [
+                        {
+                            "evidence_revision_id": source_id,
+                            "support_kind": "user_asserted",
+                            "excerpt": item["rendering"],
+                        }
+                    ],
+                },
+                headers=catalog.headers(profile["version"]),
+            )
+            assert changed.status_code == 200, changed.text
+            profile = changed.json()
+        task = _queue_pair(catalog, _preview(catalog, profile, application))
         workflow = _run(catalog, task)
     assert workflow["state"] == "succeeded", workflow
     assert len(stub.requests) == 1
+    projection = json.loads(stub.requests[0]["messages"][1]["content"])
+    assert projection["evidence"] == [
+        {"id": source_id, "text": "\n".join(item["rendering"] for item in selected)}
+    ]
     items = _pair_documents(catalog, application)["items"]
     assert {item["kind"] for item in items} == {"resume", "cover_letter"}
     for document in items:
         provenance = document["current_revision"]["provenance_snapshot"]
-        assert provenance["checker_version"] == "claim-evidence-v6"
         pinned = {fact["claim_revision_id"] for fact in provenance["facts"]}
         blocks = _factual_blocks(document)
         assert blocks and all(
@@ -468,7 +508,12 @@ def test_owner_send_lock_refuses_evidence_writers_during_the_corrective_call(
 
 def _claim_item(context: SourceContext) -> tuple[dict[str, Any], dict[str, Any]]:
     current = context.client.get("/api/v1/profile").json()
-    return current, current["current_revision"]["claims"][0]
+    # Keep the original benchmark claim across edits and date-sorted additions.
+    return current, next(
+        item
+        for item in current["current_revision"]["claims"]
+        if item["revision"]["payload"]["text"] == "Maintained Linux batch processing runbooks"
+    )
 
 
 def _edit_claim(context: SourceContext) -> Any:

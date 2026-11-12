@@ -17,6 +17,7 @@ from test_identity import identity as identity
 from bonafides.documents import prepare_synthetic, publish_document
 from bonafides.portable_data import collect_owner_data, quarantine_records
 from bonafides.problems import Problem
+from bonafides.profile_breadth import citation_runs, citation_text, normalize_citation_url
 from bonafides.profile_entries import evidence_revision, hydrate_claim
 from bonafides.profiles import ProfileSnapshot, _save, canonical, content_hash
 
@@ -887,8 +888,9 @@ def test_experience_coverage_merges_overlaps_without_inventing_unknown_dates(
         )
         assert profile["experience_coverage"]["minimum_days"] == 47
         assert profile["experience_coverage"]["maximum_days"] == 412
-        assert (
-            profile["current_revision"]["claims"][-1]["revision"]["payload"]["start_date"] == "2023"
+        assert any(
+            item["revision"]["payload"].get("start_date") == "2023"
+            for item in profile["current_revision"]["claims"]
         )
 
 
@@ -1004,3 +1006,231 @@ def test_literal_save_requires_whole_phrase_in_genuine_supporting_quote(
             assert _json(response)["code"] == "literal_claim_not_grounded"
             assert statement in _json(response)["detail"]
             assert _json(client.get("/api/v1/profile")) == profile
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "javascript:alert(1)",
+        "https://user:secret@example.org",
+        "https://example.org\\evil",
+        "https://example.org/\npath",
+    ],
+)
+def test_publication_links_reject_unsafe_targets(url: str) -> None:
+    with pytest.raises(ValueError, match="invalid_citation_url"):
+        normalize_citation_url(url)
+
+
+def test_publication_emphasis_is_literal_and_doi_is_normalized() -> None:
+    markup = r"**Title** by *Author*, \*literal* and unmatched **"
+    assert citation_runs(markup)[:3] == [("strong", "Title"), ("text", " by "), ("em", "Author")]
+    assert citation_text(markup) == "Title by Author, *literal* and unmatched **"
+    assert (
+        citation_text("<script>x</script> [title](javascript:x)")
+        == "<script>x</script> [title](javascript:x)"
+    )
+    assert normalize_citation_url("doi:10.1000/xyz") == "https://doi.org/10.1000/xyz"
+
+
+@pytest.mark.postgres
+def test_writing_drafts_require_real_sources_and_cannot_enter_professional_membership(
+    profile_owner: IdentityContext,
+) -> None:
+    with profile_owner.client() as client:
+        csrf = str(_json(_bootstrap(profile_owner, client))["csrf_token"])
+        profile = _attest(client, profile_owner, csrf)
+        draft = _mutate(
+            client,
+            profile_owner,
+            csrf,
+            "POST",
+            "/claims",
+            profile["version"],
+            {"kind": "writing_fact", "payload": {"text": ""}, "evidence_links": []},
+        )
+        assert draft.status_code == 200, draft.text
+        profile = _json(draft)
+        fact = profile["current_revision"]["claims"][0]
+        snapshot = profile["current_revision"]["snapshot"]
+        assert snapshot["claim_revision_ids"] == []
+        assert snapshot["writing_fact_revision_ids"]["personal"] == [fact["revision"]["id"]]
+        assert fact["grounding_issue"] is None
+        body = _claim_body(profile["evidence"][0]["revision"]["id"], "writing_fact")
+        body["payload"] = {"text": "Invented accomplishment"}
+        refused = _mutate(
+            client, profile_owner, csrf, "PUT", f"/claims/{fact['id']}", profile["version"], body
+        )
+        assert refused.status_code == 422
+        body["payload"] = {"text": "Maintained Linux services"}
+        updated = _mutate(
+            client, profile_owner, csrf, "PUT", f"/claims/{fact['id']}", profile["version"], body
+        )
+        assert updated.status_code == 200, updated.text
+        profile = _json(updated)
+        snapshot = profile["current_revision"]["snapshot"]
+        fact_id = snapshot["writing_fact_revision_ids"]["personal"][0]
+        for forged in (
+            {**snapshot, "claim_revision_ids": [fact_id], "writing_fact_revision_ids": {}},
+            {**snapshot, "writing_fact_revision_ids": {str(uuid4()): [fact_id]}},
+            {**snapshot, "writing_fact_revision_ids": {"personal": [fact_id, fact_id]}},
+        ):
+            response = _mutate(
+                client, profile_owner, csrf, "PUT", "/profile", profile["version"], forged
+            )
+            assert response.status_code == 422
+        historical_id = profile["current_revision"]["id"]
+        history = _json(client.get(f"/api/v1/profile/revisions/{historical_id}"))
+        assert history["claims"][0]["revision"]["id"] == fact_id
+        deleted = _mutate(
+            client, profile_owner, csrf, "DELETE", f"/claims/{fact['id']}", profile["version"]
+        )
+        assert deleted.status_code == 200
+        restored = _mutate(
+            client,
+            profile_owner,
+            csrf,
+            "POST",
+            "/profile/restore",
+            _json(deleted)["version"],
+            {"revision_id": historical_id},
+        )
+        assert restored.status_code == 200, restored.text
+        assert (
+            _json(restored)["current_revision"]["snapshot"]["writing_fact_revision_ids"]
+            == snapshot["writing_fact_revision_ids"]
+        )
+        assert _json(client.get(f"/api/v1/profile/revisions/{historical_id}")) == history
+
+
+@pytest.mark.postgres
+def test_section_membership_races_and_entry_restore_preserve_later_additions(
+    profile_owner: IdentityContext,
+) -> None:
+    with profile_owner.client() as client:
+        csrf = str(_json(_bootstrap(profile_owner, client))["csrf_token"])
+        profile = _attest(client, profile_owner, csrf)
+        profile = _add_claim(client, profile_owner, csrf, profile, "education", start_date="2020")
+        first = profile["current_revision"]["claims"][0]
+        profile = _add_claim(
+            client, profile_owner, csrf, profile, "education", start_date="2024-01"
+        )
+        section = profile["current_revision"]["snapshot"]["claim_revision_ids"]
+        assert section[-1] == first["revision"]["id"]
+        old_version = profile["version"]
+        profile = _add_claim(client, profile_owner, csrf, profile, "education", start_date="2022")
+        route = "/profile/sections/education/order"
+        assert (
+            _mutate(
+                client,
+                profile_owner,
+                csrf,
+                "POST",
+                route,
+                old_version,
+                {"revision_ids": section, "mode": "manual"},
+            ).status_code
+            == 412
+        )
+        assert (
+            _mutate(
+                client,
+                profile_owner,
+                csrf,
+                "POST",
+                route,
+                profile["version"],
+                {"revision_ids": section, "mode": "date"},
+            ).status_code
+            == 409
+        )
+        ids = profile["current_revision"]["snapshot"]["claim_revision_ids"]
+        manual = _mutate(
+            client,
+            profile_owner,
+            csrf,
+            "POST",
+            route,
+            profile["version"],
+            {"revision_ids": list(reversed(ids)), "mode": "manual"},
+        )
+        assert manual.status_code == 200
+        profile = _json(manual)
+        deleted = _mutate(
+            client, profile_owner, csrf, "DELETE", f"/claims/{first['id']}", profile["version"]
+        )
+        assert deleted.status_code == 200
+        profile = _add_claim(
+            client, profile_owner, csrf, _json(deleted), "education", start_date="2025"
+        )
+        later = profile["current_revision"]["claims"][0]["revision"]["id"]
+        restore = _mutate(
+            client,
+            profile_owner,
+            csrf,
+            "POST",
+            f"/claims/{first['id']}/restore",
+            profile["version"],
+            {},
+        )
+        assert restore.status_code == 200, restore.text
+        profile = _json(restore)
+        ids = profile["current_revision"]["snapshot"]["claim_revision_ids"]
+        assert len(ids) == len(set(ids)) == 4 and later in ids and first["revision"]["id"] in ids
+        dated = _mutate(
+            client,
+            profile_owner,
+            csrf,
+            "POST",
+            route,
+            profile["version"],
+            {"revision_ids": ids, "mode": "date"},
+        )
+        assert dated.status_code == 200
+        dates = [
+            item["revision"]["payload"]["start_date"]
+            for item in _json(dated)["current_revision"]["claims"]
+        ]
+        assert dates == ["2025", "2024-01", "2022", "2020"]
+
+
+@pytest.mark.postgres
+def test_publication_metadata_remains_pinned_and_cannot_be_applied_to_other_kinds(
+    profile_owner: IdentityContext,
+) -> None:
+    with profile_owner.client() as client:
+        csrf = str(_json(_bootstrap(profile_owner, client))["csrf_token"])
+        profile = _attest(client, profile_owner, csrf)
+        body = _claim_body(profile["evidence"][0]["revision"]["id"], "publication")
+        payload = {
+            "text": "Maintained Linux services",
+            "citation_markup": "**Maintained** Linux services",
+            "citation_url": "10.1000/xyz",
+            "include_in_resume": False,
+        }
+        body["payload"] = payload
+        saved = _mutate(client, profile_owner, csrf, "POST", "/claims", profile["version"], body)
+        assert saved.status_code == 200, saved.text
+        profile = _json(saved)
+        publication = profile["current_revision"]["claims"][0]
+        assert publication["revision"]["payload"]["citation_url"] == "https://doi.org/10.1000/xyz"
+        assert publication["revision"]["payload"]["include_in_resume"] is False
+        pinned = _json(client.get(f"/api/v1/profile/revisions/{profile['current_revision']['id']}"))
+        body["kind"] = "skill"
+        assert (
+            _mutate(
+                client, profile_owner, csrf, "POST", "/claims", profile["version"], body
+            ).status_code
+            == 422
+        )
+        body["kind"] = "publication"
+        body["payload"] = {**payload, "citation_markup": "**Invented**"}
+        assert (
+            _mutate(
+                client, profile_owner, csrf, "POST", "/claims", profile["version"], body
+            ).status_code
+            == 422
+        )
+        profile = _add_claim(client, profile_owner, csrf, profile, "publication")
+        assert profile["current_revision"]["claims"][1]["id"] == publication["id"]
+        assert pinned["claims"][0]["revision"] == publication["revision"]

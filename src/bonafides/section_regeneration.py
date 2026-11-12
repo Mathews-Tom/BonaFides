@@ -90,7 +90,9 @@ def _source_context(
     if selected is None:
         raise Problem(404, "document_section_not_found")
     profile = generation._profile(conn, owner, row["profile_revision_id"])
-    facts = generation._fact_data(conn, owner, row["profile_revision_id"])
+    facts = generation._fact_data(
+        conn, owner, row["profile_revision_id"], application_id=row["application_id"], writing=True
+    )
     # The historical parent, not today's expanded profile, is the complete fact boundary.
     if facts != provenance.get("facts"):
         raise Problem(409, "document_source_changed")

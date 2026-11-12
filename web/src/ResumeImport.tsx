@@ -7,7 +7,7 @@ export interface ResumeImportProps {
   api: Api; profile: Profile; disabled: boolean; onProfile: (profile: Profile) => void;
   onDirtyChange?: (dirty: boolean) => void; onBusyChange?: (busy: boolean) => void;
 }
-type PayloadField = keyof ClaimPayload;
+type PayloadField = Exclude<keyof ClaimPayload, 'citation_markup' | 'citation_url' | 'include_in_resume'>;
 type FieldChoice = 'keep' | 'import' | 'edit';
 interface ReviewDraft {
   action: ImportDecision['action']; kind: ImportEntry['kind']; identity_field: ImportEntry['identity_field'];

@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react';
-import { Api, ApiError, errorText, type PostingPage, type PostingSummary } from './api';
+import { Api, ApiError, errorText, type PostingPage, type PostingSummary, type Profile } from './api';
 import { ApplicationClaimsUsed } from './ClaimUsage';
+import { ApplicationWritingFacts } from './ProfileEntries';
 import { PipelineBoard, PipelineCalendar, PipelineReports } from './PipelineViews';
 import { MAX_ATTACHMENT_BYTES, attachmentDigest, stageName, stages, uploadAttachment, type ApplicationCounts, type ApplicationDetail, type ApplicationPage, type ApplicationSummary, type Appointment, type AppointmentWrite, type AttentionPage, type Stage, type StageEvent, type StagePage } from './tracking-api';
 
@@ -43,8 +44,8 @@ function PrivateComparison({ value }: { value: ApplicationDetail }) {
       <h5>Saved attachments</h5><ul>{value.attachments.map(item => <li key={item.id}>{item.display_name} · {item.byte_length} bytes</li>)}</ul>
     </details></>;
 }
-export function Tracking({ api, active, disabled = false, onDirtyChange, onBusyChange }: {
-  api: Api; active: boolean; disabled?: boolean; onDirtyChange?: (value: boolean) => void; onBusyChange?: (value: boolean) => void;
+export function Tracking({ api, active, disabled = false, onDirtyChange, onBusyChange, onProfileChange }: {
+  api: Api; active: boolean; disabled?: boolean; onDirtyChange?: (value: boolean) => void; onBusyChange?: (value: boolean) => void; onProfileChange?: (value: Profile) => void;
 }) {
   const [viewsOpened, setViewsOpened] = useState(active);
   useEffect(() => { if (active) setViewsOpened(true); }, [active]);
@@ -80,6 +81,8 @@ export function Tracking({ api, active, disabled = false, onDirtyChange, onBusyC
   const [reconfirm, setReconfirm] = useState(false);
   const [pendingSelection, setPendingSelection] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [writingDirty, setWritingDirty] = useState(false);
+  const [writingBusy, setWritingBusy] = useState(false);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
   const mounted = useRef(false);
@@ -94,11 +97,11 @@ export function Tracking({ api, active, disabled = false, onDirtyChange, onBusyC
   const errorRef = useRef<HTMLDivElement>(null);
   const detailHeading = useRef<HTMLHeadingElement>(null);
   const editorHeading = useRef<HTMLHeadingElement>(null);
-  const dirty = draft !== null;
-  const locked = disabled || busy;
+  const dirty = draft !== null || writingDirty;
+  const locked = disabled || busy || writingBusy;
   const draftKind = draft?.kind;
   useEffect(() => { callbacks.current.onDirtyChange?.(dirty); }, [dirty]);
-  useEffect(() => { callbacks.current.onBusyChange?.(busy); }, [busy]);
+  useEffect(() => { callbacks.current.onBusyChange?.(busy || writingBusy); }, [busy, writingBusy]);
   useEffect(() => { if (error) errorRef.current?.focus(); }, [error]);
   useEffect(() => { if (draftKind) editorHeading.current?.focus(); }, [draftKind]);
   useEffect(() => {
@@ -156,7 +159,8 @@ export function Tracking({ api, active, disabled = false, onDirtyChange, onBusyC
     finally { if (mounted.current && selection.current.id === id && selection.current.epoch === epoch) setHistoryLoading(false); }
   }
   async function selectApplication(id: string, editStage = false) {
-    if (operation.current || disabled) return;
+    if (operation.current || disabled || writingBusy) return;
+    if (writingDirty) { setError('Save or discard the application writing editor before changing application. Your text remains attached to this attempt.'); return; }
     if (live.current.draft) { pendingStageEditor.current = editStage; setPendingSelection(id); return; }
     const epoch = selection.current.epoch + 1; selection.current = { id, epoch };
     setSelectedId(id); setDetail(null); setDetailError(''); setDetailLoading(true); setHistory(null); setHistoryCursor(null); setHistoryError('');
@@ -166,7 +170,7 @@ export function Tracking({ api, active, disabled = false, onDirtyChange, onBusyC
     catch (failure) { if (!aborted(failure) && selection.current.id === id && selection.current.epoch === epoch) setDetailError(errorText(failure)); }
     finally { if (mounted.current && selection.current.id === id && selection.current.epoch === epoch) setDetailLoading(false); }
   }
-  function begin(value: Draft) { if (locked || live.current.draft) return; setDraft(value); live.current.draft = value; setConfirmed(false); setReconfirm(false); setConflict(false); setComparison(null); setError(''); setNotice(''); }
+  function begin(value: Draft) { if (locked || dirty) return; setDraft(value); live.current.draft = value; setConfirmed(false); setReconfirm(false); setConflict(false); setComparison(null); setError(''); setNotice(''); }
   function change(value: Draft) { setDraft(value); live.current.draft = value; setConfirmed(false); }
   function discard() { setDraft(null); live.current.draft = null; setConfirmed(false); setReconfirm(false); setConflict(false); setComparison(null); mutation.current = null; fileIdentity.current = null; setError(''); detailHeading.current?.focus(); }
   async function compareCurrent() {
@@ -306,6 +310,8 @@ export function Tracking({ api, active, disabled = false, onDirtyChange, onBusyC
           <button className="secondary" disabled={locked || dirty} onClick={() => begin({ kind: 'archive', archived: !detail.archived_at })}>{detail.archived_at ? 'Reactivate archived attempt' : 'Archive attempt'}</button></div>
         <p className="hint">Reopening is a stage change on this same attempt. A repeat is a separately confirmed new Preparing pursuit. Reactivation changes archive visibility only, never the stage.</p>
         <ApplicationClaimsUsed key={detail.id} api={api} applicationId={detail.id} />
+        <ApplicationWritingFacts key={detail.id} api={api} applicationId={detail.id} disabled={disabled || busy || draft !== null || !!detail.archived_at}
+          onDirtyChange={setWritingDirty} onBusyChange={setWritingBusy} onProfile={value => onProfileChange?.(value)} />
         <section aria-labelledby="tracking-history-title"><h4 id="tracking-history-title">Append-only stage history</h4><p>Newest recorded first. Effective time determines period reporting; recorded time tells when you entered the event. Older events are retained after correction.</p>
           <button className="secondary" disabled={locked || historyLoading} onClick={() => { void loadHistory(detail.id, selection.current.epoch); }}>Refresh stage history</button>
           {historyError && <p className="error" role="status">Stage history unavailable. {historyError} {history ? 'Earlier loaded events may be stale.' : ''}</p>}

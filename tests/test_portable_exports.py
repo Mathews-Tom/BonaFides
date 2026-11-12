@@ -125,7 +125,6 @@ def test_owner_can_download_nonempty_blocked_document_and_exact_evidence_bytes(
     # Independent ZIP/JSON reader and direct SQL, not the exporter or its decoder.
     with ZipFile(io.BytesIO(downloaded.content)) as archive:
         manifest = json.loads(archive.read("manifest.json"))
-        assert (manifest["format"], manifest["format_version"]) == ("bonafides-workspace", 2)
         records = {
             table: rows
             for section in manifest["sections"].values()

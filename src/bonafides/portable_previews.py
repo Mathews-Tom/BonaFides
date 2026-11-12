@@ -326,6 +326,10 @@ def _prepare(
                 application_id=str(application), application_version=deletion.application_version
             )
             plan["connections_after_operation"] = "unchanged_except_revoked_owner_sessions"
+            plan["remaining_copies"] = [
+                *cast(list[str], plan["remaining_copies"]),
+                "profile_history_application_writing_facts",
+            ]
         plan.update(
             record_counts=_counts(conn, owner.id, application),
             credentials_erased=application is None,

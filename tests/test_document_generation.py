@@ -2332,3 +2332,46 @@ def test_owner_omissions_survive_edits_restore_once_and_validate_hidden_portable
         _document(catalog, current["id"])["current_revision"]
         == saved_invalid.json()["current_revision"]
     )
+
+
+@pytest.mark.postgres
+@pytest.mark.parametrize(
+    "citation", ["Doe J*, Roe K* (2021). Title.", r"Title \*marker* **literal**"]
+)
+def test_plain_citation_markers_survive_checked_generation(
+    catalog: SourceContext, citation: str
+) -> None:
+    profile = catalog.client.get("/api/v1/profile").json()
+    response = catalog.client.post(
+        "/api/v1/evidence",
+        json={
+            "payload": {"text": citation, "source": "Synthetic citation"},
+            "provenance": {
+                "source_type": "owner_statement",
+                "privacy_class": "private",
+                "employer_owned": False,
+            },
+        },
+        headers=catalog.headers(profile["version"]),
+    )
+    assert response.status_code == 200, response.text
+    profile = response.json()
+    response = catalog.client.post(
+        "/api/v1/claims",
+        json={
+            "kind": "publication",
+            "payload": {"text": citation},
+            "evidence_links": [
+                {
+                    "evidence_revision_id": profile["evidence"][0]["revision"]["id"],
+                    "support_kind": "user_asserted",
+                    "excerpt": citation,
+                }
+            ],
+        },
+        headers=catalog.headers(profile["version"]),
+    )
+    assert response.status_code == 200, response.text
+    document = _base(catalog, response.json())
+    assert document["current_revision"]["body"]["sections"][0]["blocks"][0]["text"] == citation
+    assert _review(catalog, document).status_code == 200

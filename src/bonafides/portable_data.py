@@ -14,6 +14,7 @@ from pydantic import JsonValue, ValidationError
 from sqlalchemy import Connection, text
 from sqlalchemy.exc import DBAPIError
 
+from bonafides.claims import literal_grounded
 from bonafides.commands import canonical_json, lock_installation
 from bonafides.config import Settings
 from bonafides.db import SCHEMA_VERSION, Database, require_baseline, schema_ledger
@@ -35,7 +36,9 @@ from bonafides.portable_archive import (
 )
 from bonafides.portable_columns import COLUMNS
 from bonafides.portable_workspace import FORMAT as WORKSPACE_FORMAT
-from bonafides.portable_workspace_v2 import FORMAT_VERSION as WORKSPACE_VERSION
+from bonafides.portable_workspace_v3 import FORMAT_VERSION as WORKSPACE_VERSION
+from bonafides.profile_breadth import snapshot_claim_ids
+from bonafides.profile_entries import ClaimPayload, ClaimWrite, WritingFactPayload
 from bonafides.profiles import ProfileSnapshot, content_hash
 from bonafides.storage import BlobStore
 
@@ -328,6 +331,58 @@ def _semantic_hashes(archive: PortableArchive) -> None:
                 raise ArchiveError("portable_content_hash_mismatch")
     claims = {UUID(cast(str, row["id"])) for row in records["claim_revisions"]}
     evidence = {UUID(cast(str, row["id"])) for row in records["evidence_revisions"]}
+    kinds = {cast(str, item["id"]): item["kind"] for item in records["professional_claims"]}
+    archived_claims = {
+        item["id"] for item in records["professional_claims"] if item["archived_at"] is not None
+    }
+    revisions = {cast(str, item["id"]): item for item in records["claim_revisions"]}
+    sources = {cast(str, item["id"]): item["payload"] for item in records["evidence_revisions"]}
+    applications = {cast(str, item["id"]) for item in records["applications"]}
+    links: dict[str, list[JsonRow]] = {}
+    for link in records["claim_evidence_links"]:
+        links.setdefault(cast(str, link["claim_revision_id"]), []).append(link)
+    for identifier, breadth_revision in revisions.items():
+        kind = kinds[cast(str, breadth_revision["claim_id"])]
+        if kind not in ("publication", "writing_fact"):
+            continue
+        own = links.get(identifier, [])
+        try:
+            checked = ClaimWrite.model_validate_json(
+                canonical_json(
+                    {
+                        "kind": kind,
+                        "payload": breadth_revision["payload"],
+                        "evidence_links": [
+                            {
+                                key: link[key]
+                                for key in ("evidence_revision_id", "support_kind", "excerpt")
+                            }
+                            for link in own
+                        ],
+                    }
+                ),
+                strict=True,
+            )
+            payload = cast(ClaimPayload | WritingFactPayload, checked.payload)
+            if (
+                isinstance(payload, WritingFactPayload)
+                and payload.application_id is not None
+                and str(payload.application_id) not in applications
+                and breadth_revision["claim_id"] not in archived_claims
+            ):
+                raise ValueError("writing_scope_missing")
+            if payload.text.strip() and not any(
+                link["support_kind"] in ("direct", "user_asserted")
+                and isinstance(source := sources[cast(str, link["evidence_revision_id"])], dict)
+                and isinstance(source.get("text"), str)
+                and literal_grounded(
+                    payload.text, cast(str, link["excerpt"]), cast(str, source["text"])
+                )
+                for link in own
+            ):
+                raise ValueError("literal_claim_not_grounded")
+        except (ValidationError, ValueError, KeyError) as exc:
+            raise ArchiveError("invalid_portable_breadth_claim") from exc
     for row in records["profile_revisions"]:
         try:
             snapshot = ProfileSnapshot.model_validate_json(
@@ -335,17 +390,41 @@ def _semantic_hashes(archive: PortableArchive) -> None:
             )
         except ValidationError as exc:
             raise ArchiveError("invalid_portable_profile") from exc
-        if (
-            not set(snapshot.claim_revision_ids) <= claims
-            or not set(snapshot.evidence_revision_ids) <= evidence
+        if row["id"] == str(archive.manifest.current_profile_revision_id) and any(
+            scope != "personal" and scope not in applications and ids
+            for scope, ids in snapshot.writing_fact_revision_ids.items()
         ):
+            raise ArchiveError("invalid_portable_current_profile")
+        snapshot_claims = {
+            UUID(value) for value in snapshot_claim_ids(snapshot.model_dump(mode="json"))
+        }
+        if not snapshot_claims <= claims or not set(snapshot.evidence_revision_ids) <= evidence:
             raise ArchiveError("portable_snapshot_reference_missing")
+        selected_ids = snapshot_claim_ids(snapshot.model_dump(mode="json"))
+        if len(set(selected_ids)) != len(selected_ids) or len(
+            {revisions[value]["claim_id"] for value in selected_ids}
+        ) != len(selected_ids):
+            raise ArchiveError("portable_snapshot_membership_mismatch")
+        for scope, identifiers in snapshot.writing_fact_revision_ids.items():
+            for writing_identifier in identifiers:
+                breadth_revision = revisions[str(writing_identifier)]
+                payload_value = cast(dict[str, JsonValue], breadth_revision["payload"])
+                if (
+                    kinds[cast(str, breadth_revision["claim_id"])] != "writing_fact"
+                    or str(payload_value.get("application_id") or "personal") != scope
+                ):
+                    raise ArchiveError("portable_snapshot_membership_mismatch")
+        if any(
+            kinds[cast(str, revisions[str(identifier)]["claim_id"])] == "writing_fact"
+            for identifier in snapshot.claim_revision_ids
+        ):
+            raise ArchiveError("portable_snapshot_membership_mismatch")
         selected = {
             UUID(cast(str, link["claim_revision_id"]))
             for link in records["profile_revision_claims"]
             if link["profile_revision_id"] == row["id"]
         }
-        if selected != set(snapshot.claim_revision_ids):
+        if selected != snapshot_claims:
             raise ArchiveError("portable_snapshot_membership_mismatch")
     for row in records["document_revisions"]:
         try:

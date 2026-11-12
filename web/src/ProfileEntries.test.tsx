@@ -3,7 +3,7 @@ import { act, fireEvent, render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
 import { Api, ApiError, type ClaimRendering, type ClaimVocabulary, type Profile, type ProfileRevision, type StructuredClaim } from './api';
-import { ProfileEntries } from './ProfileEntries';
+import { ApplicationWritingFacts, ProfileEntries } from './ProfileEntries';
 
 const metadata = { revision_no: 1, content_sha256: 'a'.repeat(64), created_at: '2026-01-01T00:00:00Z', author_owner_id: 'synthetic-owner' };
 const source = { id: 'source', version: 1, archived: false, current_revision_id: 'source-revision', revision: { ...metadata, id: 'source-revision', payload: { text: 'Synthetic workshop notes.', source: 'Owner attestation' }, provenance: { source_type: 'owner_statement' as const, origin: 'owner_entry' as const, privacy_class: 'private' as const, employer_owned: false } } };
@@ -790,5 +790,77 @@ describe('source-specific interview preparation', () => {
     view.rerender(<ProfileEntries {...props} profile={value} />);
     expect(screen.queryByRole('button', { name: 'Interview preparation for skills entry 1' })).not.toBeInTheDocument();
     expect(screen.queryByRole('region', { name: 'Interview preparation for skills entry 1' })).not.toBeInTheDocument();
+  });
+});
+
+describe('profile breadth editing', () => {
+  it('explicitly saves publication citation, emphasis, inclusion and a genuine source pin', async () => {
+    const api = new Api(); const user = userEvent.setup();
+    const request = vi.spyOn(api, 'request').mockResolvedValue(profile);
+    render(<ProfileEntries api={api} profile={profile} disabled={false} onProfile={vi.fn()} onDirtyChange={vi.fn()} onBusyChange={vi.fn()} />);
+    await user.click(screen.getByRole('button', { name: 'Publications' }));
+    await user.click(screen.getByRole('button', { name: 'Add publications entry' }));
+    await user.type(screen.getByLabelText('Plain citation'), 'Synthetic workshop notes.');
+    await user.type(screen.getByLabelText('Citation emphasis (optional)'), '**Synthetic** workshop notes.');
+    await user.type(screen.getByLabelText('Citation link or DOI (optional)'), 'doi:10.1000/example');
+    await user.click(screen.getByLabelText('Include this publication in my résumé'));
+    expect(screen.getByRole('button', { name: 'Save entry revision' })).toBeDisabled();
+    await user.click(screen.getByRole('button', { name: 'Add evidence link' }));
+    await user.selectOptions(screen.getByLabelText('Evidence revision 1'), source.revision.id);
+    await user.type(screen.getByLabelText('Source excerpt 1'), 'Synthetic workshop notes.');
+    expect(request).not.toHaveBeenCalledWith('/claims', expect.anything(), expect.anything(), expect.anything(), expect.anything());
+    await user.click(screen.getByRole('button', { name: 'Save entry revision' }));
+    expect(request).toHaveBeenCalledWith('/claims', 'POST', {
+      kind: 'publication', payload: { text: 'Synthetic workshop notes.', citation_markup: '**Synthetic** workshop notes.', citation_url: 'doi:10.1000/example', include_in_resume: false },
+      evidence_links: [{ evidence_revision_id: source.revision.id, support_kind: 'user_asserted', excerpt: 'Synthetic workshop notes.' }],
+    }, profile.version, expect.any(String));
+  });
+
+  it('allows blank personal drafts without evidence, but requires sources for useful facts and caps rows per scope', async () => {
+    const api = new Api(); const user = userEvent.setup(); const onProfile = vi.fn();
+    vi.spyOn(api, 'request').mockResolvedValue(profile);
+    const props = { api, profile: { ...profile, evidence: [] }, disabled: false, onProfile, onDirtyChange: vi.fn(), onBusyChange: vi.fn() };
+    const view = render(<ProfileEntries {...props} />);
+    await user.click(screen.getByRole('button', { name: 'Personal writing facts' }));
+    expect(screen.getByText(/Ordinary model input for writing, not a private note/)).toBeVisible();
+    await user.click(screen.getByRole('button', { name: 'Add personal writing facts entry' }));
+    expect(screen.getByLabelText('Entry statement')).toHaveAttribute('maxlength', '1000');
+    await user.type(screen.getByLabelText('Entry statement'), 'Useful fact');
+    expect(screen.getByRole('button', { name: 'Save entry revision' })).toBeDisabled();
+    await user.clear(screen.getByLabelText('Entry statement'));
+    await user.click(screen.getByRole('button', { name: 'Save entry revision' }));
+    const blank = { ...profile.current_revision.claims[0]!, kind: 'writing_fact' as const, rendering: '', revision: { ...profile.current_revision.claims[0]!.revision, payload: { text: '', application_id: null }, evidence_links: [] } };
+    view.rerender(<ProfileEntries {...props} profile={{ ...profile, current_revision: { ...profile.current_revision, claims: Array.from({ length: 50 }, (_, i) => ({ ...blank, id: `blank-${i}` })) } }} />);
+    expect(screen.getByRole('button', { name: 'Personal writing facts' })).toHaveAccessibleDescription('0 useful writing facts');
+    expect(screen.getByRole('button', { name: 'Add personal writing facts entry' })).toBeDisabled();
+  });
+
+
+  it('binds writing drafts to the selected application and excludes personal and other-application rows from its editor', async () => {
+    const api = new Api(); const user = userEvent.setup(); const onProfile = vi.fn();
+    const facts = [null, 'selected', 'different'].map((application_id, i) => ({
+      ...profile.current_revision.claims[0]!, id: `fact-${i}`, kind: 'writing_fact' as const, rendering: `Scope fact ${i}`,
+      revision: { ...profile.current_revision.claims[0]!.revision, payload: { text: `Scope fact ${i}`, application_id } },
+    }));
+    const scoped = { ...profile, current_revision: { ...profile.current_revision, claims: facts } };
+    vi.spyOn(api, 'request').mockResolvedValue(scoped);
+    render(<ApplicationWritingFacts api={api} applicationId="selected" disabled={false} onProfile={onProfile} onDirtyChange={vi.fn()} onBusyChange={vi.fn()} />);
+    await user.click(screen.getByRole('button', { name: 'Load writing facts for this application' }));
+    expect(screen.getByText('Scope fact 1')).toBeVisible();
+    expect(screen.queryByText('Scope fact 0')).not.toBeInTheDocument();
+    expect(screen.queryByText('Scope fact 2')).not.toBeInTheDocument();
+  });
+
+  it('ignores a late scoped load after its application editor is replaced', async () => {
+    const api = new Api(); const user = userEvent.setup(); const pending = deferred<Profile>();
+    vi.spyOn(api, 'getProfile').mockReturnValue(pending.promise);
+    const props = { api, disabled: false, onProfile: vi.fn(), onDirtyChange: vi.fn(), onBusyChange: vi.fn() };
+    const view = render(<ApplicationWritingFacts key="first" {...props} applicationId="first" />);
+    await user.click(screen.getByRole('button', { name: 'Load writing facts for this application' }));
+    view.rerender(<ApplicationWritingFacts key="second" {...props} applicationId="second" />);
+    await act(async () => pending.resolve(profile));
+    expect(screen.getByRole('button', { name: 'Load writing facts for this application' })).toBeVisible();
+    expect(screen.queryByRole('heading', { name: 'Application writing input' })).not.toBeInTheDocument();
+    expect(props.onProfile).not.toHaveBeenCalled();
   });
 });

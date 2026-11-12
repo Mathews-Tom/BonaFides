@@ -64,6 +64,8 @@ You can permanently delete one application or everything in your workspace. Dele
 
 The deletion then runs in the background. When it runs, you're signed out; sign in again. Select **Reload previews and dispatch status** to see when it's finished.
 
+Writing facts for a deleted application are archived from your profile; their text stays in immutable profile history and exports until you delete all workspace data. Restoring an old profile does not reactivate facts for a deleted application.
+
 If you change your mind before approving, select **Cancel preview and clear retained bytes**. Cancelling can't undo a deletion that has already run.
 
 Deleting removes your data from BonaFides. Exports and PDFs you downloaded, and any installation backups, are separate and aren't touched.

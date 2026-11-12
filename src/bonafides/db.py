@@ -10,7 +10,7 @@ from sqlalchemy.engine import make_url
 from bonafides.config import Settings
 from bonafides.execution_guard import ExecutionGuard
 
-SCHEMA_VERSION = 5
+SCHEMA_VERSION = 6
 # Checksum of migrations/sql/001_baseline.up.sql; every supported ledger starts with it.
 BASELINE_SHA256 = "d59f2522f5e4be27f5ad367c23bc3b0979af4c9d48831249b36697df8992d3d8"
 SUPPORTED_MIGRATIONS = {
@@ -19,6 +19,7 @@ SUPPORTED_MIGRATIONS = {
     3: "13d490b113728bed3b30176b6c14d9f787bc94293d206080d953272540703331",
     4: "73337671c1fb65ffb0f0830b5be441e4ec81edbf9e3eb92f7d45b68958814460",
     5: "62fd5caa3c9fbfeee4a3f4234d4886c6c6fff411c206d1e22e6e90051616a769",
+    6: "7b0da461f841f1042966b950070337b80e575da701c94562228284e66d3b9ae9",
 }
 PRE_BASELINE_GUIDANCE = (
     "This data predates the 0.1.0 schema baseline and is never upgraded in place. "

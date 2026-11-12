@@ -57,6 +57,7 @@ from bonafides.workflows import Claim, assert_fence, claim, heartbeat
 
 CLAIM = "Kept the synthetic payroll batch inside its nightly window"
 WITHHELD_MARKER = "SECRET-EMPLOYER-ROADMAP-7Q"
+UNSELECTED_MARKER = "UNSELECTED-RAW-SOURCE-4R"
 
 
 def _withheld_source(
@@ -68,7 +69,7 @@ def _withheld_source(
         "/api/v1/evidence",
         json={
             "payload": {
-                "text": f"{CLAIM}. Internal codename {WITHHELD_MARKER}.",
+                "text": f"{CLAIM}. Internal codename {WITHHELD_MARKER}. {UNSELECTED_MARKER}",
                 "source": "Review",
             },
             "provenance": {
@@ -90,7 +91,7 @@ def _withheld_source(
                 {
                     "evidence_revision_id": evidence_id,
                     "support_kind": "user_asserted",
-                    "excerpt": CLAIM,
+                    "excerpt": f"{CLAIM}. Internal codename {WITHHELD_MARKER}.",
                 }
             ],
         },
@@ -161,6 +162,7 @@ def _transmitted(tmp_path: Path, stage: str, context: dict[str, object]) -> dict
         assert len(requests) == 1
         raw = requests[0]
     assert WITHHELD_MARKER.encode() not in raw
+    assert UNSELECTED_MARKER.encode() not in raw
     sent = json.loads(raw)
     return cast(dict[str, Any], json.loads(sent["messages"][1]["content"]))
 
@@ -265,6 +267,7 @@ def test_private_and_public_evidence_content_still_reaches_document_generation(
     assert {"id": evidence_id, "text": f"{CLAIM}. Internal codename {WITHHELD_MARKER}."} in preview[
         "model_projection"
     ]["evidence"]
+    assert UNSELECTED_MARKER not in canonical_json(preview["model_projection"])
     assert preview["withheld_evidence"] == []
 
 
@@ -749,6 +752,8 @@ def test_inflight_owner_send_refuses_classify_edit_archive_restore_and_import_me
         corrective = stage in {"generate_documents", "regenerate_section"}
         assert len(requests) == (2 if corrective else 1)
         assert all(WITHHELD_MARKER.encode() in request for request in requests)
+        if stage != "match_requirements":
+            assert all(UNSELECTED_MARKER.encode() not in request for request in requests)
         assert catalog.workflow(task.id)["last_error_code"] == (
             "model_output_invalid_after_correction" if corrective else "invalid_model_output"
         )

@@ -27,7 +27,7 @@ Contact details are printed on your documents but are **never sent to an AI mode
 
 ## Add a source
 
-You need at least one source before you can add an entry.
+Nonblank entries need a supporting source. A blank writing-fact draft can be saved without one; it is not used for writing.
 
 1. Under the entry sections, choose **Sources**.
 2. Select **Add source or owner attestation**.
@@ -64,7 +64,7 @@ If the profile changed, select **Load latest profile and retain capture review**
 
 ## Add an entry
 
-Entries are grouped by kind: **Skills**, **Work experience**, **Projects**, **Education**, **Languages**, **Certifications**, **Identity facts**, **Preferences** and **Other facts**.
+Entries are grouped by kind: **Skills**, **Work experience**, **Projects**, **Education**, **Languages**, **Certifications**, **Identity facts**, **Preferences**, **Other facts**, **Publications** and **Personal writing facts**.
 
 1. Choose a kind, for example **Skills**.
 2. Select **Add skills entry** (the button names the kind you chose).
@@ -119,13 +119,23 @@ This warning differs from **Needs attention: this statement is still free text. 
 
 A new base résumé may leave out unsupported single-statement entries and names each one under **Entries omitted from this saved revision**. A build with no usable entries is refused and names the unsupported entries instead of creating an empty résumé. Tailored generation refuses unsupported entries rather than silently leaving them out. After saving a supported entry revision, choose the updated **Saved profile revision** and select **Rebuild base from selected profile** to update the document; existing document words and omission lists do not change by themselves.
 
+## Publications and writing facts
+
+Under **Publications**, enter the exact **Plain citation** and link it to its supporting source. Optional **Citation emphasis** accepts `**bold**`, `*italic*` and backslash-escaped literal asterisks; its plain wording must match the citation exactly. A citation is limited to 3,000 characters and its optional web link or DOI to 500. DOI values become `https://doi.org/…` links; BonaFides does not fetch them. **Include this publication in my résumé** controls inclusion without deleting the saved citation. Choose a citation-aware Evidence or Compact template in Documents to print emphasis and clickable links. Models cannot rewrite citation wording.
+
+**Personal writing facts** are reusable writing inputs. The selected application's **Application writing input** stores facts for that application only. Each scope holds at most 50 facts of 1,000 characters each. Nonblank facts need the same genuine source/excerpt support as other entries. Blank drafts do not count as useful input. Facts are not private notes: personal and current-application facts can enter generation and refinement, subject to existing source-classification rules. Other applications' facts stay out. These context rows are not automatically printed as entries in the model-free base résumé.
+
+For drafting and section refinement, the model receives only the supporting excerpts linked to selected facts, not the full text of shared sources. Confidential and employer-owned source content remains withheld.
+
 ## Change, reorder or archive entries
 
 Each saved entry has its own buttons:
 
 - **Edit … entry *N***: change it. Saving creates a new revision; the old one stays in history.
 - **Move … entry *N* up** and **Move … entry *N* down**: change the order.
-- **Archive … entry *N***: remove it from your active profile. Select **Confirm archive** to go ahead, or **Keep active record** to cancel. Archived entries stay in your history and can be brought back by restoring an earlier profile revision.
+- **Archive … entry *N***: remove it from your active profile. Select **Confirm archive** to go ahead, or **Keep active record** to cancel. **Undo entry archive, keeping later additions** restores just that entry in the current editor. Whole-profile history restoration remains separate and restores the selected complete snapshot.
+
+Moving work, project or education entries selects manual order for that section. **Reset … to newest start date** restores date order independently; undated entries come last and ties keep their saved order. Publications remain manually ordered. Concurrent membership changes require a reload rather than silently discarding an entry.
 
 Changing your profile doesn't rewrite documents you've already created. Those keep the exact wording and sources they were built from, and show that newer profile facts exist.
 
