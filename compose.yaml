@@ -87,7 +87,7 @@ services:
     command: [api]
     environment: *settings
     volumes: [app-secrets:/run/bonafides:ro, blobs:/data/blobs, spool:/spool, import-spool:/import-spool]
-    networks: [private]
+    networks: [private, sources]
     depends_on: {migrate: {condition: service_completed_successfully}, renderer: {condition: service_started}, parser: {condition: service_started}}
     healthcheck:
       test: [CMD, python, -m, bonafides, healthcheck]

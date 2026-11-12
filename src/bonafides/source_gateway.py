@@ -41,6 +41,8 @@ from bonafides.greenhouse import (
 )
 from bonafides.model_gateway import GATEWAY_PORT as MODEL_GATEWAY_PORT
 from bonafides.model_gateway import ModelGatewayServer
+from bonafides.release_updates import TIMEOUT as RELEASE_TIMEOUT
+from bonafides.release_updates import ReleaseClient, parse_release, serialize_release
 
 GATEWAY_PORT = 8766
 MAX_IN_FLIGHT = 4
@@ -93,10 +95,12 @@ class SourceGatewayServer(socketserver.ThreadingMixIn, socketserver.TCPServer):
         client: GreenhouseClient,
         *,
         github_client: GitHubClient | None = None,
+        release_client: ReleaseClient | None = None,
         capture_config_file: Path | None = None,
     ) -> None:
         self.client = client
         self.github_client = github_client or GitHubClient()
+        self.release_client = release_client or ReleaseClient()
         self.capture_config_file = capture_config_file
         self._slots = threading.BoundedSemaphore(MAX_IN_FLIGHT)
         super().__init__(address, _Handler)
@@ -161,7 +165,8 @@ def _request_source(wire: _Wire) -> tuple[str, str]:
     first = wire.line(512)
     match = _ROUTE.fullmatch(first)
     github_match = _GITHUB_ROUTE.fullmatch(first)
-    if match is None and github_match is None:
+    release = first in {b"GET /v1/releases/latest HTTP/1.0", b"GET /v1/releases/latest HTTP/1.1"}
+    if match is None and github_match is None and not release:
         raise SourceFailure("source_invalid_token")
     size = len(first) + 2
     headers: dict[str, str] = {}
@@ -183,6 +188,8 @@ def _request_source(wire: _Wire) -> tuple[str, str]:
                 or "expect" in headers
             ):
                 raise SourceFailure("source_invalid_response")
+            if release:
+                return "release", ""
             if match is not None:
                 return "greenhouse", validate_board_token(match[1].decode("ascii"))
             assert github_match is not None
@@ -218,7 +225,10 @@ class _Handler(socketserver.BaseRequestHandler):
         watcher: threading.Thread | None = None
         try:
             kind, identity = _request_source(wire)
-            wire.budget = _Budget(None, seconds=TOTAL_TIMEOUT + 1.0)
+            wire.budget = _Budget(
+                interrupted if kind == "release" else None,
+                seconds=RELEASE_TIMEOUT if kind == "release" else TOTAL_TIMEOUT + 1.0,
+            )
 
             def disconnect_watch() -> None:
                 # The worker closes this connection on cancellation. No HTTP
@@ -241,7 +251,12 @@ class _Handler(socketserver.BaseRequestHandler):
             )
             watcher.start()
             server = cast(SourceGatewayServer, self.server)
-            if kind == "github":
+            if kind == "release":
+                payload = serialize_release(
+                    server.release_client.read(interrupted, budget=wire.budget)
+                )
+                parse_release(payload, wire.budget, relay=True)
+            elif kind == "github":
                 payload = server.github_read(identity, interrupted)
                 deserialize_commits(payload, identity, wire.budget)
             else:

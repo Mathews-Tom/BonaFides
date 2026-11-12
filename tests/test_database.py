@@ -173,6 +173,7 @@ def test_baseline_upgrade_preserves_existing_profile_and_adds_capture_and_import
 ) -> None:
     config = MigrationSecret(pg_context.migrator.url.render_as_string(hide_password=False))
     with pg_context.migrator.begin() as conn:
+        conn.execute(text("DROP TABLE bonafides.installation_updates"))
         conn.execute(
             text(
                 "ALTER TABLE bonafides.evidence_revisions DROP CONSTRAINT evidence_revisions_origin_check"

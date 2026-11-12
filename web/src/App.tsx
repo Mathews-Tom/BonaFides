@@ -10,6 +10,7 @@ import { Documents, type DocumentArchiveRecovery } from './Documents';
 import { Tasks } from './Tasks';
 import { DataPortability } from './DataPortability';
 import { ConnectionPanel } from './ConnectionPanel';
+import { Operations } from './Operations';
 import { navigateWorkspace, readWorkspacePage, workspacePages, WorkspaceNavigation, WorkspaceOverview, type WorkspacePage } from './Workspace';
 const emptyContact: ProfileContact = { email: '', phone: '', location: '', postal_address: '' };
 
@@ -300,6 +301,7 @@ export function App({ api = defaultApi }: { api?: Api }) {
         <label>Owner account ID<input readOnly value={session.owner_id} onFocus={event => event.currentTarget.select()} /></label>
         <button type="button" className="secondary" onClick={() => { void copyOwnerId(); }}>Copy owner account ID</button>
       </section>
+      <Operations api={api} active={page === 'settings'} disabled={connectionPaused} />
       <details className="panel"><summary>Privacy, backup and portable data</summary><DataPortability api={api} profile={profile} disabled={taskResultBlocked || !!(workflow && !terminal(workflow.state))} onBusyChange={setPortabilityBusy} /></details>
       <details className="advanced-tools"><summary>Advanced diagnostic tools</summary>
       <section className="panel"><h2>Evidence proof</h2><p>Explicitly load SYN-CORE: fictional Mira Vale, Linux and SQL evidence. This replaces the saved proof profile; it is not imported personal history. Benchmark tasks are synthetic mechanisms, separate from production composition.</p>{benchmark ? <><button className="secondary" disabled={profileLocked || !profile || !!(workflow && !terminal(workflow.state))} onClick={() => { if (profile) void benchmarkAction(async () => { acceptProfile(await api.request<Profile>('/benchmarks/profile', 'POST', { fixture: 'SYN-CORE' }, profile.version, true)); setNotice('SYN-CORE saved by the server.'); }); }}>Load SYN-CORE benchmark evidence</button><label>Proof scenario<select value={scenario} disabled={profileLocked} onChange={event => setScenario(event.target.value)}><option value="normal">Normal task</option><option value="slow">Slow task (cancellation proof)</option><option value="poison">Poison task (bounded failure proof)</option><option value="stage_pause">Stage pause (restart proof)</option></select></label><button disabled={profileLocked || !profile || profile.current_revision.snapshot.claim_revision_ids.length === 0 || !!(workflow && !terminal(workflow.state))} onClick={() => { if (profile) void benchmarkAction(async () => { const value = await api.request<Workflow>('/benchmarks/tasks', 'POST', { profile_revision_id: profile.current_revision.id, scenario, delay_seconds: scenario === 'normal' ? 0 : 15 }, profile.version, true); setWorkflow(value); }); }}>Start synthetic proof task</button></> : <p className="hint">Benchmark endpoints are disabled here. No synthetic task was started.</p>}

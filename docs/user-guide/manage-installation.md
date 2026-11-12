@@ -28,6 +28,16 @@ sh "$HOME/bonafides/stop.sh"
 
 Stopping keeps all your data, settings and keys. `sh start.sh --open-browser` also opens BonaFides in your browser.
 
+## Check health and release notices
+
+Open **Settings → Operations**. **Refresh operations health** reports the application version, database schema version and database readiness. It does not test PDF rendering, a model server, mail delivery or your public TLS proxy.
+
+Release checks start disabled. Select **Enable release checks** to allow the installation to request official GitHub release metadata. GitHub receives ordinary network metadata, including the server's public IP address; BonaFides sends no profile, credential or installation identifier. Automatic checks run when Settings first opens, at most once per UTC day; **Check for updates** starts an explicit check. Nothing is downloaded or installed.
+
+**Dismiss update** hides the notice for that exact release, not later releases. A failed check leaves the last recognized release visible and identifies it as retained information, not a fresh result. “No published stable release” does not mean your development checkout is a released version. Disabling checks prevents future requests; it cannot recall a request already transmitted.
+
+Update preferences belong to this installation, not to career-data exports. An isolated native recovery disables release checks before reopening access; enable them again deliberately.
+
 ## Update to a newer version
 
 Updating replaces the BonaFides software and keeps your data, account and password.
