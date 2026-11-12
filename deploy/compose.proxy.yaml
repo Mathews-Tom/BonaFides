@@ -1,0 +1,11 @@
+# SPDX-License-Identifier: MIT OR Apache-2.0
+# Selected only by the managed lifecycle after explicit --proxy-network preparation.
+services:
+  ingress:
+    networks:
+      proxy:
+        aliases: ["${COMPOSE_PROJECT_NAME}-ingress"]
+networks:
+  proxy:
+    external: true
+    name: ${BONAFIDES_PROXY_NETWORK:?select an existing operator proxy network}

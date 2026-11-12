@@ -49,6 +49,32 @@ valid_image() {
   case $image in ''|-*|*[!a-zA-Z0-9_./:@-]*) return 1 ;; esac
 }
 
+valid_proxy_network() {
+  case $proxy_network in ''|[!a-zA-Z0-9]*|*[!a-zA-Z0-9_.-]*) return 1 ;; esac
+  [ ${#proxy_network} -le 128 ]
+}
+
+check_proxy_network() {
+  [ -n "$proxy_network" ] || return 0
+  valid_proxy_network || fail "invalid proxy network name"
+  case $proxy_network in "$project"_*) fail "proxy network must be external to managed resources" ;; esac
+  network_details=$(docker network inspect --format '{{.Id}}|{{.Driver}}|{{.Attachable}}|{{.ConfigOnly}}|{{index .Options "com.docker.network.bridge.default_bridge"}}' "$proxy_network") ||
+    fail "operator proxy network does not exist or cannot be inspected; lifecycle never creates it"
+  IFS='|' read -r actual_network_id network_driver network_attachable network_config_only default_bridge <<EOF
+$network_details
+EOF
+  printf '%s\n' "$actual_network_id" | grep -Eq '^([a-z0-9]{25}|[0-9a-f]{64})$' || fail "invalid Docker network identity"
+  [ -z "$proxy_network_id" ] || [ "$proxy_network_id" = "$actual_network_id" ] ||
+    fail "operator proxy network was replaced; restore the saved network deliberately"
+  [ "$network_config_only" != true ] || fail "operator proxy network is configuration-only and cannot attach containers"
+  case $network_driver in
+    overlay) [ "$network_attachable" = true ] || fail "operator overlay proxy network must already be attachable" ;;
+    host|null) fail "operator proxy network must support standalone container attachment and DNS aliases" ;;
+    bridge) [ "$default_bridge" != true ] || fail "default Docker bridge does not support the required proxy DNS alias; select an existing user-defined network" ;;
+  esac
+  proxy_network_id=$actual_network_id
+}
+
 # Metadata contains no secrets and is never executed. Its exact namespace binds every resource
 # to both the Compose project and the canonical host directory, including orphaned volumes.
 validate_resources() {
@@ -80,7 +106,15 @@ load_saved() {
   private_file "$dir/.env"
   port=$(sed -n 's/^BONAFIDES_PORT=//p' "$dir/.env")
   valid_port || fail "invalid saved port"
-  expected_env=$(printf "COMPOSE_PROJECT_NAME=%s\nBONAFIDES_SECRET_DIR='%s/secrets'\nBONAFIDES_PORT=%s\nBONAFIDES_ORIGIN=http://localhost:%s\nBONAFIDES_MODE=production" "$project" "$dir" "$port" "$port")
+  origin=$(sed -n 's/^BONAFIDES_ORIGIN=//p' "$dir/.env")
+  proxy_network=$(sed -n 's/^BONAFIDES_PROXY_NETWORK=//p' "$dir/.env")
+  proxy_network_id=$(sed -n 's/^BONAFIDES_PROXY_NETWORK_ID=//p' "$dir/.env")
+  expected_env=$(printf "COMPOSE_PROJECT_NAME=%s\nBONAFIDES_SECRET_DIR='%s/secrets'\nBONAFIDES_PORT=%s\nBONAFIDES_ORIGIN=%s\nBONAFIDES_MODE=production" "$project" "$dir" "$port" "$origin")
+  if [ -n "$proxy_network" ] || [ -n "$proxy_network_id" ]; then
+    valid_proxy_network || fail "invalid saved proxy network"
+    printf '%s\n' "$proxy_network_id" | grep -Eq '^([a-z0-9]{25}|[0-9a-f]{64})$' || fail "invalid saved proxy network identity"
+    expected_env=$(printf '%s\nBONAFIDES_PROXY_NETWORK=%s\nBONAFIDES_PROXY_NETWORK_ID=%s' "$expected_env" "$proxy_network" "$proxy_network_id")
+  fi
   model_route_enabled=no
   model_route_env='BONAFIDES_LOCAL_MODEL_ROUTE_FILE=/run/bonafides/local_model_route.json'
   saved_env=$(cat "$dir/.env")
@@ -96,10 +130,13 @@ $model_route_env" ]; then
 }
 
 check_install() {
+  set --
+  case $origin in https://*) set -- --origin "$origin" ;; esac
   docker run --rm --pull never --network none --read-only --cap-drop ALL \
     --security-opt no-new-privileges:true --user "$(id -u):$(id -g)" \
     --mount "type=bind,source=$dir,target=/install,readonly" --entrypoint python "$image" \
     -m bonafides.local_setup --release-root /install --host-root "$dir" \
+    "$@" --proxy-network "$proxy_network" --proxy-network-id "$proxy_network_id" \
     --project "$project" --port "$port" --image "$image" --resource-map "$resources" \
     --check --validate-installed >/dev/null || fail "saved credentials or assets were refused"
 }
@@ -172,6 +209,9 @@ EOF
 }
 
 compose() {
+  if [ -n "$proxy_network" ]; then
+    set -- -f "$dir/compose.proxy.yaml" "$@"
+  fi
   BONAFIDES_IMAGE=$image docker compose --project-name "$project" --project-directory "$dir" --env-file "$dir/.env" -f "$dir/compose.yaml" "$@"
 }
 

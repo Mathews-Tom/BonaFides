@@ -9,11 +9,11 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Literal
-from urllib.parse import urlsplit
 
 from sqlalchemy.engine import make_url
 
 from bonafides.crypto import Keyring
+from bonafides.origin import validate_origin
 
 
 class ConfigurationError(ValueError):
@@ -93,32 +93,9 @@ class Settings:
         if self.migration_dsn is not None:
             object.__setattr__(self, "migration_dsn", _dsn(self.migration_dsn, "migration_dsn"))
         try:
-            parsed = urlsplit(self.origin)
-            port = parsed.port
+            validate_origin(self.origin)
         except ValueError as exc:
-            raise ConfigurationError("Invalid origin") from exc
-        if (
-            parsed.scheme not in {"http", "https"}
-            or not parsed.hostname
-            or parsed.username is not None
-            or parsed.password is not None
-            or parsed.path
-            or parsed.query
-            or parsed.fragment
-            or any(c.isspace() for c in self.origin)
-            or any(ord(c) < 33 or ord(c) == 127 for c in self.origin)
-            or "\\" in self.origin
-            or "%" in self.origin
-            or not parsed.hostname.isascii()
-            or parsed.hostname.endswith(".")
-            or not all(c.isalnum() or c in ".-:" for c in parsed.hostname)
-            or (
-                parsed.scheme == "http" and parsed.hostname not in {"localhost", "127.0.0.1", "::1"}
-            )
-            or (port is not None and not 1 <= port <= 65535)
-            or self.origin != f"{parsed.scheme}://{parsed.netloc}"
-        ):
-            raise ConfigurationError("Invalid origin: exact HTTPS origin or loopback HTTP required")
+            raise ConfigurationError(str(exc)) from exc
         if self.mode not in {"production", "benchmark"}:
             raise ConfigurationError("Invalid mode")
         private_roots = (

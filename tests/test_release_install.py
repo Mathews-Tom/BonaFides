@@ -70,8 +70,13 @@ elif args[0] in ("volume", "network"):
     if command == "ls":
         output("\n".join(name for name, _ in filter_items(items)))
     elif command == "inspect":
-        key = option("--format").split('"')[1]
-        output(labels(items[args[-1]]).get(key, "<no value>"))
+        if args[-1] not in items: sys.exit(1)
+        if option("--format").startswith("{{.Id}}"):
+            item = items[args[-1]]
+            output("|".join((item["id"], item["driver"], str(item["attachable"]).lower(), str(item.get("config_only", False)).lower(), str(item.get("default_bridge", "<no value>")).lower())))
+        else:
+            key = option("--format").split('"')[1]
+            output(labels(items[args[-1]]).get(key, "<no value>"))
     elif command == "rm":
         del items[args[-1]]
         state["mutations"].append(args)
@@ -117,6 +122,7 @@ elif args[0] == "compose" and "config" in args:
     print(json.dumps({key: {name: {"name": project + "_" + name} for name in names} for key, names in (("volumes", os.environ["FAKE_VOLUMES"].split()), ("networks", os.environ["FAKE_NETWORKS"].split()))}))
 elif args[0] == "compose":
     index = args.index("-f") + 2
+    while args[index:index + 1] == ["-f"]: index += 2
     command = args[index:]
     project = option("--project-name")
     directory = option("--project-directory")
@@ -156,6 +162,55 @@ def test_release_compose_requires_an_explicit_image() -> None:
         check=False,
     )
     assert result.returncode != 0
+
+
+def test_proxy_compose_attaches_only_credential_free_ingress() -> None:
+    result = subprocess.run(
+        [
+            "docker",
+            "compose",
+            "--project-name",
+            PROJECT,
+            "--env-file",
+            "/dev/null",
+            "-f",
+            str(ROOT / "deploy" / "compose.release.yaml"),
+            "-f",
+            str(ROOT / "deploy" / "compose.proxy.yaml"),
+            "config",
+            "--format",
+            "json",
+        ],
+        capture_output=True,
+        text=True,
+        env={
+            key: value
+            for key, value in os.environ.items()
+            if not key.startswith(("BONAFIDES_", "COMPOSE_"))
+        }
+        | {
+            "BONAFIDES_IMAGE": IMAGE,
+            "BONAFIDES_SECRET_DIR": "/srv/secrets",
+            "BONAFIDES_ORIGIN": "https://career.example",
+            "BONAFIDES_PROXY_NETWORK": "operator-proxy",
+        },
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    config = json.loads(result.stdout)
+    assert config["networks"]["proxy"]["external"] is True
+    assert config["networks"]["proxy"]["name"] == "operator-proxy"
+    exposed = {
+        name
+        for name, service in config["services"].items()
+        if "proxy" in service.get("networks", {})
+    }
+    assert exposed == {"ingress"}
+    ingress = config["services"]["ingress"]
+    assert ingress["networks"]["proxy"]["aliases"] == [f"{PROJECT}-ingress"]
+    assert "private" in ingress["networks"]
+    assert not ingress.get("volumes")
+    assert not ingress.get("secrets")
 
 
 @pytest.fixture
@@ -200,6 +255,8 @@ def run(
         FAKE_VOLUMES=" ".join(VOLUMES),
         FAKE_NETWORKS=" ".join(NETWORKS),
         BONAFIDES_PORT="9999",
+        BONAFIDES_ORIGIN="https://ambient.example",
+        BONAFIDES_PROXY_NETWORK="ambient-network",
         HOME=str(sandbox["install"].parent / "home"),
     )
     if without_home:
@@ -282,6 +339,274 @@ def populate(sandbox: dict[str, Path]) -> dict[str, Any]:
     }
     sandbox["state"].write_text(json.dumps(state))
     return state
+
+
+@pytest.mark.parametrize("source", [False, True], ids=["image-owned", "source"])
+@pytest.mark.parametrize(
+    ("network_name", "network", "message"),
+    [
+        ("missing", None, "does not exist"),
+        ("bad/name", None, "invalid proxy network name"),
+        (f"{PROJECT}_private", None, "external to managed resources"),
+        (
+            "platform",
+            {"id": "invalid", "driver": "bridge", "attachable": False},
+            "invalid Docker network identity",
+        ),
+        (
+            "platform",
+            {"id": "2" * 64, "driver": "overlay", "attachable": False},
+            "must already be attachable",
+        ),
+        (
+            "platform",
+            {"id": "2" * 64, "driver": "host", "attachable": False},
+            "standalone container attachment",
+        ),
+        (
+            "platform",
+            {"id": "2" * 64, "driver": "null", "attachable": False},
+            "standalone container attachment",
+        ),
+        (
+            "bridge",
+            {"id": "2" * 64, "driver": "bridge", "attachable": False, "default_bridge": True},
+            "default Docker bridge",
+        ),
+        (
+            "platform",
+            {"id": "2" * 64, "driver": "bridge", "attachable": False, "config_only": True},
+            "configuration-only",
+        ),
+    ],
+    ids=[
+        "missing",
+        "invalid-name",
+        "managed",
+        "invalid-id",
+        "nonattachable-overlay",
+        "host",
+        "none",
+        "default-bridge",
+        "configuration-only",
+    ],
+)
+def test_unusable_proxy_network_refuses_before_installation_or_runtime_changes(
+    sandbox: dict[str, Path],
+    source: bool,
+    network_name: str,
+    network: dict[str, object] | None,
+    message: str,
+) -> None:
+    if network is not None:
+        state = json.loads(sandbox["state"].read_text())
+        state["networks"][network_name] = {"labels": {}} | network
+        sandbox["state"].write_text(json.dumps(state))
+    persisted = sandbox["state"].read_text()
+    before = files(sandbox["install"])
+    result = run(
+        sandbox,
+        "install.sh",
+        "--project",
+        PROJECT,
+        "--origin",
+        "https://career.example",
+        "--proxy-network",
+        network_name,
+        *(["--image", IMAGE] if source else [IMAGE]),
+        entrypoint=ROOT / "install.sh" if source else ROOT / "deploy" / "install.sh",
+    )
+    assert result.returncode != 0
+    assert message in result.stderr
+    assert files(sandbox["install"]) == before
+    assert sandbox["state"].read_text() == persisted
+
+
+@pytest.mark.parametrize("source", [False, True], ids=["image-owned", "source"])
+@pytest.mark.parametrize(
+    "origin",
+    [
+        "http://localhost:8000",
+        "http://career.example",
+        "https://career.example/",
+        "https://career.example/path",
+    ],
+)
+def test_invalid_explicit_origin_refuses_without_mutation(
+    sandbox: dict[str, Path], source: bool, origin: str
+) -> None:
+    before = files(sandbox["install"])
+    persisted = sandbox["state"].read_text()
+    result = run(
+        sandbox,
+        "install.sh",
+        "--project",
+        PROJECT,
+        "--origin",
+        origin,
+        *(["--image", IMAGE] if source else [IMAGE]),
+        entrypoint=ROOT / "install.sh" if source else ROOT / "deploy" / "install.sh",
+    )
+    assert result.returncode != 0
+    assert files(sandbox["install"]) == before
+    assert sandbox["state"].read_text() == persisted
+
+
+@pytest.mark.parametrize("source", [False, True], ids=["image-owned", "source"])
+@pytest.mark.parametrize("network", [False, True], ids=["host-proxy", "platform-proxy"])
+def test_public_origin_survives_restart_reinstall_and_rejects_conflicts(
+    sandbox: dict[str, Path], source: bool, network: bool
+) -> None:
+    entrypoint = ROOT / "install.sh" if source else ROOT / "deploy" / "install.sh"
+    state = json.loads(sandbox["state"].read_text())
+    network_id = "q" * 25 if source else "2" * 64
+    proxy = {
+        "labels": {},
+        "id": network_id,
+        "driver": "overlay" if source else "bridge",
+        "attachable": source,
+    }
+    state["networks"]["platform"] = proxy
+    sandbox["state"].write_text(json.dumps(state))
+    options = ["--origin", "https://career.example"]
+    if network:
+        options += ["--proxy-network", "platform"]
+    image_options = ["--image", IMAGE] if source else [IMAGE]
+    result = run(
+        sandbox,
+        "install.sh",
+        "--project",
+        PROJECT,
+        "--port",
+        "18400",
+        *options,
+        *image_options,
+        entrypoint=entrypoint,
+    )
+    assert result.returncode == 0, result.stderr
+    before = files(sandbox["install"])
+    environment = (sandbox["install"] / ".env").read_text()
+    assert "BONAFIDES_ORIGIN=https://career.example\n" in environment
+    assert ("BONAFIDES_PROXY_NETWORK=platform\n" in environment) == network
+    browser = sandbox["install"].parent / "browser.json"
+    for name in ("open", "xdg-open"):
+        opener = sandbox["bin"] / name
+        opener.write_text(
+            f"#!{sys.executable}\nimport json, sys\nfrom pathlib import Path\n"
+            f"Path({str(browser)!r}).write_text(json.dumps(sys.argv[1:]))\n"
+        )
+        opener.chmod(0o755)
+    for script in ("start.sh", "stop.sh", "start.sh", "stop.sh"):
+        result = run(
+            sandbox,
+            script,
+            *(["--open-browser"] if script == "start.sh" else []),
+            entrypoint=sandbox["install"] / script,
+        )
+        assert result.returncode == 0, result.stderr
+        if script == "start.sh":
+            assert "Sign in: https://career.example" in result.stdout
+            assert json.loads(browser.read_text()) == ["https://career.example"]
+    result = run(sandbox, "install.sh", *image_options, entrypoint=entrypoint)
+    assert result.returncode == 0, result.stderr
+    assert files(sandbox["install"]) == before
+    persisted = sandbox["state"].read_text()
+    for conflict in (["--origin", "https://other.example"], ["--proxy-network", "other"]):
+        result = run(sandbox, "install.sh", *conflict, *image_options, entrypoint=entrypoint)
+        assert result.returncode != 0
+        assert files(sandbox["install"]) == before
+        assert sandbox["state"].read_text() == persisted
+    state = json.loads(persisted)
+    if network:
+        state["networks"]["platform"]["id"] = "3" * 64
+        sandbox["state"].write_text(json.dumps(state))
+        replaced = sandbox["state"].read_text()
+        for script, arguments in (("start.sh", []), ("install.sh", image_options)):
+            result = run(
+                sandbox,
+                script,
+                *arguments,
+                entrypoint=entrypoint if script == "install.sh" else sandbox["install"] / script,
+            )
+            assert result.returncode != 0
+            assert "network was replaced" in result.stderr
+            assert sandbox["state"].read_text() == replaced
+            assert files(sandbox["install"]) == before
+    result = run(sandbox, "uninstall.sh", "--yes", entrypoint=sandbox["install"] / "uninstall.sh")
+    assert result.returncode == 0, result.stderr
+    state = json.loads(sandbox["state"].read_text())
+    assert state["networks"]["platform"] == proxy | {
+        "id": "3" * 64 if network else network_id,
+    }
+    assert set(state["networks"]) == {"platform"}
+    assert files(sandbox["install"]) == before
+
+
+@pytest.mark.parametrize("unusable", ["missing", "nonattachable"])
+def test_saved_network_becoming_unusable_refuses_start_and_reinstall(
+    sandbox: dict[str, Path], unusable: str
+) -> None:
+    proxy = {"labels": {}, "id": "q" * 25, "driver": "overlay", "attachable": True}
+    state = json.loads(sandbox["state"].read_text())
+    state["networks"]["platform"] = proxy
+    sandbox["state"].write_text(json.dumps(state))
+    result = run(
+        sandbox,
+        "install.sh",
+        "--project",
+        PROJECT,
+        "--origin",
+        "https://career.example",
+        "--proxy-network",
+        "platform",
+        IMAGE,
+    )
+    assert result.returncode == 0, result.stderr
+    before = files(sandbox["install"])
+    if unusable == "missing":
+        del state["networks"]["platform"]
+    else:
+        proxy["attachable"] = False
+    sandbox["state"].write_text(json.dumps(state))
+    persisted = sandbox["state"].read_text()
+    for script, arguments in (("start.sh", []), ("install.sh", [IMAGE])):
+        result = run(sandbox, script, *arguments)
+        assert result.returncode != 0
+        assert files(sandbox["install"]) == before
+        assert sandbox["state"].read_text() == persisted
+
+
+def test_confirmed_proxy_installation_purge_retains_external_network(
+    sandbox: dict[str, Path],
+) -> None:
+    proxy = {"labels": {}, "id": "2" * 64, "driver": "bridge", "attachable": False}
+    state = json.loads(sandbox["state"].read_text())
+    state["networks"]["platform"] = proxy
+    sandbox["state"].write_text(json.dumps(state))
+    result = run(
+        sandbox,
+        "install.sh",
+        "--project",
+        PROJECT,
+        "--origin",
+        "https://career.example",
+        "--proxy-network",
+        "platform",
+        IMAGE,
+    )
+    assert result.returncode == 0, result.stderr
+    result = run(sandbox, "start.sh")
+    assert result.returncode == 0, result.stderr
+    state = json.loads(sandbox["state"].read_text())
+    state["image_present"] = False
+    sandbox["state"].write_text(json.dumps(state))
+    result = run(sandbox, "uninstall.sh", "--yes", "--purge", "--confirm-purge", PROJECT)
+    assert result.returncode == 0, result.stderr
+    state = json.loads(sandbox["state"].read_text())
+    assert state["networks"] == {"platform": proxy}
+    assert not state["containers"]
+    assert not state["volumes"]
+    assert not files(sandbox["install"])
 
 
 def test_install_only_and_check_do_not_create_runtime_resources(sandbox: dict[str, Path]) -> None:

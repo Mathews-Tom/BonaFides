@@ -18,7 +18,10 @@ import shutil
 import stat
 import sys
 from contextlib import suppress
+from dataclasses import dataclass
 from pathlib import Path
+
+from bonafides.origin import validate_origin
 
 SECRET_NAMES = (
     "admin_password",
@@ -32,6 +35,7 @@ SECRET_NAMES = (
 # Source name -> (installed name, mode). The database entrypoint executes the init script directly.
 ASSETS = {
     "compose.release.yaml": ("compose.yaml", 0o644),
+    "compose.proxy.yaml": ("compose.proxy.yaml", 0o644),
     "init-db.sh": ("init-db.sh", 0o755),
     "start.sh": ("start.sh", 0o755),
     "stop.sh": ("stop.sh", 0o755),
@@ -58,6 +62,67 @@ def private_write(path: Path, content: str) -> None:
         stream.write(content + "\n")
 
 
+@dataclass(frozen=True)
+class _Deployment:
+    origin: str
+    network: str = ""
+    network_id: str = ""
+
+    def environment(self) -> str:
+        if not self.network:
+            return ""
+        return (
+            f"\nBONAFIDES_PROXY_NETWORK={self.network}"
+            f"\nBONAFIDES_PROXY_NETWORK_ID={self.network_id}"
+        )
+
+
+def _deployment(
+    port: int,
+    origin: str | None = None,
+    network: str | None = None,
+    network_id: str | None = None,
+    env_file: Path | None = None,
+) -> _Deployment:
+    if origin is not None:
+        try:
+            validate_origin(origin, canonical_https=True)
+        except ValueError as exc:
+            raise SetupError(
+                "--origin must be a canonical HTTPS origin (no path or default :443)"
+            ) from exc
+    choices = [origin, network, network_id]
+    defaults = [f"http://localhost:{port}", "", ""]
+    if env_file is not None:
+        lines = _private_regular(env_file, str(env_file)).splitlines()
+        for index, name in enumerate(("ORIGIN", "PROXY_NETWORK", "PROXY_NETWORK_ID")):
+            values = [
+                line.partition("=")[2] for line in lines if line.startswith(f"BONAFIDES_{name}=")
+            ]
+            if len(values) > 1:
+                raise SetupError("duplicate saved deployment setting")
+            saved = values[0] if values else defaults[index]
+            if choices[index] is not None and choices[index] != saved:
+                raise SetupError("saved origin or proxy network differs; use the original settings")
+            choices[index] = saved
+    selected = _Deployment(
+        *(value if value is not None else defaults[index] for index, value in enumerate(choices))
+    )
+    try:
+        validate_origin(selected.origin, canonical_https=selected.origin != defaults[0])
+    except ValueError as exc:
+        raise SetupError(
+            "--origin must be a canonical HTTPS origin (no path or default :443)"
+        ) from exc
+    if (selected.network or selected.network_id) and (
+        not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,127}", selected.network)
+        or not re.fullmatch(r"(?:[a-z0-9]{25}|[0-9a-f]{64})", selected.network_id)
+        or not selected.origin.startswith("https://")
+    ):
+        raise SetupError("proxy network requires its exact name, Docker identity and HTTPS origin")
+    return selected
+
+
 def _check_request(project: str, port: int) -> None:
     if not _PROJECT.fullmatch(project):
         raise SetupError("project must be a lowercase disposable/local namespace")
@@ -65,15 +130,24 @@ def _check_request(project: str, port: int) -> None:
         raise SetupError("port must be an unprivileged TCP port")
 
 
-def _env_text(project: str, port: int, benchmark: bool, published: Path) -> str:
+def _env_text(
+    project: str, port: int, benchmark: bool, published: Path, deployment: _Deployment
+) -> str:
+    # API callers must pass through the same validation as CLI/saved deployment choices.
+    _deployment(
+        port,
+        None if deployment.origin == f"http://localhost:{port}" else deployment.origin,
+        deployment.network,
+        deployment.network_id,
+    )
     # No credential values belong in Compose interpolation or a process environment.
-    if "'" in str(published):
-        raise SetupError("the install path must not contain a single quote")
+    if "'" in str(published) or any(ord(c) < 32 or ord(c) == 127 for c in str(published)):
+        raise SetupError("the install path must not contain a single quote or control character")
     # Single quotes make Compose read the host path literally (no $ interpolation).
     return (
         f"COMPOSE_PROJECT_NAME={project}\nBONAFIDES_SECRET_DIR='{published}'\n"
-        f"BONAFIDES_PORT={port}\nBONAFIDES_ORIGIN=http://localhost:{port}\n"
-        f"BONAFIDES_MODE={'benchmark' if benchmark else 'production'}"
+        f"BONAFIDES_PORT={port}\nBONAFIDES_ORIGIN={deployment.origin}\n"
+        f"BONAFIDES_MODE={'benchmark' if benchmark else 'production'}{deployment.environment()}"
     )
 
 
@@ -85,17 +159,22 @@ def initialize(
     benchmark: bool,
     *,
     published: Path | None = None,
+    deployment: _Deployment | None = None,
 ) -> None:
     """Create a new credential set; `published` is the absolute path Compose must mount."""
     _check_request(project, port)
-    if directory.exists() or env_file.exists():
+    if os.path.lexists(directory) or os.path.lexists(env_file):
         raise SetupError(
             "setup refuses existing secret directory or environment file; preserve your keys"
         )
     # The host path is recorded exactly as given: it does not exist inside the container.
     # Rendering first refuses a bad path before anything is created.
     environment = _env_text(
-        project, port, benchmark, directory.resolve() if published is None else published
+        project,
+        port,
+        benchmark,
+        directory.resolve() if published is None else published,
+        _deployment(port) if deployment is None else deployment,
     )
     directory.mkdir(mode=0o700, parents=True)
     credentials = {name: secrets.token_hex(32) for name in ("admin", "migrator", "runtime")}
@@ -152,7 +231,13 @@ def _verify_secret_formats(values: dict[str, str]) -> None:
 
 
 def verify(
-    directory: Path, env_file: Path, project: str, port: int, benchmark: bool, published: Path
+    directory: Path,
+    env_file: Path,
+    project: str,
+    port: int,
+    benchmark: bool,
+    published: Path,
+    deployment: _Deployment | None = None,
 ) -> None:
     """Accept only a complete, private, consistent credential set for this exact install."""
     _private_regular(directory, str(directory), directory=True)
@@ -164,11 +249,13 @@ def verify(
         )
     values = {name: _private_regular(directory / name, name) for name in SECRET_NAMES}
     _verify_secret_formats(values)
-    expected = _env_text(project, port, benchmark, published)
+    if deployment is None:
+        deployment = _deployment(port, env_file=env_file)
+    expected = _env_text(project, port, benchmark, published, deployment)
     allowed = {expected} if benchmark else {expected, f"{expected}\n{MODEL_ROUTE_ENV}"}
     if _private_regular(env_file, str(env_file)) not in allowed:
         raise SetupError(
-            f"{env_file} differs from the requested project, port or secret path; rerun with the "
+            f"{env_file} differs from the requested project, port, origin or secret path; rerun with the "
             "original values or reconcile the file by hand; nothing was changed"
         )
 
@@ -181,19 +268,28 @@ def ensure(
     benchmark: bool,
     *,
     published: Path,
+    deployment: _Deployment | None = None,
 ) -> str:
     """Create credentials when none exist, reuse a complete set, refuse anything between."""
     _check_request(project, port)
     present = [path for path in (directory, env_file) if os.path.lexists(path)]
     if not present:
-        initialize(directory, env_file, project, port, benchmark, published=published)
+        initialize(
+            directory,
+            env_file,
+            project,
+            port,
+            benchmark,
+            published=published,
+            deployment=deployment,
+        )
         return "created"
     if len(present) == 1:
         raise SetupError(
             f"partial installation state: only {present[0]} exists; restore the other from "
             "escrow or move this one aside deliberately; nothing was changed"
         )
-    verify(directory, env_file, project, port, benchmark, published)
+    verify(directory, env_file, project, port, benchmark, published, deployment)
     return "reused"
 
 
@@ -255,6 +351,13 @@ def _release_preflight(arguments: argparse.Namespace) -> tuple[str, bool]:
         saved_image = _private_regular(root / ".installer-image", "saved image identity")
         if not re.fullmatch(r"[A-Za-z0-9_./:@-]+", saved_image):
             raise SetupError("saved image identity is invalid")
+        arguments.deployment = _deployment(
+            arguments.port,
+            arguments.origin,
+            arguments.proxy_network,
+            arguments.proxy_network_id,
+            root / ".env",
+        )
         verify(
             root / "secrets",
             root / ".env",
@@ -262,11 +365,16 @@ def _release_preflight(arguments: argparse.Namespace) -> tuple[str, bool]:
             arguments.port,
             False,
             host / "secrets",
+            arguments.deployment,
         )
     elif any(os.path.lexists(root / name) for name in ("secrets", ".env", ".installer-image")):
         raise SetupError(
             "existing configuration has no lifecycle ownership metadata; preserve it and use "
             "its original management procedure or choose a separate empty installation"
+        )
+    else:
+        arguments.deployment = _deployment(
+            arguments.port, arguments.origin, arguments.proxy_network, arguments.proxy_network_id
         )
     if os.path.lexists(root / ".installer-image.new"):
         raise SetupError("saved-image temporary path already exists; nothing was changed")
@@ -315,6 +423,7 @@ def _release(arguments: argparse.Namespace) -> str:
         arguments.port,
         False,
         published=arguments.host_root / "secrets",
+        deployment=arguments.deployment,
     )
     if not existing:
         private_write(root / ".installer-state", metadata)
@@ -331,6 +440,11 @@ def _parse(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--env-file", type=Path, default=Path(".env"))
     parser.add_argument("--project", default="bonafides-local")
     parser.add_argument("--port", type=int, default=8000)
+    parser.add_argument(
+        "--origin", help="canonical HTTPS origin; default/reinstall reuse localhost/saved origin"
+    )
+    parser.add_argument("--proxy-network", help="existing operator-owned Docker proxy network")
+    parser.add_argument("--proxy-network-id", help="resolved immutable identity of that network")
     parser.add_argument(
         "--benchmark",
         action="store_true",
@@ -370,7 +484,16 @@ def main(argv: list[str] | None = None) -> int:
                 raise SetupError("bootstrap token must be a private regular file")
             print(token.read_text().strip())
         else:
-            initialize(args.directory, args.env_file, args.project, args.port, args.benchmark)
+            initialize(
+                args.directory,
+                args.env_file,
+                args.project,
+                args.port,
+                args.benchmark,
+                deployment=_deployment(
+                    args.port, args.origin, args.proxy_network, args.proxy_network_id
+                ),
+            )
             print(
                 "Local credentials generated. Keep the secret directory private and escrow the keyring separately."
             )

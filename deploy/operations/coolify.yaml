@@ -1,0 +1,22 @@
+# SPDX-License-Identifier: MIT OR Apache-2.0
+# Coolify Proxy > Dynamic Configurations. Replace domain, project alias and resolver.
+http:
+  routers:
+    bonafides-http:
+      rule: Host(`career.example`)
+      entryPoints: [http]
+      middlewares: [bonafides-https]
+      service: bonafides
+    bonafides-https:
+      rule: Host(`career.example`)
+      entryPoints: [https]
+      service: bonafides
+      tls: {certResolver: letsencrypt}
+  middlewares:
+    bonafides-https:
+      redirectScheme: {scheme: https, permanent: true}
+  services:
+    bonafides:
+      loadBalancer:
+        passHostHeader: true
+        servers: [{url: "http://bonafides-ingress:8000"}]
