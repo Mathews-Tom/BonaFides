@@ -26,7 +26,7 @@ BonaFides is a self-hosted career workspace in development. The implemented **Ar
 
 ### Measured results and limits
 
-- **Observed real-model qualification (stage `generate_documents` only).** On 2026-11-02 on macOS Apple Silicon, host Ollama `0.40.13` with `qwen2.5:7b-instruct` produced valid résumé/letter JSON on the first response for **20/20 cases (100%)**, with **98.0% usable factual statements**, in **1,318.184 seconds**; `gemma4:12b-mlx` produced valid first-response JSON in **0/20 cases** and failed qualification. Real `regenerate_section` runs were not performed, so that stage is unqualified. This measures JSON shape and checker usability, not semantic correctness. Details: [observed local schema qualification](#observed-local-schema-qualification--2026-11-02).
+- **Observed real-model qualification.** A later [2026-11-08 installed-command observation](#observed-installed-qualification--2026-11-08) on a fresh disposable installation qualified `qwen2.5:7b-instruct` on Apple Silicon through Ollama `0.40.13` for both `generate_documents` and `regenerate_section`: 20/20 first-response cases, with 98% and 100% usable factual statements, respectively. Total qualification durations were 1,527.701s and 277.283s, one 20-case run per stage. These are historical schema/checker observations, not product latency, human accuracy or qualification of another installation. The separate [2026-11-02 results](#observed-local-schema-qualification--2026-11-02), including the failed Gemma run, remain dated evidence.
 - **Deterministic fixture proof, not qualification.** The core-loop proof and its recording use `tools/stub_model.py`, whose qualification receipts are fixture-only. They show the workflow and the blocking behavior, and attest nothing about any real model.
 - **Checker benchmark on synthetic sets (deterministic, no model).** Checker `claim-evidence-v6` blocked all targeted inflation classes and every untargeted fabrication class except one, and falsely blocked 2 of 1,175 honest statements (0.2%). The `dropped_qualifier` class (a limiting trailing qualifier cut away) is **not caught: 0 of 12**, an accepted limitation. Strict claim coverage of the 305-bullet synthetic corpus is **90.1%**, below the 95% target. Details: [structured claim evidence matching](#structured-claim-evidence-matching).
 
@@ -44,6 +44,7 @@ BonaFides is a self-hosted career workspace in development. The implemented **Ar
   - [Implemented scope](#implemented-scope)
   - [Measured results and limits](#measured-results-and-limits)
   - [Runtime boundaries](#runtime-boundaries)
+- [Preview the project site](#preview-the-project-site)
 - [Set up and check your changes](#set-up-and-check-your-changes)
   - [Requirements and frozen installs](#requirements-and-frozen-installs)
   - [Local setup and lifecycle](#local-setup-and-lifecycle)
@@ -77,6 +78,38 @@ BonaFides is a self-hosted career workspace in development. The implemented **Ar
   - [Private milestone progression](#private-milestone-progression)
   - [Observed final private alpha engineering checkpoint — 2026-10-26](#observed-final-private-alpha-engineering-checkpoint--2026-10-26)
   - [Post-checkpoint review fixes — erasure reservation migration](#post-checkpoint-review-fixes--erasure-reservation-migration)
+
+## Preview the project site
+
+The public-facing site is independent of the authenticated application. Build it from the repository root with the pinned Python/uv environment; no application service, database, Node, model, external API or Pages configuration is needed:
+
+```sh
+uvx --from uv==0.13.0 uv run --frozen python -m tools.project_site
+uvx --from uv==0.13.0 uv run --frozen python -m http.server 18443 --bind 127.0.0.1 --directory site/dist
+```
+
+Open **http://127.0.0.1:18443/**. Stop the preview with **Ctrl+C**. The complete artifact is `site/dist/` (ignored by Git); relative asset links also support serving it under `/BonaFides/`. Building or previewing does not publish anything. GitHub Pages activation remains a separate owner decision.
+
+Every build calls the existing deterministic fabrication benchmark on the current synthetic corpus and writes its canonical report to `site/dist/benchmark.json`; the page renders the same values, including false blocks and missed qualifiers. Reproduce the report separately with:
+
+```sh
+mkdir -p .local
+uvx --from uv==0.13.0 uv run --frozen bonafides benchmark run tests/fixtures/fabrication --output .local/site-benchmark.json
+```
+
+No measured real-model comparison recordings are bundled. The model section instead attributes the already documented 2026-11-08 qualification and measured total durations to their historical source revision, model/runtime, stages, datasets and limits. Those observations do not transfer to changed routes or establish latency or human accuracy. Model reproduction commands are instructions for a separately authorized operator run, never part of the site build.
+
+### Site media provenance
+
+The site uses the existing real-interface recording `docs/assets/bonafides-workflow.gif` (SHA-256 `a42ebda6fd1e94396dba6320c21fec3ca0fe21bc2d01f8b0e39fd139470b7b08`) and unmodified PNG frames extracted at 5s, 14s and 30s for evidence, review and application tracking. The recording contains synthetic data, uses an explicit test stand-in rather than a real model, and was made by the existing `tools/demo_capture.py` workflow. Captions are recording overlays, not fabricated application controls. No owner data, credentials, third-party screenshots, fonts or new assets from external providers are incorporated. These project-owned derivatives retain `MIT OR Apache-2.0`; independent rights review remains pending.
+
+Only refreshing these maintained screenshots needs the existing FFmpeg tool:
+
+```sh
+ffmpeg -v error -y -ss 5 -i docs/assets/bonafides-workflow.gif -frames:v 1 site/assets/evidence.png
+ffmpeg -v error -y -ss 14 -i docs/assets/bonafides-workflow.gif -frames:v 1 site/assets/review.png
+ffmpeg -v error -y -ss 30 -i docs/assets/bonafides-workflow.gif -frames:v 1 site/assets/application.png
+```
 
 ## Set up and check your changes
 
