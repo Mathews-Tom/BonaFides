@@ -80,7 +80,7 @@ class ProfileContact(BaseModel):
 class PublicationPresentation(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True, frozen=True)
     text: str = Field(min_length=1, max_length=3000)
-    markup: str = Field(max_length=3000)
+    markup: str = Field(max_length=6000)
     url: str = Field(default="", max_length=500)
 
     @model_validator(mode="after")

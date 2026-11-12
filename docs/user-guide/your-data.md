@@ -40,7 +40,7 @@ You can download all your saved data as a single ZIP file. Use it as a personal 
 
 The export contains your profile and evidence history, postings, applications, notes, document versions and the files they refer to. It doesn't include unsaved text, your password or the installation's keys.
 
-New exports use workspace format 2, which preserves the exact source text and origin of owner-approved local Git and GitHub captures, including historical revisions. To bring a new export into another installation, that installation must support workspace format 2; a reader that supports only format 1 cannot import it. This installation accepts workspace formats 1 and 2, including older workspace-1 exports.
+New exports use workspace format 3, which also preserves publication metadata, scoped writing facts, profile ordering and historical pins. The exact source text and origin of owner-approved local Git and GitHub captures, including historical revisions, remain included. To bring a new export into another installation, that installation must support workspace format 3; readers supporting only formats 1 or 2 cannot import it. This installation accepts workspace formats 1, 2 and 3, including older workspace-1 and workspace-2 exports.
 
 Keep in mind:
 

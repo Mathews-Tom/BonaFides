@@ -1031,6 +1031,12 @@ def test_publication_emphasis_is_literal_and_doi_is_normalized() -> None:
         == "<script>x</script> [title](javascript:x)"
     )
     assert normalize_citation_url("doi:10.1000/xyz") == "https://doi.org/10.1000/xyz"
+    assert normalize_citation_url("doi:10.1000/res#test") == "https://doi.org/10.1000/res%23test"
+    assert normalize_citation_url("10.1000/res?test%") == "https://doi.org/10.1000/res%3Ftest%25"
+    assert (
+        normalize_citation_url("https://doi.org/10.1000/res#test")
+        == "https://doi.org/10.1000/res#test"
+    )
 
 
 @pytest.mark.postgres

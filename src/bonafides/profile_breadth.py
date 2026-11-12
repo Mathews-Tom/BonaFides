@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import re
 from collections.abc import Mapping
-from urllib.parse import urlsplit
+from urllib.parse import quote, urlsplit
 from uuid import UUID
 
 from pydantic import HttpUrl
@@ -77,7 +77,7 @@ def normalize_citation_url(value: str) -> str:
         raise ValueError("invalid_citation_url")
     doi = value[4:] if value.lower().startswith("doi:") else value
     if re.fullmatch(r"10\.\d{4,9}/[^\s]+", doi):
-        value = "https://doi.org/" + doi
+        value = "https://doi.org/" + quote(doi, safe="/")
     try:
         parsed = urlsplit(value)
         if (

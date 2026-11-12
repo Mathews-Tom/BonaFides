@@ -2336,7 +2336,8 @@ def test_owner_omissions_survive_edits_restore_once_and_validate_hidden_portable
 
 @pytest.mark.postgres
 @pytest.mark.parametrize(
-    "citation", ["Doe J*, Roe K* (2021). Title.", r"Title \*marker* **literal**"]
+    "citation",
+    ["Doe J*, Roe K* (2021). Title.", r"Title \*marker* **literal**", "A" + "*" * 2999],
 )
 def test_plain_citation_markers_survive_checked_generation(
     catalog: SourceContext, citation: str
