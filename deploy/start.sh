@@ -23,6 +23,7 @@ check_ownership
 docker image inspect "$image" >/dev/null 2>&1 || fail "saved application image is not loaded; load it or run install with a deliberately selected local image"
 [ -f "$dir/compose.yaml" ] && [ ! -L "$dir/compose.yaml" ] || fail "managed Compose asset is missing or linked; run install while stopped"
 check_install
+check_proxy_network
 if [ "$running" = yes ]; then
   # A healthy installation is not recreated and its one-shot jobs are not rerun.
   for service in db api worker ingress lifecycle source-egress renderer parser; do
@@ -40,7 +41,7 @@ else
   compose up -d --wait --wait-timeout 420 || fail "services did not become healthy; inspect Docker Compose logs in $dir"
 fi
 compose exec -T api python -m bonafides init-bootstrap-if-ownerless || fail "bootstrap initialization failed; inspect the running installation"
-printf 'BonaFides is ready. Sign in: http://localhost:%s\n' "$port"
+printf 'BonaFides is ready. Sign in: %s\n' "$origin"
 printf 'Secrets (keep private; escrow the keyring separately): %s/secrets\n' "$dir"
 printf 'First-time owner setup (only while no owner exists):\n'
 printf "  Read the setup token in your private terminal: cat '%s/secrets/bootstrap_token'\n" "$dir"
@@ -49,12 +50,12 @@ printf "  If the window expires before signup, run sh '%s/start.sh' again to ren
 printf '  After creating the owner, sign in with your password; the setup token cannot create another account.\n'
 if [ "$open_browser" = yes ]; then
   case $(uname -s) in
-    Darwin) open "http://localhost:$port" || printf 'Browser did not open; use the URL above.\n' >&2 ;;
+    Darwin) open "$origin" || printf 'Browser did not open; use the URL above.\n' >&2 ;;
     *)
       if command -v xdg-open >/dev/null 2>&1; then
-        xdg-open "http://localhost:$port" || printf 'Browser did not open; use the URL above.\n' >&2
+        xdg-open "$origin" || printf 'Browser did not open; use the URL above.\n' >&2
       else
-        printf 'Open http://localhost:%s in your browser.\n' "$port"
+        printf 'Open %s in your browser.\n' "$origin"
       fi ;;
   esac
 fi

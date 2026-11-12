@@ -26,7 +26,7 @@ check_ownership
 # Complete file preflight happens before stopping even one container. Unknown files are never
 # claimed, followed or recursively removed, including additional files inside the secrets folder.
 secret_names='admin_password migrator_password runtime_password migrator_dsn runtime_dsn keyring bootstrap_token local_model_route.json'
-managed_files='.env .installer-image .installer-state compose.yaml init-db.sh start.sh stop.sh uninstall.sh lifecycle.sh models.sh'
+managed_files='.env .installer-image .installer-state compose.yaml compose.proxy.yaml init-db.sh start.sh stop.sh uninstall.sh lifecycle.sh models.sh'
 if [ "$purge" = yes ]; then
   [ -d "$dir/secrets" ] && [ ! -L "$dir/secrets" ] || fail "secrets must be an owned private directory"
   [ "$(find "$dir/secrets" -prune -type d -user "$(id -u)" ! -perm -004 ! -perm -002 ! -perm -001 ! -perm -040 ! -perm -020 ! -perm -010 -print)" = "$dir/secrets" ] || fail "secrets must be an owned private directory"

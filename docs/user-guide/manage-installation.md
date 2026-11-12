@@ -38,6 +38,32 @@ Release checks start disabled. Select **Enable release checks** to allow the ins
 
 Update preferences belong to this installation, not to career-data exports. An isolated native recovery disables release checks before reopening access; enable them again deliberately.
 
+## Put a server behind HTTPS
+
+This is an operator task: provide a domain, certificates and an existing TLS proxy first. Default installations stay local to their computer. Select the exact public origin when preparing a fresh installation, configure the matching proxy template, then start:
+
+```sh
+sh install.sh --origin https://career.example
+# Configure your existing proxy using the template below.
+sh start.sh
+```
+
+For a container-based proxy, also pass `--proxy-network NAME` to `install.sh`. The network must already exist on the same Docker node and allow standalone containers to attach. Only the credential-free ingress joins it; API, worker, database, renderer and parser remain private. The installer saves its immutable Docker ID and refuses a replacement network with the same name. It never creates or removes the external network. Host publication remains loopback.
+
+| Platform | Template and operator action |
+|---|---|
+| Ubuntu | Customize [`ubuntu.conf`](../../deploy/operations/ubuntu.conf) with your domain, certificate paths and selected loopback port. Install it as `/etc/nginx/conf.d/bonafides.conf`; run `sudo nginx -t && sudo systemctl reload nginx`. |
+| Coolify | Verify the existing proxy network before selecting `--proxy-network coolify`. Add customized [`coolify.yaml`](../../deploy/operations/coolify.yaml) under **Servers → your server → Proxy → Dynamic Configurations**. Match the proxy's actual `http`/`https` entrypoints and certificate resolver. |
+| Dokploy | Verify the existing proxy network before selecting `--proxy-network dokploy-network`. Put customized [`dokploy.yaml`](../../deploy/operations/dokploy.yaml) in the watched dynamic directory through **Traefik File System**. Match the actual `web`/`websecure` entrypoints and certificate resolver. |
+| CapRover | On the same Docker node as the proxy, inspect `docker network inspect --format '{{.Id}} {{.Attachable}}' captain-overlay-network`; use `--proxy-network captain-overlay-network` only if attachable. Install customized [`caprover.conf`](../../deploy/operations/caprover.conf) as `/captain/data/nginx-shared/bonafides.conf` and place the operator-managed certificates alongside it. Preserve the existing base NGINX template and add `include /nginx-shared/bonafides.conf;` inside its `http` block through server settings. |
+
+Replace every example domain, certificate path and resolver. Container-proxy templates target `bonafides-ingress:8000`; use `NAME-ingress:8000` for `--project NAME`. Keep the custom configuration persistent through platform regeneration. These adapters use an existing proxy, not another BonaFides installation or a dummy platform application. A non-attachable overlay requires a separately managed attachable proxy network; the installer never changes the platform network.
+
+Use the printed HTTPS address exactly. Stop before reinstalling. Repeating `sh install.sh` reuses the saved origin, network, account, data and credentials. A conflicting origin or network is refused; do not edit `.env` to retarget an installation.
+
+Platform dashboards, public DNS and certificate provisioning require operator validation. Controlled local TLS verification does not mean those consoles were activated.
+
+
 ## Update to a newer version
 
 Updating replaces the BonaFides software and keeps your data, account and password.

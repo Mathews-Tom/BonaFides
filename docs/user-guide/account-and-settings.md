@@ -2,7 +2,7 @@
 
 ## Sign in and sign out
 
-Go to **http://localhost:8000** (or the port you chose), enter your **Login name** and **Password**, and select **Sign in**. Each installation has exactly one account; there's no way to add another user.
+Go to the exact address printed by `sh start.sh`: **http://localhost:8000** (or your chosen port) by default, or your configured HTTPS origin. Enter your **Login name** and **Password**, then select **Sign in**. Each installation has exactly one account; there's no way to add another user.
 
 **Sign out** is in the top bar. It's unavailable while you have unsaved changes on some pages or while a task you started is still running. Save or discard your changes first.
 

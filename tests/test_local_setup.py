@@ -6,12 +6,15 @@ import json
 import os
 import shutil
 import stat
+from dataclasses import replace
 from pathlib import Path
 from typing import BinaryIO
 
 import pytest
 
 from bonafides import local_setup
+from bonafides.config import ConfigurationError, Settings
+from bonafides.crypto import Keyring
 from bonafides.local_setup import SECRET_NAMES, main
 
 HOST_ROOT = Path("/srv/host/bonafides")
@@ -22,6 +25,7 @@ def assets(tmp_path: Path) -> Path:
     directory = tmp_path / "assets"
     directory.mkdir()
     (directory / "compose.release.yaml").write_text("services: {}\n# build one\n")
+    (directory / "compose.proxy.yaml").write_text("services: {}\n")
     (directory / "init-db.sh").write_text("#!/bin/sh\n# build one\n")
     for name in ("start.sh", "stop.sh", "uninstall.sh", "lifecycle.sh", "models.sh"):
         (directory / name).write_text("#!/bin/sh\n# build one\n")
@@ -98,6 +102,210 @@ def test_release_rerun_reuses_credentials_and_replaces_only_image_owned_assets(
     assert capsys.readouterr().out.strip() == "reused"
     assert snapshot(root / "secrets") == credentials
     assert (root / "compose.yaml").read_text().endswith("# build two\n")
+
+
+@pytest.mark.parametrize(
+    "origin",
+    [
+        "http://public.example",
+        "https://public.example/",
+        "https://PUBLIC.example",
+        "https://public.example:443",
+        "https://user@public.example",
+        "http://localhost:18400",
+        "https://public.example:",
+        "https://public.example:08443",
+        "https://public.example:0",
+        "https://public.example:65536",
+        "https://public.example?x=1",
+        "https://public.example#fragment",
+        "https://public.example\\foreign",
+        "https://public.example%0a",
+        "https://public.example\nBONAFIDES_MODE=benchmark",
+        "https://public.example\t",
+        "https://public.example\x00",
+        "https://públic.example",
+        "https://${PUBLIC_HOST}",
+        "https://public..example",
+        "https://-public.example",
+        "https://public-.example",
+        "https://127.1",
+        "https://0177.0.0.1",
+        "https://0x7f000001",
+        "https://2130706433",
+        "https://999.1.1.1",
+    ],
+)
+def test_release_refuses_noncanonical_public_origin_without_writes(
+    root: Path, assets: Path, origin: str
+) -> None:
+    before = snapshot(root)
+    assert install(root, assets, "--origin", origin) == 1
+    assert snapshot(root) == before
+
+
+def test_release_public_origin_reuse_and_conflict_preserve_credentials(
+    root: Path, assets: Path
+) -> None:
+    assert install(root, assets, "--origin", "https://career.example") == 0
+    before = snapshot(root)
+    assert install(root, assets, "--check", "--validate-installed") == 0
+    assert install(root, assets) == 0
+    assert snapshot(root) == before
+    assert install(root, assets, "--origin", "https://other.example") == 1
+    assert snapshot(root) == before
+
+
+@pytest.mark.parametrize(
+    "origin",
+    [
+        "https://career.example:8443",
+        "https://127.0.0.1",
+        "https://[::1]:8443",
+        "https://[2001:db8::1]",
+        "https://internal.0xyz",
+    ],
+)
+def test_release_reuses_nondefault_https_authorities(root: Path, assets: Path, origin: str) -> None:
+    assert install(root, assets, "--origin", origin) == 0
+    assert f"BONAFIDES_ORIGIN={origin}\n" in (root / ".env").read_text()
+    before = snapshot(root)
+    assert install(root, assets, "--origin", origin) == 0
+    assert install(root, assets, "--check", "--validate-installed") == 0
+    assert snapshot(root) == before
+
+
+@pytest.mark.parametrize("network_id", ["a" * 64, "b" * 25])
+def test_release_proxy_network_intent_is_optional_saved_and_immutable(
+    root: Path, assets: Path, network_id: str
+) -> None:
+    selection = (
+        "--origin",
+        "https://career.example",
+        "--proxy-network",
+        "operator.proxy-1",
+        "--proxy-network-id",
+        network_id,
+    )
+    assert install(root, assets, *selection) == 0
+    environment = (root / ".env").read_text()
+    assert environment.endswith(
+        f"BONAFIDES_PROXY_NETWORK=operator.proxy-1\nBONAFIDES_PROXY_NETWORK_ID={network_id}\n"
+    )
+    before = snapshot(root)
+    assert install(root, assets) == 0
+    assert install(root, assets, *selection, "--check", "--validate-installed") == 0
+    assert snapshot(root) == before
+    for option in (
+        ("--origin", "https://other.example"),
+        ("--proxy-network", "another.proxy"),
+        ("--proxy-network-id", "c" * 64),
+        ("--proxy-network", ""),
+    ):
+        assert install(root, assets, *option) == 1
+        assert snapshot(root) == before
+
+
+@pytest.mark.parametrize(
+    ("origin", "network", "network_id"),
+    [
+        (None, "operator", "a" * 64),
+        ("https://career.example", "operator", ""),
+        ("https://career.example", "", "a" * 64),
+        ("https://career.example", "operator", "a" * 63),
+        ("https://career.example", "operator", "A" * 64),
+        ("https://career.example", "../operator", "a" * 64),
+        ("https://career.example", "operator\nBONAFIDES_MODE=benchmark", "a" * 64),
+        ("https://career.example", "${OPERATOR}", "a" * 64),
+    ],
+)
+def test_release_refuses_unsafe_or_incomplete_proxy_intent_before_writes(
+    root: Path, assets: Path, origin: str | None, network: str, network_id: str
+) -> None:
+    selection = ["--proxy-network", network, "--proxy-network-id", network_id]
+    if origin is not None:
+        selection += ["--origin", origin]
+    before = snapshot(root)
+    assert install(root, assets, *selection) == 1
+    assert snapshot(root) == before
+
+
+@pytest.mark.parametrize(
+    "extra",
+    [
+        "BONAFIDES_ORIGIN=https://career.example",
+        "BONAFIDES_PROXY_NETWORK=operator",
+        "BONAFIDES_PROXY_NETWORK_ID=" + "a" * 64,
+        "BONAFIDES_MODE=benchmark",
+        "BONAFIDES_UNKNOWN=unmanaged",
+    ],
+)
+def test_release_refuses_duplicate_or_unmanaged_saved_deployment_settings(
+    root: Path, assets: Path, extra: str
+) -> None:
+    assert (
+        install(
+            root,
+            assets,
+            "--origin",
+            "https://career.example",
+            "--proxy-network",
+            "operator",
+            "--proxy-network-id",
+            "a" * 64,
+        )
+        == 0
+    )
+    environment = root / ".env"
+    environment.write_text(environment.read_text() + extra + "\n")
+    before = snapshot(root)
+    assert install(root, assets, "--check", "--validate-installed") == 1
+    assert install(root, assets) == 1
+    assert snapshot(root) == before
+
+
+def test_local_cli_and_helpers_preserve_the_selected_deployment(tmp_path: Path) -> None:
+    directory = tmp_path / "secrets"
+    environment = tmp_path / ".env"
+    assert (
+        main(
+            [
+                "--directory",
+                str(directory),
+                "--env-file",
+                str(environment),
+                "--project",
+                "bonafides-test",
+                "--port",
+                "18400",
+                "--origin",
+                "https://career.example",
+                "--proxy-network",
+                "operator",
+                "--proxy-network-id",
+                "a" * 64,
+            ]
+        )
+        == 0
+    )
+    before = snapshot(tmp_path)
+    local_setup.verify(directory, environment, "bonafides-test", 18400, False, directory)
+    assert (
+        local_setup.ensure(
+            directory, environment, "bonafides-test", 18400, False, published=directory
+        )
+        == "reused"
+    )
+    assert snapshot(tmp_path) == before
+
+
+def test_default_loopback_environment_remains_byte_compatible(root: Path, assets: Path) -> None:
+    assert install(root, assets) == 0
+    assert (root / ".env").read_bytes() == (
+        f"COMPOSE_PROJECT_NAME=bonafides-test\nBONAFIDES_SECRET_DIR='{HOST_ROOT / 'secrets'}'\n"
+        "BONAFIDES_PORT=18400\nBONAFIDES_ORIGIN=http://localhost:18400\n"
+        "BONAFIDES_MODE=production\n"
+    ).encode()
 
 
 @pytest.mark.parametrize("operation", ["copy", "chmod", "replace"])
@@ -298,11 +506,12 @@ def test_release_refuses_uncertain_ownership_before_any_write(
     assert snapshot(root) == before
 
 
+@pytest.mark.parametrize("name", ["compose.yaml", "compose.proxy.yaml"])
 def test_start_validation_refuses_changed_assets_without_republishing(
-    root: Path, assets: Path
+    root: Path, assets: Path, name: str
 ) -> None:
     assert install(root, assets) == 0
-    (root / "compose.yaml").write_text("services: {foreign: {image: foreign}}\n")
+    (root / name).write_text("services: {foreign: {image: foreign}}\n")
     before = snapshot(root)
     assert install(root, assets, "--check", "--validate-installed") == 1
     assert snapshot(root) == before
@@ -310,7 +519,15 @@ def test_start_validation_refuses_changed_assets_without_republishing(
 
 @pytest.mark.parametrize(
     "name",
-    [".installer-image.new", ".stop.sh.new", ".compose.yaml.new", "stop.sh", "compose.yaml"],
+    [
+        ".installer-image.new",
+        ".stop.sh.new",
+        ".compose.yaml.new",
+        ".compose.proxy.yaml.new",
+        "stop.sh",
+        "compose.yaml",
+        "compose.proxy.yaml",
+    ],
 )
 def test_new_install_refuses_unmanaged_destinations_without_creating_keys(
     root: Path, assets: Path, name: str
@@ -321,10 +538,11 @@ def test_new_install_refuses_unmanaged_destinations_without_creating_keys(
     assert snapshot(root) == before
 
 
+@pytest.mark.parametrize("name", ["stop.sh", "compose.proxy.yaml"])
 def test_missing_image_asset_is_refused_before_credential_creation(
-    root: Path, assets: Path
+    root: Path, assets: Path, name: str
 ) -> None:
-    (assets / "stop.sh").unlink()
+    (assets / name).unlink()
     before = snapshot(root)
     assert install(root, assets) == 1
     assert snapshot(root) == before
@@ -365,3 +583,61 @@ def test_reinstall_refuses_unmanaged_route_environment(
     assert install(root, assets) == 1
 
     assert snapshot(root) == before
+
+
+@pytest.mark.parametrize(
+    "origin",
+    [
+        "https://public..example",
+        "https://-public.example",
+        "https://public-.example",
+        "https://127.1",
+        "https://0177.0.0.1",
+        "https://0x7f000001",
+        "https://2130706433",
+        "https://999.1.1.1",
+    ],
+)
+def test_runtime_refuses_unusable_or_browser_rewritten_origins(tmp_path: Path, origin: str) -> None:
+    roots = [tmp_path / name for name in ("blobs", "render", "import")]
+    for directory in roots:
+        directory.mkdir()
+    settings = Settings(
+        database_dsn="postgresql+psycopg://runtime:synthetic@db:5432/bonafides",
+        keyring=Keyring("test", {"test": b"a" * 32}),
+        origin="https://career.example",
+        blob_root=roots[0],
+        renderer_spool=roots[1],
+        import_spool=roots[2],
+    )
+    with pytest.raises(ConfigurationError):
+        replace(settings, origin=origin)
+
+
+@pytest.mark.parametrize("linked", ["directory", "environment"])
+def test_local_initialize_refuses_dangling_links_before_creating_credentials(
+    tmp_path: Path, linked: str
+) -> None:
+    directory = tmp_path / "secrets"
+    environment = tmp_path / ".env"
+    missing = tmp_path / "missing"
+    planted = directory if linked == "directory" else environment
+    planted.symlink_to(missing)
+    with pytest.raises(local_setup.SetupError):
+        local_setup.initialize(directory, environment, "bonafides-test", 18400, False)
+    assert planted.is_symlink()
+    assert not missing.exists()
+    if linked == "environment":
+        assert not directory.exists()
+    else:
+        assert not environment.exists()
+
+
+@pytest.mark.parametrize("character", ["\n", "\r", "\t"])
+def test_local_initialize_refuses_environment_path_injection_before_writes(
+    tmp_path: Path, character: str
+) -> None:
+    directory = tmp_path / f"secrets{character}BONAFIDES_MODE=benchmark"
+    environment = tmp_path / ".env"
+    assert main(["--directory", str(directory), "--env-file", str(environment)]) == 1
+    assert list(tmp_path.iterdir()) == []

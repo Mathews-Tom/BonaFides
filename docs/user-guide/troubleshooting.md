@@ -33,7 +33,7 @@ Messages from `sh start.sh` start with `start refused:`.
 
 ## In the browser
 
-**The page doesn't load.** Check that BonaFides is running (`sh start.sh` tells you if it is) and that you're using the address it printed, such as `http://localhost:8000`. Type `localhost` exactly: with `127.0.0.1` or your computer's name, BonaFides refuses to sign you in or save anything. It also can't be reached from another computer or phone.
+**The page doesn't load.** Check that BonaFides is running (`sh start.sh` tells you if it is) and that you're using the exact address it printed. Default installations use `http://localhost:8000`; `127.0.0.1` or a computer name is not interchangeable. An explicitly configured HTTPS installation must use its saved origin through its operator-managed TLS proxy. Default loopback installations cannot be reached from another computer or phone.
 
 **"Installation unavailable".** BonaFides isn't reachable. Start it, then select **Check installation again**.
 
@@ -41,7 +41,7 @@ Messages from `sh start.sh` start with `start refused:`.
 
 **You forgot your password.** See [Forgotten your password](account-and-settings.md#forgotten-your-password).
 
-**You keep being signed out, or sign-in doesn't stick.** Use a Chromium-based browser such as Google Chrome or Microsoft Edge, and the `localhost` address.
+**You keep being signed out, or sign-in doesn't stick.** Use a Chromium-based browser such as Google Chrome or Microsoft Edge and the exact saved origin: `localhost` for a default installation, or the configured HTTPS address.
 
 ## Using the workspace
 

@@ -8,13 +8,14 @@ fail() { printf 'Setup refused: %s\n' "$*" >&2; exit 1; }
 usage() {
   cat <<'HELP'
 Usage: sh install.sh [--dir DIR] [--port PORT] [--project NAME]
+                     [--origin HTTPS_ORIGIN] [--proxy-network EXISTING_NETWORK]
                      [--image LOCAL_IMAGE | --build]
 
 Run from a source checkout with Docker already running. No prompts are shown.
 Fresh defaults: ~/bonafides, loopback port 8000, Compose project bonafides.
 Parameters override fresh defaults; existing installations reuse saved settings.
 --image uses an already-loaded image; application images are never pulled.
-Reruns reuse saved project/port and the last successfully installed image.
+Reruns reuse saved project/port/origin/proxy network and the last installed image.
 --build explicitly rebuilds the current checkout instead of reusing that image.
 Installation never starts or stops the application; use start.sh and stop.sh.
 HELP
@@ -28,22 +29,27 @@ image=
 build=no
 port_set=no
 project_set=no
+origin=
+proxy_network=
 while [ "$#" -gt 0 ]; do
   case $1 in
     --help|-h) usage; exit 0 ;;
     --build) build=yes; shift ;;
-    --dir|--port|--project|--image)
+    --dir|--port|--project|--image|--origin|--proxy-network)
       [ "$#" -ge 2 ] && [ -n "$2" ] || fail "a value is required for $1"
       case $1 in
         --dir) dir=$2 ;;
         --port) port=$2; port_set=yes ;;
         --project) project=$2; project_set=yes ;;
         --image) image=$2 ;;
+        --origin) origin=$2 ;;
+        --proxy-network) proxy_network=$2 ;;
       esac
       shift 2 ;;
     *) usage >&2; fail "unknown argument: $1" ;;
   esac
 done
+case $origin in ''|https://*) ;; *) fail "--origin requires a canonical HTTPS origin" ;; esac
 [ "$build" = no ] || [ -z "$image" ] || fail "choose --build or --image, not both"
 [ -n "$dir" ] || dir=${HOME:?set HOME or pass --dir}/bonafides
 valid_port() {
@@ -76,9 +82,13 @@ if [ -d "$dir" ]; then dir=$(CDPATH='' cd -- "$dir" && pwd -P); fi
 existing=no
 if [ -e "$dir/.env" ] || [ -L "$dir/.env" ]; then
   [ -f "$dir/.env" ] && [ ! -L "$dir/.env" ] || fail "saved .env must be a regular file, not a symlink"
-  # Read only two literal fields; never source/evaluate installation configuration.
+  # Read literal fields only; never source/evaluate installation configuration.
   saved_project=$(sed -n 's/^COMPOSE_PROJECT_NAME=//p' "$dir/.env")
   saved_port=$(sed -n 's/^BONAFIDES_PORT=//p' "$dir/.env")
+  saved_origin=$(sed -n 's/^BONAFIDES_ORIGIN=//p' "$dir/.env")
+  saved_proxy_network=$(sed -n 's/^BONAFIDES_PROXY_NETWORK=//p' "$dir/.env")
+  [ -z "$origin" ] || [ "$origin" = "$saved_origin" ] || fail "existing installation requires its saved origin; nothing was changed"
+  [ -z "$proxy_network" ] || [ "$proxy_network" = "$saved_proxy_network" ] || fail "existing installation requires its saved proxy network; nothing was changed"
   [ "$project_set" = no ] || [ "$project" = "$saved_project" ] || fail "existing installation requires its saved project; nothing was changed"
   [ "$port_set" = no ] || [ "$port" = "$saved_port" ] || fail "existing installation requires its saved port; nothing was changed"
   project=$saved_project
@@ -125,7 +135,7 @@ else
   [ -n "$version" ] || fail "cannot read project version"
   image="bonafides-local:$(printf '%.12s' "$revision")-${platform#linux/}-$(date +%s)-$$"
 fi
-printf '\nDirectory: %s\nProject:   %s\nURL:       http://localhost:%s\nPlatform:  %s\nImage:     %s\n' "$dir" "$project" "$port" "$platform" "$image"
+printf '\nDirectory: %s\nProject:   %s\nLoopback port: %s\nPlatform:  %s\nImage:     %s\n' "$dir" "$project" "$port" "$platform" "$image"
 if [ -n "${revision:-}" ]; then printf 'Build source: %s (%s). Base-image downloads may be needed.\n' "$revision" "$root"; fi
 printf 'Existing credentials and volumes are retained. Stop an existing target before reinstalling.\n'
 
@@ -156,7 +166,10 @@ done
 contract=$(sh "$work/install.sh" --contract) ||
   fail "image does not support separate installation and startup; rebuild with --build"
 [ "$contract" = bonafides-lifecycle-1 ] || fail "unsupported image lifecycle contract"
-sh "$work/install.sh" --check --dir "$dir" --port "$port" --project "$project" "$image"
+set -- --dir "$dir" --port "$port" --project "$project"
+[ -z "$origin" ] || set -- "$@" --origin "$origin"
+[ -z "$proxy_network" ] || set -- "$@" --proxy-network "$proxy_network"
+sh "$work/install.sh" --check "$@" "$image"
 
 # A temporary native container reserves only the requested loopback port. This
 # needs no host Python, lsof or netcat, and catches native as well as Docker listeners.
@@ -173,6 +186,6 @@ if ! docker start "$probe" > "$work/port.out" 2> "$work/port.err"; then
 fi
 docker rm -f "$probe" >/dev/null; probe=
 
-sh "$work/install.sh" --dir "$dir" --port "$port" --project "$project" "$image"
+sh "$work/install.sh" "$@" "$image"
 printf '\nInstallation prepared; the application is not started.\n'
 printf "Start it with: sh '%s/start.sh'\n" "$dir"
