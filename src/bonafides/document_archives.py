@@ -28,6 +28,7 @@ from bonafides.document_generation import lock_workspace
 from bonafides.documents import PreparedRender, prepare_render
 from bonafides.maintenance import finish_activity, start_cleanup_activity
 from bonafides.problems import Problem
+from bonafides.profile_identity import portrait_bytes
 from bonafides.render_service import RenderClient
 from bonafides.storage import atomic_stream, directory, read_file, subdirectory
 from bonafides.suitability import _posting_digest
@@ -251,11 +252,17 @@ def execute_archive(db: Database, settings: Settings, task: Claim, interrupted: 
                     with db.transaction() as conn:
                         lock_workspace(conn, task.owner_id)
                         assert_fence(conn, task)
+                        portrait_png = (
+                            portrait_bytes(conn, settings, task.owner_id, prepared.frame.portrait)
+                            if prepared.frame is not None and prepared.frame.portrait is not None
+                            else None
+                        )
                     pdf = RenderClient(settings.renderer_spool, timeout=min(40.0, budget)).render(
                         prepared.body,
                         prepared.template_version,
                         prepared.frame,
                         prepared.template_sha256,
+                        portrait_png=portrait_png,
                     )
                     pdf_bytes += len(pdf)
                     if pdf_bytes > MAX_ARCHIVE_BYTES:

@@ -3,6 +3,8 @@
 
 from __future__ import annotations
 
+import base64
+import hashlib
 import io
 import os
 import subprocess
@@ -17,6 +19,8 @@ from typing import Any
 from uuid import uuid4
 
 import pytest
+from PIL import Image
+from PIL.PngImagePlugin import PngInfo
 from pypdf import PdfReader, PdfWriter
 from pypdf.generic import (
     DecodedStreamObject,
@@ -26,7 +30,8 @@ from pypdf.generic import (
 
 from bonafides import render_service
 from bonafides.document_frame import PrintableFrame, ProfileContact, template_digest
-from bonafides.documents import DocumentBlock, DocumentBody, DocumentSection
+from bonafides.documents import DocumentBlock, DocumentBody, DocumentSection, canonical
+from bonafides.profile_identity import PortraitPin, ReferenceContact
 from bonafides.render_service import RenderClient, RenderFailure, RenderReceipt, render_pdf
 from bonafides.storage import MAX_PDF_BYTES, atomic_file, directory, read_file
 
@@ -76,7 +81,13 @@ def _pdf(*page_texts: str) -> bytes:
     return output.getvalue()
 
 
-def _engine(monkeypatch: pytest.MonkeyPatch, output: bytes, *, missing: bool = False) -> None:
+def _engine(
+    monkeypatch: pytest.MonkeyPatch,
+    output: bytes,
+    *,
+    missing: bool = False,
+    inspect_fetcher: Callable[[Any], None] | None = None,
+) -> None:
     class Painted:
         fonts = {"font": types.SimpleNamespace(missing={0x378: 65535} if missing else {})}
 
@@ -85,7 +96,10 @@ def _engine(monkeypatch: pytest.MonkeyPatch, output: bytes, *, missing: bool = F
 
     class HTML:
         def __init__(self, **kwargs: object) -> None:
-            assert kwargs["url_fetcher"] is render_service.deny_url_fetcher
+            if inspect_fetcher is None:
+                assert kwargs["url_fetcher"] is render_service.deny_url_fetcher
+            else:
+                inspect_fetcher(kwargs["url_fetcher"])
 
         def render(self) -> Painted:
             return Painted()
@@ -317,9 +331,18 @@ def actual_renderer(
         assert (spool / ".renderer-lock").exists(), "Required sealed renderer startup timed out."
         client = RenderClient(spool)
 
-        def paint(body: DocumentBody, template: str, frame: PrintableFrame | None) -> bytes:
+        def paint(
+            body: DocumentBody,
+            template: str,
+            frame: PrintableFrame | None,
+            portrait_png: bytes | None = None,
+        ) -> bytes:
             return client.render(
-                body, template, frame, template_digest(template) if frame is not None else None
+                body,
+                template,
+                frame,
+                template_digest(template) if frame is not None else None,
+                portrait_png,
             )
 
         yield paint
@@ -433,7 +456,8 @@ def test_actual_renderer_rejects_unsupported_glyphs_without_silent_text_loss(
         actual_renderer(_body(text), template, PrintableFrame(display_name="Synthetic Name"))
 
 
-def test_publication_formatting_is_escaped_and_bound_to_its_cited_claim() -> None:
+@pytest.mark.parametrize("template", ["bonafides-evidence-v2", "bonafides-evidence-v3"])
+def test_publication_formatting_is_escaped_and_bound_to_its_cited_claim(template: str) -> None:
     claim = uuid4()
     citation = "<script>x</script> Study"
     frame = PrintableFrame.model_validate(
@@ -457,7 +481,7 @@ def test_publication_formatting_is_escaped_and_bound_to_its_cited_claim() -> Non
     )
     section = DocumentSection(key="publications", heading="Publications", blocks=[block])
     body = DocumentBody(title="Résumé", sections=[section])
-    rendered = render_service.render_html(body, "bonafides-evidence-v2", frame)
+    rendered = render_service.render_html(body, template, frame)
     assert "<script>" not in rendered
     assert "&lt;script&gt;x&lt;/script&gt; <strong>Study</strong>" in rendered
     assert 'href="https://doi.org/10.1000/study"' in rendered
@@ -465,4 +489,166 @@ def test_publication_formatting_is_escaped_and_bound_to_its_cited_claim() -> Non
     unrelated = body.model_copy(
         update={"sections": [section.model_copy(update={"blocks": [other]})]}
     )
-    assert "<strong>" not in render_service.render_html(unrelated, "bonafides-evidence-v2", frame)
+    assert "<strong>" not in render_service.render_html(unrelated, template, frame)
+
+
+def _portrait(*, size: tuple[int, int] = (480, 640), padding: int = 0) -> bytes:
+    output = io.BytesIO()
+    metadata = PngInfo()
+    if padding:
+        metadata.add_text("padding", "x" * padding)
+    Image.new("RGB", size, "#245b65").save(output, format="PNG", pnginfo=metadata)
+    return output.getvalue()
+
+
+def _portrait_frame(data: bytes) -> PrintableFrame:
+    return PrintableFrame(
+        display_name="",
+        age=37,
+        portrait=PortraitPin(
+            blob_id=uuid4(), sha256=hashlib.sha256(data).hexdigest(), byte_length=len(data)
+        ),
+        references=[
+            ReferenceContact(name="<script>Reference</script>", email="ref@example.invalid")
+        ],
+    )
+
+
+@pytest.mark.parametrize("failure", ["missing", "extra", "digest", "length", "geometry", "base64"])
+def test_spool_rejects_unbound_or_invalid_portrait(failure: str) -> None:
+    png = _portrait(size=(1, 1)) if failure == "geometry" else _portrait()
+    frame = _portrait_frame(png)
+    encoded: str | None = base64.b64encode(png).decode("ascii")
+    if failure == "missing":
+        encoded = None
+    elif failure == "extra":
+        frame = PrintableFrame(display_name="")
+    elif failure in {"digest", "length"}:
+        assert frame.portrait is not None
+        pin = frame.portrait.model_copy(
+            update={"sha256": "0" * 64} if failure == "digest" else {"byte_length": len(png) + 1}
+        )
+        frame = frame.model_copy(update={"portrait": pin})
+    elif failure == "base64":
+        encoded = "not raw base64!"
+    with pytest.raises(ValueError):
+        render_service.RenderRequest(
+            schema_version=1,
+            template_version="bonafides-evidence-v3",
+            template_sha256=template_digest("bonafides-evidence-v3"),
+            body=_body("Fact"),
+            frame=frame,
+            portrait_png=encoded,
+        )
+
+
+@pytest.mark.parametrize("field", ["age", "portrait", "references"])
+def test_old_templates_refuse_identity_fields(field: str) -> None:
+    frame = _portrait_frame(_portrait()).model_dump(mode="json")
+    with pytest.raises(ValueError, match="render_identity_template_mismatch"):
+        render_service.RenderRequest(
+            schema_version=1,
+            template_version="bonafides-evidence-v2",
+            template_sha256=template_digest("bonafides-evidence-v2"),
+            body=_body("Fact"),
+            frame=PrintableFrame.model_validate({"display_name": "", field: frame[field]}),
+        )
+
+
+def test_spool_retains_nonimage_budget_and_allows_bounded_image_capacity(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    png = _portrait(padding=500_000)
+    request = render_service.RenderRequest(
+        schema_version=1,
+        template_version="bonafides-evidence-v3",
+        template_sha256=template_digest("bonafides-evidence-v3"),
+        body=_body(*["😀" * 4000 for _ in range(25)]),
+        frame=_portrait_frame(png),
+        portrait_png=base64.b64encode(png).decode("ascii"),
+    )
+    payload = canonical(request.model_dump(mode="json", exclude_none=True)).encode()
+    assert render_service.MAX_REQUEST_BYTES < len(payload) <= render_service.MAX_SPOOL_BYTES
+    assert request.portrait_bytes() == png
+    monkeypatch.setattr(render_service, "MAX_REQUEST_BYTES", 1000)
+    with pytest.raises(ValueError, match="render_request_too_large"):
+        render_service.RenderRequest.model_validate_json(payload, strict=True)
+    with pytest.raises(ValueError):
+        render_service.RenderRequest.model_validate(
+            {**request.model_dump(), "portrait_png": "a" * 700_001}
+        )
+
+
+@pytest.mark.parametrize(
+    "template",
+    [
+        "bonafides-evidence-v3",
+        "bonafides-compact-v3",
+        "bonafides-evidence-letter-v3",
+        "bonafides-compact-letter-v3",
+    ],
+)
+def test_actual_v3_portrait_age_references_and_cover_letter_exclusion(
+    template: str,
+    actual_renderer: Callable[..., bytes],
+) -> None:
+    png = _portrait()
+    frame = _portrait_frame(png)
+    body = _body("Literal fact")
+    pdf = PdfReader(io.BytesIO(actual_renderer(body, template, frame, png)))
+    text = "\n".join(page.extract_text() for page in pdf.pages)
+    assert "Age: 37" in text and "<script>Reference</script>" in text
+    assert "ref@example.invalid" in text
+    assert any(page.images for page in pdf.pages)
+    expected_width = 612 if "letter" in template else 595.28
+    assert abs(float(pdf.pages[0].mediabox.width) - expected_width) < 1
+    letter = body.model_copy(update={"title": "Cover letter"})
+    pdf = PdfReader(io.BytesIO(actual_renderer(letter, template, frame, png)))
+    text = "\n".join(page.extract_text() for page in pdf.pages)
+    assert "Age:" not in text and "References" not in text and "ref@example.invalid" not in text
+    assert not any(page.images for page in pdf.pages)
+
+
+def test_portrait_fetcher_refuses_every_other_resource(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class Fetcher:
+        def __init__(self, **kwargs: object) -> None:
+            del kwargs
+
+    urls = types.ModuleType("weasyprint.urls")
+    urls.URLFetcher = Fetcher  # type: ignore[attr-defined]
+    urls.URLFetcherResponse = object  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "weasyprint.urls", urls)
+
+    def inspect(fetcher: Any) -> None:
+        for url in (
+            "file:///etc/passwd",
+            "https://example.invalid/portrait.png",
+            "http://169.254.169.254/",
+            "data:image/png;base64,AAAA",
+            "bonafides-portrait:other",
+            "bonafides-portrait:current?extra",
+            "bonafides-portrait:current#fragment",
+            "BONAFIDES-PORTRAIT:current",
+        ):
+            with pytest.raises(ValueError, match="^renderer_url_denied$"):
+                fetcher.fetch(url)
+
+    png = _portrait()
+    frame = PrintableFrame(display_name="", portrait=_portrait_frame(png).portrait)
+    output = _pdf("Resume Evidence First fact")
+    _engine(monkeypatch, output, inspect_fetcher=inspect)
+    assert render_pdf(_body("First fact"), "bonafides-evidence-v3", frame, png) == output
+
+
+def test_old_template_refuses_image_payload_before_spooling(tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match="render_identity_template_mismatch"):
+        RenderClient(tmp_path).render(
+            _body("Fact"),
+            "bonafides-evidence-v2",
+            PrintableFrame(display_name=""),
+            template_digest("bonafides-evidence-v2"),
+            _portrait(),
+        )
+    assert not list(tmp_path.iterdir())

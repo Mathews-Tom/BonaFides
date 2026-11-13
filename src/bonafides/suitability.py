@@ -248,6 +248,7 @@ class Requirement(ReviewModel):
 class RequirementsWrite(ReviewModel):
     confirmed: Literal[True]
     requirements: list[Requirement] = Field(max_length=100)
+    references_requested: bool = Field(default=False, strict=True)
 
     @field_validator("confirmed", mode="before")
     @classmethod
@@ -630,6 +631,7 @@ def save_requirements(
         "origin": "owner_reviewed",
         "policy_version": POLICY_VERSION,
         "semantic_review": "owner_required_token_guards_are_not_entailment_proof",
+        "references_requested": body.references_requested,
     }
     conn.execute(
         text("""INSERT INTO bonafides.posting_requirement_revisions

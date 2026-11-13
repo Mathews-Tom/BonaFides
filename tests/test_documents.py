@@ -1008,7 +1008,7 @@ def test_archive_lost_publication_ack_preserves_only_confirmed_or_uncertain_zip(
 ) -> None:
     _archive_pair(catalog, monkeypatch, tmp_path)
     pdf = b"%PDF-1.7\npublication acknowledgement boundary\n"
-    monkeypatch.setattr(RenderClient, "render", lambda self, *args: pdf)
+    monkeypatch.setattr(RenderClient, "render", lambda self, *args, **kwargs: pdf)
     task = _queue_archive(catalog)
     actual_transaction = catalog.runtime.transaction
     actual_publish = publish_workflow
@@ -1089,7 +1089,7 @@ def test_archive_zip_success_integrity_expiry_cleanup_and_shared_blob(
     documents_before = [_document(catalog, record["id"]) for record in records]
     profile_before = catalog.client.get("/api/v1/profile").json()
     pdf = b"%PDF-1.7\nsynthetic archive boundary payload\n"
-    monkeypatch.setattr(RenderClient, "render", lambda self, *args: pdf)
+    monkeypatch.setattr(RenderClient, "render", lambda self, *args, **kwargs: pdf)
     shared = BlobStore(catalog.identity.settings.blob_root).put(catalog.owner_id, pdf)
     task = _queue_archive(catalog)
     with catalog.runtime.transaction() as conn:
@@ -1147,7 +1147,7 @@ def test_archive_render_boundary_drift_never_publishes_partial(
     task = _queue_archive(catalog)
     changed = False
 
-    def render(self: RenderClient, *args: object) -> bytes:
+    def render(self: RenderClient, *args: object, **kwargs: object) -> bytes:
         nonlocal changed
         if not changed:
             changed = True
@@ -1254,7 +1254,9 @@ def test_archive_download_revalidates_namespace_source_and_integrity(
     catalog: SourceContext, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, change: str
 ) -> None:
     application, _ = _archive_pair(catalog, monkeypatch, tmp_path)
-    monkeypatch.setattr(RenderClient, "render", lambda self, *args: b"%PDF-1.7\nboundary\n")
+    monkeypatch.setattr(
+        RenderClient, "render", lambda self, *args, **kwargs: b"%PDF-1.7\nboundary\n"
+    )
     task = _queue_archive(catalog)
     Worker(catalog.runtime, catalog.identity.settings)._execute(task, threading.Event())
     workflow = catalog.workflow(task.id)
@@ -1290,7 +1292,9 @@ def test_archive_size_failure_and_crash_orphan_cleanup_never_touch_shared_storag
     catalog: SourceContext, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     _archive_pair(catalog, monkeypatch, tmp_path)
-    monkeypatch.setattr(RenderClient, "render", lambda self, *args: b"%PDF-1.7\nboundary\n")
+    monkeypatch.setattr(
+        RenderClient, "render", lambda self, *args, **kwargs: b"%PDF-1.7\nboundary\n"
+    )
     task = _queue_archive(catalog)
     monkeypatch.setattr(document_archives, "MAX_ARCHIVE_BYTES", 1)
     Worker(catalog.runtime, catalog.identity.settings)._execute(task, threading.Event())
@@ -1320,7 +1324,9 @@ def test_archive_private_spool_refuses_intermediate_symlink(
     spool = catalog.identity.settings.blob_root / "document_archives"
     spool.parent.mkdir(parents=True, exist_ok=True)
     spool.symlink_to(outside, target_is_directory=True)
-    monkeypatch.setattr(RenderClient, "render", lambda self, *args: b"%PDF-1.7\nboundary\n")
+    monkeypatch.setattr(
+        RenderClient, "render", lambda self, *args, **kwargs: b"%PDF-1.7\nboundary\n"
+    )
     Worker(catalog.runtime, catalog.identity.settings)._execute(task, threading.Event())
     workflow = catalog.workflow(task.id)
     assert workflow["state"] != "succeeded"
@@ -1364,7 +1370,7 @@ def test_archive_queue_idempotency_and_entry_revalidation(
             {"owner": catalog.owner_id, "id": UUID(records[0]["current_revision"]["id"])},
         )
 
-    def forbidden_render(self: RenderClient, *args: object) -> bytes:
+    def forbidden_render(self: RenderClient, *args: object, **kwargs: object) -> bytes:
         raise AssertionError("An ineligible snapshot must fail before renderer admission")
 
     monkeypatch.setattr(RenderClient, "render", forbidden_render)

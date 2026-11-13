@@ -1,0 +1,71 @@
+/* SPDX-License-Identifier: MIT OR Apache-2.0 */
+.identity-panel .profile-identity-options,
+.identity-panel .profile-presence {
+  grid-column: 1 / -1;
+  border-top: 1px solid var(--line);
+  margin-top: 1rem;
+  padding-top: 1rem;
+}
+.profile-identity-options > section {
+  margin-top: 1.5rem;
+}
+.profile-identity-options .check {
+  display: flex;
+  align-items: center;
+  gap: .5rem;
+  min-height: 44px;
+}
+.profile-identity-options .check input {
+  flex: none;
+  width: 24px;
+  height: 24px;
+  margin: 0;
+}
+.profile-identity-options input[type=date] {
+  max-width: 20rem;
+}
+.portrait-preview {
+  display: block;
+  width: 120px;
+  height: 160px;
+  object-fit: contain;
+  border: 1px solid var(--line);
+}
+.portrait-crop {
+  position: relative;
+  width: min(100%, 300px);
+  aspect-ratio: 3 / 4;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  background: var(--canvas);
+  touch-action: none;
+  cursor: move;
+}
+.portrait-crop img {
+  position: absolute;
+  max-width: none;
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+  user-select: none;
+}
+.portrait-round-guide {
+  position: absolute;
+  width: 84%;
+  aspect-ratio: 1;
+  top: 12%;
+  left: 8%;
+  border: 2px dashed white;
+  border-radius: 50%;
+  box-shadow: 0 0 0 1px #172a3a;
+  pointer-events: none;
+}
+.portrait-crop-editor input[type=range] {
+  max-width: 25rem;
+  min-height: 44px;
+  padding: .5rem 0;
+}
+@media (forced-colors: active) {
+  .portrait-crop, .portrait-preview, .portrait-round-guide {
+    border-color: CanvasText;
+  }
+}

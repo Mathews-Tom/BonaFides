@@ -3,8 +3,12 @@
 
 from __future__ import annotations
 
+import base64
+import binascii
 import hashlib
 import json
+import re
+from datetime import date
 from typing import Annotated, Literal
 from uuid import UUID, uuid4
 
@@ -20,8 +24,28 @@ from bonafides.document_frame import ProfileContact
 from bonafides.model_context import lock_evidence_write
 from bonafides.problems import Problem
 from bonafides.profile_breadth import citation_text, selected_claim_ids, snapshot_claim_ids
+from bonafides.profile_identity import (
+    MAX_PORTRAIT_BASE64,
+    PortraitPin,
+    ReferenceContact,
+    portrait_bytes,
+    portrait_storage_key,
+    validate_portrait,
+)
+from bonafides.storage import BlobStore
 
 MAX_HEADLINE_LENGTH = 300
+PRESERVED_SNAPSHOT_FIELDS: dict[str, object] = {
+    "description": "",
+    "writing_fact_revision_ids": {},
+    "ordering_modes": {},
+    "birth_date": None,
+    "include_age": False,
+    "portrait": None,
+    "include_portrait": True,
+    "references": [],
+    "include_references": False,
+}
 SYNTHETIC_FACTS = (
     "Maintained Linux batch processing runbooks",
     "Wrote SQL queries for incident analysis",
@@ -41,6 +65,24 @@ class ProfileSnapshot(StrictModel):
     ordering_modes: dict[
         Literal["experience", "project", "education"], Literal["date", "manual"]
     ] = Field(default_factory=dict)
+    birth_date: str | None = Field(default=None, exclude_if=lambda value: value is None)
+    include_age: bool = Field(default=False, strict=True, exclude_if=lambda value: not value)
+    portrait: PortraitPin | None = Field(default=None, exclude_if=lambda value: value is None)
+    include_portrait: bool = Field(default=True, strict=True, exclude_if=lambda value: value)
+    references: list[ReferenceContact] = Field(
+        default_factory=list, max_length=20, exclude_if=lambda value: not value
+    )
+    include_references: bool = Field(default=False, strict=True, exclude_if=lambda value: not value)
+
+    @field_validator("birth_date")
+    @classmethod
+    def valid_birth_date(cls, value: str | None) -> str | None:
+        if value is not None and (
+            re.fullmatch(r"[0-9]{4}-[0-9]{2}-[0-9]{2}", value) is None
+            or date.fromisoformat(value) > date.today()
+        ):
+            raise ValueError("invalid_birth_date")
+        return value
 
     @field_validator("writing_fact_revision_ids")
     @classmethod
@@ -51,6 +93,10 @@ class ProfileSnapshot(StrictModel):
             if len(ids) > 50:
                 raise ValueError("writing_fact_limit")
         return groups
+
+
+class ProfileUpdate(ProfileSnapshot):
+    portrait_upload: str | None = Field(default=None, max_length=MAX_PORTRAIT_BASE64)
 
 
 class BenchmarkProfile(StrictModel):
@@ -173,6 +219,8 @@ def _save(
     reason: str,
     *,
     restoring: bool = False,
+    portrait_upload: bytes | None = None,
+    settings: Settings | None = None,
 ) -> dict[str, object]:
     snapshot = ProfileSnapshot.model_validate(snapshot.model_dump(mode="json"))
     profile = (
@@ -248,6 +296,49 @@ def _save(
         ).scalar_one()
         if count != len(claim_ids):
             raise Problem(422, "duplicate_claim")
+    # All membership and saved-pin checks precede the first filesystem/SQL mutation.
+    if snapshot.portrait is not None:
+        try:
+            portrait_storage_key(conn, owner_id, snapshot.portrait)
+            if settings is not None:
+                portrait_bytes(conn, settings, owner_id, snapshot.portrait)
+        except (OSError, ValueError) as error:
+            raise Problem(422, "invalid_portrait_pin") from error
+    if portrait_upload is not None:
+        if settings is None:
+            raise ValueError("portrait_settings_required")
+        validate_portrait(portrait_upload)
+        digest = hashlib.sha256(portrait_upload).hexdigest()
+        existing = conn.execute(
+            text("SELECT id FROM bonafides.blobs WHERE owner_id=:owner AND sha256=:sha"),
+            {"owner": owner_id, "sha": digest},
+        ).scalar_one_or_none()
+        pin = PortraitPin(
+            blob_id=existing or uuid4(), sha256=digest, byte_length=len(portrait_upload)
+        )
+        if existing is not None:
+            try:
+                portrait_bytes(conn, settings, owner_id, pin)
+            except (OSError, ValueError) as error:
+                raise Problem(422, "invalid_portrait_pin") from error
+        else:
+            try:
+                blob = BlobStore(settings.blob_root).put_bytes(owner_id, portrait_upload)
+            except (OSError, ValueError) as error:
+                raise Problem(503, "portrait_storage_unavailable") from error
+            conn.execute(
+                text("""INSERT INTO bonafides.blobs
+                (owner_id,id,sha256,byte_length,media_type,storage_key,state)
+                VALUES(:owner,:id,:sha,:size,'image/png',:key,'ready')"""),
+                {
+                    "owner": owner_id,
+                    "id": pin.blob_id,
+                    "sha": blob.sha256,
+                    "size": blob.byte_length,
+                    "key": blob.storage_key,
+                },
+            )
+        snapshot = snapshot.model_copy(update={"portrait": pin})
     revision_id = uuid4()
     revision_no = int(
         conn.execute(
@@ -417,9 +508,36 @@ def build_router(db: Database, settings: Settings) -> APIRouter:
         response.headers["ETag"] = f'"{result["version"]}"'
         return result
 
+    @router.get("/profile/portrait/{blob_id}")
+    def portrait(blob_id: UUID, owner: Annotated[Owner, Depends(require_owner)]) -> Response:
+        with db.transaction() as conn:
+            row = (
+                conn.execute(
+                    text("""SELECT sha256,byte_length FROM bonafides.blobs
+                WHERE owner_id=:owner AND id=:id AND state='ready' AND media_type='image/png'"""),
+                    {"owner": owner.id, "id": blob_id},
+                )
+                .mappings()
+                .one_or_none()
+            )
+            if row is None:
+                raise Problem(404, "portrait_not_found")
+            try:
+                pin = PortraitPin(
+                    blob_id=blob_id, sha256=row["sha256"], byte_length=row["byte_length"]
+                )
+                data = portrait_bytes(conn, settings, owner.id, pin)
+            except (OSError, ValueError) as error:
+                raise Problem(422, "invalid_portrait_pin") from error
+        return Response(
+            content=data,
+            media_type="image/png",
+            headers={"Cache-Control": "no-store", "X-Content-Type-Options": "nosniff"},
+        )
+
     @router.put("/profile")
     def save(
-        body: ProfileSnapshot,
+        body: ProfileUpdate,
         response: Response,
         owner: Annotated[Owner, Depends(require_owner)],
         if_match: Annotated[str | None, Header()] = None,
@@ -441,29 +559,44 @@ def build_router(db: Database, settings: Settings) -> APIRouter:
                 ).scalar_one()
                 updates = {
                     field: current.get(field, default)
-                    for field, default in (
-                        ("description", ""),
-                        ("writing_fact_revision_ids", {}),
-                        ("ordering_modes", {}),
-                    )
+                    for field, default in PRESERVED_SNAPSHOT_FIELDS.items()
                     if field not in body.model_fields_set
                 }
                 snapshot = ProfileSnapshot.model_validate(
-                    {**body.model_dump(mode="json"), **updates}
+                    {**body.model_dump(mode="json", exclude={"portrait_upload"}), **updates}
                 )
-                return 200, _save(connection, owner.id, snapshot, "owner_save")
+                upload = None
+                if body.portrait_upload is not None:
+                    try:
+                        upload = base64.b64decode(body.portrait_upload, validate=True)
+                        validate_portrait(upload)
+                    except (ValueError, binascii.Error) as error:
+                        raise Problem(422, "invalid_portrait_upload") from error
+                return 200, _save(
+                    connection,
+                    owner.id,
+                    snapshot,
+                    "owner_save",
+                    portrait_upload=upload,
+                    settings=settings,
+                )
 
+            request_body = body.model_dump(
+                mode="json",
+                exclude=(set(PRESERVED_SNAPSHOT_FIELDS) | {"portrait_upload"})
+                - body.model_fields_set,
+            )
+            # exclude_if preserves historical digests, not command intent: explicit
+            # clears/defaults must remain distinct from omitted legacy fields.
+            for field in body.model_fields_set - request_body.keys():
+                request_body[field] = getattr(body, field)
             status, result = command(
                 conn,
                 owner.id,
                 "PUT",
                 "/api/v1/profile",
                 {},
-                body.model_dump(
-                    mode="json",
-                    exclude=set(("description", "writing_fact_revision_ids", "ordering_modes"))
-                    - body.model_fields_set,
-                ),
+                request_body,
                 if_match,
                 idempotency_key,
                 "profile",

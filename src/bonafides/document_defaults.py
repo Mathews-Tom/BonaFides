@@ -72,7 +72,7 @@ def _selection(settings: object) -> Selection:
     if not isinstance(settings, dict):
         raise Problem(409, "invalid_document_defaults")
     if "document_defaults" not in settings:
-        return Selection(template_version="bonafides-evidence-v2", tone="professional")
+        return Selection(template_version="bonafides-evidence-v3", tone="professional")
     try:
         return Selection.model_validate(settings["document_defaults"])
     except ValidationError as exc:

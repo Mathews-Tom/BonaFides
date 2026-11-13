@@ -79,6 +79,122 @@ describe('owner account identifier', () => {
 });
 
 describe('profile editing', () => {
+  it('retains optional identity through conflicts, saves deletions explicitly, and replaces only by owner choice', async () => {
+    const user = userEvent.setup(); const api = new Api();
+    let saved: Profile = { ...profile, current_revision: { ...profile.current_revision, snapshot: { ...profile.current_revision.snapshot, birth_date: '1990-03-02', references: [{ name: 'Original reference', relationship: '', organization: '', email: '', phone: '' }] } } };
+    let rejectSave = true;
+    const request = mockRequest(api, async (path, method, body) => {
+      if (path === '/session') return session;
+      if (path === '/profile' && method === 'GET') return saved;
+      if (path === '/profile' && method === 'PUT') {
+        if (rejectSave) throw new ApiError(412, 'version_conflict');
+        saved = { ...saved, version: saved.version + 1, current_revision: { ...saved.current_revision, revision_no: saved.version + 1, snapshot: body as Snapshot } };
+        return saved;
+      }
+      throw new ApiError(404, 'not_found');
+    });
+    render(<App api={api} />);
+    const birth = await screen.findByLabelText('Birth date (optional)');
+    fireEvent.change(birth, { target: { value: '1991-04-03' } });
+    await user.click(screen.getByLabelText('Print my age in new résumés'));
+    await user.click(screen.getByRole('button', { name: 'Remove reference 1' }));
+    await user.click(screen.getByRole('button', { name: 'Save profile' }));
+    expect(await screen.findByRole('alert')).toHaveTextContent('newer revision');
+    saved = { ...saved, version: 2 };
+    await user.click(screen.getByRole('button', { name: 'Compare current revision' }));
+    await user.click(await screen.findByRole('button', { name: 'Keep my text against this version' }));
+    await goTo(user, 'Documents'); await goTo(user, 'Profile');
+    expect(birth).toHaveValue('1991-04-03');
+    expect(screen.getByLabelText('Print my age in new résumés')).toBeChecked();
+    expect(screen.queryByRole('button', { name: 'Remove reference 1' })).not.toBeInTheDocument();
+    rejectSave = false;
+    await user.click(screen.getByRole('button', { name: 'Save profile' }));
+    await screen.findByText('Saved as revision 3.');
+    const writes = request.mock.calls.filter(call => call[1] === 'PUT');
+    expect(writes.at(-1)?.[2]).toMatchObject({ birth_date: '1991-04-03', include_age: true, references: [] });
+    expect(writes.at(-1)?.[3]).toBe(2);
+    expect(screen.getByRole('button', { name: /Restore removed reference/ })).toBeVisible();
+    fireEvent.change(screen.getByLabelText('Birth date (optional)'), { target: { value: '1992-05-04' } });
+    await user.click(screen.getByRole('button', { name: 'Compare current revision' }));
+    await user.click(await screen.findByRole('button', { name: 'Replace editor with current revision' }));
+    expect(screen.getByLabelText('Birth date (optional)')).toHaveValue('1991-04-03');
+    expect(screen.queryByRole('button', { name: /Restore removed reference/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Discard identity changes' })).not.toBeInTheDocument();
+  });
+
+  it('restores saved portrait and reference removals as a new draft without reverting newer identity material', async () => {
+    const user = userEvent.setup(); const api = new Api();
+    const portrait = { blob_id: 'original-crop', sha256: 'b'.repeat(64), byte_length: 120 };
+    const reference = { name: 'Original reference', relationship: 'Manager', organization: 'Example', email: 'reference@example.test', phone: '+1 555 0123' };
+    const contact = { email: 'owner@example.test', phone: '', location: 'Original city', postal_address: '' };
+    let saved: Profile = { ...profile, current_revision: { ...profile.current_revision, snapshot: { ...profile.current_revision.snapshot, contact, portrait, include_portrait: false, references: [reference], include_references: true } } };
+    const request = mockRequest(api, async (path, method, body) => {
+      if (path === '/session') return session;
+      if (path === '/profile' && method === 'GET') return saved;
+      if (path === '/profile' && method === 'PUT') {
+        saved = { ...saved, version: saved.version + 1, current_revision: { ...saved.current_revision, revision_no: saved.version + 1, snapshot: body as Snapshot } };
+        return saved;
+      }
+      throw new ApiError(404, 'not_found');
+    });
+    render(<App api={api} />);
+    await user.click(await screen.findByRole('button', { name: 'Remove portrait' }));
+    await user.click(screen.getByRole('button', { name: 'Remove reference 1' }));
+    await user.click(screen.getByRole('button', { name: 'Save profile' }));
+    await screen.findByText('Saved as revision 2.');
+    expect(saved.current_revision.snapshot).toMatchObject({ portrait: null, include_portrait: false, references: [], include_references: true });
+    expect(screen.getByRole('button', { name: 'Restore removed portrait' })).toBeVisible();
+    expect(screen.getByRole('button', { name: 'Restore removed reference: Original reference' })).toBeVisible();
+    expect(screen.queryByRole('button', { name: 'Discard identity changes' })).not.toBeInTheDocument();
+
+    fireEvent.change(screen.getByLabelText('Description (optional)'), { target: { value: 'Newer professional narrative.' } });
+    await user.click(screen.getByRole('button', { name: 'Save profile' }));
+    await screen.findByText('Saved as revision 3.');
+    await user.click(screen.getByRole('button', { name: 'Restore removed portrait' }));
+    await user.click(screen.getByRole('button', { name: 'Restore removed reference: Original reference' }));
+    expect(screen.getByRole('img', { name: 'Current portrait draft' })).toHaveAttribute('src', '/api/v1/profile/portrait/original-crop');
+    expect(screen.getByLabelText('Print portrait in new résumés')).not.toBeChecked();
+    expect(screen.getByLabelText('Print references in new résumés')).toBeChecked();
+    expect(screen.getByLabelText('Description (optional)')).toHaveValue('Newer professional narrative.');
+    expect(request.mock.calls.filter(call => call[1] === 'PUT')).toHaveLength(2);
+    await user.click(screen.getByRole('button', { name: 'Save profile' }));
+    await screen.findByText('Saved as revision 4.');
+    const writes = request.mock.calls.filter(call => call[1] === 'PUT');
+    expect(writes.at(-1)?.[3]).toBe(3);
+    expect(saved.current_revision.snapshot).toMatchObject({ portrait, include_portrait: false, references: [reference], include_references: true, contact, description: 'Newer professional narrative.' });
+    expect(screen.queryByRole('button', { name: /Restore removed/ })).not.toBeInTheDocument();
+  });
+
+  it.each(['discard', 'replace'] as const)('clears saved removal undo when the owner chooses to %s the editor', async action => {
+    const user = userEvent.setup(); const api = new Api();
+    let saved: Profile = { ...profile, current_revision: { ...profile.current_revision, snapshot: { ...profile.current_revision.snapshot, portrait: { blob_id: 'old-crop', sha256: 'c'.repeat(64), byte_length: 120 }, references: [{ name: 'Obsolete reference', relationship: '', organization: '', email: '', phone: '' }] } } };
+    mockRequest(api, async (path, method, body) => {
+      if (path === '/session') return session;
+      if (path === '/profile' && method === 'GET') return saved;
+      if (path === '/profile' && method === 'PUT') {
+        saved = { ...saved, version: saved.version + 1, current_revision: { ...saved.current_revision, revision_no: saved.version + 1, snapshot: body as Snapshot } };
+        return saved;
+      }
+      throw new ApiError(404, 'not_found');
+    });
+    render(<App api={api} />);
+    await user.click(await screen.findByRole('button', { name: 'Remove portrait' }));
+    await user.click(screen.getByRole('button', { name: 'Remove reference 1' }));
+    await user.click(screen.getByRole('button', { name: 'Save profile' }));
+    await screen.findByText('Saved as revision 2.');
+    expect(screen.getAllByRole('button', { name: /Restore removed/ })).toHaveLength(2);
+    fireEvent.change(screen.getByLabelText('Description (optional)'), { target: { value: 'Unwanted draft.' } });
+    if (action === 'discard') await user.click(screen.getByRole('button', { name: 'Discard identity changes' }));
+    else {
+      await user.click(screen.getByRole('button', { name: 'Compare current revision' }));
+      await user.click(await screen.findByRole('button', { name: 'Replace editor with current revision' }));
+    }
+    expect(screen.queryByRole('button', { name: /Restore removed/ })).not.toBeInTheDocument();
+    expect(screen.getByLabelText('Description (optional)')).toHaveValue('');
+    expect(screen.queryByRole('img', { name: 'Current portrait draft' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Remove reference 1' })).not.toBeInTheDocument();
+  });
+
   it('retains description-only drafts through navigation and themes, fences source edits, and explicitly discards them', async () => {
     const user = userEvent.setup(); const { api, request } = connectedApi();
     render(<App api={api} />);

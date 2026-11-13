@@ -9,7 +9,10 @@ claimed HTTP/UI acceptance of the owner-facing producer.
 
 from __future__ import annotations
 
+import base64
+from dataclasses import replace
 from pathlib import Path
+from threading import Event
 from typing import Any, cast
 from uuid import UUID, uuid4
 
@@ -17,12 +20,14 @@ import pytest
 from sqlalchemy import text
 from sqlalchemy.exc import DBAPIError
 from test_action_approvals import Prepared, _approve, _owner
-from test_document_generation import _base
+from test_document_generation import _base, _document, _queue_base
 from test_identity import _login
 from test_identity import identity as identity
 from test_import_parser import parser as parser
 from test_installation_control import _queue_control
 from test_installation_control import renderer_spool as renderer_spool
+from test_portable_data import _export
+from test_profile_identity import png
 from test_sources import SourceContext
 from test_sources import catalog as catalog
 from test_suitability import _posting, _profile, _queue, _route, _view
@@ -34,7 +39,9 @@ from bonafides.commands import command
 from bonafides.import_parser import ImportParserClient
 from bonafides.installation_control import Control, InstallationMaintenance, begin_control
 from bonafides.portable_erasure import delete_controlled_owner_data, purge_scope
+from bonafides.profile_identity import PortraitPin, portrait_bytes
 from bonafides.storage import BlobStore, StoredBlob
+from bonafides.worker import Worker
 from bonafides.workflows import assert_fence, claim, claim_control, enqueue
 
 
@@ -303,6 +310,100 @@ def test_application_erasure_preserves_neighbors_and_shared_bytes_and_blocks_old
         assert conn.execute(text("SELECT id FROM bonafides.applications")).scalars().all() == [
             UUID(second["id"])
         ]
+
+
+@pytest.mark.postgres
+def test_shared_portrait_survives_application_erasure_until_workspace_history_is_erased(
+    catalog: SourceContext, parser: ImportParserClient, renderer_spool: Path
+) -> None:
+    current = _profile(catalog)
+    image = png()
+    response = catalog.client.put(
+        "/api/v1/profile",
+        json={
+            **current["current_revision"]["snapshot"],
+            "portrait_upload": base64.b64encode(image).decode("ascii"),
+        },
+        headers=catalog.headers(current["version"]),
+    )
+    assert response.status_code == 200, response.text
+    saved = response.json()
+    historical_profile = saved["current_revision"]
+    pin = historical_profile["snapshot"]["portrait"]
+    task = _queue_base(catalog, saved, "bonafides-evidence-v3")
+    Worker(catalog.runtime, replace(catalog.identity.settings, mode="production"))._execute(
+        task, Event()
+    )
+    workflow = catalog.workflow(task.id)
+    assert workflow["state"] == "succeeded", workflow
+    document = _document(catalog, workflow["result"]["document_id"])
+    historical_document = document["current_revision"]
+    assert historical_document["provenance_snapshot"]["frame"]["portrait"] == pin
+    removed = catalog.client.put(
+        "/api/v1/profile",
+        json={**historical_profile["snapshot"], "portrait": None},
+        headers=catalog.headers(saved["version"]),
+    )
+    assert removed.status_code == 200, removed.text
+    application = _application(catalog, title="Synthetic shared portrait attachment")
+    stored = _attachment(catalog, application, image)
+    assert stored.sha256 == pin["sha256"]
+    control = _deletion(catalog, application)
+    maintenance = InstallationMaintenance(catalog.runtime, control, parser.spool, renderer_spool)
+    with maintenance.quiescent():
+        result = delete_controlled_owner_data(catalog.runtime, catalog.identity.settings, control)
+        maintenance.finish(result)
+    login = _login(catalog.identity, catalog.client)
+    assert login.status_code == 201, login.text
+    catalog.csrf = login.json()["csrf_token"]
+    history = catalog.client.get(f"/api/v1/profile/revisions/{historical_profile['id']}")
+    assert history.status_code == 200, history.text
+    assert history.json()["snapshot"] == historical_profile["snapshot"]
+    assert history.json()["content_sha256"] == historical_profile["content_sha256"]
+    retained_document = _document(catalog, document["id"])["current_revision"]
+    assert retained_document == historical_document
+    portrait = catalog.client.get(f"/api/v1/profile/portrait/{pin['blob_id']}")
+    assert portrait.status_code == 200 and portrait.content == image
+    document_pin = PortraitPin.model_validate(
+        retained_document["provenance_snapshot"]["frame"]["portrait"]
+    )
+    with catalog.runtime.transaction() as conn:
+        assert conn.execute(text("SELECT count(*) FROM bonafides.applications")).scalar_one() == 0
+        assert (
+            portrait_bytes(conn, catalog.identity.settings, catalog.owner_id, document_pin) == image
+        )
+    archive = _export(catalog)
+    assert archive.blobs[pin["sha256"]] == image
+    for family, identifier, snapshot_key, snapshot in (
+        ("profile_revisions", historical_profile["id"], "snapshot", historical_profile["snapshot"]),
+        (
+            "document_revisions",
+            historical_document["id"],
+            "provenance_snapshot",
+            historical_document["provenance_snapshot"],
+        ),
+    ):
+        row = next(row for row in archive.manifest.records[family] if row["id"] == identifier)
+        assert row[snapshot_key] == snapshot
+    # The new retention guards must not turn history into an unerasable CAS leak.
+    control = _deletion(catalog)
+    maintenance = InstallationMaintenance(catalog.runtime, control, parser.spool, renderer_spool)
+    with maintenance.quiescent():
+        result = delete_controlled_owner_data(catalog.runtime, catalog.identity.settings, control)
+        maintenance.finish(result)
+    with catalog.runtime.transaction() as conn:
+        for family in ("blobs", "document_revisions"):
+            assert conn.execute(text(f"SELECT count(*) FROM bonafides.{family}")).scalar_one() == 0
+        assert (
+            conn.execute(
+                text("SELECT count(*) FROM bonafides.profile_revisions WHERE profile_id=:profile"),
+                {"profile": UUID(saved["id"])},
+            ).scalar_one()
+            == 0
+        )
+    assert not (
+        catalog.identity.settings.blob_root / str(catalog.owner_id) / stored.storage_key
+    ).exists()
 
 
 @pytest.mark.postgres

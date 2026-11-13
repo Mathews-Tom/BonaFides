@@ -1,0 +1,56 @@
+{# SPDX-License-Identifier: MIT OR Apache-2.0 #}
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>{{ document.title }}</title>
+<style>
+@page { size: {{ paper }}; margin: {% if compact %}18mm 19mm{% else %}20mm{% endif %}; }
+body { font-family: "DejaVu Sans", sans-serif; color: #152c35; font-size: {% if compact %}10{% else %}10.5{% endif %}pt; line-height: {% if compact %}1.4{% else %}1.5{% endif %}; }
+header { margin-bottom: 5mm; {% if not compact %}border-bottom: 1pt solid #245b65; padding-bottom: 5mm;{% endif %} }
+h1 { font-size: {% if compact %}21{% else %}23{% endif %}pt; line-height: 1.2; margin: 0 0 3mm; overflow-wrap: anywhere; }
+h2 { font-size: 12pt; color: #245b65; margin: 6mm 0 3mm; break-after: avoid; {% if compact %}border-left: 2pt solid #245b65; padding-left: 2mm;{% else %}border-bottom: .5pt solid #a7bdc1; padding-bottom: 2mm;{% endif %} }
+p { margin: 0 0 3mm; white-space: pre-wrap; overflow-wrap: anywhere; }
+a { color: inherit; text-decoration: none; }
+.contact { font-size: 9pt; margin-bottom: 1mm; }
+.document-title { font-size: 12pt; margin: 4mm 0; }
+.correspondence { margin-bottom: 6mm; }
+.portrait { float: right; width: 24mm; height: 32mm; margin: 0 0 3mm 5mm; }
+header::after { content: ""; display: block; clear: both; }
+.reference { break-inside: avoid; margin-bottom: 4mm; }
+</style></head>
+<body>
+<header>
+{% if document.title != 'Cover letter' and frame.portrait %}<img class="portrait" src="bonafides-portrait:current" alt="">{% endif %}
+{% if frame.display_name %}<h1>{{ frame.display_name }}</h1>{% endif %}
+{% if frame.contact %}
+{% for value in [frame.contact.email, frame.contact.phone, frame.contact.location, frame.contact.postal_address] %}
+{% if value %}<p class="contact">{{ value }}</p>{% endif %}
+{% endfor %}
+{% endif %}
+{% if document.title != 'Cover letter' and frame.age is not none %}<p class="contact">Age: {{ frame.age }}</p>{% endif %}
+<p class="document-title">{{ document.title }}</p>
+</header>
+{% if document.title == 'Cover letter' %}
+<div class="correspondence">
+{% if frame.correspondence_date %}<p>{{ frame.correspondence_date }}</p>{% endif %}
+{% if frame.recipient %}<p>{{ frame.recipient }}</p>{% endif %}
+{% if frame.organization %}<p>{{ frame.organization }}</p>{% endif %}
+{% if frame.role %}<p>{{ frame.role }}</p>{% endif %}
+</div>
+{% endif %}
+{% for section in document.sections %}
+<section><h2>{{ section.heading }}</h2>
+{% for block in section.blocks %}<p>{{ publication_html(block, frame) }}</p>{% endfor %}
+</section>
+{% endfor %}
+{% if document.title != 'Cover letter' and frame.references %}
+<section><h2>References</h2>
+{% for reference in frame.references %}
+<div class="reference">
+{% for value in [reference.name, reference.relationship, reference.organization, reference.email, reference.phone] %}
+{% if value %}<p class="contact">{{ value }}</p>{% endif %}
+{% endfor %}
+</div>
+{% endfor %}
+</section>
+{% endif %}
+</body></html>

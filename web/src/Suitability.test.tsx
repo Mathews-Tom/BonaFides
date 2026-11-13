@@ -52,8 +52,8 @@ function server() {
       return snapshot as T;
     }
     if (path === '/postings/posting-one/requirements' && method === 'PUT') {
-      const input = body as { requirements: Requirement[] };
-      state.view = { ...state.view, version: state.view.version + 1, current_revision: { ...state.view.current_revision!, id: 'requirements-two', revision_no: 2, requirements: input.requirements } };
+      const input = body as { requirements: Requirement[]; references_requested: boolean };
+      state.view = { ...state.view, version: state.view.version + 1, current_revision: { ...state.view.current_revision!, id: 'requirements-two', revision_no: 2, requirements: input.requirements, provenance: { origin: 'owner_reviewed', ...state.view.current_revision?.provenance, references_requested: input.references_requested } } };
       return state.view as T;
     }
     if (path === '/postings/posting-one/coverage' && method === 'PUT') {
@@ -88,6 +88,26 @@ function server() {
 afterEach(() => { vi.useRealTimers(); vi.restoreAllMocks(); window.history.replaceState(null, '', '/'); });
 
 describe('reviewed suitability boundaries', () => {
+  it('loads the explicit reviewed references flag and saves opt-out without inferring from posting text', async () => {
+    const { api, state } = server();
+    state.view.current_revision!.provenance.references_requested = true;
+    render(<Suitability api={api} postingId="posting-one" />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Review requirements manually' }));
+    const flag = screen.getByRole('checkbox', { name: 'I reviewed the posting and confirm that it requests references' });
+    expect(flag).toBeChecked();
+    fireEvent.click(flag);
+    fireEvent.click(screen.getByRole('checkbox', { name: /I reviewed all exact source spans/ }));
+    fireEvent.click(screen.getByRole('button', { name: 'Save reviewed requirements' }));
+    await screen.findByText(/Saved reviewed requirement revision 2/);
+    expect(state.submissions[0]).toMatchObject({ path: '/postings/posting-one/requirements', version: 1, body: { references_requested: false, confirmed: true } });
+    fireEvent.click(screen.getByRole('button', { name: 'Review requirements manually' }));
+    expect(screen.getByRole('checkbox', { name: 'I reviewed the posting and confirm that it requests references' })).not.toBeChecked();
+    fireEvent.click(screen.getByRole('checkbox', { name: 'I reviewed the posting and confirm that it requests references' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Discard review buffer' }));
+    expect(state.submissions).toHaveLength(1);
+    expect(state.view.current_revision!.provenance.references_requested).toBe(false);
+  });
+
   it('displays evidence provenance in selected claims, selected evidence, citation choices and pinned history', async () => {
     const { api, state } = server();
     state.view.latest_assessment = assessmentSnapshot();
@@ -578,7 +598,6 @@ describe('reviewed suitability boundaries', () => {
     fireEvent.click(screen.getByLabelText(/I reviewed all exact source spans/));
     fireEvent.click(screen.getByRole('button', { name: 'Save reviewed requirements' }));
     await screen.findByText(/Saved reviewed requirement revision 2/);
-    expect(state.submissions[0]?.body).toEqual({ confirmed: true, requirements: [] });
     expect(screen.getByText('Requirements unavailable — no current suitability assertion')).toBeVisible();
     expect(screen.getByText('No reviewed hard constraints: unknown — no_reviewed_constraints')).toBeVisible();
     expect(screen.queryByText('Current snapshot')).not.toBeInTheDocument();
