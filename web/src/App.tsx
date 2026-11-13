@@ -2,6 +2,7 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react';
 import { Api, ApiError, errorText, terminal, type Challenge, type InstallationStatus, type Profile, type ProfileContact, type Session, type Workflow } from './api';
 import { ProfileEntries } from './ProfileEntries';
+import { IdentityEditor, IdentitySummary, ProfilePresence, identityChanged, identityFrom, identityRequest, type IdentityDraft } from './ProfileIdentity';
 import { ResumeImport } from './ResumeImport';
 import { JobSources } from './JobSources';
 import { ThemePreference } from './ThemePreference';
@@ -40,6 +41,8 @@ export function App({ api = defaultApi }: { api?: Api }) {
   const [headline, setHeadline] = useState('');
   const [description, setDescription] = useState('');
   const [contact, setContact] = useState<ProfileContact>(emptyContact);
+  const [identity, setIdentity] = useState(() => identityFrom({}));
+  const [identityReset, setIdentityReset] = useState(0);
   const [comparison, setComparison] = useState<Profile | null>(null);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
@@ -68,7 +71,7 @@ export function App({ api = defaultApi }: { api?: Api }) {
   const latestProfileId = useRef<string | null>(null);
   const identityEpoch = useRef(0);
   const workspaceEpoch = useRef(0);
-  const acceptProfile = useCallback((value: Profile) => {
+  const acceptProfile = useCallback((value: Profile, undo?: Pick<IdentityDraft, 'removed_portrait' | 'removed_references'>) => {
     if (latestProfileId.current && value.id !== latestProfileId.current) {
       setComparison(value); api.onUnavailable?.(new ApiError(409, 'workspace_identity_changed')); return;
     }
@@ -78,6 +81,8 @@ export function App({ api = defaultApi }: { api?: Api }) {
     setProfile(value); setName(value.current_revision.snapshot.display_name); setHeadline(value.current_revision.snapshot.headline);
     setDescription(value.current_revision.snapshot.description ?? '');
     setContact(value.current_revision.snapshot.contact ?? emptyContact); setComparison(null); identityEpoch.current++;
+    // Only the owner's accepted identity save retains local removal undo, never a replacement or discard.
+    setIdentity({ ...identityFrom(value.current_revision.snapshot), ...undo }); setIdentityReset(current => current + 1);
   }, [api]);
   const acceptEditorProfile = useCallback((value: Profile) => {
     if (workspaceGeneration === workspaceEpoch.current) acceptProfile(value);
@@ -163,6 +168,7 @@ export function App({ api = defaultApi }: { api?: Api }) {
       workspaceEpoch.current++; setWorkspaceGeneration(workspaceEpoch.current);
       identityEpoch.current++; latestProfileVersion.current = 0; latestProfileId.current = null; profileMutation.current = null;
       setSession(null); setProfile(null); setName(''); setHeadline(''); setDescription(''); setContact(emptyContact);
+      setIdentity(identityFrom({})); setIdentityReset(current => current + 1);
       setDocumentRequest(null); setWorkflow(null);
       const value = await api.request<Challenge>('/auth/challenge'); api.csrf = value.csrf_token; setChallenge(value);
     });
@@ -181,7 +187,7 @@ export function App({ api = defaultApi }: { api?: Api }) {
   const headlineLength = [...headline].length;
   const descriptionLength = [...description].length;
   const profileTextInvalid = headlineLength > 300 || descriptionLength > 2000;
-  const identityDirty = !!profile && (name !== profile.current_revision.snapshot.display_name || headline !== profile.current_revision.snapshot.headline || description !== (profile.current_revision.snapshot.description ?? '') || (['email', 'phone', 'location', 'postal_address'] as const).some(field => contact[field] !== (profile.current_revision.snapshot.contact ?? emptyContact)[field]));
+  const identityDirty = !!profile && (name !== profile.current_revision.snapshot.display_name || headline !== profile.current_revision.snapshot.headline || description !== (profile.current_revision.snapshot.description ?? '') || (['email', 'phone', 'location', 'postal_address'] as const).some(field => contact[field] !== (profile.current_revision.snapshot.contact ?? emptyContact)[field]) || identityChanged(identity, profile.current_revision.snapshot));
   const profileLocked = connectionPaused || busy || entriesBusy || entriesDirty || identityDirty || importBusy || importDirty || documentsDirty || documentsBusy;
   const observeProfile = useCallback((value: Profile) => {
     if (workspaceGeneration !== workspaceEpoch.current) return;
@@ -198,14 +204,16 @@ export function App({ api = defaultApi }: { api?: Api }) {
   }, [identityDirty]);
   async function saveProfile(event: FormEvent) {
     event.preventDefault(); if (!profile) return;
+    if (identity.crop || identity.portrait_loading) { setError('Use or cancel your local portrait crop before saving.'); return; }
     if (profileTextInvalid) { setError('Shorten the highlight / tagline to 300 characters and the description to 2000 characters before saving. Your text has not been changed.'); return; }
     await act(async () => {
-      const body = { ...profile.current_revision.snapshot, display_name: name, headline, description, ...(profile.current_revision.snapshot.contact || Object.values(contact).some(Boolean) ? { contact } : {}) };
+      const body = { ...profile.current_revision.snapshot, ...identityRequest(identity, profile.current_revision.snapshot), display_name: name, headline, description, ...(profile.current_revision.snapshot.contact || Object.values(contact).some(Boolean) ? { contact } : {}) };
       const fingerprint = JSON.stringify({ body, version: profile.version });
       if (profileMutation.current?.fingerprint !== fingerprint) profileMutation.current = { fingerprint, key: crypto.randomUUID() };
       const value = await api.request<Profile>('/profile', 'PUT', body, profile.version, profileMutation.current.key);
       profileMutation.current = null;
-      acceptProfile(value); setNotice(`Saved as revision ${value.current_revision.revision_no}.`);
+      acceptProfile(value, { removed_portrait: identity.removed_portrait, removed_references: identity.removed_references });
+      setNotice(`Saved as revision ${value.current_revision.revision_no}.`);
     });
   }
   const taskResultBlocked = profileLocked || jobsDirty || jobsBusy || trackingDirty || trackingBusy;
@@ -282,11 +290,14 @@ export function App({ api = defaultApi }: { api?: Api }) {
           <label>Printable phone (optional)<input type="tel" autoComplete="tel" maxLength={120} value={contact.phone} onChange={event => { identityEpoch.current++; setContact(value => ({ ...value, phone: event.target.value })); }} /></label>
           <label>Printable location (optional)<input autoComplete="address-level2" maxLength={300} value={contact.location} onChange={event => { identityEpoch.current++; setContact(value => ({ ...value, location: event.target.value })); }} /></label>
           <label>Printable postal address (optional)<input autoComplete="street-address" maxLength={1000} value={contact.postal_address} onChange={event => { identityEpoch.current++; setContact(value => ({ ...value, postal_address: event.target.value })); }} /></label>
+          <ProfilePresence profile={profile} name={name} headline={headline} description={description} />
+          <IdentityEditor key={identityReset} value={identity} onChange={update => { identityEpoch.current++; setIdentity(update); }} />
           <p className="hint">Save identity separately from entries and sources. Existing exact source links are retained. Unsaved changes prevent conflicting workspace actions.</p>
-          <div className="actions"><button disabled={connectionPaused || profileTextInvalid}>Save profile</button><button type="button" className="secondary" onClick={() => { void act(async () => { const value = await api.request<Profile>('/profile'); if (value.id === latestProfileId.current && value.version >= latestProfileVersion.current) setComparison(value); else if (value.id !== latestProfileId.current) { setComparison(value); api.onUnavailable?.(new ApiError(409, 'workspace_identity_changed')); } }); }}>Compare current revision</button>
+          <div className="actions"><button disabled={connectionPaused || profileTextInvalid || !!identity.crop || identity.portrait_loading}>Save profile</button><button type="button" className="secondary" onClick={() => { void act(async () => { const value = await api.request<Profile>('/profile'); if (value.id === latestProfileId.current && value.version >= latestProfileVersion.current) setComparison(value); else if (value.id !== latestProfileId.current) { setComparison(value); api.onUnavailable?.(new ApiError(409, 'workspace_identity_changed')); } }); }}>Compare current revision</button>
             {identityDirty && <button type="button" className="secondary" onClick={() => acceptProfile(profile)}>Discard identity changes</button>}</div>
           {comparison && <div className="comparison"><h3>Current server revision {comparison.current_revision.revision_no}</h3><p>{comparison.current_revision.snapshot.display_name}</p><p>Highlight / tagline: {comparison.current_revision.snapshot.headline || 'Not supplied'}</p><p className="profile-description-preview">Description: {comparison.current_revision.snapshot.description || 'Not supplied'}</p><p>Printable contact: {Object.values(comparison.current_revision.snapshot.contact ?? emptyContact).filter(Boolean).join(' · ') || 'None'}</p><p>Your editor above is unchanged.</p>
-            <button type="button" className="secondary" disabled={connectionPaused || comparison.id !== profile.id} onClick={() => { latestProfileVersion.current = comparison.version; identityEpoch.current++; setProfile(comparison); setComparison(null); setNotice('Current version loaded as the save precondition. Your edited text and printable contact are retained. Review and save explicitly.'); }}>Keep my text against this version</button>
+            <IdentitySummary snapshot={comparison.current_revision.snapshot} />
+            <button type="button" className="secondary" disabled={connectionPaused || comparison.id !== profile.id} onClick={() => { latestProfileVersion.current = comparison.version; identityEpoch.current++; setProfile(comparison); setComparison(null); setNotice('Current version loaded as the save precondition. Your edited text, printable contact and optional identity drafts are retained. Review and save explicitly.'); }}>Keep my text against this version</button>
             <button type="button" className="secondary" disabled={connectionPaused || comparison.id !== profile.id} onClick={() => acceptProfile(comparison)}>Replace editor with current revision</button></div>}
           {profile.quality_warnings.length > 0 && <ul>{profile.quality_warnings.map((warning, index) => <li key={index}>{warning}</li>)}</ul>}
         </fieldset></form> : <><p>Profile has not loaded. No sample data is being shown.</p><button disabled={busy} onClick={() => { void act(loadProfile); }}>Load profile</button></>}</section>

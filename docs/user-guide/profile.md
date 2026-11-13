@@ -4,7 +4,7 @@ Your profile is the foundation for everything else in BonaFides. Every résumé 
 
 A profile has three parts:
 
-- **Personal details**: your name, a tagline and the contact details printed on your documents.
+- **Personal details**: your name, a tagline, printable contact details and optional age, portrait and reference preferences.
 - **Sources**: the material that supports your facts.
 - **Entries**: the facts themselves, each linked to a source.
 
@@ -24,6 +24,33 @@ Under **Personal details**, fill in:
 Select **Save profile**. You'll see "Saved as revision *N*".
 
 Contact details are printed on your documents but are **never sent to an AI model**. Saving new details doesn't change documents you've already created; rebuild a document to pick them up.
+
+### Optional age, portrait and references
+
+These details print only with an **identity-enabled v3 template**, such as `bonafides-evidence-v3`. Older templates omit them. Saving preferences does not change existing documents or their PDFs; create a new composition to use the new settings.
+
+**Age:** enter **Birth date (optional)**, then separately select **Print my age in new résumés**. It is off by default. Turning it off retains the date. A new composition freezes your age on that day; your birth date is never printed. Missing dates and ages outside 0–149 produce no printed age.
+
+**Portrait:**
+
+1. Select **Choose portrait locally**. The original stays in your browser.
+2. Drag the image or focus the crop and use arrow keys; hold Shift for larger moves. Use **Portrait zoom** from 1× to 4×. The circular guide is not printed.
+3. Select **Use this crop**, then **Save profile**. Only the confirmed rectangular 480 × 640 PNG is uploaded, with a 700,000-character encoded limit. **Cancel crop** leaves the prior portrait unchanged.
+4. Use **Print portrait in new résumés** independently of storing the portrait. New portraits start visible; replacements retain your preference, including when printing is off.
+
+**References:** select **Add reference** for each contact, up to 20. Name, Relationship and Organization allow 200 characters each; Email allows 320 and Phone 60. Blank fields are allowed. Enter only contacts you have a lawful reason to retain.
+
+**Print references in new résumés** is off by default. Enabling it includes them in new base résumés. A tailored résumé additionally requires you to open the posting’s **Review requirements manually**, select **I reviewed the posting and confirm that it requests references**, confirm the exact review and select **Save reviewed requirements**. This is your explicit decision, not a model or keyword inference. Printing does not establish permission or contact anyone.
+
+**Remove portrait** and **Remove reference N** change the draft until you select **Save profile**. Use the corresponding **Restore removed…** control in the same editor, including after saving a removal. Restoration retains the portrait’s printing preference and does not roll back newer edits. Discarding, replacing or reloading the editor clears this local undo.
+
+Birth date, portrait and reference contacts are excluded from ordinary AI input. Cover letters omit the optional printed identity. Turning printing off does not erase saved data or history: complete workspace exports and backups retain them, including historical portraits.
+
+### Material presence and explicit saving
+
+**Profile material presence** counts five areas: a nonblank display name; a headline or description; work experience; education; and skills. It shows material present in the editor, including unsaved edits—not accuracy, qualifications or a hiring score. Optional contact details, age, portrait, references, publications and writing facts add no points.
+
+Select **Save profile** to persist changes. A failed or stale save retains your draft. Use **Compare current revision**, then explicitly choose **Keep my text against this version** or **Replace editor with current revision**. **Discard identity changes** returns an unsaved editor to its accepted revision. Neither changing tabs nor changing the theme saves a draft.
 
 ## Add a source
 

@@ -29,6 +29,7 @@
     "tests/test_model_qualification.py",
     "tests/test_portable_archive.py",
     "tests/test_portable_exports.py",
+    "tests/test_profile_identity.py",
     "tests/test_profiles.py",
     "tests/test_render_safety.py"
   ],

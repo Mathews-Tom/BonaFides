@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: MIT OR Apache-2.0
 from __future__ import annotations
 
+import base64
 import io
 from copy import deepcopy
 from typing import cast
@@ -11,6 +12,7 @@ from pydantic import JsonValue
 from sqlalchemy import text
 from test_document_generation import _base, _document, _save
 from test_identity import identity as identity
+from test_profile_identity import png
 from test_sources import SourceContext
 from test_sources import catalog as catalog
 from test_suitability import _profile
@@ -450,5 +452,54 @@ def test_proposal_requires_matching_historical_model(catalog: SourceContext, dam
         else "portable_model_reference_mismatch"
     )
     with catalog.runtime.transaction() as conn, pytest.raises(ArchiveError, match=expected):
+        quarantine_records(conn, _digest(archive))
+    assert _snapshot(catalog) == before
+
+
+@pytest.mark.postgres
+def test_removed_portrait_history_exports_and_rejects_a_changed_pin_without_writes(
+    catalog: SourceContext,
+) -> None:
+    current = _profile(catalog)
+    image = png()
+    saved = catalog.client.put(
+        "/api/v1/profile",
+        json={
+            **current["current_revision"]["snapshot"],
+            "portrait_upload": base64.b64encode(image).decode("ascii"),
+            "include_portrait": False,
+        },
+        headers=catalog.headers(current["version"]),
+    )
+    assert saved.status_code == 200, saved.text
+    historical = saved.json()
+    pin = historical["current_revision"]["snapshot"]["portrait"]
+    removed = catalog.client.put(
+        "/api/v1/profile",
+        json={**historical["current_revision"]["snapshot"], "portrait": None},
+        headers=catalog.headers(historical["version"]),
+    )
+    assert removed.status_code == 200, removed.text
+    archive = _export(catalog)
+    member = next(
+        item for item in archive.manifest.blob_manifest if str(item.blob_id) == pin["blob_id"]
+    )
+    assert member.media_type == "image/png"
+    assert archive.blobs[member.sha256] == image
+    with catalog.runtime.transaction() as conn:
+        quarantine_records(conn, archive)
+    row = next(
+        item
+        for item in archive.manifest.records["profile_revisions"]
+        if item["id"] == historical["current_revision"]["id"]
+    )
+    snapshot = cast(dict[str, JsonValue], row["snapshot"])
+    cast(dict[str, JsonValue], snapshot["portrait"])["sha256"] = "0" * 64
+    row["content_sha256"] = content_hash(snapshot)
+    before = _snapshot(catalog)
+    with (
+        catalog.runtime.transaction() as conn,
+        pytest.raises(ArchiveError, match="portable_portrait_reference_mismatch"),
+    ):
         quarantine_records(conn, _digest(archive))
     assert _snapshot(catalog) == before

@@ -38,6 +38,7 @@ from bonafides.db import Database
 from bonafides.document_frame import TEMPLATE_PAPER, TEMPLATES, PrintableFrame, template_digest
 from bonafides.problems import Problem
 from bonafides.profile_breadth import selected_claim_ids, snapshot_claim_ids
+from bonafides.profile_identity import age_on
 from bonafides.statement_check import CATEGORIES
 from bonafides.workflows import Claim, assert_fence, enqueue, get_workflow
 
@@ -275,12 +276,24 @@ def _frame(
     snapshot: dict[str, object],
     posting: RowMapping | None = None,
     *,
+    template: str,
+    references_requested: bool = False,
     facts: list[dict[str, object]] | None = None,
 ) -> dict[str, object]:
     values: dict[str, object] = {
         "display_name": snapshot.get("display_name", ""),
         "contact": snapshot.get("contact"),
     }
+    if template.endswith("-v3"):
+        if snapshot.get("include_age") is True:
+            birth_date = snapshot.get("birth_date")
+            values["age"] = age_on(
+                birth_date if isinstance(birth_date, str) else None, date.today()
+            )
+        if snapshot.get("include_portrait", True):
+            values["portrait"] = snapshot.get("portrait")
+        if snapshot.get("include_references") is True and (posting is None or references_requested):
+            values["references"] = snapshot.get("references", [])
     if facts is not None and any("publication" in fact for fact in facts):
         values["publication_styles"] = {
             str(fact["claim_revision_id"]): fact["publication"]
@@ -493,7 +506,7 @@ def base_plan(conn: Connection, owner: UUID, revision: UUID, template: str) -> d
         "template_sha256": template_digest(template),
         "facts": facts,
         "omitted_claims": omitted,
-        "frame": _frame(profile["snapshot"], facts=facts),
+        "frame": _frame(profile["snapshot"], template=template, facts=facts),
         "targets": targets,
         "policy_version": POLICY,
     }
@@ -577,7 +590,13 @@ def generation_plan(
         "template_sha256": template_digest(template),
         "tone": tone,
         "language": language,
-        "frame": _frame(profile["snapshot"], posting, facts=facts),
+        "frame": _frame(
+            profile["snapshot"],
+            posting,
+            template=template,
+            references_requested=current["provenance"].get("references_requested") is True,
+            facts=facts,
+        ),
         "facts": facts,
         "targets": targets,
         "context": projection,
@@ -593,6 +612,17 @@ def generation_plan(
     return plan
 
 
+def _retain_calendar_fields(plan: dict[str, object], frozen: dict[str, object]) -> None:
+    """Publication replays the approved composition's day, not the worker's current day."""
+    frame = cast(dict[str, object], plan["frame"])
+    original = cast(dict[str, object], frozen["frame"])
+    for field in ("correspondence_date", "age"):
+        if field in original:
+            frame[field] = original[field]
+        else:
+            frame.pop(field, None)
+
+
 def check_context(conn: Connection, task: Claim, settings: Settings) -> None:
     lock_workspace(conn, task.owner_id)
     assert_fence(conn, task)
@@ -603,6 +633,7 @@ def check_context(conn: Connection, task: Claim, settings: Settings) -> None:
             UUID(str(task.input["profile_revision_id"])),
             str(task.input["template_version"]),
         )
+        _retain_calendar_fields(plan, task.input)
         expected = {key: task.input.get(key) for key in plan}
         if "omitted_claims" not in task.input and not plan["omitted_claims"]:
             expected["omitted_claims"] = []
@@ -620,11 +651,7 @@ def check_context(conn: Connection, task: Claim, settings: Settings) -> None:
         settings,
         active=True,
     )
-    # The correspondence date belongs to the frozen request, not a worker's next day.
-    frame = cast(dict[str, object], plan["frame"])
-    frame["correspondence_date"] = cast(dict[str, object], task.input["frame"])[
-        "correspondence_date"
-    ]
+    _retain_calendar_fields(plan, task.input)
     del plan["context_sha256"]
     if sha(plan) != task.input.get("context_sha256"):
         raise Problem(409, "stale_document_context")

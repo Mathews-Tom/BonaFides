@@ -18,6 +18,7 @@ from bonafides.db import Database
 from bonafides.import_parser import ImportFailure
 from bonafides.maintenance import finish_activity, start_worker_activity
 from bonafides.problems import Problem
+from bonafides.profile_identity import portrait_bytes
 from bonafides.render_service import RenderClient, RenderFailure
 from bonafides.storage import BlobStore
 from bonafides.workflows import (
@@ -165,9 +166,18 @@ class Worker:
                 revision_id = UUID(str(task.input["revision_id"]))
                 with self.db.transaction() as conn:
                     render = documents.prepare_render(conn, task.owner_id, document_id, revision_id)
-                # Spool processing and private content-addressed blob I/O never hold DB locks.
+                    portrait_png = (
+                        portrait_bytes(conn, self.settings, task.owner_id, render.frame.portrait)
+                        if render.frame is not None and render.frame.portrait is not None
+                        else None
+                    )
+                # PDF composition and artifact writes never hold DB locks.
                 pdf = RenderClient(self.settings.renderer_spool).render(
-                    render.body, render.template_version, render.frame, render.template_sha256
+                    render.body,
+                    render.template_version,
+                    render.frame,
+                    render.template_sha256,
+                    portrait_png,
                 )
                 blob = BlobStore(self.settings.blob_root).put(task.owner_id, pdf)
                 if scenario == "stage_pause":

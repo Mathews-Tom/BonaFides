@@ -39,11 +39,55 @@ from bonafides.portable_workspace import FORMAT as WORKSPACE_FORMAT
 from bonafides.portable_workspace_v3 import FORMAT_VERSION as WORKSPACE_VERSION
 from bonafides.profile_breadth import snapshot_claim_ids
 from bonafides.profile_entries import ClaimPayload, ClaimWrite, WritingFactPayload
+from bonafides.profile_identity import PortraitPin, validate_portrait
 from bonafides.profiles import ProfileSnapshot, content_hash
 from bonafides.storage import BlobStore
 
 JsonRow = dict[str, JsonValue]
 _BLOB_REFERENCES = ("evidence_revisions", "application_attachments", "document_artifacts")
+
+
+def _portrait_pins(records: Mapping[str, list[JsonRow]]) -> set[PortraitPin]:
+    pins: set[PortraitPin] = set()
+    for family, field in (
+        ("profile_revisions", "snapshot"),
+        ("document_revisions", "provenance_snapshot"),
+    ):
+        for row in records[family]:
+            value = row[field]
+            if family == "document_revisions" and isinstance(value, dict):
+                value = value.get("frame")
+            if isinstance(value, dict) and value.get("portrait") is not None:
+                try:
+                    pins.add(
+                        PortraitPin.model_validate_json(
+                            canonical_json(value["portrait"]), strict=True
+                        )
+                    )
+                except ValidationError as exc:
+                    raise ArchiveError("invalid_portable_portrait") from exc
+    return pins
+
+
+def _validate_portraits(manifest: Manifest, blobs: Mapping[str, bytes] | None = None) -> None:
+    members = {member.blob_id: member for member in manifest.blob_manifest}
+    for pin in _portrait_pins(manifest.records):
+        member = members.get(pin.blob_id)
+        if (
+            member is None
+            or member.sha256 != pin.sha256
+            or member.byte_length != pin.byte_length
+            or member.media_type != "image/png"
+        ):
+            raise ArchiveError("portable_portrait_reference_mismatch")
+        if blobs is not None:
+            try:
+                data = blobs[pin.sha256]
+                if len(data) != pin.byte_length or hashlib.sha256(data).hexdigest() != pin.sha256:
+                    raise ValueError("portrait_digest_mismatch")
+                validate_portrait(data)
+            except (KeyError, OSError, ValueError) as exc:
+                raise ArchiveError("invalid_portable_portrait") from exc
 
 
 class _CollectedBlobs(Mapping[str, bytes]):
@@ -230,6 +274,7 @@ def _collect_owner_data(conn: Connection, blob_root: Path, owner_id: UUID) -> Po
         for row in records[name]
         if row["blob_id"] is not None
     }
+    blob_ids.update(str(pin.blob_id) for pin in _portrait_pins(records))
     if len(blob_ids) > MAX_BLOBS:
         raise ArchiveError("portable_blob_limit")
     locations: dict[str, tuple[str, int]] = {}
@@ -272,6 +317,7 @@ def _collect_owner_data(conn: Connection, blob_root: Path, owner_id: UUID) -> Po
         exclusions=list(EXCLUSIONS),
     )
     manifest = manifest.model_copy(update={"manifest_sha256": manifest_digest(manifest)})
+    _validate_portraits(manifest)
     return PortableArchive(manifest, _CollectedBlobs(BlobStore(blob_root), owner_id, locations))
 
 
@@ -636,11 +682,13 @@ def quarantine_records(conn: Connection, archive: PortableArchive) -> None:
     except (DBAPIError, ValueError, TypeError, KeyError) as exc:
         raise ArchiveError("invalid_portable_records") from exc
     _semantic_hashes(archive)
+    _validate_portraits(manifest, archive.blobs)
     referenced = {
         cast(str, row["blob_id"])
         for name in _BLOB_REFERENCES
         for row in manifest.records[name]
         if row["blob_id"] is not None
     }
+    referenced.update(str(pin.blob_id) for pin in _portrait_pins(manifest.records))
     if referenced != {str(blob.blob_id) for blob in manifest.blob_manifest}:
         raise ArchiveError("portable_blob_reference_mismatch")

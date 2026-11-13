@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import base64
 from collections.abc import Iterator
 from typing import Any, cast
 from uuid import UUID, uuid4
@@ -13,6 +14,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy import text
 from test_identity import IdentityContext, _bootstrap
 from test_identity import identity as identity
+from test_profile_identity import png
 
 from bonafides.documents import prepare_synthetic, publish_document
 from bonafides.portable_data import collect_owner_data, quarantine_records
@@ -1240,3 +1242,158 @@ def test_publication_metadata_remains_pinned_and_cannot_be_applied_to_other_kind
         profile = _add_claim(client, profile_owner, csrf, profile, "publication")
         assert profile["current_revision"]["claims"][1]["id"] == publication["id"]
         assert pinned["claims"][0]["revision"] == publication["revision"]
+
+
+@pytest.mark.postgres
+def test_portrait_command_preconditions_pins_and_membership_precede_storage(
+    profile_owner: IdentityContext, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from bonafides.storage import BlobStore
+
+    def unexpected_store(*args: object, **kwargs: object) -> None:
+        raise AssertionError("rejected profile command reached portrait storage")
+
+    with profile_owner.client() as client:
+        csrf = str(_json(_bootstrap(profile_owner, client))["csrf_token"])
+        before = _json(client.get("/api/v1/profile"))
+        upload = base64.b64encode(png()).decode("ascii")
+        with monkeypatch.context() as patch:
+            patch.setattr(BlobStore, "put_bytes", unexpected_store)
+            for version, extra, status in (
+                (2, {}, 412),
+                (1, {"claim_revision_ids": [str(uuid4())]}, 422),
+                (
+                    1,
+                    {
+                        "portrait": {
+                            "blob_id": str(uuid4()),
+                            "sha256": "a" * 64,
+                            "byte_length": 1,
+                        }
+                    },
+                    422,
+                ),
+                (1, {"portrait_upload": "data:image/png;base64," + upload}, 422),
+            ):
+                response = _mutate(
+                    client,
+                    profile_owner,
+                    csrf,
+                    "PUT",
+                    "/profile",
+                    version,
+                    {"portrait_upload": upload, **extra},
+                )
+                assert response.status_code == status, response.text
+            assert _json(client.get("/api/v1/profile")) == before
+
+
+@pytest.mark.postgres
+def test_portrait_and_identity_save_replay_legacy_preservation_clear_and_verified_read(
+    profile_owner: IdentityContext, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from bonafides.storage import BlobStore
+
+    with profile_owner.client() as client:
+        csrf = str(_json(_bootstrap(profile_owner, client))["csrf_token"])
+        image = png()
+        body: dict[str, object] = {
+            "birth_date": "2000-02-29",
+            "include_age": True,
+            "include_portrait": False,
+            "references": [{"name": "Referee", "email": "referee@example.test"}],
+            "include_references": True,
+            "portrait_upload": base64.b64encode(image).decode("ascii"),
+        }
+        key = uuid4().hex
+        saved = _mutate(client, profile_owner, csrf, "PUT", "/profile", 1, body, key)
+        assert saved.status_code == 200, saved.text
+        current = _json(saved)
+        snapshot = current["current_revision"]["snapshot"]
+        assert "portrait_upload" not in snapshot
+        pin = snapshot["portrait"]
+        url = f"/api/v1/profile/portrait/{pin['blob_id']}"
+        response = client.get(url)
+        assert response.status_code == 200 and response.content == image
+        assert response.headers["content-type"] == "image/png"
+        with profile_owner.client() as unauthenticated:
+            assert unauthenticated.get(url).status_code == 401
+        assert client.get(f"/api/v1/profile/portrait/{uuid4()}").status_code == 404
+        replay = _mutate(client, profile_owner, csrf, "PUT", "/profile", 1, body, key)
+        assert _json(replay) == current
+        legacy_key = uuid4().hex
+        legacy = _mutate(
+            client,
+            profile_owner,
+            csrf,
+            "PUT",
+            "/profile",
+            current["version"],
+            {"display_name": "Updated"},
+            legacy_key,
+        )
+        assert legacy.status_code == 200, legacy.text
+        for field in (
+            "birth_date",
+            "include_age",
+            "portrait",
+            "include_portrait",
+            "references",
+            "include_references",
+        ):
+            assert _json(legacy)["current_revision"]["snapshot"][field] == snapshot[field]
+        different_intent = _mutate(
+            client,
+            profile_owner,
+            csrf,
+            "PUT",
+            "/profile",
+            current["version"],
+            {"display_name": "Updated", "include_age": False},
+            legacy_key,
+        )
+        assert different_intent.status_code == 409
+        current = _json(legacy)
+        cleared = _mutate(
+            client,
+            profile_owner,
+            csrf,
+            "PUT",
+            "/profile",
+            current["version"],
+            {
+                "birth_date": None,
+                "include_age": False,
+                "portrait": None,
+                "include_portrait": True,
+                "references": [],
+                "include_references": False,
+            },
+        )
+        assert cleared.status_code == 200, cleared.text
+        assert not {
+            "birth_date",
+            "include_age",
+            "portrait",
+            "include_portrait",
+            "references",
+            "include_references",
+        }.intersection(_json(cleared)["current_revision"]["snapshot"])
+        # Historical pins remain readable, but only while both metadata and bytes verify.
+        with profile_owner.admin.transaction() as conn:
+            conn.execute(
+                text("UPDATE bonafides.blobs SET state='missing' WHERE id=:id"),
+                {"id": UUID(pin["blob_id"])},
+            )
+        assert client.get(url).status_code == 404
+        with profile_owner.admin.transaction() as conn:
+            conn.execute(
+                text("UPDATE bonafides.blobs SET state='ready' WHERE id=:id"),
+                {"id": UUID(pin["blob_id"])},
+            )
+
+        def corrupted_read(*args: object, **kwargs: object) -> bytes:
+            return image[:-1]
+
+        monkeypatch.setattr(BlobStore, "read", corrupted_read)
+        assert client.get(url).status_code == 422

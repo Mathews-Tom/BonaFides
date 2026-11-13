@@ -2,9 +2,15 @@
 export interface Session { owner_id: string; login_name: string; csrf_token: string; expires_at: string }
 export interface Challenge { csrf_token: string; bootstrap_available: boolean }
 export interface ProfileContact { email: string; phone: string; location: string; postal_address: string }
+export interface PortraitPin { blob_id: string; sha256: string; byte_length: number }
+export interface ReferenceContact { name: string; relationship: string; organization: string; email: string; phone: string }
+export interface ProfileIdentity {
+  birth_date?: string | null; include_age?: boolean; portrait?: PortraitPin | null;
+  include_portrait?: boolean; references?: ReferenceContact[]; include_references?: boolean;
+}
 export type ProfileOrderKind = 'experience' | 'project' | 'education' | 'publication';
 export type ProfileOrderMode = 'date' | 'manual';
-export interface Snapshot { display_name: string; headline: string; description?: string; claim_revision_ids: string[]; writing_fact_revision_ids?: Record<string, string[]>; ordering_modes?: Partial<Record<Exclude<ProfileOrderKind, 'publication'>, ProfileOrderMode>>; evidence_revision_ids?: string[]; contact?: ProfileContact | null }
+export interface Snapshot extends ProfileIdentity { display_name: string; headline: string; description?: string; claim_revision_ids: string[]; writing_fact_revision_ids?: Record<string, string[]>; ordering_modes?: Partial<Record<Exclude<ProfileOrderKind, 'publication'>, ProfileOrderMode>>; evidence_revision_ids?: string[]; contact?: ProfileContact | null }
 export type ClaimKind = 'identity' | 'experience' | 'education' | 'skill' | 'project' | 'certification' | 'preference' | 'other' | 'language' | 'publication' | 'writing_fact';
 export interface ClaimPayload { text: string; organization?: string; role?: string; start_date?: string; end_date?: string; proficiency?: string; project_url?: string; citation_markup?: string; citation_url?: string; include_in_resume?: boolean }
 export interface WritingFactPayload { text: string; application_id?: string | null }

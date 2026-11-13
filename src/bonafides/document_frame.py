@@ -10,6 +10,7 @@ from typing import Annotated, Final, Literal
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from bonafides.profile_breadth import citation_text, normalize_citation_url
+from bonafides.profile_identity import PortraitPin, ReferenceContact
 
 TEMPLATES: Final = {
     "bonafides-evidence-v1": ("Evidence", "evidence-v1.html"),
@@ -20,6 +21,10 @@ TEMPLATES: Final = {
     "bonafides-compact-v2": ("Compact — citations", "profile-v2.html"),
     "bonafides-evidence-letter-v2": ("Evidence — citations", "profile-v2.html"),
     "bonafides-compact-letter-v2": ("Compact — citations", "profile-v2.html"),
+    "bonafides-evidence-v3": ("Evidence — identity", "profile-v3.html"),
+    "bonafides-compact-v3": ("Compact — identity", "profile-v3.html"),
+    "bonafides-evidence-letter-v3": ("Evidence — identity", "profile-v3.html"),
+    "bonafides-compact-letter-v3": ("Compact — identity", "profile-v3.html"),
 }
 TEMPLATE_PAPER: Final[dict[str, Literal["A4", "Letter"]]] = {
     "bonafides-evidence-v1": "A4",
@@ -30,6 +35,10 @@ TEMPLATE_PAPER: Final[dict[str, Literal["A4", "Letter"]]] = {
     "bonafides-compact-v2": "A4",
     "bonafides-evidence-letter-v2": "Letter",
     "bonafides-compact-letter-v2": "Letter",
+    "bonafides-evidence-v3": "A4",
+    "bonafides-compact-v3": "A4",
+    "bonafides-evidence-letter-v3": "Letter",
+    "bonafides-compact-letter-v3": "Letter",
 }
 TemplateVersion = Literal[
     "bonafides-base-v1",
@@ -41,6 +50,10 @@ TemplateVersion = Literal[
     "bonafides-compact-v2",
     "bonafides-evidence-letter-v2",
     "bonafides-compact-letter-v2",
+    "bonafides-evidence-v3",
+    "bonafides-compact-v3",
+    "bonafides-evidence-letter-v3",
+    "bonafides-compact-letter-v3",
 ]
 
 
@@ -104,6 +117,11 @@ class PrintableFrame(BaseModel):
     recipient: Literal["Hiring team"] | None = None
     publication_styles: dict[str, PublicationPresentation] = Field(
         default_factory=dict, max_length=100, exclude_if=lambda value: not value
+    )
+    age: int | None = Field(default=None, ge=0, lt=150, exclude_if=lambda value: value is None)
+    portrait: PortraitPin | None = Field(default=None, exclude_if=lambda value: value is None)
+    references: list[ReferenceContact] = Field(
+        default_factory=list, max_length=20, exclude_if=lambda value: not value
     )
 
     @field_validator("display_name", "organization", "role")

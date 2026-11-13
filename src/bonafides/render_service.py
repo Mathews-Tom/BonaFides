@@ -7,6 +7,8 @@ The renderer daemon has no database, keyring, blob mount, or production debug AP
 
 from __future__ import annotations
 
+import base64
+import binascii
 import contextlib
 import hashlib
 import io
@@ -42,10 +44,12 @@ from bonafides.documents import (
     canonical,
 )
 from bonafides.profile_breadth import citation_runs
+from bonafides.profile_identity import MAX_PORTRAIT_BASE64, MAX_PORTRAIT_BYTES, validate_portrait
 from bonafides.spool_guard import SpoolBusy, acknowledge_pause, shared_spool
 from bonafides.storage import MAX_PDF_BYTES, atomic_file, directory, read_file
 
 MAX_REQUEST_BYTES = 1024 * 1024
+MAX_SPOOL_BYTES = MAX_REQUEST_BYTES + MAX_PORTRAIT_BASE64 + len(',"portrait_png":""')
 RENDER_TIMEOUT = 30
 _JOB = re.compile(r"[0-9a-f]{64}\Z")
 # Child exit codes carry only allowlisted errors across the process boundary.
@@ -74,6 +78,7 @@ class RenderRequest(StrictModel):
     body: DocumentBody
     frame: PrintableFrame | None = None
     template_sha256: Annotated[str, Field(pattern=r"^[0-9a-f]{64}$")] | None = None
+    portrait_png: Annotated[str, Field(max_length=MAX_PORTRAIT_BASE64)] | None = None
 
     @model_validator(mode="after")
     def pinned_frame(self) -> RenderRequest:
@@ -84,7 +89,39 @@ class RenderRequest(StrictModel):
                 raise ValueError("render_frame_template_mismatch")
         elif self.template_sha256 != template_digest(self.template_version):
             raise ValueError("render_template_digest_mismatch")
+        _validate_portrait(self.template_version, self.frame, self.portrait_bytes())
+        nonimage = self.model_dump(mode="json", exclude_none=True)
+        nonimage.pop("portrait_png", None)
+        if len(canonical(nonimage).encode()) > MAX_REQUEST_BYTES:
+            raise ValueError("render_request_too_large")
         return self
+
+    def portrait_bytes(self) -> bytes | None:
+        if self.portrait_png is None:
+            return None
+        try:
+            return base64.b64decode(self.portrait_png, validate=True)
+        except (ValueError, binascii.Error):
+            raise ValueError("render_portrait_invalid") from None
+
+
+def _validate_portrait(
+    template_version: str, frame: PrintableFrame | None, data: bytes | None
+) -> None:
+    if not template_version.endswith("-v3"):
+        if data is not None or (
+            frame is not None
+            and frame.model_fields_set.intersection({"age", "portrait", "references"})
+        ):
+            raise ValueError("render_identity_template_mismatch")
+        return
+    pin = frame.portrait if frame is not None else None
+    if (pin is None) != (data is None):
+        raise ValueError("render_portrait_pin_mismatch")
+    if pin is not None and data is not None:
+        if len(data) != pin.byte_length or hashlib.sha256(data).hexdigest() != pin.sha256:
+            raise ValueError("render_portrait_pin_mismatch")
+        validate_portrait(data)
 
 
 class RenderReceipt(StrictModel):
@@ -141,6 +178,11 @@ def render_html(
         if frame is not None:
             raise RenderFailure("render_invalid_input")
         return environment.get_template("base-v1.html").render(document=body)
+    if not template_version.endswith("-v3"):
+        try:
+            _validate_portrait(template_version, frame, None)
+        except ValueError:
+            raise RenderFailure("render_invalid_input") from None
     if template_version not in TEMPLATES or frame is None:
         raise RenderFailure("render_invalid_input")
     return environment.get_template(TEMPLATES[template_version][1]).render(
@@ -221,15 +263,34 @@ def render_pdf(
     body: DocumentBody,
     template_version: str = TEMPLATE_VERSION,
     frame: PrintableFrame | None = None,
+    portrait_png: bytes | None = None,
 ) -> bytes:
     """Only called by the bounded child in the sealed renderer container."""
     from weasyprint import HTML  # type: ignore[import-untyped]
 
+    try:
+        _validate_portrait(template_version, frame, portrait_png)
+    except ValueError:
+        raise RenderFailure("render_invalid_input") from None
     logger = logging.getLogger("weasyprint")
     logger.handlers = [logging.NullHandler()]
     logger.propagate = False
     html = render_html(body, template_version, frame)
-    rendered = HTML(string=html, url_fetcher=deny_url_fetcher).render()
+    fetcher: object = deny_url_fetcher
+    if portrait_png is not None:
+        from weasyprint.urls import URLFetcher, URLFetcherResponse  # type: ignore[import-untyped]
+
+        class PortraitFetcher(URLFetcher):  # type: ignore[misc]
+            def fetch(self, url: str, headers: object = None) -> object:
+                if url != "bonafides-portrait:current":
+                    return deny_url_fetcher(url)
+                response: object = URLFetcherResponse(
+                    url, body=portrait_png, headers={"Content-Type": "image/png"}
+                )
+                return response
+
+        fetcher = PortraitFetcher(allowed_protocols=[], allow_redirects=False)
+    rendered = HTML(string=html, url_fetcher=fetcher).render()
     data = rendered.write_pdf(pdf_forms=False, attachments=[], custom_metadata=False)
     # WeasyPrint 70 populates its documented Document.fonts table during painting.
     # Font.missing records the actual Pango unknown-glyph mapping, including tofu
@@ -260,7 +321,10 @@ class RenderClient:
         template_version: str = TEMPLATE_VERSION,
         frame: PrintableFrame | None = None,
         template_sha256: str | None = None,
+        portrait_png: bytes | None = None,
     ) -> bytes:
+        if portrait_png is not None and len(portrait_png) > MAX_PORTRAIT_BYTES:
+            raise RenderFailure("render_invalid_input")
         request = RenderRequest.model_validate(
             {
                 "schema_version": 1,
@@ -268,10 +332,15 @@ class RenderClient:
                 "template_sha256": template_sha256,
                 "body": body,
                 "frame": frame,
+                "portrait_png": (
+                    base64.b64encode(portrait_png).decode("ascii")
+                    if portrait_png is not None
+                    else None
+                ),
             }
         )
         payload = canonical(request.model_dump(mode="json", exclude_none=True)).encode()
-        if len(payload) > MAX_REQUEST_BYTES:
+        if len(payload) > MAX_SPOOL_BYTES:
             raise RenderFailure("render_invalid_input")
         digest = hashlib.sha256(payload).hexdigest()
         job_id = hashlib.sha256(uuid4().bytes + bytes.fromhex(digest)).hexdigest()
@@ -328,9 +397,11 @@ def _render_child(spool: Path, job_id: str) -> None:
     if not _JOB.fullmatch(job_id):
         raise RenderFailure("render_invalid_input")
     with directory(spool) as fd:
-        raw = read_file(fd, f"{job_id}.request.json", MAX_REQUEST_BYTES)
+        raw = read_file(fd, f"{job_id}.request.json", MAX_SPOOL_BYTES)
         request = RenderRequest.model_validate_json(raw, strict=True)
-        output = render_pdf(request.body, request.template_version, request.frame)
+        output = render_pdf(
+            request.body, request.template_version, request.frame, request.portrait_bytes()
+        )
         atomic_file(fd, f"{job_id}.pdf", output)
 
 
@@ -340,7 +411,7 @@ def _supervise(spool: Path, fd: int, job_id: str) -> None:
 
 
 def _supervise_active(spool: Path, fd: int, job_id: str, guard: int) -> None:
-    raw = read_file(fd, f"{job_id}.request.json", MAX_REQUEST_BYTES)
+    raw = read_file(fd, f"{job_id}.request.json", MAX_SPOOL_BYTES)
     digest = hashlib.sha256(raw).hexdigest()
     error: RenderError | None = None
     output_digest: str | None = None

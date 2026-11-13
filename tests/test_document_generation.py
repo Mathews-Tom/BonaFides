@@ -12,6 +12,7 @@ import json
 import time
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
+from datetime import date
 from pathlib import Path
 from threading import Event
 from types import SimpleNamespace
@@ -2111,7 +2112,9 @@ def test_initial_page_fit_keeps_original_pair_and_fences_every_publication(
                     {"owner": catalog.owner_id, "id": application["id"]},
                 )
 
-    def render(self: RenderClient, body: documents.DocumentBody, *args: object) -> bytes:
+    def render(
+        self: RenderClient, body: documents.DocumentBody, *args: object, **kwargs: object
+    ) -> bytes:
         nonlocal calls
         calls += 1
         if during_render and calls == 1:
@@ -2376,3 +2379,45 @@ def test_plain_citation_markers_survive_checked_generation(
     document = _base(catalog, response.json())
     assert document["current_revision"]["body"]["sections"][0]["blocks"][0]["text"] == citation
     assert _review(catalog, document).status_code == 200
+
+
+@pytest.mark.postgres
+def test_birthday_rollover_keeps_queued_age_and_only_changes_a_new_composition(
+    catalog: SourceContext, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    today = date(2026, 1, 1)
+
+    class Clock:
+        @staticmethod
+        def today() -> date:
+            return today
+
+    monkeypatch.setattr(generation, "date", Clock)
+    current = _profile(catalog)
+    saved = catalog.client.put(
+        "/api/v1/profile",
+        json={
+            **current["current_revision"]["snapshot"],
+            "birth_date": "1990-01-02",
+            "include_age": True,
+        },
+        headers=catalog.headers(current["version"]),
+    )
+    assert saved.status_code == 200, saved.text
+    profile = saved.json()
+    task = _queue_base(catalog, profile, "bonafides-evidence-v3")
+    today = date(2026, 1, 2)
+    worker = Worker(catalog.runtime, replace(catalog.identity.settings, mode="production"))
+    worker._execute(task, Event())
+    first = catalog.workflow(task.id)
+    assert first["state"] == "succeeded", first
+    original = _document(catalog, first["result"]["document_id"])["current_revision"]
+    assert original["provenance_snapshot"]["frame"]["age"] == 35
+    next_task = _queue_base(catalog, profile, "bonafides-evidence-v3")
+    worker._execute(next_task, Event())
+    next_run = catalog.workflow(next_task.id)
+    assert next_run["state"] == "succeeded", next_run
+    rebuilt = _document(catalog, next_run["result"]["document_id"])
+    assert rebuilt["current_revision"]["provenance_snapshot"]["frame"]["age"] == 36
+    history = catalog.client.get(f"/api/v1/documents/{rebuilt['id']}/revisions").json()
+    assert next(item for item in history["items"] if item["id"] == original["id"]) == original

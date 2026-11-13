@@ -22,6 +22,7 @@ from bonafides.config import Settings
 from bonafides.db import Database
 from bonafides.document_frame import PrintableFrame, template_digest
 from bonafides.problems import Problem
+from bonafides.profile_identity import portrait_bytes
 from bonafides.render_service import RenderClient, RenderFailure
 from bonafides.workflows import Claim, assert_fence, enqueue, get_workflow, publish
 
@@ -427,12 +428,18 @@ def execute_fit(db: Database, settings: Settings, task: Claim, interrupted: Even
     template_sha = str(provenance["template_sha256"])
     if template_sha != template_digest(template):
         raise Problem(409, "document_template_unavailable")
+    portrait_png = None
+    if frame.portrait is not None:
+        with db.transaction() as conn:
+            generation.lock_workspace(conn, task.owner_id)
+            assert_fence(conn, task)
+            portrait_png = portrait_bytes(conn, settings, task.owner_id, frame.portrait)
     renderer = RenderClient(settings.renderer_spool)
 
     def measure(content: documents.DocumentBody) -> int:
         if interrupted.is_set():
             raise _Interrupted
-        pdf = renderer.render(content, template, frame, template_sha)
+        pdf = renderer.render(content, template, frame, template_sha, portrait_png=portrait_png)
         try:
             count = len(PdfReader(io.BytesIO(pdf), strict=True).pages)
         except Exception as exc:

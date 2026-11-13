@@ -127,6 +127,7 @@ def test_migration_repeat_and_checksum_ledger(pg_context: PGContext) -> None:
     query = text("SELECT version,source_sha256 FROM bonafides.schema_migrations ORDER BY version")
     with pg_context.runtime.begin() as conn:
         before = conn.execute(query).all()
+    assert {version: sha for version, sha in before} == SUPPORTED_MIGRATIONS
     config = MigrationSecret(str(pg_context.migrator.url.render_as_string(hide_password=False)))
     migrate(config)
     with pg_context.runtime.begin() as conn:
