@@ -1129,6 +1129,14 @@ Completion inserts an immutable owner-bound proposal and returns opaque result I
 
 Rendering checks actual painted-font missing-glyph records and selectable text against the escaped visible template content in original order. Extraction may add layout whitespace but cannot erase original word/block boundaries, drop text or introduce words. `render_text_unsupported` rejects unavailable glyphs or degraded text without publishing a ready artifact; correct the characters or use a separately qualified fixed font/template deployment. Latin/other sampled glyph success does not qualify all Unicode, RTL, multilingual layout or PDF-UA. Literal URLs/markup remain escaped text, not fetched resources or active PDF links.
 
+#### Conversational-refinement qualification
+
+`models.sh qualify --stage refine_documents --reviewed-by 'Local owner'` measures the independently versioned refinement prompt/schema on 20 distinct bundled synthetic cases. The regular private-route transport, pre/post manifest observations, bounded output and single corrective attempt remain unchanged. The added contract changes the common capability fingerprint: rerun configured stages after upgrading; earlier receipts cannot carry forward or qualify refinement.
+
+The schema identifies saved targets by document UUID, section key, block key and previous-content SHA-256. Replacements retain source annotations and pass the existing claim checker against the original document's pinned facts; duplicate targets collapse deterministically and unknown targets never redirect. Refusals contain neither edits nor tone. Qualification separately checks expected edit/no-change/refusal outcomes and reports factual statement counts.
+
+The pure projection permits at most two document contexts and nine completed turns plus the active request (2,000 characters). Dedicated contact/frame/portrait fields, private notes and withheld evidence text are excluded; professional free text can still contain personal information. This operator-facing qualification writes a stage receipt, not application conversation rows, document revisions or execution authority. No measured real-model result is claimed for refinement.
+
 #### Reversible résumé page fitting
 
 Only saved tailored résumés with schema-2 provenance support fitting and recoverable omission. Both routes retain the owner/Origin/CSRF, quoted document `If-Match` and payload-bound idempotency boundary above.

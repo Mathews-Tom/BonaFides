@@ -26,7 +26,7 @@ case $operation in
     [ -n "$model" ] && [ -n "$license" ] && [ "$authorized" = yes ] || fail "attach requires --model, --model-license and --authorize-local-model"
     [ -z "$stage$reviewer" ] || fail "stage/reviewer belong to qualify" ;;
   qualify)
-    case $stage in generate_documents|regenerate_section|structure_import) ;; *) fail "choose generate_documents, regenerate_section or structure_import" ;; esac
+    case $stage in generate_documents|regenerate_section|refine_documents|structure_import) ;; *) fail "choose generate_documents, regenerate_section, refine_documents or structure_import" ;; esac
     [ -n "$reviewer" ] || fail "qualify requires --reviewed-by"
     [ -z "$model$license$import_structuring" ] && [ "$authorized" = no ] || fail "model/authorization/import-structuring belong to attach" ;;
   remove)

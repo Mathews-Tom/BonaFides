@@ -1649,7 +1649,7 @@ def _legacy_receipt_route(
     initial = load_route(route_file(tmp_path, data))
     assert initial is not None
     stages = (
-        tuple(stage for stage in local_model.PROMPT_VERSIONS if stage != "structure_import")
+        ("extract_posting", "match_requirements", "generate_documents", "regenerate_section")
         if document_receipts
         else ("extract_posting", "match_requirements")
     )

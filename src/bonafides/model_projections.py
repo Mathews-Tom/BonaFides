@@ -1,6 +1,8 @@
 # SPDX-License-Identifier: MIT OR Apache-2.0
 """Plain-data generation projections shared by production and local qualification."""
 
+from __future__ import annotations
+
 from collections.abc import Mapping
 
 from bonafides import local_model, suitability
@@ -64,3 +66,28 @@ def regeneration_projection(
     )
     projection["target"] = target
     return local_model.section_projection(projection)
+
+
+def refinement_projection(
+    base_contexts: list[dict[str, object]],
+    request: str,
+    turns: list[dict[str, object]],
+    targets: list[dict[str, object]],
+) -> dict[str, object]:
+    """Reuse minimized source builders; send nine completed turns plus this request."""
+    sources = [
+        {
+            key: value
+            for key, value in local_model.section_projection(context).items()
+            if key != "target"
+        }
+        for context in base_contexts
+    ]
+    return local_model.refinement_context(
+        {
+            "base_contexts": sources,
+            "request": request,
+            "turns": turns[-9:],
+            "targets": targets,
+        }
+    )

@@ -50,6 +50,8 @@ SCENARIOS = (
     "malformed-once",
     "malformed",
     "truncated",
+    "declined",
+    "no-change",
 )
 ABSENT_CLAIM_ID = str(uuid5(NAMESPACE_URL, "bonafides-stub-model/absent-claim"))
 FIXTURE_REVIEWER = "fixture-only-stub-route-not-a-qualification"
@@ -118,6 +120,42 @@ def _section(projection: dict[str, object]) -> dict[str, Any]:
     }
 
 
+def _conversation(projection: dict[str, object], scenario: str) -> dict[str, Any]:
+    edits = []
+    for target in _items(projection, "targets"):
+        before = target["before"]
+        assert isinstance(before, dict)
+        replacement = dict(before)
+        text = str(before["text"])
+        replacement["text"] = text[:-1] if text.endswith(".") else text + "."
+        if scenario == "absent-claim":
+            replacement["claim_revision_ids"] = [ABSENT_CLAIM_ID]
+        elif scenario in {"posting-only-skill", "inflated"}:
+            source = _items(projection, "base_contexts")[0]
+            replacement["text"] = (
+                f"Hands-on experience with {_posting_only_term(source)}."
+                if scenario == "posting-only-skill"
+                else _inflated(source)[1]
+            )
+        edits.append(
+            {
+                key: target[key]
+                for key in ("document_id", "section_key", "block_key", "previous_sha256")
+            }
+            | {"replacement": replacement}
+        )
+    return {
+        "schema_version": "1",
+        "stage": "refine_documents",
+        "reply_text": "I cannot support that request."
+        if scenario == "declined"
+        else "Reviewed the selected text.",
+        "declined": scenario == "declined",
+        "tone": None,
+        "edits": [] if scenario in {"declined", "no-change"} else edits,
+    }
+
+
 def _statements(output: dict[str, Any]) -> list[dict[str, object]]:
     """The first statement list a fabrication scenario edits."""
     if output["stage"] == "regenerate_section":
@@ -180,7 +218,14 @@ def respond(scenario: str, request: dict[str, object]) -> dict[str, object]:
     projection: dict[str, object] = json.loads(messages[1]["content"])
     corrected = len(messages) == 3
     done_reason = "stop"
-    output = _section(projection) if "target" in projection else _pair(projection)
+    conversation = "base_contexts" in projection
+    output = (
+        _conversation(projection, scenario)
+        if conversation
+        else _section(projection)
+        if "target" in projection
+        else _pair(projection)
+    )
     if scenario == "malformed" or (scenario == "malformed-once" and not corrected):
         invalid: dict[str, object] = {"schema_version": "2", "stage": output["stage"]}
         if output["stage"] == "regenerate_section":
@@ -192,15 +237,15 @@ def respond(scenario: str, request: dict[str, object]) -> dict[str, object]:
         done_reason = "length"
         content = json.dumps(output)[:200]
     else:
-        statements = _statements(output)
-        if scenario == "absent-claim":
+        statements = [] if conversation else _statements(output)
+        if scenario == "absent-claim" and not conversation:
             factual = next(item for item in statements if item["kind"] == "factual")
             factual["claim_id"] = ABSENT_CLAIM_ID
-        elif scenario == "posting-only-skill":
+        elif scenario == "posting-only-skill" and not conversation:
             claim = str(_items(projection, "claims")[0]["id"])
             statement = f"Hands-on experience with {_posting_only_term(projection)}."
             statements.append(_block(900, "factual", statement, claim))
-        elif scenario == "inflated":
+        elif scenario == "inflated" and not conversation:
             claim, statement = _inflated(projection)
             statements.append(_block(900, "factual", statement, claim))
         content = json.dumps(output)
@@ -324,7 +369,7 @@ def route(endpoint: str, address: str, output: Path, deadline: int) -> None:
     write()
     initial = load_route(output)
     assert initial is not None
-    stages = ("generate_documents", "regenerate_section")
+    stages = ("generate_documents", "regenerate_section", "refine_documents")
     data["qualification_receipts"] = {
         stage: qualification_receipt(
             {

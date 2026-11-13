@@ -28,6 +28,7 @@ from bonafides import (
 )
 from bonafides.commands import canonical_json
 from bonafides.config import ConfigurationError, read_secret
+from bonafides.conversation_protocol import ConversationReply, validate_reply
 from bonafides.fabrication_benchmark import digest
 from bonafides.problems import Problem
 from bonafides.statement_check import check_statements
@@ -44,6 +45,33 @@ def load_cases(directory: Path, stage: str) -> tuple[list[dict[str, object]], st
     cases: list[dict[str, object]] = []
     for line in raw.splitlines():
         case = json.loads(line)
+        if stage == "refine_documents":
+            if not isinstance(case, dict) or set(case) != {
+                "id",
+                "base_contexts",
+                "request",
+                "turns",
+                "targets",
+                "documents",
+                "expected",
+            }:
+                raise ValueError("qualification_case_invalid")
+            projection(case, stage)
+            if not isinstance(case["id"], str) or not case["id"].strip():
+                raise ValueError("qualification_case_invalid")
+            expected = case["expected"]
+            if (
+                not isinstance(expected, dict)
+                or set(expected) != {"declined", "minimum_edits"}
+                or type(expected["declined"]) is not bool
+                or type(expected["minimum_edits"]) is not int
+                or not 0 <= expected["minimum_edits"] <= len(case["targets"])
+            ):
+                raise ValueError("qualification_case_invalid")
+            for document in case["documents"]:
+                documents.parse_body(document["body"])
+            cases.append(case)
+            continue
         if stage == "structure_import":
             if not isinstance(case, dict) or set(case) != {
                 "id",
@@ -98,10 +126,24 @@ def load_cases(directory: Path, stage: str) -> tuple[list[dict[str, object]], st
         }
         if len(distinct) != len(cases):
             raise ValueError("qualification_cases_not_distinct")
+    if stage == "refine_documents" and len(
+        {
+            canonical_json({key: value for key, value in case.items() if key != "id"})
+            for case in cases
+        }
+    ) != len(cases):
+        raise ValueError("qualification_cases_not_distinct")
     return cases, digest({f"{stage}.jsonl": raw})
 
 
 def projection(case: dict[str, object], stage: str) -> dict[str, object]:
+    if stage == "refine_documents":
+        return model_projections.refinement_projection(
+            cast(list[dict[str, object]], case["base_contexts"]),
+            cast(str, case["request"]),
+            cast(list[dict[str, object]], case["turns"]),
+            cast(list[dict[str, object]], case["targets"]),
+        )
     if stage == "structure_import":
         return import_structuring.projection(
             cast(str, case["source_sha256"]), cast(list[dict[str, object]], case["units"])
@@ -177,6 +219,29 @@ def statement_counts(
     return factual, usable
 
 
+def checked_refinement(output: dict[str, object], case: dict[str, object]) -> ConversationReply:
+    reply = validate_reply(output, case)
+    expected = cast(dict[str, object], case["expected"])
+    targets = {
+        (str(item["document_id"]), item["section_key"], item["block_key"]): item
+        for item in cast(list[dict[str, object]], case["targets"])
+    }
+    changed = sum(
+        edit.replacement.model_dump(mode="json") != target["before"]
+        for edit in reply.edits
+        if (target := targets.get((str(edit.document_id), edit.section_key, edit.block_key)))
+        is not None
+    )
+    minimum = cast(int, expected["minimum_edits"])
+    if (
+        reply.declined != expected["declined"]
+        or changed < minimum
+        or (minimum == 0 and (reply.edits or reply.tone is not None))
+    ):
+        raise model_calls.OutputMismatch(["conversation: unexpected_outcome"])
+    return reply
+
+
 def qualify(
     route: local_model.LocalRoute,
     stage: str,
@@ -209,6 +274,8 @@ def qualify(
             )
             unit_count += len(expected)
             validate = partial(import_structuring.checked_units, context=context)
+        elif stage == "refine_documents":
+            validate_refinement = partial(checked_refinement, case=case)
         else:
             posting = cast(dict[str, object], context["posting"])
             plan = {
@@ -223,6 +290,8 @@ def qualify(
             )
             if stage == "structure_import":
                 kinds, _, corrected = model_calls.checked_call(call, validate)
+            elif stage == "refine_documents":
+                reply, _, corrected = model_calls.checked_call(call, validate_refinement)
             else:
                 bodies, _, corrected = model_calls.checked_call(
                     call,
@@ -255,6 +324,36 @@ def qualify(
         counts["valid_after_correction" if corrected else "valid_first"] += 1
         if stage == "structure_import":
             correct_kind_count += sum(kind == expected[key] for key, kind in kinds.items())
+        elif stage == "refine_documents":
+            selected = {
+                (str(item["document_id"]), item["section_key"], item["block_key"])
+                for item in cast(list[dict[str, object]], case["targets"])
+            }
+            by_id = {
+                str(document["document_id"]): document
+                for document in cast(list[dict[str, object]], case["documents"])
+            }
+            for edit in reply.edits:
+                if (str(edit.document_id), edit.section_key, edit.block_key) not in selected:
+                    continue
+                document = by_id.get(str(edit.document_id))
+                if document is None:
+                    continue
+                snapshot = cast(dict[str, object], document["provenance_snapshot"])
+                body = documents.DocumentBody(
+                    title="Cover letter" if document["kind"] == "cover_letter" else "Résumé",
+                    sections=[
+                        documents.DocumentSection(
+                            key=edit.section_key, heading="Experience", blocks=[edit.replacement]
+                        )
+                    ],
+                )
+                total, supported = statement_counts(
+                    [(str(document["kind"]), body)],
+                    {"facts": snapshot["facts"], "frame": snapshot["frame"]},
+                )
+                factual += total
+                usable += supported
         else:
             total, supported = statement_counts(bodies, plan)
             factual += total

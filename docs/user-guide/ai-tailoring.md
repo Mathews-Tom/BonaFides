@@ -95,11 +95,14 @@ cd ~/bonafides
 sh models.sh attach --model qwen2.5:7b-instruct --model-license Apache-2.0 --authorize-local-model
 sh models.sh qualify --stage generate_documents --reviewed-by 'Local owner'
 sh models.sh qualify --stage regenerate_section --reviewed-by 'Local owner'
+sh models.sh qualify --stage refine_documents --reviewed-by 'Local owner'
 ```
 
 Replace `Local owner` with the name to record as the reviewer. Attaching authorizes metadata reads and unencrypted HTTP on this computer's private Docker network, using the named model under your control with cloud use disabled. It records the installed model and Ollama version but does not send inference or claim that a test passed. Each qualification command sends only the bundled made-up examples, never your profile, and can take several minutes. Keep Ollama running and do not change its model while a test runs.
 
-To enable optional import structuring, remove an existing route first, then add `--import-structuring` to the attachment command above and run `sh models.sh qualify --stage structure_import --reviewed-by 'Local owner'`. Enabling changes the route's capabilities: rerun both document qualifications too; older receipts cannot carry over. A passed import test does not authorize document tasks or opt in any upload. This new stage has synthetic integration coverage, not a measured real-model result.
+Operators can independently measure bounded document-refinement replies with `refine_documents`. Adding this contract changes the route capability fingerprint: after upgrading, rerun each configured stage's qualification rather than carrying earlier receipts forward. Historical model results do not qualify this new stage; no real-model measurement is claimed for it. Qualification alone does not add an application chat interface or change saved documents.
+
+To enable optional import structuring, remove an existing route first, then add `--import-structuring` to the attachment command above and run `sh models.sh qualify --stage structure_import --reviewed-by 'Local owner'`. Enabling changes the route's capabilities: rerun each document-stage qualification you use; older receipts cannot carry over. A passed import test does not authorize document tasks or opt in any upload. Import structuring and conversational refinement have synthetic integration coverage, not measured real-model results.
 
 Each completed test saves its real result and restarts this installation to apply it. Exit status 0 means passed and applied; 1 means failed and applied, with its failed receipt saved; 2 means a setup, connection or application problem. Failures before publication leave earlier receipts unchanged. If configuration was saved but restarting failed, the error says so: resolve the reported problem and run `sh start.sh`. A failed test is not permission to use that stage. Only one model command can run at a time.
 
@@ -115,7 +118,7 @@ sh models.sh remove
 
 Removal restarts this installation and returns the route to disabled. Your profile, documents, credentials and Ollama model weights are retained. Already transmitted input cannot be recalled. For a nondefault installation, add `--dir /absolute/path/to/installation` to each command. See the [developer contract](../development/README.md#optional-operator-controlled-local-model-route) for the pinned identity, limits and advanced source-checkout setup.
 
-If the gateway's Docker address changes after network/container recreation, remove the route, attach it again and rerun both qualifications. Existing address pins deliberately fail closed; restarting retained containers does not require requalification.
+If the gateway's Docker address changes after network/container recreation, remove the route, attach it again and rerun each configured stage's qualification. Existing address pins deliberately fail closed; restarting retained containers does not require requalification.
 
 ## If an AI task fails
 
