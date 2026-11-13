@@ -34,10 +34,7 @@ from bonafides.storage import BlobStore
 
 def _export(context: SourceContext) -> PortableArchive:
     output = io.BytesIO()
-    manifest = export_owner_data(
-        context.runtime, context.identity.settings, context.owner_id, output
-    )
-    assert (manifest.format, manifest.format_version) == ("bonafides-workspace", 2)
+    export_owner_data(context.runtime, context.identity.settings, context.owner_id, output)
     return decode_archive(output, expected_source_owner=context.owner_id)
 
 

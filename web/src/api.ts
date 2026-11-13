@@ -2,9 +2,12 @@
 export interface Session { owner_id: string; login_name: string; csrf_token: string; expires_at: string }
 export interface Challenge { csrf_token: string; bootstrap_available: boolean }
 export interface ProfileContact { email: string; phone: string; location: string; postal_address: string }
-export interface Snapshot { display_name: string; headline: string; description?: string; claim_revision_ids: string[]; evidence_revision_ids?: string[]; contact?: ProfileContact | null }
-export type ClaimKind = 'identity' | 'experience' | 'education' | 'skill' | 'project' | 'certification' | 'preference' | 'other' | 'language';
-export interface ClaimPayload { text: string; organization?: string; role?: string; start_date?: string; end_date?: string; proficiency?: string; project_url?: string }
+export type ProfileOrderKind = 'experience' | 'project' | 'education' | 'publication';
+export type ProfileOrderMode = 'date' | 'manual';
+export interface Snapshot { display_name: string; headline: string; description?: string; claim_revision_ids: string[]; writing_fact_revision_ids?: Record<string, string[]>; ordering_modes?: Partial<Record<Exclude<ProfileOrderKind, 'publication'>, ProfileOrderMode>>; evidence_revision_ids?: string[]; contact?: ProfileContact | null }
+export type ClaimKind = 'identity' | 'experience' | 'education' | 'skill' | 'project' | 'certification' | 'preference' | 'other' | 'language' | 'publication' | 'writing_fact';
+export interface ClaimPayload { text: string; organization?: string; role?: string; start_date?: string; end_date?: string; proficiency?: string; project_url?: string; citation_markup?: string; citation_url?: string; include_in_resume?: boolean }
+export interface WritingFactPayload { text: string; application_id?: string | null }
 export type ClaimRateWording = 'per' | 'a' | 'an' | 'each' | 'every' | 'adverbial' | 'annual';
 export type ClaimPeriodStyle = 'parenthetical' | 'in_year' | 'range';
 export type ClaimPeriodSeparator = 'hyphen' | 'en_dash' | 'em_dash';
@@ -12,11 +15,11 @@ export interface ClaimMetric { value: string; unit: string; magnitude?: string; 
 export interface ClaimPeriod { start: string; end: string; style?: ClaimPeriodStyle | null; separator?: ClaimPeriodSeparator | null }
 export interface StructuredClaim { schema_version: 1; verb: string; subject: string; scope?: string; metric?: ClaimMetric; period?: ClaimPeriod }
 export type StructuredClaimPayload = Omit<ClaimPayload, 'text'> & { claim: StructuredClaim };
-export type ProfileClaimPayload = ClaimPayload | StructuredClaimPayload;
+export type ProfileClaimPayload = ClaimPayload | StructuredClaimPayload | WritingFactPayload;
 export interface ClaimVocabulary { language: string; verbs: { key: string; label: string }[]; units: string[]; changes: string[]; magnitudes: string[]; rates: string[]; rate_wordings: ClaimRateWording[]; period_styles: ClaimPeriodStyle[]; period_separators: ClaimPeriodSeparator[] }
 export interface ClaimRendering { language: string; rendering: string }
 /** Literal view of a saved claim: structured statements contribute their rendering as text. */
-export function literalClaimPayload(claim: PinnedClaim): ClaimPayload {
+export function literalClaimPayload(claim: PinnedClaim): ClaimPayload & Partial<WritingFactPayload> {
   const payload = claim.revision.payload;
   if (!('claim' in payload)) return payload;
   const context: Partial<StructuredClaimPayload> = { ...payload };
@@ -336,6 +339,15 @@ export class Api {
     if (version !== undefined) headers['If-Match'] = `"${version}"`;
     if (idempotent) headers['Idempotency-Key'] = typeof idempotent === 'string' ? idempotent : crypto.randomUUID();
     return this.send<T>(path, { method, headers, ...(signal ? { signal } : {}), ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
+  }
+  getProfile(applicationId?: string, signal?: AbortSignal): Promise<Profile> {
+    return this.request(`/profile${applicationId ? `?application_id=${encodeURIComponent(applicationId)}` : ''}`, 'GET', undefined, undefined, false, signal);
+  }
+  orderProfileSection(kind: ProfileOrderKind, revisionIds: string[], mode: ProfileOrderMode, version: number, key: string): Promise<Profile> {
+    return this.request(`/profile/sections/${kind}/order`, 'POST', { revision_ids: revisionIds, mode }, version, key);
+  }
+  restoreProfileEntry(id: string, version: number, key: string): Promise<Profile> {
+    return this.request(`/claims/${encodeURIComponent(id)}/restore`, 'POST', undefined, version, key);
   }
   getOperations(signal?: AbortSignal): Promise<OperationsHealth> {
     return this.request('/operations', 'GET', undefined, undefined, false, signal);

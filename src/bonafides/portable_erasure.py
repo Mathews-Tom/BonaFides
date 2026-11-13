@@ -24,7 +24,8 @@ from bonafides.config import Settings
 from bonafides.db import Database
 from bonafides.installation_control import Control, assert_control
 from bonafides.portable_archive import MAX_ARCHIVE_BYTES, ArchiveError
-from bonafides.profiles import create_empty_profile
+from bonafides.profile_entries import _snapshot
+from bonafides.profiles import _save, create_empty_profile
 from bonafides.storage import MAX_PDF_BYTES, directory, subdirectory
 
 _MAX_ITEMS = 100000
@@ -185,6 +186,22 @@ def erase_scope(
             },
         ).scalar_one(),
     )
+    if result["scope"] == "application":
+        scope = str(result["application_id"])
+        snapshot = _snapshot(conn, control.owner_id)
+        archived = conn.execute(
+            text("""UPDATE bonafides.professional_claims c
+            SET archived_at=clock_timestamp(),version=c.version+1
+            FROM bonafides.claim_revisions r
+            WHERE c.owner_id=:owner AND c.kind='writing_fact' AND c.archived_at IS NULL
+            AND r.owner_id=c.owner_id AND r.id=c.current_revision_id
+            AND r.payload->>'application_id'=:scope"""),
+            {"owner": control.owner_id, "scope": scope},
+        ).rowcount
+        if archived or scope in snapshot.writing_fact_revision_ids:
+            snapshot.writing_fact_revision_ids.pop(scope, None)
+            _save(conn, control.owner_id, snapshot, "application_erased")
+        assert_control(conn, control)
     if control.purpose == "privacy_delete" and result["scope"] == "workspace":
         # Initialize the SQL erasure's empty profile before this transaction commits.
         profile_id = conn.execute(

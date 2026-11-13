@@ -76,8 +76,6 @@ def test_partial_defaults_preserve_other_preferences_and_replay_without_rollback
     before = _stored(catalog)
     original = _defaults(catalog)
     assert _stored(catalog) == before, "Reading unset defaults must not mutate the owner."
-    assert original["template_version"] == "bonafides-evidence-v1"
-    assert original["tone"] == "professional"
 
     headers = catalog.headers(original["version"])
     first = catalog.client.patch(

@@ -19,6 +19,7 @@ from bonafides.config import Settings
 from bonafides.db import Database
 from bonafides.document_frame import PrintableFrame, template_digest
 from bonafides.problems import Problem
+from bonafides.profile_breadth import selected_claim_ids
 from bonafides.statement_check import CHECKER_VERSION, check_statements
 from bonafides.storage import BlobStore, StoredBlob
 
@@ -113,7 +114,14 @@ class PreparedRender:
     template_sha256: str | None = None
 
 
-def _facts(conn: Connection, owner_id: UUID, profile_revision_id: UUID) -> tuple[Fact, ...]:
+def _facts(
+    conn: Connection,
+    owner_id: UUID,
+    profile_revision_id: UUID,
+    *,
+    application_id: UUID | None = None,
+    writing: bool = False,
+) -> tuple[Fact, ...]:
     profile = (
         conn.execute(
             text(
@@ -126,6 +134,8 @@ def _facts(conn: Connection, owner_id: UUID, profile_revision_id: UUID) -> tuple
     )
     if profile is None:
         raise Problem(404, "not_found")
+    selected = selected_claim_ids(profile["snapshot"], application_id, writing=writing)
+    professional = set(profile["snapshot"].get("claim_revision_ids", []))
     rows = (
         conn.execute(
             text("""
@@ -137,14 +147,22 @@ def _facts(conn: Connection, owner_id: UUID, profile_revision_id: UUID) -> tuple
         JOIN bonafides.claim_evidence_links l ON l.owner_id=c.owner_id AND l.claim_revision_id=c.id
         JOIN bonafides.evidence_revisions e ON e.owner_id=l.owner_id AND e.id=l.evidence_revision_id
         WHERE p.owner_id=:owner AND p.profile_revision_id=:profile
+          AND c.id=ANY(CAST(:selected AS uuid[]))
+          AND NOT (c.id=ANY(CAST(:writing AS uuid[])) AND c.payload->>'text'='')
         ORDER BY c.id,e.id
     """),
-            {"owner": owner_id, "profile": profile_revision_id},
+            {
+                "owner": owner_id,
+                "profile": profile_revision_id,
+                "selected": selected,
+                "writing": [
+                    identifier for identifier in selected if identifier not in professional
+                ],
+            },
         )
         .mappings()
         .all()
     )
-    selected = profile["snapshot"].get("claim_revision_ids", [])
     order = {str(identifier): index for index, identifier in enumerate(selected)}
     facts: list[Fact] = []
     for row in rows:

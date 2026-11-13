@@ -9,7 +9,7 @@ from typing import Annotated, Literal, cast
 from uuid import UUID, uuid4
 
 from fastapi import APIRouter, Depends, Header, Response
-from pydantic import Field, HttpUrl, ValidationInfo, field_validator
+from pydantic import Field, HttpUrl, ValidationInfo, field_validator, model_validator
 from sqlalchemy import Connection, text
 from sqlalchemy.engine import RowMapping
 
@@ -35,7 +35,14 @@ from bonafides.evidence_provenance import (
 )
 from bonafides.model_context import lock_evidence_write
 from bonafides.problems import Problem
-from bonafides.profiles import ProfileSnapshot, _save, canonical, content_hash
+from bonafides.profile_breadth import citation_text, normalize_citation_url, snapshot_claim_ids
+from bonafides.profiles import (
+    ProfileSnapshot,
+    _save,
+    canonical,
+    content_hash,
+    validate_writing_scope,
+)
 
 ClaimKind = Literal[
     "identity",
@@ -47,6 +54,8 @@ ClaimKind = Literal[
     "preference",
     "other",
     "language",
+    "publication",
+    "writing_fact",
 ]
 
 
@@ -130,6 +139,18 @@ class ClaimContext(StrictModel):
 
 class ClaimPayload(ClaimContext):
     text: str = Field(min_length=1, max_length=4000)
+    citation_markup: str | None = Field(
+        default=None, max_length=3000, exclude_if=lambda value: value is None
+    )
+    citation_url: str | None = Field(
+        default=None, max_length=500, exclude_if=lambda value: value is None
+    )
+    include_in_resume: bool | None = Field(default=None, exclude_if=lambda value: value is None)
+
+    @field_validator("citation_url")
+    @classmethod
+    def safe_citation_url(cls, value: str | None) -> str | None:
+        return normalize_citation_url(value) if value is not None else None
 
     @field_validator("text")
     @classmethod
@@ -143,6 +164,11 @@ class StructuredClaimPayload(ClaimContext):
     """Claim schema v1: the stored statement is its structure, never a sentence."""
 
     claim: StructuredClaim
+
+
+class WritingFactPayload(StrictModel):
+    text: str = Field(default="", max_length=1000)
+    application_id: UUID | None = None
 
 
 class EvidencePayload(StrictModel):
@@ -165,19 +191,47 @@ class EvidenceLink(StrictModel):
 
 class ClaimWrite(StrictModel):
     kind: ClaimKind
-    payload: StructuredClaimPayload | ClaimPayload
-    evidence_links: list[EvidenceLink] = Field(min_length=1, max_length=16)
+    payload: StructuredClaimPayload | ClaimPayload | WritingFactPayload
+    evidence_links: list[EvidenceLink] = Field(default_factory=list, max_length=16)
 
-    @field_validator("payload")
+    @field_validator("payload", mode="before")
     @classmethod
-    def structured_kind(
-        cls, value: StructuredClaimPayload | ClaimPayload, info: ValidationInfo
-    ) -> StructuredClaimPayload | ClaimPayload:
-        if isinstance(value, StructuredClaimPayload) and info.data.get("kind") not in (
-            STRUCTURED_KINDS
-        ):
-            raise ValueError("structured_claim_kind")
+    def typed_payload(cls, value: object, info: ValidationInfo) -> object:
+        if isinstance(value, dict):
+            if info.data.get("kind") == "writing_fact":
+                return WritingFactPayload.model_validate(value)
+            if "claim" in value:
+                return StructuredClaimPayload.model_validate(value)
+            return ClaimPayload.model_validate(value)
         return value
+
+    @model_validator(mode="after")
+    def valid_entry(self) -> ClaimWrite:
+        payload = self.payload
+        if isinstance(payload, WritingFactPayload) != (self.kind == "writing_fact"):
+            raise ValueError("invalid_writing_payload")
+        if isinstance(payload, StructuredClaimPayload) and self.kind not in STRUCTURED_KINDS:
+            raise ValueError("structured_claim_kind")
+        if not self.evidence_links and not (
+            isinstance(payload, WritingFactPayload) and not payload.text.strip()
+        ):
+            raise ValueError("evidence_required")
+        if isinstance(payload, ClaimPayload):
+            if self.kind == "publication":
+                if len(payload.text) > 3000:
+                    raise ValueError("citation_length")
+                if (
+                    payload.citation_markup is not None
+                    and citation_text(payload.citation_markup) != payload.text
+                ):
+                    raise ValueError("citation_text_mismatch")
+            elif payload.model_fields_set & {
+                "citation_markup",
+                "citation_url",
+                "include_in_resume",
+            }:
+                raise ValueError("publication_metadata")
+        return self
 
 
 class EvidenceWrite(StrictModel):
@@ -197,6 +251,14 @@ class RenderRequest(StrictModel):
 
 class RestoreProfile(StrictModel):
     revision_id: UUID
+
+
+SectionKind = Literal["experience", "project", "education", "publication"]
+
+
+class SectionOrder(StrictModel):
+    revision_ids: list[UUID] = Field(max_length=100)
+    mode: Literal["manual", "date"]
 
 
 def _revision(row: RowMapping, owner_id: UUID) -> dict[str, object]:
@@ -268,6 +330,7 @@ def hydrate_claim(
     grounding_issue = (
         "literal_claim_not_grounded"
         if payload.get("claim") is None
+        and claim_text(payload).strip()
         and not any(
             link["support_kind"] in ("direct", "user_asserted")
             and literal_grounded(
@@ -507,6 +570,175 @@ def append_claim_revision(
     return revision_id
 
 
+def ensure_claim_capacity(conn: Connection, owner_id: UUID, kind: str, scope: str) -> None:
+    count = conn.execute(
+        text("""SELECT count(*) FROM bonafides.professional_claims c
+        JOIN bonafides.claim_revisions r ON r.owner_id=c.owner_id AND r.id=c.current_revision_id
+        WHERE c.owner_id=:owner AND c.archived_at IS NULL AND
+        CASE WHEN :writing THEN c.kind='writing_fact' AND COALESCE(r.payload->>'application_id','personal')=:scope
+        ELSE c.kind<>'writing_fact' END"""),
+        {"owner": owner_id, "writing": kind == "writing_fact", "scope": scope},
+    ).scalar_one()
+    if count >= (50 if kind == "writing_fact" else 100):
+        raise Problem(422, "writing_fact_limit" if kind == "writing_fact" else "claim_limit")
+
+
+def section_ids(
+    conn: Connection, owner_id: UUID, snapshot: ProfileSnapshot, kind: str
+) -> list[UUID]:
+    members = set(
+        conn.execute(
+            text("""SELECT r.id FROM bonafides.claim_revisions r
+        JOIN bonafides.professional_claims c ON c.owner_id=r.owner_id AND c.id=r.claim_id
+        WHERE r.owner_id=:owner AND r.id=ANY(CAST(:ids AS uuid[])) AND c.kind=:kind"""),
+            {"owner": owner_id, "ids": snapshot.claim_revision_ids, "kind": kind},
+        ).scalars()
+    )
+    return [item for item in snapshot.claim_revision_ids if item in members]
+
+
+def apply_date_order(
+    conn: Connection, owner_id: UUID, snapshot: ProfileSnapshot, kind: str
+) -> None:
+    if (
+        snapshot.ordering_modes.get(cast(Literal["experience", "project", "education"], kind))
+        != "date"
+    ):
+        return
+    members = section_ids(conn, owner_id, snapshot, kind)
+    dates = dict(
+        conn.execute(
+            text("""SELECT id,payload->>'start_date' FROM bonafides.claim_revisions
+        WHERE owner_id=:owner AND id=ANY(CAST(:ids AS uuid[]))"""),
+            {"owner": owner_id, "ids": members},
+        )
+        .tuples()
+        .all()
+    )
+    ordered = iter(
+        sorted(
+            members, key=lambda item: -date_bounds(dates[item])[0].toordinal() if dates[item] else 0
+        )
+    )
+    member_set = set(members)
+    snapshot.claim_revision_ids = [
+        next(ordered) if item in member_set else item for item in snapshot.claim_revision_ids
+    ]
+
+
+def order_section(
+    conn: Connection, owner_id: UUID, kind: SectionKind, body: SectionOrder
+) -> dict[str, object]:
+    snapshot = _snapshot(conn, owner_id)
+    members = section_ids(conn, owner_id, snapshot, kind)
+    if len(body.revision_ids) != len(set(body.revision_ids)) or set(body.revision_ids) != set(
+        members
+    ):
+        raise Problem(
+            409, "section_membership_changed", "Reload the profile before ordering this section."
+        )
+    if kind == "publication" and body.mode != "manual":
+        raise Problem(422, "publication_order_manual")
+    replacements = iter(body.revision_ids if body.mode == "manual" else members)
+    member_set = set(members)
+    snapshot.claim_revision_ids = [
+        next(replacements) if item in member_set else item for item in snapshot.claim_revision_ids
+    ]
+    if kind != "publication":
+        snapshot.ordering_modes[kind] = body.mode
+        apply_date_order(conn, owner_id, snapshot, kind)
+    return _save(conn, owner_id, snapshot, "section_ordered")
+
+
+def restore_claim(conn: Connection, owner_id: UUID, entity_id: UUID) -> dict[str, object]:
+    record = (
+        conn.execute(
+            text("""SELECT c.*,r.payload FROM bonafides.professional_claims c
+        JOIN bonafides.claim_revisions r ON r.owner_id=c.owner_id AND r.id=c.current_revision_id
+        WHERE c.owner_id=:owner AND c.id=:id FOR UPDATE OF c"""),
+            {"owner": owner_id, "id": entity_id},
+        )
+        .mappings()
+        .one_or_none()
+    )
+    if record is None:
+        raise Problem(404, "claim_not_found")
+    if record["archived_at"] is None:
+        raise Problem(409, "claim_not_archived")
+    kind, revision_id = str(record["kind"]), record["current_revision_id"]
+    scope = str(record["payload"].get("application_id") or "personal")
+    if kind == "writing_fact":
+        validate_writing_scope(conn, owner_id, scope, active=True)
+    ensure_claim_capacity(conn, owner_id, kind, scope)
+    snapshot = _snapshot(conn, owner_id)
+    historical = conn.execute(
+        text("""SELECT p.snapshot FROM bonafides.profile_revisions p
+        JOIN bonafides.profile_revision_claims l ON l.owner_id=p.owner_id AND l.profile_revision_id=p.id
+        JOIN bonafides.claim_revisions r ON r.owner_id=l.owner_id AND r.id=l.claim_revision_id
+        WHERE p.owner_id=:owner AND r.claim_id=:id ORDER BY p.revision_no DESC LIMIT 1"""),
+        {"owner": owner_id, "id": entity_id},
+    ).scalar_one_or_none()
+    ids = list(
+        snapshot.writing_fact_revision_ids.get(scope, [])
+        if kind == "writing_fact"
+        else snapshot.claim_revision_ids
+    )
+    old = (
+        ProfileSnapshot.model_validate(historical) if historical is not None else ProfileSnapshot()
+    )
+    former = (
+        old.writing_fact_revision_ids.get(scope, [])
+        if kind == "writing_fact"
+        else old.claim_revision_ids
+    )
+    # Match neighbors by claim identity, not revision: later edits must not erase position.
+    identities = dict(
+        conn.execute(
+            text("""SELECT id,claim_id FROM bonafides.claim_revisions
+        WHERE owner_id=:owner AND id=ANY(CAST(:ids AS uuid[]))"""),
+            {"owner": owner_id, "ids": list(set(ids + former))},
+        )
+        .tuples()
+        .all()
+    )
+    positions = {identities[item]: index for index, item in enumerate(ids)}
+    pivot = next(
+        (index for index, item in enumerate(former) if identities[item] == entity_id), len(former)
+    )
+    after = next(
+        (
+            positions[identities[item]]
+            for item in former[pivot + 1 :]
+            if identities[item] in positions
+        ),
+        None,
+    )
+    before = next(
+        (
+            positions[identities[item]]
+            for item in reversed(former[:pivot])
+            if identities[item] in positions
+        ),
+        None,
+    )
+    ids.insert(
+        after if after is not None else before + 1 if before is not None else len(ids), revision_id
+    )
+    conn.execute(
+        text("""UPDATE bonafides.professional_claims SET archived_at=NULL,version=version+1
+        WHERE owner_id=:owner AND id=:id"""),
+        {"owner": owner_id, "id": entity_id},
+    )
+    if kind == "writing_fact":
+        snapshot.writing_fact_revision_ids = {**snapshot.writing_fact_revision_ids, scope: ids}
+    else:
+        snapshot.claim_revision_ids = ids
+        apply_date_order(conn, owner_id, snapshot, kind)
+    result = _save(conn, owner_id, snapshot, "claim_restored")
+    result["changed_claim_id"] = str(entity_id)
+    return result
+
+
 def write_claim(
     conn: Connection, owner_id: UUID, body: ClaimWrite, entity_id: UUID | None
 ) -> dict[str, object]:
@@ -524,29 +756,30 @@ def write_claim(
         ).scalar_one_or_none()
         if valid is None:
             raise Problem(422, "invalid_evidence_revision")
-        if isinstance(body.payload, ClaimPayload) and link.support_kind in (
+        if isinstance(body.payload, (ClaimPayload, WritingFactPayload)) and link.support_kind in (
             "direct",
             "user_asserted",
         ):
             grounded_literal = grounded_literal or literal_grounded(
                 body.payload.text, link.excerpt, valid.get("text", "")
             )
-    if isinstance(body.payload, ClaimPayload) and not grounded_literal:
+    if (
+        isinstance(body.payload, (ClaimPayload, WritingFactPayload))
+        and body.payload.text.strip()
+        and not grounded_literal
+    ):
         raise Problem(
             422,
             "literal_claim_not_grounded",
             f"Literal entry is not grounded in its source: {body.payload.text}",
         )
     previous = None
+    scope = "personal"
+    if isinstance(body.payload, WritingFactPayload):
+        scope = str(body.payload.application_id or "personal")
+        validate_writing_scope(conn, owner_id, scope, active=True)
     if entity_id is None:
-        count = conn.execute(
-            text(
-                "SELECT count(*) FROM bonafides.professional_claims WHERE owner_id=:owner AND archived_at IS NULL"
-            ),
-            {"owner": owner_id},
-        ).scalar_one()
-        if count >= 100:
-            raise Problem(422, "claim_limit")
+        ensure_claim_capacity(conn, owner_id, body.kind, scope)
         entity_id = uuid4()
         conn.execute(
             text(
@@ -559,20 +792,51 @@ def write_claim(
         if current["kind"] != body.kind:
             raise Problem(422, "claim_kind_immutable")
         previous = current["current_revision_id"]
+        if body.kind == "writing_fact":
+            old_payload = conn.execute(
+                text(
+                    "SELECT payload FROM bonafides.claim_revisions WHERE owner_id=:owner AND id=:id"
+                ),
+                {"owner": owner_id, "id": previous},
+            ).scalar_one()
+            if str(old_payload.get("application_id") or "personal") != scope:
+                raise Problem(422, "writing_scope_immutable")
+    payload = body.payload.model_dump(mode="json", exclude_none=True)
+    if body.kind != "publication":
+        for field in ("citation_markup", "citation_url", "include_in_resume"):
+            payload.pop(field, None)
     revision_id = append_claim_revision(
         conn,
         owner_id,
         entity_id,
-        body.payload.model_dump(mode="json", exclude_none=True),
+        payload,
         body.evidence_links,
         increment=0 if creating else 1,
     )
-    ids = [revision_id if item == previous else item for item in snapshot.claim_revision_ids]
-    if revision_id not in ids:
-        ids.append(revision_id)
-    result = _save(
-        conn, owner_id, snapshot.model_copy(update={"claim_revision_ids": ids}), "claim_saved"
+    ids = (
+        snapshot.writing_fact_revision_ids.get(scope, [])
+        if body.kind == "writing_fact"
+        else snapshot.claim_revision_ids
     )
+    ids = [revision_id if item == previous else item for item in ids]
+    if revision_id not in ids:
+        dated_kind = cast(Literal["experience", "project", "education"], body.kind)
+        manual_dated = (
+            body.kind in ("experience", "project", "education")
+            and snapshot.ordering_modes.get(dated_kind, "manual") == "manual"
+        )
+        ids.insert(0 if body.kind == "publication" or manual_dated else len(ids), revision_id)
+    if body.kind == "writing_fact":
+        snapshot.writing_fact_revision_ids = {**snapshot.writing_fact_revision_ids, scope: ids}
+    else:
+        if body.kind in ("experience", "project", "education"):
+            dated_kind = cast(Literal["experience", "project", "education"], body.kind)
+            existing = section_ids(conn, owner_id, snapshot, dated_kind)
+            if not existing and dated_kind not in snapshot.ordering_modes:
+                snapshot.ordering_modes = {**snapshot.ordering_modes, dated_kind: "date"}
+        snapshot.claim_revision_ids = ids
+        apply_date_order(conn, owner_id, snapshot, body.kind)
+    result = _save(conn, owner_id, snapshot, "claim_saved")
     result["changed_claim_id"] = str(entity_id)
     return result
 
@@ -599,6 +863,10 @@ def archive_entry(
                 ]
             }
         )
+        snapshot.writing_fact_revision_ids = {
+            scope: [item for item in ids if item != record["current_revision_id"]]
+            for scope, ids in snapshot.writing_fact_revision_ids.items()
+        }
     result = _save(conn, owner_id, snapshot, f"{kind}_archived")
     result[f"changed_{kind}_id"] = str(entity_id)
     return result
@@ -628,7 +896,7 @@ def profile_revision(
     }
     if include_claims:
         result["claims"] = hydrate_claims(
-            conn, owner_id, row["snapshot"].get("claim_revision_ids", []), historical=True
+            conn, owner_id, snapshot_claim_ids(row["snapshot"]), historical=True
         )
         ids = row["snapshot"].get("evidence_revision_ids", [])
         evidence_rows = (
@@ -655,8 +923,20 @@ def profile_revision(
 def restore_profile(conn: Connection, owner_id: UUID, revision_id: UUID) -> dict[str, object]:
     historical = profile_revision(conn, owner_id, revision_id)
     snapshot = ProfileSnapshot.model_validate(historical["snapshot"])
+    applications = {
+        str(item)
+        for item in conn.execute(
+            text("SELECT id FROM bonafides.applications WHERE owner_id=:owner"),
+            {"owner": owner_id},
+        ).scalars()
+    }
+    snapshot.writing_fact_revision_ids = {
+        scope: ids
+        for scope, ids in snapshot.writing_fact_revision_ids.items()
+        if scope == "personal" or scope in applications
+    }
     # Only this explicit command can reactivate archived entries. Ordinary writes cannot.
-    selected = snapshot.claim_revision_ids
+    selected = snapshot_claim_ids(snapshot.model_dump(mode="json"))
     conn.execute(
         text("""UPDATE bonafides.professional_claims SET archived_at=clock_timestamp(),version=version+1
         WHERE owner_id=:owner AND archived_at IS NULL
@@ -825,6 +1105,47 @@ def build_entry_router(db: Database) -> APIRouter:
             if match is None:
                 raise Problem(404, "evidence_revision_not_found")
             return evidence_revision(conn, owner.id, revision_id)
+
+    @router.post("/profile/sections/{kind}/order")
+    def reorder(
+        kind: SectionKind,
+        body: SectionOrder,
+        response: Response,
+        owner: Annotated[Owner, Depends(require_owner)],
+        if_match: Annotated[str | None, Header()] = None,
+        idempotency_key: Annotated[str | None, Header()] = None,
+    ) -> dict[str, object]:
+        return mutate(
+            owner.id,
+            "POST",
+            "/api/v1/profile/sections/{kind}/order",
+            {"kind": kind},
+            body.model_dump(mode="json"),
+            if_match,
+            idempotency_key,
+            response,
+            lambda conn: order_section(conn, owner.id, kind, body),
+        )
+
+    @router.post("/claims/{entity_id}/restore")
+    def restore_entry(
+        entity_id: UUID,
+        response: Response,
+        owner: Annotated[Owner, Depends(require_owner)],
+        if_match: Annotated[str | None, Header()] = None,
+        idempotency_key: Annotated[str | None, Header()] = None,
+    ) -> dict[str, object]:
+        return mutate(
+            owner.id,
+            "POST",
+            "/api/v1/claims/{entity_id}/restore",
+            {"entity_id": str(entity_id)},
+            {},
+            if_match,
+            idempotency_key,
+            response,
+            lambda conn: restore_claim(conn, owner.id, entity_id),
+        )
 
     @router.post("/claims")
     def create_claim(

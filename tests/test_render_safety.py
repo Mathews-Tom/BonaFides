@@ -431,3 +431,38 @@ def test_actual_renderer_rejects_unsupported_glyphs_without_silent_text_loss(
 ) -> None:
     with pytest.raises(RenderFailure, match="^render_text_unsupported$"):
         actual_renderer(_body(text), template, PrintableFrame(display_name="Synthetic Name"))
+
+
+def test_publication_formatting_is_escaped_and_bound_to_its_cited_claim() -> None:
+    claim = uuid4()
+    citation = "<script>x</script> Study"
+    frame = PrintableFrame.model_validate(
+        {
+            "display_name": "Synthetic author",
+            "publication_styles": {
+                str(claim): {
+                    "text": citation,
+                    "markup": "<script>x</script> **Study**",
+                    "url": "https://doi.org/10.1000/study",
+                }
+            },
+        }
+    )
+    block = DocumentBlock(
+        block_key="citation",
+        text=citation,
+        claim_kind="factual",
+        claim_revision_ids=[claim],
+        evidence_revision_ids=[uuid4()],
+    )
+    section = DocumentSection(key="publications", heading="Publications", blocks=[block])
+    body = DocumentBody(title="Résumé", sections=[section])
+    rendered = render_service.render_html(body, "bonafides-evidence-v2", frame)
+    assert "<script>" not in rendered
+    assert "&lt;script&gt;x&lt;/script&gt; <strong>Study</strong>" in rendered
+    assert 'href="https://doi.org/10.1000/study"' in rendered
+    other = block.model_copy(update={"claim_revision_ids": [uuid4()]})
+    unrelated = body.model_copy(
+        update={"sections": [section.model_copy(update={"blocks": [other]})]}
+    )
+    assert "<strong>" not in render_service.render_html(unrelated, "bonafides-evidence-v2", frame)

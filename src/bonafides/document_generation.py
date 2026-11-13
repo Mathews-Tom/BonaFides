@@ -37,6 +37,7 @@ from bonafides.config import Settings
 from bonafides.db import Database
 from bonafides.document_frame import TEMPLATE_PAPER, TEMPLATES, PrintableFrame, template_digest
 from bonafides.problems import Problem
+from bonafides.profile_breadth import selected_claim_ids, snapshot_claim_ids
 from bonafides.statement_check import CATEGORIES
 from bonafides.workflows import Claim, assert_fence, enqueue, get_workflow
 
@@ -123,20 +124,22 @@ def _fact_data(
     revision: UUID,
     *,
     omitted_claims: list[dict[str, str]] | None = None,
+    application_id: UUID | None = None,
+    writing: bool = False,
 ) -> list[dict[str, object]]:
-    facts = documents._facts(conn, owner, revision)
+    facts = documents._facts(conn, owner, revision, application_id=application_id, writing=writing)
     profile = conn.execute(
         text("SELECT snapshot FROM bonafides.profile_revisions WHERE owner_id=:owner AND id=:id"),
         {"owner": owner, "id": revision},
     ).scalar_one()
-    selected = profile.get("claim_revision_ids", [])
+    selected = selected_claim_ids(profile, application_id, writing=writing)
     current = conn.execute(
         text(
             "SELECT r.snapshot FROM bonafides.profiles p JOIN bonafides.profile_revisions r ON r.owner_id=p.owner_id AND r.id=p.current_revision_id WHERE p.owner_id=:owner"
         ),
         {"owner": owner},
     ).scalar_one()
-    if set(selected) - set(current.get("claim_revision_ids", [])):
+    if set(selected) - set(snapshot_claim_ids(current)):
         raise Problem(409, "profile_fact_withdrawn")
     claims: dict[str, RowMapping] = {}
     for identifier in selected:
@@ -154,8 +157,22 @@ def _fact_data(
         if row is None:
             raise Problem(409, "profile_fact_withdrawn")
         claims[identifier] = row
+    selected = [
+        identifier
+        for identifier in selected
+        if not (
+            claims[identifier]["kind"] == "publication"
+            and not claims[identifier]["payload"].get("include_in_resume", True)
+        )
+        and not (
+            claims[identifier]["kind"] == "writing_fact"
+            and not claims[identifier]["payload"].get("text", "").strip()
+        )
+    ]
     accepted: list[dict[str, object]] = []
     for fact in facts:
+        if str(fact.claim_id) not in selected:
+            continue
         if str(fact.evidence_id) not in profile.get("evidence_revision_ids", []) or str(
             fact.evidence_id
         ) not in current.get("evidence_revision_ids", []):
@@ -176,7 +193,11 @@ def _fact_data(
             for key in statement_check.PRINTABLE_FIELDS
             if isinstance((value := payload.get(key)), str) and value
         }
-        printable = statement_check.printable_text(fact.claim_text, structured)
+        printable = (
+            fact.claim_text
+            if claim["kind"] == "publication"
+            else statement_check.printable_text(fact.claim_text, structured)
+        )
         if len(printable) > 4000:
             raise Problem(409, "document_context_too_large")
         accepted.append(
@@ -195,6 +216,12 @@ def _fact_data(
                 "printable_text": printable,
             }
         )
+        if claim["kind"] == "publication":
+            accepted[-1]["publication"] = {
+                "text": fact.claim_text,
+                "markup": payload.get("citation_markup") or fact.claim_text.replace("*", r"\*"),
+                "url": payload.get("citation_url", ""),
+            }
     supported = {str(item["claim_revision_id"]) for item in accepted}
     missing = [identifier for identifier in selected if identifier not in supported]
     omitted: list[dict[str, str]] = []
@@ -244,11 +271,22 @@ def _fact_data(
     return accepted
 
 
-def _frame(snapshot: dict[str, object], posting: RowMapping | None = None) -> dict[str, object]:
+def _frame(
+    snapshot: dict[str, object],
+    posting: RowMapping | None = None,
+    *,
+    facts: list[dict[str, object]] | None = None,
+) -> dict[str, object]:
     values: dict[str, object] = {
         "display_name": snapshot.get("display_name", ""),
         "contact": snapshot.get("contact"),
     }
+    if facts is not None and any("publication" in fact for fact in facts):
+        values["publication_styles"] = {
+            str(fact["claim_revision_id"]): fact["publication"]
+            for fact in facts
+            if "publication" in fact
+        }
     if posting is not None:
         values.update(
             {
@@ -455,7 +493,7 @@ def base_plan(conn: Connection, owner: UUID, revision: UUID, template: str) -> d
         "template_sha256": template_digest(template),
         "facts": facts,
         "omitted_claims": omitted,
-        "frame": _frame(profile["snapshot"]),
+        "frame": _frame(profile["snapshot"], facts=facts),
         "targets": targets,
         "policy_version": POLICY,
     }
@@ -492,7 +530,7 @@ def generation_plan(
     )
     _, requirements = suitability._reviewed_requirements(conn, owner, posting, current["id"])
     profile = _profile(conn, owner, revision)
-    facts = _fact_data(conn, owner, revision)
+    facts = _fact_data(conn, owner, revision, application_id=application, writing=True)
     claims, evidence = model_context.professional_context(conn, owner, facts)
     projection = model_projections.generation_projection(
         cast(Mapping[str, object], posting),
@@ -539,7 +577,7 @@ def generation_plan(
         "template_sha256": template_digest(template),
         "tone": tone,
         "language": language,
-        "frame": _frame(profile["snapshot"], posting),
+        "frame": _frame(profile["snapshot"], posting, facts=facts),
         "facts": facts,
         "targets": targets,
         "context": projection,
@@ -770,16 +808,37 @@ def candidate_block(
 
 
 def _candidate_body(item: CandidateDocument, plan: dict[str, object]) -> documents.DocumentBody:
+    sections = [
+        documents.DocumentSection(
+            key=f"section-{index}",
+            heading=section.heading,
+            blocks=[candidate_block(block, plan) for block in section.blocks],
+        )
+        for index, section in enumerate(item.sections)
+    ]
+    publications = [
+        fact
+        for fact in cast(list[dict[str, object]], plan["facts"])
+        if fact.get("category") == "publication"
+    ]
+    if item.kind == "resume" and publications:
+        pinned = compose_base({"facts": publications}).sections[0]
+        literal = {str(block.claim_revision_ids[0]): block.text for block in pinned.blocks}
+        kept: list[documents.DocumentSection] = []
+        for section in sections:
+            blocks = [
+                block
+                for block in section.blocks
+                if section.heading not in statement_check.HEADINGS
+                or block.claim_kind != "factual"
+                or len(block.claim_revision_ids) != 1
+                or literal.get(str(block.claim_revision_ids[0])) != block.text
+            ]
+            if blocks:
+                kept.append(section.model_copy(update={"blocks": blocks}))
+        sections = [*kept, pinned.model_copy(update={"key": "profile-publications"})]
     return documents.DocumentBody(
-        title="Résumé" if item.kind == "resume" else "Cover letter",
-        sections=[
-            documents.DocumentSection(
-                key=f"section-{index}",
-                heading=section.heading,
-                blocks=[candidate_block(block, plan) for block in section.blocks],
-            )
-            for index, section in enumerate(item.sections)
-        ],
+        title="Résumé" if item.kind == "resume" else "Cover letter", sections=sections
     )
 
 
@@ -1101,7 +1160,7 @@ def export_eligibility(conn: Connection, owner: UUID, revision: dict[str, object
     for fact in facts:
         if (str(fact["claim_revision_id"]), str(fact["evidence_revision_id"])) not in used:
             continue
-        if str(fact["claim_revision_id"]) not in current.get("claim_revision_ids", []) or str(
+        if str(fact["claim_revision_id"]) not in snapshot_claim_ids(current) or str(
             fact["evidence_revision_id"]
         ) not in current.get("evidence_revision_ids", []):
             raise Problem(409, "document_source_withdrawn")

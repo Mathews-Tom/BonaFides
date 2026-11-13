@@ -55,6 +55,27 @@ function deferred<T>() { let resolve!: (value: T) => void; const promise = new P
 afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks(); localStorage.clear(); window.history.replaceState(null, '', '/'); });
 
 describe('manual application buffers and selection boundaries', () => {
+  it('keeps application writing text bound to its attempt until explicitly discarded', async () => {
+    const { api, request } = connected(async path => {
+      if (path === '/profile?application_id=application-one') return { id: 'profile', version: 1, current_revision: { id: 'revision', revision_no: 1, content_sha256: 'a'.repeat(64), created_at: timestamp, author_owner_id: 'synthetic-owner', reason: '', snapshot: { display_name: 'Mira', headline: '', claim_revision_ids: [] }, claims: [] }, evidence: [], quality_warnings: [], experience_coverage: { minimum_days: 0, maximum_days: 0, undated_or_open_entries: 0 } } satisfies Profile;
+    }, [application(), application('application-two', 'Analyst')]);
+    const dirty = vi.fn(); render(<Tracking active={true} api={api} onDirtyChange={dirty} />); await openFirst();
+    fireEvent.click(screen.getByRole('button', { name: 'Load writing facts for this application' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Add application writing facts entry' }));
+    fireEvent.change(screen.getByLabelText('Entry statement'), { target: { value: 'Retain this application writing draft' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Open Analyst at Synthetic North' }));
+    expect(screen.getByLabelText('Entry statement')).toHaveValue('Retain this application writing draft');
+    expect(screen.getByRole('heading', { name: 'Engineer at Synthetic North · attempt 1' })).toBeVisible();
+    expect(request.mock.calls.some(call => call[0] === '/applications/application-two')).toBe(false);
+    expect(screen.getByRole('button', { name: 'Add private note' })).toBeDisabled();
+    expect(dirty).toHaveBeenLastCalledWith(true);
+    fireEvent.click(screen.getByRole('button', { name: 'Discard entry changes' }));
+    await waitFor(() => expect(dirty).toHaveBeenLastCalledWith(false));
+    fireEvent.click(screen.getByRole('button', { name: 'Open Analyst at Synthetic North' }));
+    expect(await screen.findByRole('heading', { name: 'Analyst at Synthetic North · attempt 1' })).toBeVisible();
+    expect(screen.queryByLabelText('Entry statement')).not.toBeInTheDocument();
+  });
+
   it('retains an offline private note, fences selection and reuses only unchanged payload/version keys', async () => {
     const { api, request } = connected(async (path, method) => { if (path.endsWith('/notes/note-one') && method === 'PUT') throw new TypeError('offline'); }, [application(), application('application-two', 'Analyst')]);
     const dirty = vi.fn(); render(<Tracking active={true} api={api} onDirtyChange={dirty} />); await openFirst();

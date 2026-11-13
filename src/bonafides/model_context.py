@@ -122,12 +122,21 @@ def evidence_item(identifier: str, content: str, withheld: bool) -> dict[str, ob
 def professional_context(
     conn: Connection, owner: UUID, facts: Sequence[Mapping[str, object]]
 ) -> tuple[list[dict[str, object]], list[dict[str, object]]]:
-    """Claims and evidence items of document facts as they enter model context."""
+    """Send only selected supporting excerpts, never unrelated text in shared sources."""
     withheld = withheld_evidence(
         conn, owner, (UUID(str(fact["evidence_revision_id"])) for fact in facts)
     )
+    quotes = {
+        (str(row.claim_revision_id), str(row.evidence_revision_id)): row.excerpt
+        for row in conn.execute(
+            text("""SELECT claim_revision_id,evidence_revision_id,excerpt
+            FROM bonafides.claim_evidence_links WHERE owner_id=:owner
+            AND claim_revision_id=ANY(CAST(:claims AS uuid[]))"""),
+            {"owner": owner, "claims": [UUID(str(fact["claim_revision_id"])) for fact in facts]},
+        )
+    }
     claims: dict[str, dict[str, object]] = {}
-    evidence: dict[str, dict[str, object]] = {}
+    excerpts: dict[str, list[str]] = {}
     for fact in facts:
         claim_id, evidence_id = str(fact["claim_revision_id"]), str(fact["evidence_revision_id"])
         claim = claims.setdefault(
@@ -140,10 +149,11 @@ def professional_context(
             },
         )
         cast(list[str], claim["evidence_revision_ids"]).append(evidence_id)
-        evidence[evidence_id] = evidence_item(
-            evidence_id, str(fact["evidence_text"]), UUID(evidence_id) in withheld
-        )
-    return list(claims.values()), list(evidence.values())
+        excerpts.setdefault(evidence_id, []).append(quotes[(claim_id, evidence_id)])
+    return list(claims.values()), [
+        evidence_item(identifier, "\n".join(dict.fromkeys(fragments)), UUID(identifier) in withheld)
+        for identifier, fragments in excerpts.items()
+    ]
 
 
 def withheld_explanations(

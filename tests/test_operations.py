@@ -361,20 +361,20 @@ def test_unready_database_is_not_green(updates: IdentityContext) -> None:
     with updates.client() as client:
         _bootstrap(updates, client)
         with updates.admin.transaction() as conn:
-            checksum = conn.execute(
-                text(
-                    "DELETE FROM bonafides.schema_migrations WHERE version=5 RETURNING source_sha256"
-                )
-            ).scalar_one()
+            version, checksum = conn.execute(
+                text("""DELETE FROM bonafides.schema_migrations
+                WHERE version=(SELECT max(version) FROM bonafides.schema_migrations)
+                RETURNING version,source_sha256""")
+            ).one()
         try:
             assert client.get(ROOT).status_code == 503
         finally:
             with updates.admin.transaction() as conn:
                 conn.execute(
                     text(
-                        "INSERT INTO bonafides.schema_migrations(version,source_sha256) VALUES(5,:sha)"
+                        "INSERT INTO bonafides.schema_migrations(version,source_sha256) VALUES(:version,:sha)"
                     ),
-                    {"sha": checksum},
+                    {"version": version, "sha": checksum},
                 )
 
 

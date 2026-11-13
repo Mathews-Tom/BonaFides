@@ -2147,3 +2147,24 @@ def test_import_worker_revalidates_legacy_approval_against_immutable_source(
     assert failed["error_code"] == "literal_claim_not_grounded"
     assert importing.profile() == before
     assert _counts(importing) == counts
+
+
+@pytest.mark.postgres
+@pytest.mark.parametrize("mode", ["merge", "replace_all"])
+def test_import_preserves_newest_first_date_order(importing: ImportContext, mode: str) -> None:
+    profile = importing.profile()
+    snapshot = profile["current_revision"]["snapshot"]
+    snapshot["ordering_modes"] = {"experience": "date"}
+    assert (
+        importing.client.put(
+            "/api/v1/profile", json=snapshot, headers=importing.headers(profile["version"])
+        ).status_code
+        == 200
+    )
+    batch = importing.staged(
+        "Experience\nOld role | Fictional | 2020 – 2021\nNew role | Fictional | 2024 – 2025\n"
+    )
+    assert importing.approve(batch, _review(batch, mode)).status_code == 202
+    importing.run()
+    claims = importing.profile()["current_revision"]["claims"]
+    assert [item["revision"]["payload"]["role"] for item in claims] == ["New role", "Old role"]

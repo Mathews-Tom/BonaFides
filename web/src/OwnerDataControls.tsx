@@ -51,7 +51,7 @@ function PlanDetails({ plan }: { plan: PortablePlan }) {
       <dt>Verified installation checkpoint</dt><dd>{plan.checkpoint_id}</dd>
     </dl>}
     <h4>Copies not erased by this operation</h4>
-    <ul>{plan.remaining_copies.map(copy => <li key={copy}>{copy}</li>)}</ul>
+    <ul>{plan.remaining_copies.map(copy => <li key={copy}>{copy === 'profile_history_application_writing_facts' ? 'Application writing facts are archived; their text remains in immutable profile history and exports until all workspace data is deleted.' : copy}</li>)}</ul>
     <p>Downloaded exports, encrypted backups and copies held elsewhere need separate retention decisions. This action does not prove those copies were erased.</p>
     <details><summary>Complete server plan and runtime bindings</summary><pre style={{ overflowWrap: 'anywhere', whiteSpace: 'pre-wrap' }}>{JSON.stringify(plan, null, 2)}</pre></details>
   </>;

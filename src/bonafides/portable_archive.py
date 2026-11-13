@@ -33,8 +33,9 @@ from bonafides.portable_workspace import (
     WorkspaceManifest,
 )
 from bonafides.portable_workspace import BlobMember as BlobMember
-from bonafides.portable_workspace_v2 import FORMAT_VERSION as WORKSPACE_VERSION
 from bonafides.portable_workspace_v2 import WorkspaceManifest as WorkspaceManifestV2
+from bonafides.portable_workspace_v3 import FORMAT_VERSION as WORKSPACE_VERSION
+from bonafides.portable_workspace_v3 import WorkspaceManifest as WorkspaceManifestV3
 from bonafides.problems import Problem
 
 MAX_MANIFEST_BYTES = 16 * 1024 * 1024
@@ -54,11 +55,10 @@ EXCLUSIONS = (
 # last pre-baseline build (commit 771776e). They're refused, like every unsupported
 # format, before any write.
 LEGACY_FORMAT = "bonafides-portable"
-# Readers stay bound to their published contracts; new exports select version 2.
-_WORKSPACE_READERS: dict[int, type[WorkspaceManifest] | type[WorkspaceManifestV2]] = {
-    1: WorkspaceManifest,
-    WORKSPACE_VERSION: WorkspaceManifestV2,
-}
+# Readers stay bound to their published contracts; new exports select version 3.
+_WORKSPACE_READERS: dict[
+    int, type[WorkspaceManifest] | type[WorkspaceManifestV2] | type[WorkspaceManifestV3]
+] = {1: WorkspaceManifest, 2: WorkspaceManifestV2, WORKSPACE_VERSION: WorkspaceManifestV3}
 SUPPORTED_FORMATS = frozenset((WORKSPACE_FORMAT, version) for version in _WORKSPACE_READERS)
 # The database schema whose portable rows the workspace sections carry. A migration
 # that changes exported columns changes this mapping, never the published contract.
@@ -78,7 +78,7 @@ class Manifest(ArchiveModel):
     """
 
     format: Literal["bonafides-workspace"]
-    format_version: Literal[1, 2]
+    format_version: Literal[1, 2, 3]
     source_schema_version: Annotated[int, Field(ge=1)]
     created_at: AwareDatetime
     source_namespace: UUID
@@ -112,7 +112,7 @@ class PortableArchive:
         self.close()
 
 
-def _workspace(manifest: Manifest) -> WorkspaceManifest | WorkspaceManifestV2:
+def _workspace(manifest: Manifest) -> WorkspaceManifest | WorkspaceManifestV2 | WorkspaceManifestV3:
     """Group the record view into its published version, validating every row."""
     if (manifest.format, manifest.format_version) not in SUPPORTED_FORMATS or (
         manifest.source_schema_version != WORKSPACE_RECORD_SCHEMA
@@ -135,7 +135,7 @@ def _workspace(manifest: Manifest) -> WorkspaceManifest | WorkspaceManifestV2:
         raise ArchiveError("invalid_portable_manifest") from exc
 
 
-def _records(workspace: WorkspaceManifest | WorkspaceManifestV2) -> Manifest:
+def _records(workspace: WorkspaceManifest | WorkspaceManifestV2 | WorkspaceManifestV3) -> Manifest:
     sections = workspace.sections.model_dump(mode="json")
     return Manifest(
         format=workspace.format,
@@ -152,11 +152,11 @@ def _records(workspace: WorkspaceManifest | WorkspaceManifestV2) -> Manifest:
     )
 
 
-def _wire(manifest: Manifest) -> WorkspaceManifest | WorkspaceManifestV2:
+def _wire(manifest: Manifest) -> WorkspaceManifest | WorkspaceManifestV2 | WorkspaceManifestV3:
     return _workspace(manifest)
 
 
-def _digest(wire: WorkspaceManifest | WorkspaceManifestV2) -> str:
+def _digest(wire: WorkspaceManifest | WorkspaceManifestV2 | WorkspaceManifestV3) -> str:
     value = wire.model_dump(mode="json", exclude={"manifest_sha256"})
     return hashlib.sha256(canonical_json(value).encode()).hexdigest()
 

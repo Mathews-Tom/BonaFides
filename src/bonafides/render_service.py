@@ -27,8 +27,21 @@ from uuid import uuid4
 
 from pydantic import Field, model_validator
 
-from bonafides.document_frame import TEMPLATES, PrintableFrame, TemplateVersion, template_digest
-from bonafides.documents import TEMPLATE_VERSION, DocumentBody, StrictModel, canonical
+from bonafides.document_frame import (
+    TEMPLATE_PAPER,
+    TEMPLATES,
+    PrintableFrame,
+    TemplateVersion,
+    template_digest,
+)
+from bonafides.documents import (
+    TEMPLATE_VERSION,
+    DocumentBlock,
+    DocumentBody,
+    StrictModel,
+    canonical,
+)
+from bonafides.profile_breadth import citation_runs
 from bonafides.spool_guard import SpoolBusy, acknowledge_pause, shared_spool
 from bonafides.storage import MAX_PDF_BYTES, atomic_file, directory, read_file
 
@@ -88,6 +101,29 @@ def deny_url_fetcher(url: str, *args: object, **kwargs: object) -> object:
     raise ValueError("renderer_url_denied")
 
 
+def _publication_html(block: DocumentBlock, frame: PrintableFrame) -> str:
+    from markupsafe import Markup, escape
+
+    style = (
+        frame.publication_styles.get(str(block.claim_revision_ids[0]))
+        if len(block.claim_revision_ids) == 1
+        else None
+    )
+    if style is None or block.text != style.text:
+        return escape(block.text)
+    content = Markup("").join(
+        escape(text)
+        if kind == "text"
+        else Markup(f"<{kind}>") + escape(text) + Markup(f"</{kind}>")
+        for kind, text in citation_runs(style.markup)
+    )
+    return (
+        Markup('<a href="') + escape(style.url) + Markup('">') + content + Markup("</a>")
+        if style.url
+        else content
+    )
+
+
 def render_html(
     body: DocumentBody,
     template_version: str = TEMPLATE_VERSION,
@@ -100,6 +136,7 @@ def render_html(
         autoescape=select_autoescape(default=True),
         undefined=StrictUndefined,
     )
+    environment.globals["publication_html"] = _publication_html
     if template_version == TEMPLATE_VERSION:
         if frame is not None:
             raise RenderFailure("render_invalid_input")
@@ -107,7 +144,10 @@ def render_html(
     if template_version not in TEMPLATES or frame is None:
         raise RenderFailure("render_invalid_input")
     return environment.get_template(TEMPLATES[template_version][1]).render(
-        document=body, frame=frame
+        document=body,
+        frame=frame,
+        paper=TEMPLATE_PAPER[template_version],
+        compact="compact" in template_version,
     )
 
 

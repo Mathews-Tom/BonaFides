@@ -9,7 +9,7 @@ from typing import Annotated, Literal
 from uuid import UUID, uuid4
 
 from fastapi import APIRouter, Depends, Header, Response
-from pydantic import Field
+from pydantic import Field, field_validator
 from sqlalchemy import Connection, text
 
 from bonafides.auth import Owner, StrictModel, audit, require_owner
@@ -19,6 +19,7 @@ from bonafides.db import Database
 from bonafides.document_frame import ProfileContact
 from bonafides.model_context import lock_evidence_write
 from bonafides.problems import Problem
+from bonafides.profile_breadth import citation_text, selected_claim_ids, snapshot_claim_ids
 
 MAX_HEADLINE_LENGTH = 300
 SYNTHETIC_FACTS = (
@@ -36,6 +37,20 @@ class ProfileSnapshot(StrictModel):
     claim_revision_ids: list[UUID] = Field(default_factory=list, max_length=100)
     evidence_revision_ids: list[UUID] = Field(default_factory=list, max_length=200)
     contact: ProfileContact | None = None
+    writing_fact_revision_ids: dict[str, list[UUID]] = Field(default_factory=dict)
+    ordering_modes: dict[
+        Literal["experience", "project", "education"], Literal["date", "manual"]
+    ] = Field(default_factory=dict)
+
+    @field_validator("writing_fact_revision_ids")
+    @classmethod
+    def valid_writing_groups(cls, groups: dict[str, list[UUID]]) -> dict[str, list[UUID]]:
+        for scope, ids in groups.items():
+            if scope != "personal" and str(UUID(scope)) != scope:
+                raise ValueError("invalid_writing_scope")
+            if len(ids) > 50:
+                raise ValueError("writing_fact_limit")
+        return groups
 
 
 class BenchmarkProfile(StrictModel):
@@ -89,7 +104,9 @@ def create_empty_profile(
     )
 
 
-def get_profile(conn: Connection, owner_id: UUID) -> dict[str, object]:
+def get_profile(
+    conn: Connection, owner_id: UUID, application_id: UUID | None = None
+) -> dict[str, object]:
     row = (
         conn.execute(
             text(
@@ -105,7 +122,11 @@ def get_profile(conn: Connection, owner_id: UUID) -> dict[str, object]:
     snapshot = row["snapshot"]
     from bonafides.profile_entries import active_evidence, experience_coverage, hydrate_claims
 
-    claims = hydrate_claims(conn, owner_id, snapshot.get("claim_revision_ids", []))
+    if application_id is not None:
+        validate_writing_scope(conn, owner_id, str(application_id))
+    claims = hydrate_claims(
+        conn, owner_id, selected_claim_ids(snapshot, application_id, writing=True)
+    )
     warnings: list[str] = []
     if not snapshot.get("claim_revision_ids"):
         warnings.append("empty_profile")
@@ -131,6 +152,20 @@ def get_profile(conn: Connection, owner_id: UUID) -> dict[str, object]:
     }
 
 
+def validate_writing_scope(
+    conn: Connection, owner_id: UUID, scope: str, *, active: bool = False
+) -> None:
+    if scope == "personal":
+        return
+    found = conn.execute(
+        text("""SELECT id FROM bonafides.applications WHERE owner_id=:owner AND id=:id
+        AND (NOT :active OR archived_at IS NULL) FOR SHARE"""),
+        {"owner": owner_id, "id": UUID(scope), "active": active},
+    ).scalar_one_or_none()
+    if found is None:
+        raise Problem(422, "invalid_writing_scope")
+
+
 def _save(
     conn: Connection,
     owner_id: UUID,
@@ -139,6 +174,7 @@ def _save(
     *,
     restoring: bool = False,
 ) -> dict[str, object]:
+    snapshot = ProfileSnapshot.model_validate(snapshot.model_dump(mode="json"))
     profile = (
         conn.execute(
             text("SELECT id,version FROM bonafides.profiles WHERE owner_id=:owner FOR UPDATE"),
@@ -147,23 +183,62 @@ def _save(
         .mappings()
         .one()
     )
-    claim_ids = snapshot.claim_revision_ids
+    claim_ids = snapshot_claim_ids(snapshot.model_dump(mode="json"))
     if len(set(claim_ids)) != len(claim_ids):
         raise Problem(422, "duplicate_claim_revision")
+    groups = {
+        str(item): scope
+        for scope, ids in snapshot.writing_fact_revision_ids.items()
+        for item in ids
+    }
+    for scope, ids in snapshot.writing_fact_revision_ids.items():
+        if ids:
+            validate_writing_scope(conn, owner_id, scope)
     for claim_id in claim_ids:
-        found = conn.execute(
-            text(
-                "SELECT r.id FROM bonafides.claim_revisions r JOIN bonafides.professional_claims c ON c.owner_id=r.owner_id AND c.id=r.claim_id WHERE r.owner_id=:owner AND r.id=:claim AND c.profile_id=:profile AND c.archived_at IS NULL AND (:restoring OR c.current_revision_id=r.id)"
-            ),
-            {
-                "owner": owner_id,
-                "claim": claim_id,
-                "profile": profile["id"],
-                "restoring": restoring,
-            },
-        ).scalar_one_or_none()
+        found = (
+            conn.execute(
+                text(
+                    "SELECT r.id,c.kind,r.payload FROM bonafides.claim_revisions r JOIN bonafides.professional_claims c ON c.owner_id=r.owner_id AND c.id=r.claim_id WHERE r.owner_id=:owner AND r.id=:claim AND c.profile_id=:profile AND c.archived_at IS NULL AND (:restoring OR c.current_revision_id=r.id)"
+                ),
+                {
+                    "owner": owner_id,
+                    "claim": claim_id,
+                    "profile": profile["id"],
+                    "restoring": restoring,
+                },
+            )
+            .mappings()
+            .one_or_none()
+        )
         if found is None:
             raise Problem(422, "invalid_claim_revision")
+        claim_scope = groups.get(claim_id)
+        if (found["kind"] == "writing_fact") != (claim_scope is not None):
+            raise Problem(422, "invalid_claim_membership")
+        if (
+            claim_scope is not None
+            and str(found["payload"].get("application_id") or "personal") != claim_scope
+        ):
+            raise Problem(422, "writing_scope_immutable")
+        payload = found["payload"]
+        if found["kind"] != "publication" and payload.keys() & {
+            "citation_markup",
+            "citation_url",
+            "include_in_resume",
+        }:
+            raise Problem(422, "publication_metadata")
+        if found["kind"] == "publication":
+            from bonafides.profile_entries import ClaimPayload
+
+            try:
+                citation = ClaimPayload.model_validate(payload)
+                if len(citation.text) > 3000 or (
+                    citation.citation_markup is not None
+                    and citation_text(citation.citation_markup) != citation.text
+                ):
+                    raise ValueError("invalid_citation")
+            except ValueError as error:
+                raise Problem(422, "invalid_citation") from error
     if claim_ids:
         count = conn.execute(
             text(
@@ -333,10 +408,12 @@ def build_router(db: Database, settings: Settings) -> APIRouter:
 
     @router.get("/profile")
     def profile(
-        response: Response, owner: Annotated[Owner, Depends(require_owner)]
+        response: Response,
+        owner: Annotated[Owner, Depends(require_owner)],
+        application_id: UUID | None = None,
     ) -> dict[str, object]:
         with db.transaction() as conn:
-            result = get_profile(conn, owner.id)
+            result = get_profile(conn, owner.id, application_id)
         response.headers["ETag"] = f'"{result["version"]}"'
         return result
 
@@ -362,11 +439,18 @@ def build_router(db: Database, settings: Settings) -> APIRouter:
                     WHERE p.owner_id=:owner"""),
                     {"owner": owner.id},
                 ).scalar_one()
-                snapshot = body
-                if "description" not in body.model_fields_set:
-                    snapshot = body.model_copy(
-                        update={"description": current.get("description", "")}
+                updates = {
+                    field: current.get(field, default)
+                    for field, default in (
+                        ("description", ""),
+                        ("writing_fact_revision_ids", {}),
+                        ("ordering_modes", {}),
                     )
+                    if field not in body.model_fields_set
+                }
+                snapshot = ProfileSnapshot.model_validate(
+                    {**body.model_dump(mode="json"), **updates}
+                )
                 return 200, _save(connection, owner.id, snapshot, "owner_save")
 
             status, result = command(
@@ -377,9 +461,8 @@ def build_router(db: Database, settings: Settings) -> APIRouter:
                 {},
                 body.model_dump(
                     mode="json",
-                    exclude={"description"}
-                    if "description" not in body.model_fields_set
-                    else set(),
+                    exclude=set(("description", "writing_fact_revision_ids", "ordering_modes"))
+                    - body.model_fields_set,
                 ),
                 if_match,
                 idempotency_key,

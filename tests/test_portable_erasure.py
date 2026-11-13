@@ -169,6 +169,25 @@ def test_application_erasure_preserves_neighbors_and_shared_bytes_and_blocks_old
     shared = _attachment(catalog, first, b"Shared retained synthetic bytes")
     _attachment(catalog, second, b"Shared retained synthetic bytes")
     private = _attachment(catalog, first, b"Private erased synthetic bytes")
+    profile = catalog.client.get("/api/v1/profile").json()
+    source = profile["evidence"][0]["revision"]
+    response = catalog.client.post(
+        "/api/v1/claims",
+        json={
+            "kind": "writing_fact",
+            "payload": {"text": source["payload"]["text"][:1000], "application_id": first["id"]},
+            "evidence_links": [
+                {
+                    "evidence_revision_id": source["id"],
+                    "support_kind": "user_asserted",
+                    "excerpt": source["payload"]["text"][:1000],
+                }
+            ],
+        },
+        headers=catalog.headers(profile["version"]),
+    )
+    assert response.status_code == 200, response.text
+    historical = response.json()["current_revision"]
     orphan = BlobStore(catalog.identity.settings.blob_root).put_bytes(
         catalog.owner_id, b"Unpublished interrupted synthetic bytes"
     )
@@ -249,6 +268,31 @@ def test_application_erasure_preserves_neighbors_and_shared_bytes_and_blocks_old
     login = _login(catalog.identity, catalog.client)
     assert login.status_code == 201, login.text
     catalog.csrf = login.json()["csrf_token"]
+    profile = catalog.client.get("/api/v1/profile").json()
+    assert first["id"] not in profile["current_revision"]["snapshot"]["writing_fact_revision_ids"]
+    restored = catalog.client.post(
+        "/api/v1/profile/restore",
+        json={"revision_id": historical["id"]},
+        headers=catalog.headers(profile["version"]),
+    )
+    assert restored.status_code == 200, restored.text
+    assert (
+        first["id"]
+        not in restored.json()["current_revision"]["snapshot"]["writing_fact_revision_ids"]
+    )
+    history = catalog.client.get(f"/api/v1/profile/revisions/{historical['id']}").json()
+    assert history["snapshot"] == historical["snapshot"]
+    with catalog.runtime.transaction() as conn:
+        assert (
+            conn.execute(
+                text("""SELECT count(*) FROM bonafides.professional_claims c
+            JOIN bonafides.claim_revisions r ON r.owner_id=c.owner_id AND r.id=c.current_revision_id
+            WHERE c.kind='writing_fact' AND r.payload->>'application_id'=:id
+            AND c.archived_at IS NULL"""),
+                {"id": first["id"]},
+            ).scalar_one()
+            == 0
+        )
     replay = catalog.client.post(
         "/api/v1/applications",
         json={"posting_id": str(posting_id)},

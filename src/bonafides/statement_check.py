@@ -31,7 +31,7 @@ from bonafides.claims import _EN_VERBS, _normalise_grounding, contains_statement
 if TYPE_CHECKING:
     from bonafides.documents import DocumentBody
 
-CHECKER_VERSION = "claim-evidence-v6"
+CHECKER_VERSION = "claim-evidence-v7"
 CATEGORIES = {
     "experience": "Experience",
     "education": "Education",
@@ -40,6 +40,8 @@ CATEGORIES = {
     "certification": "Certifications",
     "language": "Languages",
     "other": "Profile evidence",
+    "publication": "Publications",
+    "writing_fact": "Additional facts",
 }
 HEADINGS = frozenset({*CATEGORIES.values(), "Application", "Letter", "Interest", "Summary"})
 ConnectiveKind = Literal["greeting", "intent"]
@@ -144,6 +146,8 @@ def _factual_issues(
     claim_text = str(own[0]["claim_text"])
     if not any(contains_statement(claim_text, str(fact["evidence_text"])) for fact in own):
         return ["statement_not_in_claim_evidence"]
+    if own[0].get("category") == "publication" and text != claim_text:
+        return ["publication_not_literal"]
     # The pinned printable text appends only the claim revision's own reviewed fields.
     if text in {fact.get("printable_text") for fact in own}:
         return []

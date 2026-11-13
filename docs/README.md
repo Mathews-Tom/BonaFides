@@ -30,7 +30,7 @@ The [user guide](user-guide/README.md) explains how BonaFides works and how to u
 | [Contributing](../CONTRIBUTING.md) | Licensing authorization, provenance, dependency review and change quality. |
 | [Security policy](../SECURITY.md) | Private vulnerability reporting, supported versions, what BonaFides protects against and what it doesn't. |
 | [Changelog](../CHANGELOG.md) | Notable changes by release. |
-| [Current workspace archive schema](schemas/bonafides-workspace-2.schema.json) | The JSON schema for new `bonafides-workspace/2` data exports; the immutable [version 1 schema](schemas/bonafides-workspace-1.schema.json) remains supported for imports. |
+| [Current workspace archive schema](schemas/bonafides-workspace-3.schema.json) | The JSON schema for new `bonafides-workspace/3` data exports; immutable [version 1](schemas/bonafides-workspace-1.schema.json) and [version 2](schemas/bonafides-workspace-2.schema.json) remain supported for imports. |
 
 ### Decisions
 

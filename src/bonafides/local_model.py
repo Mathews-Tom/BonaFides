@@ -407,8 +407,8 @@ class _WireTarget(_WireModel):
 class _SectionProjection(_WireModel):
     posting: _WirePosting
     requirements: list[_WireRequirement] = Field(max_length=100)
-    claims: list[_WireClaim] = Field(max_length=100)
-    evidence: list[_WireEvidence | _WireWithheldEvidence] = Field(max_length=100)
+    claims: list[_WireClaim] = Field(max_length=200)
+    evidence: list[_WireEvidence | _WireWithheldEvidence] = Field(max_length=200)
     tone: Literal["professional", "concise"]
     language: Literal["en"]
     target: _WireTarget

@@ -11,10 +11,12 @@ const kinds: { value: ClaimKind; label: string }[] = [
   { value: 'language', label: 'Languages' }, { value: 'certification', label: 'Certifications' },
   { value: 'identity', label: 'Identity facts' }, { value: 'preference', label: 'Preferences' },
   { value: 'other', label: 'Other facts' },
+  { value: 'publication', label: 'Publications' }, { value: 'writing_fact', label: 'Personal writing facts' },
 ];
 interface StructuredDraft { verb: string; subject: string; scope: string; value: string; unit: string; magnitude: string; change: string; per: string; rate_wording: ClaimRateWording | ''; measure: string; start: string; end: string; style: ClaimPeriodStyle | ''; separator: ClaimPeriodSeparator | '' }
-interface ClaimDraft { id?: string; kind: ClaimKind; payload: ClaimPayload; structured: StructuredDraft | null; legacyText: string; evidence_links: EvidenceLink[]; pinnedEvidence: EvidenceRevision[] }
+interface ClaimDraft { id?: string; kind: ClaimKind; payload: ClaimPayload & { application_id?: string | null }; structured: StructuredDraft | null; legacyText: string; evidence_links: EvidenceLink[]; pinnedEvidence: EvidenceRevision[] }
 const structuredKinds: ReadonlySet<ClaimKind> = new Set(['experience', 'project']);
+const orderedKinds: Partial<Record<ClaimKind, true>> = { experience: true, project: true, education: true, publication: true };
 const emptyStructured: StructuredDraft = { verb: 'built', subject: '', scope: '', value: '', unit: 'percent', magnitude: '', change: '', per: '', rate_wording: '', measure: '', start: '', end: '', style: '', separator: '' };
 const rateWordingLabels: Record<ClaimRateWording, string> = {
   per: 'Per', a: 'A', an: 'An', each: 'Each', every: 'Every',
@@ -82,14 +84,16 @@ interface ClassificationDraft { id: string; privacy_class: EvidencePrivacyClass;
 
 
 function ClaimWords({ claim }: { claim: PinnedClaim }) {
-  const payload = claim.revision.payload;
+  const payload = literalClaimPayload(claim);
   return <><p>{claim.rendering}</p>
     {claim.grounding_issue === 'literal_claim_not_grounded' && <p className="hint">Needs attention: this statement is not present as a whole phrase in a pinned supporting source and excerpt. The original saved entry is unchanged. Edit the entry and save a supported new revision.</p>}
-    {claim.needs_attention && structuredKinds.has(claim.kind) && !('claim' in payload) && <p className="hint">Needs attention: this statement is still free text. Edit the entry to restructure it as a claim.</p>}
+    {claim.needs_attention && structuredKinds.has(claim.kind) && !('claim' in claim.revision.payload) && <p className="hint">Needs attention: this statement is still free text. Edit the entry to restructure it as a claim.</p>}
     {(payload.organization || payload.role) && <p>{[payload.role, payload.organization].filter(Boolean).join(' · ')}</p>}
     {(payload.start_date || payload.end_date) && <p>{payload.start_date || 'Start not supplied'} — {payload.end_date || 'End not supplied'}</p>}
     {payload.proficiency && <p>Proficiency: {payload.proficiency}</p>}
     {payload.project_url && <p>Project reference (not fetched): <code>{payload.project_url}</code></p>}
+    {claim.kind === 'publication' && <p>{payload.include_in_resume === false ? 'Excluded from résumé' : 'Included in résumé'}{payload.citation_url && <> · Citation reference (not fetched): <code>{payload.citation_url}</code></>}</p>}
+    {claim.kind === 'writing_fact' && !payload.text.trim() && <p>Blank draft — not useful writing input.</p>}
     <details><summary>Evidence and authorship · revision {claim.revision.revision_no}</summary>
       <p>Owner assertion by {claim.revision.author_owner_id} · {claim.revision.created_at}. Not independently verified.</p>
       <p>Claim revision {claim.revision.id} · SHA-256 {claim.revision.content_sha256}</p>
@@ -140,12 +144,12 @@ function InterviewPreparation({ claim, profile, label, disabled }: { claim: Pinn
   </div>;
 }
 
-export function ProfileEntries({ api, profile, disabled, onProfile, onDirtyChange, onBusyChange }: {
+export function ProfileEntries({ api, profile, disabled, onProfile, onDirtyChange, onBusyChange, applicationId }: {
   api: Api; profile: Profile; disabled: boolean; onProfile: (value: Profile) => void;
-  onDirtyChange: (value: boolean) => void; onBusyChange: (value: boolean) => void;
+  onDirtyChange: (value: boolean) => void; onBusyChange: (value: boolean) => void; applicationId?: string;
 }) {
   const [claim, setClaim] = useState<ClaimDraft | null>(null);
-  const [section, setSection] = useState<ClaimKind | 'sources' | 'history'>('skill');
+  const [section, setSection] = useState<ClaimKind | 'sources' | 'history'>(applicationId ? 'writing_fact' : 'skill');
   const [evidence, setEvidence] = useState<EvidenceDraft | null>(null);
   const [classification, setClassification] = useState<ClassificationDraft | null>(null);
   const [archive, setArchive] = useState<ArchiveChoice | null>(null);
@@ -159,6 +163,10 @@ export function ProfileEntries({ api, profile, disabled, onProfile, onDirtyChang
   const [cursor, setCursor] = useState<number | null>(null);
   const [preview, setPreview] = useState<ProfileRevision | null>(null);
   const [restoreConfirmed, setRestoreConfirmed] = useState(false);
+  const [undoEntry, setUndoEntry] = useState<{ id: string; text: string } | null>(null);
+  const mounted = useRef(false);
+  useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
+  const latestProfile = useRef(profile); latestProfile.current = profile;
   const mutation = useRef<{ fingerprint: string; key: string } | null>(null);
   const errorRef = useRef<HTMLDivElement>(null);
   const claimInput = useRef<HTMLTextAreaElement>(null);
@@ -220,7 +228,14 @@ export function ProfileEntries({ api, profile, disabled, onProfile, onDirtyChang
     const fingerprint = JSON.stringify({ path, method, body, version: profile.version });
     if (mutation.current?.fingerprint !== fingerprint) mutation.current = { fingerprint, key: crypto.randomUUID() };
     try {
-      const value = await api.request<Profile>(path, method, body, profile.version, mutation.current.key);
+      let value = await api.request<Profile>(path, method, body, profile.version, mutation.current.key);
+      if (applicationId) value = await api.getProfile(applicationId);
+      if (!mounted.current) return;
+      if (value.id !== latestProfile.current.id || value.version < latestProfile.current.version) {
+        setError('A newer profile arrived while saving. Your editor remains here; compare the current profile before continuing.'); return;
+      }
+      if (archive?.kind === 'claim' && method === 'DELETE') setUndoEntry({ id: archive.id, text: archive.text });
+      if (path.endsWith('/restore') && path.startsWith('/claims/')) setUndoEntry(null);
       mutation.current = null; onProfile(value); setClaim(null); setEvidence(null); setClassification(null); setArchive(null);
       setComparison(null); setHistory(null); setPreview(null); setRestoreConfirmed(false);
       setNotice(path.endsWith('/classification') ? 'Source classification updated. Source revisions and claim pins are unchanged.' : `Saved profile revision ${value.current_revision.revision_no}. Earlier content revisions are unchanged; source classification always reflects the current record.`);
@@ -240,7 +255,8 @@ export function ProfileEntries({ api, profile, disabled, onProfile, onDirtyChang
   function payloadField(field: keyof ClaimPayload, value: string) {
     if (!claim) return;
     const payload = { ...claim.payload };
-    if (field !== 'text' && !value) delete payload[field]; else payload[field] = value;
+    if (field !== 'text' && !value) delete payload[field];
+    else Object.assign(payload, { [field]: value });
     setClaim({ ...claim, payload });
   }
   function structuredField<K extends keyof StructuredDraft>(field: K, value: StructuredDraft[K]) {
@@ -272,60 +288,77 @@ export function ProfileEntries({ api, profile, disabled, onProfile, onDirtyChang
   }
   function move(value: ClaimRecord, target: ClaimRecord | undefined) {
     if (!target) return;
-    const ids = profile.current_revision.snapshot.claim_revision_ids.map(id =>
-      id === value.revision.id ? target.revision.id : id === target.revision.id ? value.revision.id : id);
-    void mutate('/profile', 'PUT', { ...profile.current_revision.snapshot, claim_revision_ids: ids });
+    if (orderedKinds[value.kind]) {
+      const ids = profile.current_revision.claims.filter(item => item.kind === value.kind).map(item =>
+        item.id === value.id ? target.revision.id : item.id === target.id ? value.revision.id : item.revision.id);
+      void mutate(`/profile/sections/${value.kind}/order`, 'POST', { revision_ids: ids, mode: 'manual' });
+    } else {
+      const ids = profile.current_revision.snapshot.claim_revision_ids.map(id =>
+        id === value.revision.id ? target.revision.id : id === target.revision.id ? value.revision.id : id);
+      void mutate('/profile', 'PUT', { ...profile.current_revision.snapshot, claim_revision_ids: ids });
+    }
   }
   const sources = new Map(profile.evidence.map(item => [item.revision.id, item.revision]));
   for (const item of claim?.pinnedEvidence ?? []) sources.set(item.id, item);
-  const currentClaims = profile.current_revision.claims;
+  const visibleKinds = applicationId ? [{ value: 'writing_fact' as const, label: 'Application writing facts' }] : kinds;
+  const inScope = (item: PinnedClaim) => item.kind !== 'writing_fact'
+    ? !applicationId : (literalClaimPayload(item).application_id ?? null) === (applicationId ?? null);
+  const currentClaims = profile.current_revision.claims.filter(inScope);
+  const usefulCount = (kind: ClaimKind) => currentClaims.filter(entry => entry.kind === kind && (kind !== 'writing_fact' || literalClaimPayload(entry).text.trim())).length;
+  const idSuffix = applicationId ?? '';
   return <>
-    <section className="panel profile-entries" aria-labelledby="profile-entries-title"><h2 id="profile-entries-title">Profile entries</h2>
-      <p>Record only facts you supply. Every saved entry pins an exact source revision or explicit owner attestation. Source links and owner authorship are not independent verification.</p>
+    <section className="panel profile-entries" aria-labelledby={`profile-entries-title${applicationId ?? ''}`}><h2 id={`profile-entries-title${applicationId ?? ''}`}>{applicationId ? 'Application writing input' : 'Profile entries'}</h2>
+      <p>Record only facts you supply. Every nonblank saved entry pins an exact source revision or explicit owner attestation. Source links and owner authorship are not independent verification.</p>
       <nav aria-label="Profile sections" className="profile-section-selector">
-        {[...kinds, { value: 'sources' as const, label: 'Sources' }, { value: 'history' as const, label: 'History' }].map(item => {
-          const count = item.value === 'sources' ? profile.evidence.length : item.value === 'history' ? null : currentClaims.filter(entry => entry.kind === item.value).length;
+        {[...visibleKinds, { value: 'sources' as const, label: 'Sources' }, ...(!applicationId ? [{ value: 'history' as const, label: 'History' }] : [])].map(item => {
+          const count = item.value === 'sources' ? profile.evidence.length : item.value === 'history' ? null : usefulCount(item.value as ClaimKind);
           return <button key={item.value} type="button" className="secondary" aria-pressed={section === item.value}
-            aria-describedby={count === null ? undefined : `profile-section-count-${item.value}`}
-            disabled={busy || (dirty && section !== item.value)} onClick={() => setSection(item.value)}>
+            aria-describedby={count === null ? undefined : `profile-section-count-${item.value}${idSuffix}`}
+            disabled={busy || (dirty && section !== item.value)} onClick={() => setSection(item.value as ClaimKind | 'sources' | 'history')}>
             {item.label}{count !== null && <span className="profile-section-count" aria-hidden="true">{count}</span>}
           </button>;
         })}
       </nav>
       <div className="profile-section-counts">
-        {kinds.map(item => <span key={item.value} id={`profile-section-count-${item.value}`}>{currentClaims.filter(entry => entry.kind === item.value).length} saved entries</span>)}
-        <span id="profile-section-count-sources">{profile.evidence.length} saved sources</span>
+        {visibleKinds.map(item => <span key={item.value} id={`profile-section-count-${item.value}${idSuffix}`}>{usefulCount(item.value)} {item.value === 'writing_fact' ? 'useful writing facts' : 'saved entries'}</span>)}
+        <span id={`profile-section-count-sources${idSuffix}`}>{profile.evidence.length} saved sources</span>
       </div>
       {dirty && <p className="profile-buffer-notice" role="status">An entry, source or archive confirmation is open. Save or discard changes, or keep the active record, before switching sections.</p>}
       {disabled && <p className="hint">Save or discard identity changes before editing entries or sources.</p>}
       <div className="error" ref={errorRef} tabIndex={-1} role="alert" hidden={!error}>{error}</div><p role="status">{notice}</p>
-      {error && <button className="secondary" disabled={locked} onClick={() => { void read(async () => { setComparison(await api.request<Profile>('/profile')); }); }}>Load latest profile for comparison</button>}
+      {error && <button className="secondary" disabled={locked} onClick={() => { void read(async () => { setComparison(await api.getProfile(applicationId)); }); }}>Load latest profile for comparison</button>}
       {comparison && <div className="comparison"><h3>Latest saved profile · revision {comparison.current_revision.revision_no}</h3>
         <p>{comparison.current_revision.snapshot.display_name} · {comparison.current_revision.snapshot.headline}</p>
         <p className="profile-description-preview">Description: {comparison.current_revision.snapshot.description || 'Not supplied'}</p>
-        {comparison.current_revision.claims.map(item => <div key={item.id}><strong>{item.kind}</strong><ClaimWords claim={item} /></div>)}
+        {comparison.current_revision.claims.filter(inScope).map(item => <div key={item.id}><strong>{item.kind}</strong><ClaimWords claim={item} /></div>)}
         {comparison.evidence.map(item => <blockquote key={item.id}><p>{item.revision.payload.source}</p><EvidenceProvenanceSummary provenance={item.revision.provenance} /><p>{item.revision.payload.text}</p></blockquote>)}
         <p>Your open editor remains unchanged. Rebasing changes the save precondition, not the entry text. Archived entries cannot be revived by saving an old editor.</p>
         <button className="secondary" disabled={locked} onClick={() => { onProfile(comparison); setComparison(null); setNotice('Latest version selected explicitly. Review your retained text before saving.'); }}>Use latest version and retain my editor</button>
       </div>}
-      {kinds.filter(kind => kind.value === section).map(kind => {
+      {undoEntry && <div className="comparison"><p>Archived: {undoEntry.text}</p><button className="secondary" disabled={locked || dirty} onClick={() => { void mutate(`/claims/${encodeURIComponent(undoEntry.id)}/restore`, 'POST', {}); }}>Undo entry archive, keeping later additions</button></div>}
+      {visibleKinds.filter(kind => kind.value === section).map(kind => {
         const entries = currentClaims.filter(item => item.kind === kind.value);
-        return <section key={kind.value} aria-labelledby={`profile-${kind.value}`}><h3 id={`profile-${kind.value}`} tabIndex={-1}>{kind.label}</h3>
+        return <section key={kind.value} aria-labelledby={`profile-${kind.value}${idSuffix}`}><h3 id={`profile-${kind.value}${idSuffix}`} tabIndex={-1}>{kind.label}</h3>
           {kind.value === 'experience' && <p className="hint">Owner-supplied closed dates cover {profile.experience_coverage.minimum_days}–{profile.experience_coverage.maximum_days} calendar days, with overlaps counted once. This is a conservative date range, not verified employment or a qualification. {profile.experience_coverage.undated_or_open_entries} open or undated entries are excluded; no present date is assumed.</p>}
+          {kind.value === 'writing_fact' && <p className="hint">Ordinary model input for writing, not a private note. {applicationId ? 'Used only for this selected application, alongside personal writing facts.' : 'Reusable across applications.'} Up to 50 saved rows per scope, 1000 characters each. Blank drafts are not useful and are never model facts. Nonblank facts require a real supporting source and excerpt.</p>}
+          {orderedKinds[kind.value] && <div className="actions"><p>Saved order: {kind.value === 'publication' ? 'manual' : profile.current_revision.snapshot.ordering_modes?.[kind.value as 'experience' | 'project' | 'education'] ?? 'retained'}</p>
+            {kind.value !== 'publication' && <><button className="secondary" disabled={locked || dirty} onClick={() => { void mutate(`/profile/sections/${kind.value}/order`, 'POST', { revision_ids: entries.map(item => item.revision.id), mode: 'date' }); }}>Reset {kind.label.toLowerCase()} to newest start date</button>
+            <button className="secondary" disabled={locked || dirty} onClick={() => { void mutate(`/profile/sections/${kind.value}/order`, 'POST', { revision_ids: entries.map(item => item.revision.id), mode: 'manual' }); }}>Keep {kind.label.toLowerCase()} in manual order</button></>}
+          </div>}
           {entries.length === 0 ? <p className="hint">No saved {kind.label.toLowerCase()}.</p> : <ol>{entries.map((item, index) => <li key={item.id}><ClaimWords claim={item} />
             <div className="actions"><button className="secondary" disabled={locked || dirty} onClick={() => editClaim(item)}>Edit {kind.label.toLowerCase()} entry {index + 1}</button>
-              <button className="secondary" disabled={locked || dirty || index === 0} onClick={() => move(item, entries[index - 1])}>Move {kind.label.toLowerCase()} entry {index + 1} up</button>
-              <button className="secondary" disabled={locked || dirty || index === entries.length - 1} onClick={() => move(item, entries[index + 1])}>Move {kind.label.toLowerCase()} entry {index + 1} down</button>
+              {kind.value !== 'writing_fact' && <><button className="secondary" disabled={locked || dirty || index === 0} onClick={() => move(item, entries[index - 1])}>Move {kind.label.toLowerCase()} entry {index + 1} up</button>
+              <button className="secondary" disabled={locked || dirty || index === entries.length - 1} onClick={() => move(item, entries[index + 1])}>Move {kind.label.toLowerCase()} entry {index + 1} down</button></>}
               <button className="secondary" disabled={locked || dirty} onClick={() => setArchive({ kind: 'claim', id: item.id, text: item.rendering })}>Archive {kind.label.toLowerCase()} entry {index + 1}</button></div>
             <ClaimUsedIn key={item.revision.id} api={api} claimId={item.id} label={`${kind.label.toLowerCase()} entry ${index + 1}`} />
             <InterviewPreparation key={`${profile.version}:${profile.current_revision.id}:${item.revision.id}`} claim={item} profile={profile} label={`${kind.label.toLowerCase()} entry ${index + 1}`} disabled={locked || dirty} />
           </li>)}</ol>}
-          <button className="secondary" disabled={locked || dirty || profile.evidence.length === 0} onClick={() => { setError(''); setClaim({ kind: kind.value, payload: { text: '' }, structured: structuredKinds.has(kind.value) ? { ...emptyStructured } : null, legacyText: '', evidence_links: [], pinnedEvidence: [] }); }}>Add {kind.label.toLowerCase()} entry</button>
+          <button className="secondary" disabled={locked || dirty || (kind.value === 'writing_fact' ? entries.length >= 50 : profile.evidence.length === 0)} onClick={() => { setError(''); setClaim({ kind: kind.value, payload: kind.value === 'writing_fact' ? { text: '', application_id: applicationId ?? null } : { text: '' }, structured: structuredKinds.has(kind.value) ? { ...emptyStructured } : null, legacyText: '', evidence_links: [], pinnedEvidence: [] }); }}>Add {kind.label.toLowerCase()} entry</button>
         </section>;
       })}
-      {profile.evidence.length === 0 && section !== 'sources' && section !== 'history' && <p className="hint">Choose Sources and add a source or explicit owner attestation before adding an entry.</p>}
+      {profile.evidence.length === 0 && section !== 'sources' && section !== 'history' && <p className="hint">Choose Sources and add a source or explicit owner attestation before saving nonblank entries.</p>}
       {claim && <form onSubmit={submitClaim}><fieldset disabled={locked}><legend>{claim.id ? 'Edit saved entry' : 'New entry'}</legend>
-        <p>Kind: {kinds.find(kind => kind.value === claim.kind)?.label}. Entry kind cannot change after creation.</p>
+        <p>Kind: {visibleKinds.find(kind => kind.value === claim.kind)?.label}. Entry kind and writing scope cannot change after creation.</p>
         {claim.structured ? <fieldset><legend>Structured claim</legend>
           {claim.legacyText && <p className="hint">Needs attention. Saved free-text statement: “{claim.legacyText}”. Saving stores the structured fields below instead of that sentence.</p>}
           {vocabulary ? <label>Ownership verb<select required value={claim.structured.verb} onChange={event => structuredField('verb', event.target.value)}>{vocabulary.verbs.map((verb, index) => <option key={verb.key} value={verb.key}>{index + 1}. {verb.label}</option>)}</select></label> : vocabularyError ? <div>
@@ -356,8 +389,14 @@ export function ProfileEntries({ api, profile, disabled, onProfile, onDirtyChang
           <p className="hint">The source excerpt must contain the complete rendered sentence as written.</p>
           <h4>Rendering (English)</h4><output aria-live="polite" aria-label="Claim rendering">{rendering ?? (renderingError ? 'Preview unavailable.' : 'Complete the structured fields to preview the rendering.')}</output>
           {renderingError && <p className="error" role="alert">Could not preview the claim: {renderingError}</p>}
-        </fieldset> : <label>Entry statement<textarea ref={claimInput} required maxLength={4000} value={claim.payload.text} onChange={event => payloadField('text', event.target.value)} /></label>}
-        <label>Organization<input maxLength={200} value={claim.payload.organization ?? ''} onChange={event => payloadField('organization', event.target.value)} /></label>
+        </fieldset> : <label>{claim.kind === 'publication' ? 'Plain citation' : 'Entry statement'}<textarea ref={claimInput} required={claim.kind !== 'writing_fact'} maxLength={claim.kind === 'writing_fact' ? 1000 : claim.kind === 'publication' ? 3000 : 4000} value={claim.payload.text} onChange={event => payloadField('text', event.target.value)} /></label>}
+        {claim.kind === 'publication' && <>
+          <label>Citation emphasis (optional)<textarea maxLength={3000} value={claim.payload.citation_markup ?? ''} onChange={event => payloadField('citation_markup', event.target.value)} /></label>
+          <p className="hint">Use **bold** or *italic* only; backslash escapes a literal asterisk. The plain text must exactly match Plain citation. HTML and Markdown links are not interpreted.</p>
+          <label>Citation link or DOI (optional)<input maxLength={500} value={claim.payload.citation_url ?? ''} onChange={event => payloadField('citation_url', event.target.value)} /></label>
+          <label className="check"><input type="checkbox" checked={claim.payload.include_in_resume !== false} onChange={event => setClaim({ ...claim, payload: { ...claim.payload, include_in_resume: event.target.checked } })} />Include this publication in my résumé</label>
+        </>}
+        {claim.kind !== 'writing_fact' && claim.kind !== 'publication' && <><label>Organization<input maxLength={200} value={claim.payload.organization ?? ''} onChange={event => payloadField('organization', event.target.value)} /></label>
         <label>Role or qualification<input maxLength={200} value={claim.payload.role ?? ''} onChange={event => payloadField('role', event.target.value)} /></label>
         <p className="hint">Dates accept YYYY, YYYY-MM or YYYY-MM-DD. Omit unknown dates; precision is never invented. Impossible or definitely reversed intervals are rejected.</p>
         <label>Start date<input maxLength={10} placeholder="YYYY, YYYY-MM or YYYY-MM-DD" value={claim.payload.start_date ?? ''} onChange={event => payloadField('start_date', event.target.value)} /></label>
@@ -365,7 +404,8 @@ export function ProfileEntries({ api, profile, disabled, onProfile, onDirtyChang
         <label>Proficiency or level<input maxLength={120} value={claim.payload.proficiency ?? ''} onChange={event => payloadField('proficiency', event.target.value)} /></label>
         <p className="hint">Include the scale in your owner assertion, for example “CEFR B2” or “intermediate on my own beginner/intermediate/advanced scale”. A language name alone is not proof of a required level.</p>
         {claim.kind === 'project' && <label>Project reference URL (optional)<input type="url" maxLength={2048} value={claim.payload.project_url ?? ''} onChange={event => payloadField('project_url', event.target.value)} /><span className="hint">HTTP or HTTPS syntax only. The target is not fetched, crawled or independently verified.</span></label>}
-        <h4>Pinned evidence links</h4><p className="hint">Select at least one exact source revision. Updating a source later never silently updates an existing entry.</p>
+        </>}
+        <h4>Pinned evidence links</h4><p className="hint">Select at least one exact supporting source revision for nonblank entries. Updating a source later never silently updates an existing entry.</p>
         {claim.evidence_links.map((link, index) => <fieldset key={index}><legend>Source link {index + 1}</legend>
           <label>Evidence revision {index + 1}<select required value={link.evidence_revision_id} onChange={event => changeLink(index, { evidence_revision_id: event.target.value })}><option value="">Choose a saved source</option>{Array.from(sources.values()).map(source => <option key={source.id} value={source.id}>{source.payload.source} · revision {source.revision_no} · {source.payload.text.slice(0, 100)} · {source.id}</option>)}</select></label>
           {sources.get(link.evidence_revision_id) && <blockquote><EvidenceProvenanceSummary provenance={sources.get(link.evidence_revision_id)!.provenance} />{sources.get(link.evidence_revision_id)?.payload.text}</blockquote>}
@@ -374,13 +414,13 @@ export function ProfileEntries({ api, profile, disabled, onProfile, onDirtyChang
           <button type="button" className="secondary" onClick={() => setClaim({ ...claim, evidence_links: claim.evidence_links.filter((_, position) => position !== index) })}>Remove source link {index + 1}</button>
         </fieldset>)}
         <button type="button" className="secondary" disabled={claim.evidence_links.length >= 16} onClick={() => setClaim({ ...claim, evidence_links: [...claim.evidence_links, { evidence_revision_id: '', support_kind: 'user_asserted', excerpt: '' }] })}>Add evidence link</button>
-        <div className="actions"><button disabled={claim.evidence_links.length === 0 || (!!claim.structured && (!vocabulary || !!wordingError))}>Save entry revision</button><button type="button" className="secondary" onClick={() => { setClaim(null); setComparison(null); setError(''); }}>Discard entry changes</button></div>
+        <div className="actions"><button disabled={(claim.evidence_links.length === 0 && (claim.kind !== 'writing_fact' || !!claim.payload.text.trim())) || (!!claim.structured && (!vocabulary || !!wordingError))}>Save entry revision</button><button type="button" className="secondary" onClick={() => { setClaim(null); setComparison(null); setError(''); }}>Discard entry changes</button></div>
       </fieldset></form>}
-      {archive && <div className="comparison"><h3>Confirm archive</h3><p>{archive.text}</p><p>This removes the {archive.kind} from the active profile. Historical revisions and their source links remain readable. Only an explicit historical restore can reactivate archived records.</p>
+      {archive && <div className="comparison"><h3>Confirm archive</h3><p>{archive.text}</p><p>This removes the {archive.kind} from the active profile. Historical revisions and their source links remain readable. Undo entry archive restores just that entry while keeping later additions; whole-profile history restore is separate.</p>
         <button disabled={locked} onClick={() => { void mutate(`/${archive.kind === 'claim' ? 'claims' : 'evidence'}/${encodeURIComponent(archive.id)}`, 'DELETE'); }}>Confirm archive</button><button className="secondary" disabled={locked} onClick={() => setArchive(null)}>Keep active record</button>
       </div>}
     </section>
-    <section className="panel" hidden={section !== 'sources'} aria-labelledby="profile-evidence-title"><h2 id="profile-evidence-title">Sources and owner attestations</h2>
+    <section className="panel" hidden={section !== 'sources'} aria-labelledby={`profile-evidence-title${idSuffix}`}><h2 id={`profile-evidence-title${idSuffix}`}>Sources and owner attestations</h2>
       <p>Versioned source text and explicit owner attestations are not external verification. Archiving removes a source from the active editor, not from immutable historical links.</p>
       {profile.evidence.length === 0 ? <p>No saved sources.</p> : <ul>{profile.evidence.map((item, index) => <li key={item.id}><h3>{item.revision.payload.source}</h3><EvidenceProvenanceSummary provenance={item.revision.provenance} /><p>{item.revision.payload.text}</p>
         <small>Revision {item.revision.revision_no} · {item.revision.id} · {item.revision.created_at} · owner {item.revision.author_owner_id}</small>
@@ -393,21 +433,21 @@ export function ProfileEntries({ api, profile, disabled, onProfile, onDirtyChang
         <label className="check"><input type="checkbox" checked={evidence.attestation} onChange={event => setEvidence({ ...evidence, attestation: event.target.checked })} />This is my explicit owner attestation, not independent verification</label>
         <label>Source reference<input required={!evidence.attestation} disabled={evidence.attestation} maxLength={500} value={evidence.attestation ? 'Owner attestation' : evidence.source} onChange={event => setEvidence({ ...evidence, source: event.target.value })} /></label>
         <label>Source type<select required value={evidence.source_type} onChange={event => setEvidence({ ...evidence, source_type: event.target.value as EvidenceSourceType | '' })}><option value="">Choose a source type</option>{Object.entries(evidenceSourceTypes).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
-        {!evidence.id && <><label>Privacy class<select required aria-describedby="evidence-privacy-hint" value={evidence.privacy_class} onChange={event => setEvidence({ ...evidence, privacy_class: event.target.value as EvidencePrivacyClass | '' })}><option value="">Choose a privacy class</option>{Object.entries(evidencePrivacyClasses).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
-        <label className="check"><input type="checkbox" aria-describedby="evidence-privacy-hint" checked={evidence.employer_owned} onChange={event => setEvidence({ ...evidence, employer_owned: event.target.checked })} />My employer owns this content</label>
-        <p className="hint" id="evidence-privacy-hint">Confidential or employer-owned source text is never sent to a model. Entries citing it are still sent as their own text and are checked locally against the full source.</p></>}
+        {!evidence.id && <><label>Privacy class<select required aria-describedby={`evidence-privacy-hint${idSuffix}`} value={evidence.privacy_class} onChange={event => setEvidence({ ...evidence, privacy_class: event.target.value as EvidencePrivacyClass | '' })}><option value="">Choose a privacy class</option>{Object.entries(evidencePrivacyClasses).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
+        <label className="check"><input type="checkbox" aria-describedby={`evidence-privacy-hint${idSuffix}`} checked={evidence.employer_owned} onChange={event => setEvidence({ ...evidence, employer_owned: event.target.checked })} />My employer owns this content</label>
+        <p className="hint" id={`evidence-privacy-hint${idSuffix}`}>Confidential or employer-owned source text is never sent to a model. Entries citing it are still sent as their own text and are checked locally against the full source.</p></>}
         {evidence.id && <p className="hint">Saving content or source type creates a new source revision without changing classification. Re-pin entries to that exact new revision before generating. Use Change classification separately to keep existing claim pins valid.</p>}
         <div className="actions"><button>Save source revision</button><button type="button" className="secondary" onClick={() => { setEvidence(null); setComparison(null); setError(''); }}>Discard source changes</button></div>
       </fieldset></form>}
       {classification && <form onSubmit={event => { event.preventDefault(); void mutate(`/evidence/${encodeURIComponent(classification.id)}/classification`, 'PUT', { privacy_class: classification.privacy_class, employer_owned: classification.employer_owned }); }}><fieldset disabled={locked}><legend>Change source classification</legend>
-        <p className="hint" id="evidence-classification-hint">Reclassification takes effect immediately across all source revisions, including existing claim links and restored profiles. No re-save or re-pin is needed. Confidential or employer-owned evidence content is withheld from models; the claim text is still sent and checked locally against the full source.</p>
-        <label>Privacy class<select required aria-describedby="evidence-classification-hint" value={classification.privacy_class} onChange={event => setClassification({ ...classification, privacy_class: event.target.value as EvidencePrivacyClass })}>{Object.entries(evidencePrivacyClasses).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
-        <label className="check"><input type="checkbox" aria-describedby="evidence-classification-hint" checked={classification.employer_owned} onChange={event => setClassification({ ...classification, employer_owned: event.target.checked })} />My employer owns this content</label>
+        <p className="hint" id={`evidence-classification-hint${idSuffix}`}>Reclassification takes effect immediately across all source revisions, including existing claim links and restored profiles. No re-save or re-pin is needed. Confidential or employer-owned evidence content is withheld from models; the claim text is still sent and checked locally against the full source.</p>
+        <label>Privacy class<select required aria-describedby={`evidence-classification-hint${idSuffix}`} value={classification.privacy_class} onChange={event => setClassification({ ...classification, privacy_class: event.target.value as EvidencePrivacyClass })}>{Object.entries(evidencePrivacyClasses).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
+        <label className="check"><input type="checkbox" aria-describedby={`evidence-classification-hint${idSuffix}`} checked={classification.employer_owned} onChange={event => setClassification({ ...classification, employer_owned: event.target.checked })} />My employer owns this content</label>
         <div className="actions"><button>Save source classification</button><button type="button" className="secondary" onClick={() => { setClassification(null); setError(''); }}>Discard classification changes</button></div>
       </fieldset></form>}
-      <EvidenceCapture key={profile.id} api={api} profile={profile} active={section === 'sources'} disabled={disabled || entryBusy || localDirty} onProfileChange={onProfile} onDirtyChange={setCaptureDirty} onBusyChange={setCaptureBusy} />
+      {!applicationId && <EvidenceCapture key={profile.id} api={api} profile={profile} active={section === 'sources'} disabled={disabled || entryBusy || localDirty} onProfileChange={onProfile} onDirtyChange={setCaptureDirty} onBusyChange={setCaptureBusy} />}
     </section>
-    <section className="panel" hidden={section !== 'history'} aria-labelledby="profile-history-title"><h2 id="profile-history-title">Immutable profile history</h2>
+    {!applicationId && <section className="panel" hidden={section !== 'history'} aria-labelledby="profile-history-title"><h2 id="profile-history-title">Immutable profile history</h2>
       <p>Preview exact saved statements, evidence and owner authorship. Restore appends a new revision; it never overwrites history or existing documents.</p>
       <button className="secondary" disabled={locked} onClick={() => { void loadHistory(); }}>Load profile history</button>
       {history && <><ol>{history.map(item => <li key={item.id}><button className="secondary" disabled={locked} onClick={() => { void read(async () => { setPreview(await api.request<ProfileRevision>(`/profile/revisions/${encodeURIComponent(item.id)}`)); setRestoreConfirmed(false); }); }}>Preview profile revision {item.revision_no}</button><p>{item.reason} · {item.created_at} · owner {item.author_owner_id}</p></li>)}</ol>
@@ -421,6 +461,35 @@ export function ProfileEntries({ api, profile, disabled, onProfile, onDirtyChang
         <label className="check"><input type="checkbox" disabled={locked || dirty} checked={restoreConfirmed} onChange={event => setRestoreConfirmed(event.target.checked)} />Restore this exact saved profile and source state as a new revision; retain displaced history</label>
         <button disabled={locked || dirty || !restoreConfirmed} onClick={() => { void mutate('/profile/restore', 'POST', { revision_id: preview.id }); }}>Restore as new profile revision</button>
       </article>}
-    </section>
+    </section>}
   </>;
+}
+
+export function ApplicationWritingFacts({ api, applicationId, disabled, onProfile, onDirtyChange, onBusyChange }: {
+  api: Api; applicationId: string; disabled: boolean; onProfile: (value: Profile) => void;
+  onDirtyChange: (value: boolean) => void; onBusyChange: (value: boolean) => void;
+}) {
+  const [profile, setProfile] = useState<Profile | null>(null);
+  const [error, setError] = useState('');
+  const [loading, setLoading] = useState(false);
+  const controller = useRef<AbortController | null>(null);
+  useEffect(() => () => controller.current?.abort(), []);
+  async function load() {
+    controller.current?.abort(); const pending = new AbortController(); controller.current = pending;
+    setLoading(true); onBusyChange(true); setError('');
+    try {
+      const value = await api.getProfile(applicationId, pending.signal);
+      if (!pending.signal.aborted) setProfile(value);
+    } catch (failure) { if (!pending.signal.aborted) setError(errorText(failure)); }
+    finally { if (!pending.signal.aborted) { setLoading(false); onBusyChange(false); } }
+  }
+  return <section aria-label="Selected application writing facts">
+    {!profile && <button className="secondary" disabled={disabled || loading} onClick={() => { void load(); }}>Load writing facts for this application</button>}
+    {error && <p className="error" role="alert">{error}</p>}
+    {profile && <ProfileEntries api={api} profile={profile} applicationId={applicationId} disabled={disabled} onDirtyChange={onDirtyChange} onBusyChange={onBusyChange}
+      onProfile={value => {
+        setProfile(value);
+        onProfile({ ...value, current_revision: { ...value.current_revision, claims: value.current_revision.claims.filter(item => item.kind !== 'writing_fact' || !literalClaimPayload(item).application_id) } });
+      }} />}
+  </section>;
 }

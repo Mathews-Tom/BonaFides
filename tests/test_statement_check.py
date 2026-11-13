@@ -768,3 +768,37 @@ def test_check_statements_every_endpoint_kind_preserves_numeric_ranges(
 def test_check_statements_punctuation_endpoints_preserve_currency_ranges(ending: str) -> None:
     claim_text = f"Managed $10{ending}"
     assert _claim_codes(claim_text, "Managed $10", "managed") == ["statement_cut_inside_claim"]
+
+
+@pytest.mark.parametrize(
+    "text,expected",
+    [
+        ("Wrote reports on reliable systems (2024)", []),
+        ("Wrote reports", ["publication_not_literal"]),
+        ("reports on reliable systems (2024)", ["publication_not_literal"]),
+    ],
+)
+def test_publications_cannot_use_the_ordinary_claim_prefix_rule(
+    text: str, expected: list[str]
+) -> None:
+    citation = "Wrote reports on reliable systems (2024)"
+    body = DocumentBody(
+        title="Résumé",
+        sections=[
+            DocumentSection(
+                key="publications",
+                heading="Publications",
+                blocks=[_factual(text, [CLAIM], [EVIDENCE])],
+            )
+        ],
+    )
+    facts = [
+        {
+            "claim_revision_id": str(CLAIM),
+            "evidence_revision_id": str(EVIDENCE),
+            "claim_text": citation,
+            "evidence_text": citation,
+            "category": "publication",
+        }
+    ]
+    assert [issue["code"] for issue in check_statements(body, facts, {}, "resume")] == expected
