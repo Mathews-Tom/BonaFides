@@ -1135,6 +1135,8 @@ Rendering checks actual painted-font missing-glyph records and selectable text a
 
 The schema identifies saved targets by document UUID, section key, block key and previous-content SHA-256. Replacements retain source annotations and pass the existing claim checker against the original document's pinned facts; duplicate targets collapse deterministically and unknown targets never redirect. Refusals contain neither edits nor tone. Qualification separately checks expected edit/no-change/refusal outcomes and reports factual statement counts.
 
+Custom refinement datasets must bind every selected target to exactly one block in its uniquely named frozen document, with identical original content and the projection-validated content digest. Document identities must use canonical UUID strings. Missing units, changed originals and duplicate or noncanonical document identities are rejected before inference. Ignored unselected edits do not fail a no-change case; a requested tone change still does.
+
 The pure projection permits at most two document contexts and nine completed turns plus the active request (2,000 characters). Dedicated contact/frame/portrait fields, private notes and withheld evidence text are excluded; professional free text can still contain personal information. This operator-facing qualification writes a stage receipt, not application conversation rows, document revisions or execution authority. No measured real-model result is claimed for refinement.
 
 #### Reversible résumé page fitting

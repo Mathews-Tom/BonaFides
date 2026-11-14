@@ -68,8 +68,27 @@ def load_cases(directory: Path, stage: str) -> tuple[list[dict[str, object]], st
                 or not 0 <= expected["minimum_edits"] <= len(case["targets"])
             ):
                 raise ValueError("qualification_case_invalid")
-            for document in case["documents"]:
-                documents.parse_body(document["body"])
+            parsed_documents = {
+                document["document_id"]: documents.parse_body(document["body"])
+                for document in case["documents"]
+            }
+            if len(parsed_documents) != len(case["documents"]) or any(
+                not isinstance(document_id, str) or str(UUID(document_id)) != document_id
+                for document_id in parsed_documents
+            ):
+                raise ValueError("qualification_case_invalid")
+            for target in case["targets"]:
+                body = parsed_documents.get(target["document_id"])
+                blocks = [
+                    block
+                    for section in (body.sections if body else [])
+                    if section.key == target["section_key"]
+                    for block in section.blocks
+                    if block.block_key == target["block_key"]
+                ]
+                # Projection already binds the digest to before; bind before to the frozen unit.
+                if len(blocks) != 1 or blocks[0].model_dump(mode="json") != target["before"]:
+                    raise ValueError("qualification_case_invalid")
             cases.append(case)
             continue
         if stage == "structure_import":
@@ -226,17 +245,20 @@ def checked_refinement(output: dict[str, object], case: dict[str, object]) -> Co
         (str(item["document_id"]), item["section_key"], item["block_key"]): item
         for item in cast(list[dict[str, object]], case["targets"])
     }
-    changed = sum(
-        edit.replacement.model_dump(mode="json") != target["before"]
+    selected = [
+        (edit, target)
         for edit in reply.edits
         if (target := targets.get((str(edit.document_id), edit.section_key, edit.block_key)))
         is not None
+    ]
+    changed = sum(
+        edit.replacement.model_dump(mode="json") != target["before"] for edit, target in selected
     )
     minimum = cast(int, expected["minimum_edits"])
     if (
         reply.declined != expected["declined"]
         or changed < minimum
-        or (minimum == 0 and (reply.edits or reply.tone is not None))
+        or (minimum == 0 and (selected or reply.tone is not None))
     ):
         raise model_calls.OutputMismatch(["conversation: unexpected_outcome"])
     return reply

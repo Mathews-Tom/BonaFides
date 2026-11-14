@@ -675,8 +675,58 @@ def test_packaged_refinement_cases_fit_installed_transport_budget(
     assert len(requests) == (40 if corrected else 20)
 
 
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        "document_id",
+        "section_key",
+        "block_key",
+        "before",
+        "duplicate_document",
+        "noncanonical_id",
+        "nonstring_id",
+    ],
+)
+def test_refinement_dataset_binds_targets_to_frozen_units(tmp_path: Path, mutation: str) -> None:
+    cases, _ = qualification.load_cases(DATASET, "refine_documents")
+    target = cast(list[dict[str, object]], cases[0]["targets"])[0]
+    frozen = cast(list[dict[str, object]], cases[0]["documents"])
+    document = next(item for item in frozen if item["document_id"] == target["document_id"])
+    if mutation in {"document_id", "section_key"}:
+        target[mutation] = str(UUID(int=999)) if mutation == "document_id" else "missing-section"
+    elif mutation == "duplicate_document":
+        frozen.append(copy.deepcopy(document))
+    elif mutation == "nonstring_id":
+        document["document_id"] = 123
+    elif mutation == "noncanonical_id":
+        original_id = target["document_id"]
+        document["document_id"] = "AAAAAAAA-AAAA-4AAA-8AAA-AAAAAAAAAAAA"
+        for item in cast(list[dict[str, object]], cases[0]["targets"]):
+            if item["document_id"] == original_id:
+                item["document_id"] = document["document_id"]
+    else:
+        body = cast(dict[str, object], document["body"])
+        section = next(
+            item
+            for item in cast(list[dict[str, object]], body["sections"])
+            if item["key"] == target["section_key"]
+        )
+        block = next(
+            item
+            for item in cast(list[dict[str, object]], section["blocks"])
+            if item["block_key"] == target["block_key"]
+        )
+        block["block_key" if mutation == "block_key" else "text"] = "changed-frozen-unit"
+    (tmp_path / "refine_documents.jsonl").write_text(
+        "\n".join(canonical_json(case) for case in cases) + "\n"
+    )
+    with pytest.raises(ValueError, match="qualification_case_invalid"):
+        qualification.load_cases(tmp_path, "refine_documents")
+
+
+@pytest.mark.parametrize("unknown_field", ["document_id", "section_key", "block_key"])
 def test_refinement_qualification_checks_changes_refusal_and_single_correction(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, unknown_field: str
 ) -> None:
     cases, sha = qualification.load_cases(DATASET, "refine_documents")
     route = local_model.load_route(route_file(tmp_path, route_data("http://127.0.0.1:11434")))
@@ -692,11 +742,17 @@ def test_refinement_qualification_checks_changes_refusal_and_single_correction(
             return local_model.ModelResult({}, {})
         output = refinement_output(case)
         edits = cast(list[dict[str, object]], output["edits"])
-        if edits:
-            unknown = copy.deepcopy(edits[0])
-            unknown["block_key"] = "unselected"
+        if not output["declined"]:
+            target = cast(list[dict[str, object]], case["targets"])[0]
+            unknown = {
+                key: target[key]
+                for key in ("document_id", "section_key", "block_key", "previous_sha256")
+            } | {"replacement": copy.deepcopy(target["before"])}
+            unknown[unknown_field] = (
+                str(UUID(int=999)) if unknown_field == "document_id" else "unselected"
+            )
             replacement = cast(dict[str, object], unknown["replacement"])
-            replacement["block_key"] = "unselected"
+            replacement["block_key"] = unknown["block_key"]
             replacement["text"] = "Invented unsupported achievement."
             replacement["claim_revision_ids"] = (
                 cast(list[object], replacement["claim_revision_ids"]) * 2
@@ -724,6 +780,15 @@ def test_refinement_qualification_checks_changes_refusal_and_single_correction(
     cast(dict[str, object], edit["replacement"])["text"] = "Led a fabricated department."
     with pytest.raises(model_calls.OutputMismatch):
         qualification.checked_refinement(unsafe, cases[0])
+    no_change = next(
+        case
+        for case in cases
+        if cast(dict[str, object], case["expected"]) == {"declined": False, "minimum_edits": 0}
+    )
+    toned = refinement_output(no_change)
+    toned["tone"] = "concise"
+    with pytest.raises(model_calls.OutputMismatch):
+        qualification.checked_refinement(toned, no_change)
 
 
 def test_regeneration_receipt_cannot_qualify_refinement(tmp_path: Path) -> None:
