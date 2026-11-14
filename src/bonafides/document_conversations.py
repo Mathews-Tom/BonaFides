@@ -644,7 +644,10 @@ def undo_turn(
                     raise Problem(409, "conversation_undo_conflict")
                 provenance["tone"] = tone["before"]
         source = {**row, "provenance_snapshot": provenance}
-        prepared.append((document, _replace(body, replacements), source))
+        try:
+            prepared.append((document, _replace(body, replacements), source))
+        except ValidationError as exc:
+            raise Problem(409, "conversation_undo_conflict") from exc
     # Validate every affected unit/tone before appending even the first revision.
     for document, body, source in prepared:
         generation.append_revision(

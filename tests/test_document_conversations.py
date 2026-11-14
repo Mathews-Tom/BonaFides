@@ -247,7 +247,7 @@ def _post(
 
 
 def _prepared(
-    context: SourceContext, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    context: SourceContext, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, before: str = BEFORE
 ) -> tuple[dict[str, Any], list[dict[str, Any]]]:
     data = route_data("http://127.0.0.1:1")
     data.update(max_input_tokens=12000, deadline_seconds=30)
@@ -259,7 +259,7 @@ def _prepared(
         body["sections"][0]["blocks"].append(
             {
                 "block_key": "conversation-prose",
-                "text": BEFORE,
+                "text": before,
                 "claim_kind": "intent",
                 "claim_revision_ids": [],
                 "evidence_revision_ids": [],
@@ -281,7 +281,7 @@ def _queue(
     return _claim(context, response.json()["workflow"]["id"])
 
 
-def _output(task: Claim) -> dict[str, Any]:
+def _output(task: Claim, after: str = AFTER) -> dict[str, Any]:
     return {
         "schema_version": "1",
         "stage": "refine_documents",
@@ -290,12 +290,10 @@ def _output(task: Claim) -> dict[str, Any]:
         "tone": "concise",
         "edits": [
             {
-                "document_id": target["document_id"],
-                "section_key": target["section_key"],
-                "block_key": target["block_key"],
-                "previous_sha256": target["previous_sha256"],
-                "replacement": {**target["before"], "text": AFTER},
+                key: target[key]
+                for key in ("document_id", "section_key", "block_key", "previous_sha256")
             }
+            | {"replacement": {**target["before"], "text": after}}
             for target in cast(list[dict[str, Any]], task.input["targets"])
             if target["block_key"] == "conversation-prose"
         ],
@@ -415,46 +413,49 @@ def test_partial_publication_preserves_intervening_owner_work(
 
 
 @pytest.mark.postgres
-@pytest.mark.parametrize("conflict", ["text", "removed", "tone", None])
+@pytest.mark.parametrize("conflict", ["text", "removed", "tone", "size", None])
 def test_reply_bound_cross_document_undo_is_atomic_and_not_repeatable(
     catalog: SourceContext, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, conflict: str | None
 ) -> None:
-    application, documents = _prepared(catalog, monkeypatch, tmp_path)
+    application, documents = _prepared(catalog, monkeypatch, tmp_path, AFTER)
     task = _queue(catalog, application, documents)
-    _execute(catalog, task, _output(task))
+    _execute(catalog, task, _output(task, BEFORE))
     turn = _view(catalog, application)["turns"][-1]
     if conflict == "tone":
         from bonafides.documents import parse_body
         from bonafides.section_regeneration import _target
 
         with catalog.runtime.transaction() as conn:
-            row = _target(conn, catalog.owner_id, UUID(documents[0]["id"]))
+            owner, identifier = catalog.owner_id, UUID(documents[0]["id"])
+            row = _target(conn, owner, identifier)
             source = dict(row)
             source["provenance_snapshot"] = {**row["provenance_snapshot"], "tone": "professional"}
-            generation.append_revision(
-                conn,
-                catalog.owner_id,
-                UUID(documents[0]["id"]),
-                parse_body(row["body"]),
-                source,
-                "manual",
-                "Owner changed writing tone",
-            )
+            body = parse_body(row["body"])
+            generation.append_revision(conn, owner, identifier, body, source, "manual", "Tone edit")
     elif conflict:
         current = _document(catalog, documents[0]["id"])
         body = copy.deepcopy(current["current_revision"]["body"])
-        if conflict == "removed":
-            body["sections"][0]["blocks"].pop()
+        blocks = body["sections"][0]["blocks"]
+        if conflict == "size":
+            remaining = 100_000 - sum(
+                len(block["text"]) for section in body["sections"] for block in section["blocks"]
+            )
+            prose = blocks[-1]
+            blocks.extend(
+                {**prose, "block_key": f"pad-{offset}", "text": "x" * min(4000, remaining - offset)}
+                for offset in range(0, remaining, 4000)
+            )
+        elif conflict == "removed":
+            blocks.pop()
         else:
-            body["sections"][0]["blocks"][-1]["text"] = "Later owner change."
+            blocks[-1]["text"] = "Later owner change."
         assert _save(catalog, current, body).status_code == 200
     before = [_document(catalog, item["id"]) for item in documents]
     counts = _counts(catalog)
     response = _undo(catalog, application, turn)
     if conflict:
-        assert (
-            response.status_code == 409 and response.json()["code"] == "conversation_undo_conflict"
-        )
+        assert response.status_code == 409
+        assert response.json()["code"] == "conversation_undo_conflict"
         assert [_document(catalog, item["id"]) for item in documents] == before
         assert _view(catalog, application)["turns"][-1]["undone_at"] is None
         assert _counts(catalog) == counts
@@ -469,9 +470,8 @@ def test_reply_bound_cross_document_undo_is_atomic_and_not_repeatable(
                 == original["current_revision"]["provenance_snapshot"]["tone"]
             )
         repeated = _undo(catalog, application, turn)
-        assert (
-            repeated.status_code == 409 and repeated.json()["code"] == "conversation_already_undone"
-        )
+        assert repeated.status_code == 409
+        assert repeated.json()["code"] == "conversation_already_undone"
 
 
 @pytest.mark.postgres
@@ -542,17 +542,14 @@ def test_local_guidance_scope_admission_and_recent_context(
         disabled_route.setattr(local_model, "load_route", lambda _path: None)
         counts = _counts(catalog)
         refused = _post(catalog, application, [documents[0]["id"]])
-        assert (
-            refused.status_code == 503
-            and refused.json()["code"] == "conversation_route_unavailable"
-        )
+        assert refused.status_code == 503
+        assert refused.json()["code"] == "conversation_route_unavailable"
         assert _counts(catalog) == counts
     assert _post(catalog, application, [], message="   ").status_code == 422
     assert _post(catalog, application, [], context_sha256="0" * 64).status_code == 409
     foreign = _post(catalog, application, [str(UUID(int=1))])
-    assert (
-        foreign.status_code == 422 and foreign.json()["code"] == "conversation_document_not_owned"
-    )
+    assert foreign.status_code == 422
+    assert foreign.json()["code"] == "conversation_document_not_owned"
     missing = {"document_id": documents[0]["id"], "section_key": "missing", "block_key": "missing"}
     selected = _post(catalog, application, [documents[0]["id"]], units=[missing])
     assert selected.status_code == 409 and selected.json()["code"] == "conversation_target_missing"

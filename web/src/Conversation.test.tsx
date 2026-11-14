@@ -144,15 +144,15 @@ describe('persistent local application conversation', () => {
     ]);
   });
 
-  it('selects saved documents and an optional stable unit, and clears the part when its document is deselected', async () => {
+  it.each(['letter', 'resume'])('preserves a selected %s part unless its own document is deselected', async selectedDocument => {
     const user = userEvent.setup(); const { get, send, Workspace } = fixture();
     get.mockResolvedValue(documentView); render(<Workspace />); const input = await ready();
     expect(screen.getByRole('checkbox', { name: 'Résumé' })).toBeChecked();
     expect(screen.getByRole('checkbox', { name: 'Cover letter' })).toBeChecked();
-    await user.selectOptions(screen.getByLabelText('Optional saved part'), JSON.stringify(['letter', unit.section_key, unit.block_key]));
+    await user.selectOptions(screen.getByLabelText('Optional saved part'), JSON.stringify([selectedDocument, unit.section_key, unit.block_key]));
     await user.click(screen.getByRole('checkbox', { name: 'Cover letter' }));
-    expect(screen.getByLabelText('Optional saved part')).toHaveValue('');
-    await user.selectOptions(screen.getByLabelText('Optional saved part'), JSON.stringify(Object.values(unit)));
+    expect(screen.getByLabelText('Optional saved part')).toHaveValue(selectedDocument === 'letter' ? '' : JSON.stringify(Object.values(unit)));
+    if (selectedDocument === 'letter') await user.selectOptions(screen.getByLabelText('Optional saved part'), JSON.stringify(Object.values(unit)));
     expect(screen.getByText('Saved résumé wording.')).toBeVisible();
     await user.type(input, 'Shorten this part.'); await user.click(screen.getByRole('button', { name: 'Send conversation message' }));
     await waitFor(() => expect(send).toHaveBeenCalledTimes(1));
