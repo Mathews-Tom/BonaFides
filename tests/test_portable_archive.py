@@ -42,7 +42,7 @@ def sample() -> tuple[Manifest, dict[str, bytes]]:
         source_owner_id=uuid4(),
         current_profile_revision_id=uuid4(),
         manifest_sha256="0" * 64,
-        records={table: [] for table in COLUMNS},
+        records={table: [] for table in COLUMNS if table != "document_conversation_turns"},
         blob_manifest=[
             BlobMember(
                 blob_id=uuid4(),

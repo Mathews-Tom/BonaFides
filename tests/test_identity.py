@@ -144,6 +144,7 @@ def identity(tmp_path: Path) -> Iterator[IdentityContext]:
                 "installation_controls",
                 "idempotency_records",
                 "action_approvals",
+                "document_conversation_turns",
                 "document_regeneration_proposals",
                 "document_drafts",
                 "match_assessments",

@@ -45,6 +45,7 @@ function fixture(document: DocumentRecord | null = saved, handler?: Handler, def
       if (method === 'GET') return remembered as T;
     }
     if (path === '/profile/base-resume' && method === 'GET') { if (document) return document as T; throw new ApiError(404, 'base_resume_not_found'); }
+    if (path.endsWith('/conversation') && method === 'GET') return { application_id: application.id, application_version: application.version, context_sha256: '2'.repeat(64), turns: [] } as T;
     if (handler) return await handler(path, method, body, version, key) as T;
     throw new ApiError(404, 'not_found');
   });
@@ -1536,5 +1537,47 @@ describe('all-current saved document archives', () => {
       expect(screen.queryByRole('button', { name: /Download all saved application PDFs/ })).not.toBeInTheDocument();
       expect(screen.getByLabelText('Tracked application')).toHaveValue(application.id);
     } finally { vi.useRealTimers(); }
+  });
+});
+
+describe('application conversation document isolation', () => {
+  it('retains drafts and dirty text across document switches, refresh and send, and invalidates reviewed generation context', async () => {
+    const user = userEvent.setup();
+    const letter: DocumentRecord = { ...tailored, id: 'conversation-letter', kind: 'cover_letter', current_revision: { ...tailored.current_revision, id: 'letter-revision' } };
+    const { api, request } = fixture(saved, async (path, method) => {
+      if (path === '/applications') return { items: [application], next_cursor: null };
+      if (path === '/applications/application-1/documents') return { ...pair, items: [tailored, letter] };
+      if (path === '/documents/conversation-letter') return letter;
+      if (path.startsWith('/applications/application-1/generation-context?')) return { ...context, generation_route: { ...route, status: 'qualified' } };
+      if (path === '/applications/application-1/conversation' && method === 'POST') return { turn: {
+        id: 'local-turn', application_id: application.id, created_at: '2026-11-14T12:00:00Z', request_text: 'Keep my review notes.',
+        reply: { text: 'Local guidance. No model was called.', declined: false, applied: [], skipped: [], tones: [], revisions: [] },
+        workflow_run_id: null, model_run_id: null, undone_at: null, historical: false,
+      }, application_version: 8, context_sha256: '3'.repeat(64) };
+      throw new ApiError(404, 'not_found');
+    });
+    render(<Documents archiveRecovery={archiveRecovery} api={api} profile={profile} />); await ready();
+    await user.click(screen.getByRole('button', { name: 'Tracked application documents' }));
+    await user.click(screen.getByRole('button', { name: 'Reload tracked applications' }));
+    await user.selectOptions(screen.getByLabelText('Tracked application'), application.id);
+    await waitFor(() => expect(screen.getByLabelText('Conversation message')).toBeEnabled());
+    await user.type(screen.getByLabelText('Conversation message'), 'Keep my review notes.');
+    await user.click(screen.getByRole('button', { name: 'Cover letter' }));
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Cover letter' })).toHaveAttribute('aria-pressed', 'true'));
+    expect(screen.getByLabelText('Conversation message')).toHaveValue('Keep my review notes.');
+    await user.click(screen.getByRole('button', { name: 'Preview reviewed generation context' }));
+    const confirm = await screen.findByRole('checkbox', { name: /I reviewed this exact projection/ });
+    await user.click(confirm); expect(confirm).toBeChecked();
+    fireEvent.change(screen.getByLabelText('Block text: b-1'), { target: { value: 'Keep this unsaved document text.' } });
+    await user.click(screen.getByRole('button', { name: 'Refresh conversation' }));
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Send conversation message' })).toBeEnabled());
+    expect(screen.getByLabelText('Conversation message')).toHaveValue('Keep my review notes.');
+    expect(screen.getByLabelText('Block text: b-1')).toHaveValue('Keep this unsaved document text.');
+    await user.click(screen.getByRole('button', { name: 'Send conversation message' }));
+    await waitFor(() => expect(screen.getByLabelText('Conversation message')).toHaveValue(''));
+    expect(screen.getByLabelText('Block text: b-1')).toHaveValue('Keep this unsaved document text.');
+    expect(screen.queryByRole('heading', { name: 'Exact minimized model projection' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('checkbox', { name: /I reviewed this exact projection/ })).not.toBeInTheDocument();
+    expect(request.mock.calls.filter(call => call[1] === 'POST').map(call => call[0])).toEqual(['/applications/application-1/conversation']);
   });
 });

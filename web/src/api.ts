@@ -230,6 +230,17 @@ export interface SectionRegenerationRequest {
   revision_id: string; content_sha256: string; section_key: string; tone: 'professional' | 'concise'; context_sha256: string;
 }
 export interface SectionProposalApplyRequest { revision_id: string; content_sha256: string; reason: string }
+export interface ConversationReply {
+  text: string; declined: boolean; applied: unknown[]; skipped: unknown[]; tones: unknown[]; revisions: unknown[];
+}
+export interface ConversationTurn {
+  id: string; application_id: string; created_at: string; request_text: string; reply: ConversationReply | null;
+  undone_at: string | null; workflow_run_id: string | null; model_run_id: string | null; historical: boolean;
+}
+export interface ApplicationConversation {
+  application_id: string; application_version: number; context_sha256: string; turns: ConversationTurn[];
+}
+export interface ConversationRequest { message: string; context_sha256: string }
 export interface BaseResumeRequest { profile_revision_id: string; template_version: string }
 export interface GenerationRequest extends BaseResumeRequest {
   requirements_revision_id: string; tone: 'professional' | 'concise'; language: 'en'; context_sha256: string;
@@ -366,6 +377,12 @@ export class Api {
   }
   dismissUpdate(version: string, signal?: AbortSignal): Promise<UpdateState> {
     return this.request('/operations/updates/dismiss', 'POST', { version }, undefined, false, signal);
+  }
+  getConversation(applicationId: string, signal?: AbortSignal): Promise<ApplicationConversation> {
+    return this.request(`/applications/${encodeURIComponent(applicationId)}/conversation`, 'GET', undefined, undefined, false, signal);
+  }
+  sendConversation(applicationId: string, body: ConversationRequest, version: number, key: string, signal?: AbortSignal): Promise<{ turn: ConversationTurn; application_version: number; context_sha256: string }> {
+    return this.request(`/applications/${encodeURIComponent(applicationId)}/conversation`, 'POST', body, version, key, signal);
   }
   async previewDocumentArchive(signal?: AbortSignal): Promise<DocumentArchivePreview> {
     return this.request<DocumentArchivePreview>('/document-archives/preview', 'GET', undefined, undefined, false, signal);

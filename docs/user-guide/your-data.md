@@ -4,7 +4,7 @@
 
 Everything you enter in BonaFides stays on the computer it's installed on:
 
-- Your profile, sources, postings, applications, notes, documents and PDFs are kept in Docker storage that belongs to your installation.
+- Your profile, sources, postings, applications, notes, saved conversation requests and replies, documents and PDFs are kept in Docker storage that belongs to your installation.
 - The installation folder (`~/bonafides` unless you chose another) holds its settings and the `secrets` folder.
 
 BonaFides has no online account, no cloud copy and no tracking. The developers can't see your data, and can't recover it for you.
@@ -38,9 +38,9 @@ You can download all your saved data as a single ZIP file. Use it as a personal 
 2. Select **Create owner-data export**.
 3. When the export appears under **Recent owner-data exports**, select **Download owner data**. (Select **Refresh exports and maintenance status** if it doesn't appear.)
 
-The export contains your profile and evidence history, postings, applications, notes, document versions and the files they refer to. It doesn't include unsaved text, your password or the installation's keys.
+The export contains your profile and evidence history, postings, applications, notes, saved conversation requests and replies, document versions and the files they refer to. It doesn't include unsaved text (including conversation drafts), your password or the installation's keys.
 
-New exports use workspace format 3, which also preserves publication metadata, scoped writing facts, profile ordering and historical pins. The exact source text and origin of owner-approved local Git and GitHub captures, including historical revisions, remain included. To bring a new export into another installation, that installation must support workspace format 3; readers supporting only formats 1 or 2 cannot import it. This installation accepts workspace formats 1, 2 and 3, including older workspace-1 and workspace-2 exports.
+New exports use workspace format 4, which adds saved application conversations to the publication metadata, scoped writing facts, profile ordering and historical pins preserved by format 3. The exact source text and origin of owner-approved local Git and GitHub captures, including historical revisions, remain included. The receiving installation must support workspace format 4; readers supporting only formats 1, 2 or 3 cannot import a new export. This installation accepts formats 1, 2, 3 and 4. Conversations imported from format 4 are reference-only history; older formats have no conversations.
 
 Keep in mind:
 
@@ -92,6 +92,7 @@ Until you have that set up, export your data regularly and keep a safe copy of y
 | What | Kept for |
 |---|---|
 | Saved profile, document and application versions | Until you delete them. Earlier versions are kept too. |
+| Saved application conversation requests and replies | Until the application or workspace is permanently deleted. Included in owner-data exports and encrypted installation backups; unsent drafts are not. |
 | Temporary task inputs, such as the context prepared for an AI model | Cleared by a daily cleanup once 24 hours have passed since the task finished. |
 | Rendered PDFs | Until you delete them, together with their document. |
 | Data exports | 24 hours, at most two at a time. |

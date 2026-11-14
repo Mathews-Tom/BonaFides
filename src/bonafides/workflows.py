@@ -148,6 +148,7 @@ def migrate(settings: MigrationConfig) -> None:
                 "005_installation_updates.up.sql",
                 "006_profile_breadth.up.sql",
                 "007_profile_portrait_lifetime.up.sql",
+                "008_document_conversations.up.sql",
             )
             if len(rows) != len(names):
                 raise RuntimeError("unsupported migration ledger")

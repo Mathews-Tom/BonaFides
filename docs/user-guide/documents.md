@@ -7,6 +7,16 @@ The **Documents** page has two workspaces, chosen with the buttons at the top:
 
 Both kinds go through the same steps: create, check, approve the exact version, then export a PDF.
 
+## Keep an application conversation
+
+In **Tracked application documents**, select a tracked application to open **Application conversation**. Enter a **Conversation message** (up to 2,000 characters after trimming), then select **Send conversation message**. Your request and the immediate local guidance are saved together, with the oldest requests first.
+
+**No model was called.** This conversation does not edit documents, change writing tone, submit applications or authorize AI. Your unsaved document text stays untouched; requests use saved context only.
+
+If sending fails, your message remains. Retrying an unchanged request recovers the same saved reply rather than creating a duplicate. If the saved context changed, select **Refresh conversation**, review the history, then send again explicitly. Refreshing does not discard your message or document edits.
+
+Unsent messages remain while you switch documents or applications in this open workspace, but are not saved across closing or reloading the page. Saved requests and replies remain with the application, appear in owner-data exports and installation backups, and are removed by the corresponding data deletion. Imported conversation history is reference-only; it cannot run an old task or change a document. Archived applications show a read-only conversation.
+
 ## Create a base résumé
 
 You need a profile with at least one supported entry (see [The one rule that matters most](profile.md#the-one-rule-that-matters-most)). An older single-statement entry whose complete phrase is not supported by its pinned source and excerpt may be left out; supported entries remain. If no usable entries remain, the build is refused and names the unsupported entries. It does not create an empty résumé or replace an existing document.
