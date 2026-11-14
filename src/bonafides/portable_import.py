@@ -28,7 +28,12 @@ from bonafides.portable_erasure import assert_checkpoint, erase_scope, orphan_in
 from bonafides.storage import BlobStore
 
 _HISTORY_RELATIONS = frozenset(
-    {"match_assessments", "document_revisions", "document_regeneration_proposals"}
+    {
+        "match_assessments",
+        "document_revisions",
+        "document_regeneration_proposals",
+        "document_conversation_turns",
+    }
 )
 
 
@@ -104,7 +109,7 @@ def _persist_records(conn: Connection, owner: UUID, archive: PortableArchive) ->
         if name == "model_run_provenance":
             continue
         rows: list[dict[str, JsonValue]] = []
-        for original in archive.manifest.records[name]:
+        for original in archive.manifest.records.get(name, []):
             row = {**original, "owner_id": str(owner)}
             if "acknowledged_by_owner_id" in row:
                 row["acknowledged_by_owner_id"] = str(owner)
@@ -115,6 +120,9 @@ def _persist_records(conn: Connection, owner: UUID, archive: PortableArchive) ->
             if name in _HISTORY_RELATIONS:
                 row["historical_model_run_id"] = row["model_run_id"]
                 row["model_run_id"] = None
+                if name == "document_conversation_turns":
+                    row["historical_workflow_run_id"] = row["workflow_run_id"]
+                    row["workflow_run_id"] = None
                 if name == "document_regeneration_proposals":
                     row["workflow_run_id"] = None
             rows.append(row)
@@ -123,6 +131,8 @@ def _persist_records(conn: Connection, owner: UUID, archive: PortableArchive) ->
         fields = list(columns)
         if name in _HISTORY_RELATIONS:
             fields.append("historical_model_run_id")
+        if name == "document_conversation_turns":
+            fields.append("historical_workflow_run_id")
         selected = ",".join(fields)
         # One bounded statement per family, not one round trip per domain row.
         conn.execute(

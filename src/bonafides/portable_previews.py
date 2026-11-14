@@ -184,6 +184,7 @@ def _counts(conn: Connection, owner: UUID, application: UUID | None) -> dict[str
             "attachments": ("application_attachments", "application_id=:application"),
             "appointments": ("appointments", "application_id=:application"),
             "documents": ("document_drafts", "application_id=:application"),
+            "conversation_turns": ("document_conversation_turns", "application_id=:application"),
         }
     else:
         relations = {
@@ -200,6 +201,7 @@ def _counts(conn: Connection, owner: UUID, application: UUID | None) -> dict[str
                 "appointments",
                 "document_drafts",
                 "document_revisions",
+                "document_conversation_turns",
                 "encrypted_credentials",
             )
         }

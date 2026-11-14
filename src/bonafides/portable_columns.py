@@ -357,6 +357,18 @@ COLUMNS: dict[str, tuple[str, ...]] = {
         "context_snapshot",
         "created_at",
     ),
+    "document_conversation_turns": (
+        "owner_id",
+        "id",
+        "application_id",
+        "created_at",
+        "request_text",
+        "context_snapshot",
+        "reply",
+        "workflow_run_id",
+        "model_run_id",
+        "undone_at",
+    ),
     "model_run_provenance": (
         "owner_id",
         "id",

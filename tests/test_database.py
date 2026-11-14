@@ -174,6 +174,15 @@ def test_baseline_upgrade_preserves_existing_profile_and_adds_capture_and_import
 ) -> None:
     config = MigrationSecret(pg_context.migrator.url.render_as_string(hide_password=False))
     with pg_context.migrator.begin() as conn:
+        conn.execute(text("DROP TABLE bonafides.document_conversation_turns"))
+        conn.execute(text("DROP FUNCTION bonafides.guard_document_conversation_turn()"))
+        conn.execute(
+            text("DROP FUNCTION bonafides.erase_portable_scope(uuid,uuid,bigint,uuid,jsonb,jsonb)")
+        )
+        conn.execute(
+            text("""ALTER FUNCTION bonafides.erase_portable_scope_records(uuid,uuid,bigint,uuid,jsonb,jsonb)
+            RENAME TO erase_portable_scope""")
+        )
         conn.execute(text("DROP TABLE bonafides.installation_updates"))
         conn.execute(
             text(

@@ -34,8 +34,9 @@ from bonafides.portable_workspace import (
 )
 from bonafides.portable_workspace import BlobMember as BlobMember
 from bonafides.portable_workspace_v2 import WorkspaceManifest as WorkspaceManifestV2
-from bonafides.portable_workspace_v3 import FORMAT_VERSION as WORKSPACE_VERSION
 from bonafides.portable_workspace_v3 import WorkspaceManifest as WorkspaceManifestV3
+from bonafides.portable_workspace_v4 import FORMAT_VERSION as WORKSPACE_VERSION
+from bonafides.portable_workspace_v4 import WorkspaceManifest as WorkspaceManifestV4
 from bonafides.problems import Problem
 
 MAX_MANIFEST_BYTES = 16 * 1024 * 1024
@@ -55,14 +56,18 @@ EXCLUSIONS = (
 # last pre-baseline build (commit 771776e). They're refused, like every unsupported
 # format, before any write.
 LEGACY_FORMAT = "bonafides-portable"
-# Readers stay bound to their published contracts; new exports select version 3.
-_WORKSPACE_READERS: dict[
-    int, type[WorkspaceManifest] | type[WorkspaceManifestV2] | type[WorkspaceManifestV3]
-] = {1: WorkspaceManifest, 2: WorkspaceManifestV2, WORKSPACE_VERSION: WorkspaceManifestV3}
+# Readers stay bound to their published contracts; new exports select version 4.
+Workspace = WorkspaceManifest | WorkspaceManifestV2 | WorkspaceManifestV3 | WorkspaceManifestV4
+_WORKSPACE_READERS: dict[int, type[Workspace]] = {
+    1: WorkspaceManifest,
+    2: WorkspaceManifestV2,
+    3: WorkspaceManifestV3,
+    WORKSPACE_VERSION: WorkspaceManifestV4,
+}
 SUPPORTED_FORMATS = frozenset((WORKSPACE_FORMAT, version) for version in _WORKSPACE_READERS)
-# The database schema whose portable rows the workspace sections carry. A migration
-# that changes exported columns changes this mapping, never the published contract.
+# Internal record views are independent of physical and published schemas.
 WORKSPACE_RECORD_SCHEMA = 1
+WORKSPACE_RECORD_SCHEMAS = {1: 1, 2: 1, 3: 1, 4: 2}
 _MEMBER = re.compile(r"blobs/[0-9a-f]{64}\Z")
 
 
@@ -78,7 +83,7 @@ class Manifest(ArchiveModel):
     """
 
     format: Literal["bonafides-workspace"]
-    format_version: Literal[1, 2, 3]
+    format_version: Literal[1, 2, 3, 4]
     source_schema_version: Annotated[int, Field(ge=1)]
     created_at: AwareDatetime
     source_namespace: UUID
@@ -112,18 +117,25 @@ class PortableArchive:
         self.close()
 
 
-def _workspace(manifest: Manifest) -> WorkspaceManifest | WorkspaceManifestV2 | WorkspaceManifestV3:
+def _workspace(manifest: Manifest) -> Workspace:
     """Group the record view into its published version, validating every row."""
     if (manifest.format, manifest.format_version) not in SUPPORTED_FORMATS or (
-        manifest.source_schema_version != WORKSPACE_RECORD_SCHEMA
+        manifest.source_schema_version != WORKSPACE_RECORD_SCHEMAS[manifest.format_version]
     ):
         raise ArchiveError("incompatible_portable_format")
     records = dict(manifest.records)
     sections: dict[str, dict[str, list[dict[str, JsonValue]]]] = {}
+    if manifest.format_version == 4 and "document_conversation_turns" not in records:
+        raise ArchiveError("incompatible_portable_schema")
+    turns = records.pop("document_conversation_turns", [])
+    if manifest.format_version < 4 and turns:
+        raise ArchiveError("incompatible_portable_schema")
     for section, tables in SECTION_TABLES.items():
         if not set(tables) <= records.keys():
             raise ArchiveError("incompatible_portable_schema")
         sections[section] = {table: records.pop(table) for table in tables}
+    if manifest.format_version == 4:
+        sections["documents"]["document_conversation_turns"] = turns
     if records:
         raise ArchiveError("incompatible_portable_schema")
     wire = manifest.model_dump(mode="json", exclude={"records", "source_schema_version"})
@@ -135,12 +147,12 @@ def _workspace(manifest: Manifest) -> WorkspaceManifest | WorkspaceManifestV2 | 
         raise ArchiveError("invalid_portable_manifest") from exc
 
 
-def _records(workspace: WorkspaceManifest | WorkspaceManifestV2 | WorkspaceManifestV3) -> Manifest:
+def _records(workspace: Workspace) -> Manifest:
     sections = workspace.sections.model_dump(mode="json")
     return Manifest(
         format=workspace.format,
         format_version=workspace.format_version,
-        source_schema_version=WORKSPACE_RECORD_SCHEMA,
+        source_schema_version=WORKSPACE_RECORD_SCHEMAS[workspace.format_version],
         created_at=workspace.created_at,
         source_namespace=workspace.source_namespace,
         source_owner_id=workspace.source_owner_id,
@@ -152,11 +164,11 @@ def _records(workspace: WorkspaceManifest | WorkspaceManifestV2 | WorkspaceManif
     )
 
 
-def _wire(manifest: Manifest) -> WorkspaceManifest | WorkspaceManifestV2 | WorkspaceManifestV3:
+def _wire(manifest: Manifest) -> Workspace:
     return _workspace(manifest)
 
 
-def _digest(wire: WorkspaceManifest | WorkspaceManifestV2 | WorkspaceManifestV3) -> str:
+def _digest(wire: Workspace) -> str:
     value = wire.model_dump(mode="json", exclude={"manifest_sha256"})
     return hashlib.sha256(canonical_json(value).encode()).hexdigest()
 

@@ -26,7 +26,7 @@ from bonafides.portable_archive import (
     MAX_BLOBS,
     MAX_MANIFEST_BYTES,
     MAX_RECORDS,
-    WORKSPACE_RECORD_SCHEMA,
+    WORKSPACE_RECORD_SCHEMAS,
     ArchiveError,
     BlobMember,
     Manifest,
@@ -36,7 +36,7 @@ from bonafides.portable_archive import (
 )
 from bonafides.portable_columns import COLUMNS
 from bonafides.portable_workspace import FORMAT as WORKSPACE_FORMAT
-from bonafides.portable_workspace_v3 import FORMAT_VERSION as WORKSPACE_VERSION
+from bonafides.portable_workspace_v4 import FORMAT_VERSION as WORKSPACE_VERSION
 from bonafides.profile_breadth import snapshot_claim_ids
 from bonafides.profile_entries import ClaimPayload, ClaimWrite, WritingFactPayload
 from bonafides.profile_identity import PortraitPin, validate_portrait
@@ -196,6 +196,7 @@ def _collect_owner_data(conn: Connection, blob_root: Path, owner_id: UUID) -> Po
             "match_assessments",
             "document_revisions",
             "document_regeneration_proposals",
+            "document_conversation_turns",
         }:
             fields = ",".join(
                 "COALESCE(model_run_id,historical_model_run_id) AS model_run_id"
@@ -205,7 +206,11 @@ def _collect_owner_data(conn: Connection, blob_root: Path, owner_id: UUID) -> Po
                     "FROM bonafides.portable_model_history h WHERE h.owner_id=:owner "
                     "AND h.id=historical_model_run_id)) AS workflow_run_id"
                     if name == "document_regeneration_proposals" and column == "workflow_run_id"
-                    else column
+                    else (
+                        "COALESCE(workflow_run_id,historical_workflow_run_id) AS workflow_run_id"
+                        if name == "document_conversation_turns" and column == "workflow_run_id"
+                        else column
+                    )
                 )
                 for column in columns
             )
@@ -306,7 +311,7 @@ def _collect_owner_data(conn: Connection, blob_root: Path, owner_id: UUID) -> Po
     manifest = Manifest(
         format=WORKSPACE_FORMAT,
         format_version=WORKSPACE_VERSION,
-        source_schema_version=WORKSPACE_RECORD_SCHEMA,
+        source_schema_version=WORKSPACE_RECORD_SCHEMAS[WORKSPACE_VERSION],
         created_at=datetime.now(UTC),
         source_namespace=namespace,
         source_owner_id=owner_id,
@@ -511,6 +516,152 @@ def _semantic_hashes(archive: PortableArchive) -> None:
         raise ArchiveError("invalid_portable_current_profile")
 
 
+def _conversation_history(records: Mapping[str, list[JsonRow]]) -> None:
+    """Resolve inert JSON pins only against this archive, never live owner data."""
+    documents = {cast(str, row["id"]): row for row in records["document_drafts"]}
+    revisions = {cast(str, row["id"]): row for row in records["document_revisions"]}
+    references = {
+        key: {cast(str, row["id"]) for row in records[table]}
+        for key, table in (
+            ("application_id", "applications"),
+            ("document_id", "document_drafts"),
+            ("before_revision_id", "document_revisions"),
+            ("after_revision_id", "document_revisions"),
+            ("profile_revision_id", "profile_revisions"),
+            ("current_profile_revision_id", "profile_revisions"),
+            ("requirements_revision_id", "posting_requirement_revisions"),
+            ("claim_revision_id", "claim_revisions"),
+            ("evidence_revision_id", "evidence_revisions"),
+        )
+    }
+
+    def check_references(value: JsonValue, application: JsonValue) -> None:
+        if isinstance(value, list):
+            for item in value:
+                check_references(item, application)
+        elif isinstance(value, dict):
+            for key, item in value.items():
+                singular = key[:-1] if key.endswith("_ids") else key
+                if singular in references and item is not None:
+                    identifiers = item if isinstance(item, list) else [item]
+                    if any(
+                        not isinstance(identifier, str) or identifier not in references[singular]
+                        for identifier in identifiers
+                    ):
+                        raise ValueError("conversation_reference_missing")
+                    if singular == "application_id" and any(
+                        identifier != application for identifier in identifiers
+                    ):
+                        raise ValueError("conversation_application_membership")
+                    if singular == "document_id" and any(
+                        documents[cast(str, identifier)]["application_id"] != application
+                        for identifier in identifiers
+                    ):
+                        raise ValueError("conversation_document_membership")
+                check_references(item, application)
+
+    def block(revision_id: str, edit: JsonRow) -> JsonValue:
+        revision = revisions[revision_id]
+        if revision["document_draft_id"] != edit["document_id"]:
+            raise ValueError("conversation_revision_membership")
+        body = parse_body(revision["body"])
+        return next(
+            item.model_dump(mode="json")
+            for section in body.sections
+            if section.key == edit["section_key"]
+            for item in section.blocks
+            if item.block_key == edit["block_key"]
+        )
+
+    workflows: dict[str, JsonValue] = {}
+    try:
+        for turn in records.get("document_conversation_turns", []):
+            snapshot = cast(JsonRow, turn["context_snapshot"])
+            if (
+                snapshot["application_id"] != turn["application_id"]
+                or snapshot["turn_id"] != turn["id"]
+                or snapshot["request_text"] != turn["request_text"]
+                or snapshot["mode"] != "document_conversation"
+                or snapshot["stage"] != "refine_documents"
+                or not isinstance(turn["request_text"], str)
+                or turn["request_text"].strip() != turn["request_text"]
+            ):
+                raise ValueError("conversation_context_mismatch")
+            check_references(snapshot, turn["application_id"])
+            workflow = turn["workflow_run_id"]
+            if (
+                isinstance(workflow, str)
+                and workflows.setdefault(workflow, turn["application_id"]) != turn["application_id"]
+            ):
+                raise ValueError("conversation_workflow_membership")
+            selected: dict[str, str] = {}
+            for item in cast(list[JsonRow], snapshot.get("documents", [])):
+                document_id = cast(str, item["document_id"])
+                revision = revisions[cast(str, item["revision_id"])]
+                if (
+                    document_id in selected
+                    or documents[document_id]["application_id"] != turn["application_id"]
+                    or revision["document_draft_id"] != document_id
+                    or any(
+                        item[key] != revision[key]
+                        for key in (
+                            "profile_revision_id",
+                            "body",
+                            "provenance_snapshot",
+                            "revision_no",
+                        )
+                        if key in item
+                    )
+                ):
+                    raise ValueError("conversation_document_membership")
+                selected[document_id] = cast(str, item["revision_id"])
+            for target in cast(list[JsonRow], snapshot.get("targets", [])):
+                document_id = cast(str, target["document_id"])
+                if (
+                    document_id not in selected
+                    or target["before"] != block(selected[document_id], target)
+                    or target["previous_sha256"] != content_hash(target["before"])
+                ):
+                    raise ValueError("conversation_target_membership")
+            reply = cast(JsonRow | None, turn["reply"])
+            if reply is None:
+                continue
+            check_references(reply, turn["application_id"])
+            if (
+                not isinstance(reply["text"], str)
+                or not 1 <= len(reply["text"]) <= 2000
+                or not isinstance(reply["declined"], bool)
+                or any(
+                    not isinstance(reply[key], list)
+                    for key in ("applied", "skipped", "tones", "revisions")
+                )
+                or (reply["declined"] and (reply["applied"] or reply["tones"]))
+            ):
+                raise ValueError("conversation_reply_shape")
+            pairs = {
+                cast(str, item["document_id"]): item
+                for item in cast(list[JsonRow], reply["revisions"])
+            }
+            if len(pairs) != len(cast(list[JsonValue], reply["revisions"])):
+                raise ValueError("conversation_duplicate_revision")
+            for document_id, pair in pairs.items():
+                if pair["before_revision_id"] != selected[document_id]:
+                    raise ValueError("conversation_revision_membership")
+                for key in ("before_revision_id", "after_revision_id"):
+                    if revisions[cast(str, pair[key])]["document_draft_id"] != document_id:
+                        raise ValueError("conversation_revision_membership")
+            for edit in cast(list[JsonRow], reply["applied"]):
+                pair = pairs[cast(str, edit["document_id"])]
+                for side in ("before", "after"):
+                    if edit[side] != block(cast(str, pair[side + "_revision_id"]), edit):
+                        raise ValueError("conversation_block_membership")
+            for tone in cast(list[JsonRow], reply["tones"]):
+                if tone["document_id"] not in selected:
+                    raise ValueError("conversation_tone_membership")
+    except (KeyError, TypeError, ValueError, StopIteration, ValidationError) as exc:
+        raise ArchiveError("invalid_portable_conversation") from exc
+
+
 def quarantine_records(conn: Connection, archive: PortableArchive) -> None:
     """Check actual SQL types, checks, unique keys and complete FK closure in temp tables.
 
@@ -520,10 +671,15 @@ def quarantine_records(conn: Connection, archive: PortableArchive) -> None:
     bonafides. Model provenance is historical data, never a fabricated ModelRun.
     """
     manifest = archive.manifest
-    if manifest.source_schema_version != WORKSPACE_RECORD_SCHEMA or set(manifest.records) != set(
-        COLUMNS
+    expected = set(COLUMNS)
+    if manifest.format_version < 4:
+        expected.remove("document_conversation_turns")
+    if (
+        manifest.source_schema_version != WORKSPACE_RECORD_SCHEMAS.get(manifest.format_version)
+        or set(manifest.records) != expected
     ):
         raise ArchiveError("incompatible_portable_schema")
+    _conversation_history(manifest.records)
     source = str(manifest.source_owner_id)
     prefix = "portable_" + uuid4().hex[:12] + "_"
     tables = {name: prefix + name for name in COLUMNS if name != "model_run_provenance"}
@@ -603,7 +759,7 @@ def quarantine_records(conn: Connection, archive: PortableArchive) -> None:
                     )
                 )
                 fields = ",".join(columns)
-                for row in manifest.records[name]:
+                for row in manifest.records.get(name, []):
                     _row_shape(row, columns, types)
                     if row["owner_id"] != source or (
                         "acknowledged_by_owner_id" in row
@@ -638,6 +794,7 @@ def quarantine_records(conn: Connection, archive: PortableArchive) -> None:
                                 "match_assessments",
                                 "document_revisions",
                                 "document_regeneration_proposals",
+                                "document_conversation_turns",
                             }
                             or edge["child_columns"] != ["owner_id", "historical_model_run_id"]
                             or edge["parent_columns"] != ["owner_id", "id"]
@@ -651,7 +808,7 @@ def quarantine_records(conn: Connection, archive: PortableArchive) -> None:
                             raise ArchiveError("unknown_portable_dependency")
                         continue
                     if parent == "model_runs":
-                        for row in manifest.records[name]:
+                        for row in manifest.records.get(name, []):
                             identifier = row.get("model_run_id")
                             if identifier is not None and (
                                 not isinstance(identifier, str) or identifier not in models

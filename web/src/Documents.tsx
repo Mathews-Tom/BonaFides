@@ -4,6 +4,7 @@ import { Api, ApiError, errorText, terminal, type ApplicationDocuments, type Bas
 import type { ApplicationPage, ApplicationSummary } from './tracking-api';
 import { copyBody, ISSUE_REASONS, issueAnchor, linkedClaim, rebaseBody, sameBody } from './document-state';
 import { proposalMatches, SectionProposals } from './SectionProposals';
+import { Conversation, type ConversationDraft } from './Conversation';
 import './Documents.css';
 
 export interface DocumentArchiveRecovery {
@@ -119,6 +120,8 @@ export function Documents({ api, profile, archiveRecovery, disabled = false, ext
   const [applications, setApplications] = useState<ApplicationSummary[]>([]);
   const [applicationCursor, setApplicationCursor] = useState<string | null>(null);
   const [applicationId, setApplicationId] = useState('');
+  const [conversationDrafts, setConversationDrafts] = useState<Record<string, ConversationDraft>>({});
+  const [conversationBusy, setConversationBusy] = useState(false);
   const [pair, setPair] = useState<ApplicationDocuments | null>(null);
   const [context, setContext] = useState<GenerationContext | null>(null);
   const [contextConfirmed, setContextConfirmed] = useState(false);
@@ -175,7 +178,7 @@ export function Documents({ api, profile, archiveRecovery, disabled = false, ext
   callbacks.current = { onDirtyChange, onBusyChange };
   const activeTask = !!workflow && !terminal(workflow.state);
   const dirty = buffer !== null || reconcile;
-  const locked = disabled || busy || activeTask;
+  const locked = disabled || busy || activeTask || conversationBusy;
   const current = useRef({ doc, buffer, dirty, disabled, profile, mode, applicationId, activeTask });
   current.current = { doc, buffer, dirty, disabled, profile, mode, applicationId, activeTask };
   const profileId = selectedProfile || profile?.current_revision.id || '';
@@ -190,13 +193,13 @@ export function Documents({ api, profile, archiveRecovery, disabled = false, ext
     return () => { mounted.current = false; for (const controller of pending) controller.abort(); callbacks.current.onDirtyChange?.(false); callbacks.current.onBusyChange?.(false); };
   }, []);
   useEffect(() => { callbacks.current.onDirtyChange?.(dirty); }, [dirty]);
-  useEffect(() => { callbacks.current.onBusyChange?.(busy || activeTask); }, [busy, activeTask]);
+  useEffect(() => { callbacks.current.onBusyChange?.(busy || activeTask || conversationBusy); }, [busy, activeTask, conversationBusy]);
   useEffect(() => { if (error) errorRef.current?.focus(); }, [error]);
   useEffect(() => {
-    if (!dirty && !busy && !activeTask) return;
+    if (!dirty && !busy && !activeTask && !conversationBusy) return;
     const prevent = (event: BeforeUnloadEvent) => { event.preventDefault(); event.returnValue = ''; };
     window.addEventListener('beforeunload', prevent); return () => window.removeEventListener('beforeunload', prevent);
-  }, [dirty, busy, activeTask]);
+  }, [dirty, busy, activeTask, conversationBusy]);
   useEffect(() => { setContext(null); setContextConfirmed(false); }, [profileId, profile?.version, template, tone, applicationId, initialPageTarget]);
   useEffect(() => {
     setSectionContext(null); setSectionConfirmed(false); setApplyConfirmed(false);
@@ -858,6 +861,7 @@ export function Documents({ api, profile, archiveRecovery, disabled = false, ext
         </>}
       </>}
     </fieldset>
+    {mode === 'tailored' && applicationId && <Conversation key={applicationId} api={api} applicationId={applicationId} disabled={disabled || busy || activeTask} archived={!!application?.archived_at} dirtyDocument={dirty} draft={conversationDrafts[applicationId] ?? { message: '' }} onDraft={draft => setConversationDrafts(previous => ({ ...previous, [applicationId]: draft }))} onBusy={setConversationBusy} onSaved={() => { setContext(null); setContextConfirmed(false); }} />}
     {workflow && <section className="task" aria-live="polite"><h3>Document task: {workflow.state.replaceAll('_', ' ')}</h3><p>Attempt {workflow.attempt}{workflow.max_attempts === undefined ? '' : ` of ${workflow.max_attempts}`}. No estimated progress percentage.</p><small>Task {workflow.id}</small>{workflow.next_attempt_at && <p>Next scheduled attempt: {workflow.next_attempt_at}</p>}
       {workflow.mode === 'document_archive' && <p>{workflow.progress ? `${workflow.progress.completed} of ${workflow.progress.total} documents rendered. A download is available only when the entire ZIP succeeds.` : 'Waiting for recorded document progress. No completed count is inferred.'}</p>}
       {workflow.mode === 'document_archive' && workflow.last_error_code && <p className="error">{archiveErrorText(new ApiError(409, workflow.last_error_code))} Failure code: {workflow.last_error_code}.</p>}

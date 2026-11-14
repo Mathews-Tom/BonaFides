@@ -864,6 +864,9 @@ def build_router(db: Database, settings: Settings) -> APIRouter:
     from bonafides.document_generation import install_routes
 
     install_routes(router, db, settings)
+    from bonafides.document_conversations import install_routes as conversation_routes
+
+    conversation_routes(router, db, settings)
     from bonafides.document_archives import build_router as archive_router
 
     router.include_router(archive_router(db, settings))

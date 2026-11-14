@@ -247,7 +247,7 @@ def test_capture_requires_exact_owner_approval_and_preserves_history(
         with identity.admin.transaction() as conn:
             conn.execute(text("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ"))
             archive = collect_owner_data(conn, identity.settings, owner)
-        assert archive.manifest.source_schema_version == 1
+        assert archive.manifest.source_schema_version == 2
         with identity.admin.transaction() as conn:
             quarantine_records(conn, archive)
         revisions = archive.manifest.records["evidence_revisions"]
