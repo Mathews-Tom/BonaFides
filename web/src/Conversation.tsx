@@ -4,7 +4,7 @@ import { Api, ApiError, errorText, type ApplicationConversation, type Conversati
 
 export interface ConversationDraft {
   message: string;
-  requestKey?: { fingerprint: string; key: string };
+  requestKey?: { body: ConversationRequest; version: number; key: string };
 }
 interface Props {
   api: Api; applicationId: string; disabled: boolean; archived: boolean; dirtyDocument: boolean;
@@ -41,7 +41,7 @@ export function Conversation({ api, applicationId, disabled, archived, dirtyDocu
       mounted.current = false; controller.abort(); active.current?.abort(); callbacks.current.onBusy(false);
     };
   }, [api, applicationId]);
-  async function run(action: (signal: AbortSignal) => Promise<void>) {
+  async function run(action: (signal: AbortSignal) => Promise<void>, sending = false) {
     if (lock.current) return;
     const controller = new AbortController();
     active.current = controller; lock.current = true; setBusy(true); callbacks.current.onBusy(true); setError('');
@@ -49,6 +49,9 @@ export function Conversation({ api, applicationId, disabled, archived, dirtyDocu
     catch (failure) {
       if (mounted.current && !controller.signal.aborted) {
         setError(failureText(failure));
+        if (sending && failure instanceof ApiError && failure.status >= 400 && failure.status < 500 &&
+            ![401, 403, 408, 429].includes(failure.status) && !(failure.status === 409 && failure.code === api.writeBlock))
+          callbacks.current.onDraft({ message: callbacks.current.draft.message });
         if (failure instanceof ApiError && (failure.status === 412 || failure.code === 'conversation_context_changed')) setStale(true);
       }
     } finally {
@@ -64,35 +67,32 @@ export function Conversation({ api, applicationId, disabled, archived, dirtyDocu
     });
   }
   const message = draft.message.trim();
+  const length = [...message].length;
   const locked = disabled || busy;
   function send() {
-    if (!view || locked || archived || stale || !message || message.length > 2000) return;
-    const body: ConversationRequest = { message, context_sha256: view.context_sha256 };
-    const fingerprint = JSON.stringify({ applicationId, body, version: view.application_version });
-    const saved = callbacks.current.draft.requestKey;
-    const intent = saved?.fingerprint === fingerprint ? saved : { fingerprint, key: crypto.randomUUID() };
+    if (!view || locked || archived || stale || (!draft.requestKey && (!message || length > 2000))) return;
+    const intent = callbacks.current.draft.requestKey ?? { body: { message, context_sha256: view.context_sha256 }, version: view.application_version, key: crypto.randomUUID() };
     callbacks.current.onDraft({ ...callbacks.current.draft, requestKey: intent });
-    const original = draft.message;
     void run(async signal => {
-      const { turn, application_version, context_sha256 } = await api.sendConversation(applicationId, body, view.application_version, intent.key, signal);
+      const { turn, application_version, context_sha256 } = await api.sendConversation(applicationId, intent.body, intent.version, intent.key, signal);
       if (signal.aborted) return;
-      setView(previous => previous ? { ...previous, application_version, context_sha256, turns: [...previous.turns.filter(item => item.id !== turn.id), turn] } : previous);
+      setView(previous => previous ? { ...previous, ...(application_version > previous.application_version ? { application_version, context_sha256 } : {}), turns: [...previous.turns.filter(item => item.id !== turn.id), turn] } : previous);
       callbacks.current.onSaved();
-      if (callbacks.current.draft.message === original) callbacks.current.onDraft({ message: '' });
+      callbacks.current.onDraft({ message: callbacks.current.draft.message.trim() === intent.body.message ? '' : callbacks.current.draft.message });
       setNotice('Local guidance saved. No model was called. No document changes were applied.');
-    });
+    }, true);
   }
   return <section className="section-proposals" aria-label="Application conversation">
     <h3>Application conversation</h3>
-    <p>Save a request and local guidance for this application. This panel cannot edit documents or call a model. Unsent requests stay only in this open workspace.</p>
+    <p>Save a request and local guidance for this application. This panel cannot edit documents or call a model. Unsent requests stay only in this open workspace. A pending request is retried before sending changed text.</p>
     {error && <p className="error" role="alert">{error}</p>}{notice && <p role="status">{notice}</p>}
     <button className="secondary" disabled={locked} onClick={refresh}>Refresh conversation</button>
     {dirtyDocument && <p>Your unsaved document text is retained. Conversation requests use saved context only.</p>}
     <fieldset disabled={locked || archived}><legend>Local conversation request</legend>
-      <label>Conversation message<textarea maxLength={2000} value={draft.message} onChange={event => onDraft({ ...draft, message: event.target.value })} /></label>
-      <p>{message.length} / 2000 characters after trimming.</p>
-      <button disabled={!view || stale || !message || message.length > 2000} onClick={send}>Send conversation message</button>
-      <button className="secondary" disabled={!draft.message} onClick={() => onDraft({ message: '' })}>Discard unsent message</button>
+      <label>Conversation message<textarea value={draft.message} onChange={event => onDraft({ ...draft, message: event.target.value })} /></label>
+      <p>{length} / 2000 characters after trimming.</p>
+      <button disabled={!view || stale || (!draft.requestKey && (!message || length > 2000))} onClick={send}>Send conversation message</button>
+      <button className="secondary" disabled={!draft.message} onClick={() => onDraft({ ...draft, message: '' })}>Discard unsent message</button>
     </fieldset>
     {archived && <p>Archived application conversation is read-only.</p>}
     {view && <ol aria-label="Saved conversation">{[...view.turns].sort((a, b) => a.created_at.localeCompare(b.created_at)).map(turn =>

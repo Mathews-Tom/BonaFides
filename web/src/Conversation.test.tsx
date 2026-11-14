@@ -58,11 +58,14 @@ describe('persistent local application conversation', () => {
   });
 
   it('retains the draft and exact idempotency key after an uncertain failure', async () => {
-    const user = userEvent.setup(); const { send, Workspace } = fixture();
-    send.mockRejectedValueOnce(new ApiError(503, 'conversation_unavailable'));
+    const user = userEvent.setup(); const { get, send, Workspace } = fixture();
+    send.mockRejectedValueOnce(new ApiError(502, 'conversation_unavailable'));
     render(<Workspace />); const input = await ready();
     await user.type(input, turn.request_text); await user.click(screen.getByRole('button', { name: 'Send conversation message' }));
     expect(await screen.findByRole('alert')).toHaveTextContent('conversation_unavailable'); expect(input).toHaveValue(turn.request_text);
+    get.mockResolvedValueOnce({ ...view, application_version: 8, context_sha256: 'b'.repeat(64), turns: [turn] });
+    await user.click(screen.getByRole('button', { name: 'Refresh conversation' }));
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Send conversation message' })).toBeEnabled());
     await user.click(screen.getByRole('button', { name: 'Send conversation message' }));
     await waitFor(() => expect(input).toHaveValue(''));
     expect(send.mock.calls[1]?.slice(0, 4)).toEqual(send.mock.calls[0]?.slice(0, 4));
@@ -89,12 +92,12 @@ describe('persistent local application conversation', () => {
   it('enforces trimmed nonempty messages and the 2,000 character maximum', async () => {
     const { send, Workspace } = fixture(); render(<Workspace />); const input = await ready();
     const button = screen.getByRole('button', { name: 'Send conversation message' });
-    expect(input).toHaveAttribute('maxlength', '2000');
+    expect(input).not.toHaveAttribute('maxlength');
     fireEvent.change(input, { target: { value: '   ' } }); expect(button).toBeDisabled();
-    fireEvent.change(input, { target: { value: 'x'.repeat(2001) } }); expect(button).toBeDisabled();
-    fireEvent.change(input, { target: { value: 'x'.repeat(2000) } }); expect(button).toBeEnabled();
+    fireEvent.change(input, { target: { value: 'x'.repeat(2000) + '😀' } }); expect(button).toBeDisabled();
+    fireEvent.change(input, { target: { value: 'x'.repeat(1999) + '😀' } }); expect(button).toBeEnabled();
     fireEvent.click(button); await waitFor(() => expect(send).toHaveBeenCalledTimes(1));
-    expect(send.mock.calls[0]?.[1].message).toHaveLength(2000);
+    expect([...(send.mock.calls[0]?.[1].message ?? '')]).toHaveLength(2000);
   });
 
   it('loads archived history read-only and recovers a failed load through explicit refresh', async () => {
