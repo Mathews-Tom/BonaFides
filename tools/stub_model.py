@@ -121,6 +121,9 @@ def _section(projection: dict[str, object]) -> dict[str, Any]:
 
 
 def _conversation(projection: dict[str, object], scenario: str) -> dict[str, Any]:
+    from bonafides.statement_check import connectives
+
+    phrases = connectives({})
     edits = []
     for target in _items(projection, "targets"):
         before = target["before"]
@@ -128,10 +131,22 @@ def _conversation(projection: dict[str, object], scenario: str) -> dict[str, Any
         replacement = dict(before)
         text = str(before["text"])
         replacement["text"] = text[:-1] if text.endswith(".") else text + "."
+        if before["claim_kind"] != "factual":
+            replacement["text"] = next(
+                phrase
+                for phrase, kind in phrases.items()
+                if kind == before["claim_kind"] and phrase != text
+            )
         if scenario == "absent-claim":
             replacement["claim_revision_ids"] = [ABSENT_CLAIM_ID]
         elif scenario in {"posting-only-skill", "inflated"}:
-            source = _items(projection, "base_contexts")[0]
+            shared = projection["shared"]
+            assert isinstance(shared, dict)
+            source = shared | next(
+                item
+                for item in _items(projection, "documents")
+                if item["document_id"] == target["document_id"]
+            )
             replacement["text"] = (
                 f"Hands-on experience with {_posting_only_term(source)}."
                 if scenario == "posting-only-skill"
@@ -218,7 +233,7 @@ def respond(scenario: str, request: dict[str, object]) -> dict[str, object]:
     projection: dict[str, object] = json.loads(messages[1]["content"])
     corrected = len(messages) == 3
     done_reason = "stop"
-    conversation = "base_contexts" in projection
+    conversation = "shared" in projection
     output = (
         _conversation(projection, scenario)
         if conversation

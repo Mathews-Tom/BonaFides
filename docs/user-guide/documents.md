@@ -9,11 +9,17 @@ Both kinds go through the same steps: create, check, approve the exact version, 
 
 ## Keep an application conversation
 
-In **Tracked application documents**, select a tracked application to open **Application conversation**. Enter a **Conversation message** (up to 2,000 characters after trimming), then select **Send conversation message**. Your request and the immediate local guidance are saved together, with the oldest requests first.
+In **Tracked application documents**, select a tracked application to open **Application conversation**. Enter a **Conversation message** (up to 2,000 characters after trimming), then select **Send conversation message**. Your request is saved immediately, with the oldest requests first.
 
-**No model was called.** This conversation does not edit documents, change writing tone, submit applications or authorize AI. Your unsaved document text stays untouched; requests use saved context only.
+With no document selected, **no model is called** and the saved-context guidance changes nothing. To request checked edits, select a saved résumé, cover letter, or both; optionally select individual passages. Leave passages unselected to include all eligible nonempty passages in those documents. Sending requires a separately qualified `refine_documents` model route. Requests use saved context, not unsaved editor text, and never submit an application.
 
 If sending fails, your message remains. Retrying an unchanged request recovers the same saved reply rather than creating a duplicate. If the saved context changed, select **Refresh conversation**, review the history, then send again explicitly. Refreshing does not discard your message or document edits.
+
+The task runs in the background; use **Refresh conversation** to see its current status and reply. Only one refinement can be unfinished per application. Replies disclose applied passages, skipped targets and tone changes. A passage you changed or removed while the task ran is skipped, never overwritten or recreated; other unchanged targets may still be saved together. Refusals and already-satisfied requests can finish without edits. New revisions still need your factual review before export. Refreshing saved documents does not replace unsaved editor text.
+
+Use **Undo this reply’s document edits** to reverse a completed live reply's exact wording, source annotations and affected tone together, without a model call. If any affected passage or tone has changed or disappeared, nothing is reversed. A reply can be undone only once; local guidance, no-change replies and imported history cannot be undone. Undo creates new revisions rather than rewriting history.
+
+The model receives eligible frozen passages and their permitted professional sources, plus the newest completed model exchanges that fit, presented oldest first (at most nine previous turns and your current request). Space is reserved for one corrective retry. Local-guidance messages and replies stay out of model history. Oversized requests are refused before a task starts. Owner-authored citations and private printed details are not editable targets. Private notes, contacts and portraits are excluded; confidential or employer-owned evidence is withheld. Your own message is sent to the model, so do not put private information in it. Requests are limited to two saved documents and 256 passages.
 
 Unsent messages remain while you switch documents or applications in this open workspace, but are not saved across closing or reloading the page. Saved requests and replies remain with the application, appear in owner-data exports and installation backups, and are removed by the corresponding data deletion. Imported conversation history is reference-only; it cannot run an old task or change a document. Archived applications show a read-only conversation.
 

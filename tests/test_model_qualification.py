@@ -597,7 +597,6 @@ def test_refinement_protocol_and_pinned_projection() -> None:
     from pydantic import ValidationError
 
     from bonafides.conversation_protocol import ConversationReply
-    from bonafides.model_projections import refinement_projection
 
     cases, _ = qualification.load_cases(DATASET, "refine_documents")
     case = cases[1]
@@ -620,21 +619,43 @@ def test_refinement_protocol_and_pinned_projection() -> None:
     turns: list[dict[str, object]] = [
         {"request_text": str(index), "reply_text": "Supported."} for index in range(14)
     ]
-    projected = refinement_projection(
-        cast(list[dict[str, object]], case["base_contexts"]),
-        str(case["request"]),
-        turns,
-        cast(list[dict[str, object]], case["targets"]),
-    )
+    projected = qualification.projection({**case, "turns": turns}, "refine_documents")
     assert projected["turns"] == turns[-9:]
-    assert len(cast(list[object], projected["base_contexts"])) == 2
-    polluted = copy.deepcopy(projected)
-    cast(list[dict[str, object]], polluted["base_contexts"])[0]["private_notes"] = "PRIVATE"
+    parts = cast(list[dict[str, object]], projected["documents"])
+    frozen = cast(list[dict[str, object]], case["documents"])
+    assert parts == [{"document_id": doc["document_id"]} for doc in frozen]
+    assert "base_contexts" not in projected
+    varied = copy.deepcopy(case)
+    cast(list[dict[str, object]], varied["base_contexts"])[1]["tone"] = "professional"
+    mixed = qualification.projection(varied, "refine_documents")
+    assert "tone" not in cast(dict[str, object], mixed["shared"])
+    tones = [part["tone"] for part in cast(list[dict[str, object]], mixed["documents"])]
+    assert tones == ["concise", "professional"]
+    for destination in (cast(dict[str, object], projected["shared"]), *parts):
+        destination["private_notes"] = "PRIVATE"
+        with pytest.raises(local_model.ModelFailure, match="model_context_invalid"):
+            local_model.refinement_context(projected)
+        del destination["private_notes"]
+    separated = copy.deepcopy(projected)
+    shared = cast(dict[str, object], separated["shared"])
+    documents = cast(list[dict[str, object]], separated["documents"])
+    documents[0]["claims"] = shared.pop("claims")
+    documents[1]["claims"] = []
     with pytest.raises(local_model.ModelFailure, match="model_context_invalid"):
-        local_model.refinement_context(polluted)
+        local_model.refinement_context(separated)
     target["previous_sha256"] = "0" * 64
     with pytest.raises(local_model.ModelFailure, match="model_context_invalid"):
         qualification.projection(case, "refine_documents")
+
+
+def test_refinement_prompt_change_requires_common_route_requalification(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    old = qualified_route(tmp_path, route_data("http://127.0.0.1:1"))
+    monkeypatch.setitem(local_model.PROMPT_VERSIONS, "refine_documents", "ol-refine-documents-v1")
+    route = local_model.load_route(tmp_path / "route.json")
+    assert route is not None and route.capability_sha256 != old.capability_sha256
+    assert not any(route.qualified_for(stage) for stage in local_model.PROMPT_VERSIONS)
 
 
 @pytest.mark.parametrize("corrected", [False, True])

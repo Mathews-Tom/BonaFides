@@ -624,6 +624,10 @@ def _conversation_history(records: Mapping[str, list[JsonRow]]) -> None:
                 ):
                     raise ValueError("conversation_target_membership")
             reply = cast(JsonRow | None, turn["reply"])
+            if turn["undone_at"] is not None and (
+                reply is None or not (reply["applied"] or reply["tones"])
+            ):
+                raise ValueError("conversation_undo_without_changes")
             if reply is None:
                 continue
             check_references(reply, turn["application_id"])
@@ -645,7 +649,9 @@ def _conversation_history(records: Mapping[str, list[JsonRow]]) -> None:
             if len(pairs) != len(cast(list[JsonValue], reply["revisions"])):
                 raise ValueError("conversation_duplicate_revision")
             for document_id, pair in pairs.items():
-                if pair["before_revision_id"] != selected[document_id]:
+                if cast(
+                    int, revisions[cast(str, pair["before_revision_id"])]["revision_no"]
+                ) < cast(int, revisions[selected[document_id]]["revision_no"]):
                     raise ValueError("conversation_revision_membership")
                 for key in ("before_revision_id", "after_revision_id"):
                     if revisions[cast(str, pair[key])]["document_draft_id"] != document_id:

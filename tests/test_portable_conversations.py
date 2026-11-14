@@ -26,6 +26,8 @@ from test_suitability import _profile
 from test_task_retention import _model
 
 from bonafides.commands import canonical_json
+from bonafides.document_generation import revision_digest
+from bonafides.documents import parse_body
 from bonafides.import_parser import ImportParserClient
 from bonafides.installation_control import InstallationMaintenance
 from bonafides.portable_archive import ArchiveError, PortableArchive
@@ -211,6 +213,57 @@ def _history(
                 "undone_at": None,
             }
         )
+    tone_revision = deepcopy(revisions[before_id])
+    tone_revision["id"] = str(uuid4())
+    tone_revision["revision_no"] = 1 + max(
+        row["revision_no"]
+        for row in revisions.values()
+        if row["document_draft_id"] == document["id"]
+    )
+    tone_revision["provenance_snapshot"]["tone"] = "concise"
+    tone_revision["content_sha256"] = revision_digest(
+        parse_body(tone_revision["body"]),
+        tone_revision["template_version"],
+        tone_revision["provenance_snapshot"],
+    )
+    records["document_revisions"].append(tone_revision)
+    original = records["document_conversation_turns"][0]
+    for state in ("applied", "skipped", "tone", "tone_undone"):
+        turn = deepcopy(original)
+        turn["id"] = str(uuid4())
+        turn["context_snapshot"] = {**snapshot, "turn_id": turn["id"]}
+        observation = _historical_model(archive)
+        model = cast(dict[str, JsonValue], observation["record"])
+        model["task_kind"] = "refine_documents"
+        records["model_run_provenance"].append(observation)
+        turn.update(workflow_run_id=model["workflow_run_id"], model_run_id=model["id"])
+        turn["undone_at"] = original["undone_at"] if state == "tone_undone" else None
+        reply = cast(dict[str, JsonValue], turn["reply"])
+        if state == "skipped":
+            reply.update(
+                applied=[],
+                revisions=[],
+                skipped=[
+                    {
+                        **{key: target[key] for key in ("document_id", "section_key", "block_key")},
+                        "reason": "changed_since_request",
+                    }
+                ],
+            )
+        elif state.startswith("tone"):
+            revision = cast(list[dict[str, JsonValue]], reply["revisions"])[0]
+            revision["after_revision_id"] = tone_revision["id"]
+            reply.update(
+                applied=[],
+                tones=[
+                    {
+                        "document_id": document["id"],
+                        "before": revisions[before_id]["provenance_snapshot"]["tone"],
+                        "after": "concise",
+                    }
+                ],
+            )
+        records["document_conversation_turns"].append(turn)
     records["document_conversation_turns"].extend(local_turns)
     return _digest(archive)
 
@@ -226,6 +279,21 @@ def test_complete_conversation_history_imports_inert_and_reexports_exactly(
     workspace: bool,
 ) -> None:
     archive = _history(catalog, monkeypatch, tmp_path)
+    assert archive.manifest.format_version == 4
+    assert archive.manifest.source_schema_version == 2
+    replies = [
+        cast(dict[str, JsonValue], turn["reply"])
+        for turn in archive.manifest.records["document_conversation_turns"]
+        if turn["reply"] is not None
+    ]
+    assert any(reply["applied"] for reply in replies)
+    assert any(reply["skipped"] and not reply["applied"] for reply in replies)
+    assert any(reply["tones"] and not reply["applied"] for reply in replies)
+    assert any(
+        turn["undone_at"] and cast(dict[str, JsonValue], turn["reply"])["tones"]
+        for turn in archive.manifest.records["document_conversation_turns"]
+        if turn["reply"] is not None
+    )
     source_owner = uuid4()
     for rows in archive.manifest.records.values():
         for row in rows:
@@ -276,12 +344,32 @@ def test_complete_conversation_history_imports_inert_and_reexports_exactly(
         )
         assert all(row["workflow_run_id"] is None and row["model_run_id"] is None for row in stored)
         assert any(row["historical_model_run_id"] and row["undone_at"] for row in stored)
+        by_id = {row["id"]: row for row in restored.manifest.records["document_conversation_turns"]}
+        for turn in archive.manifest.records["document_conversation_turns"]:
+            assert by_id[turn["id"]]["undone_at"] == turn["undone_at"]
     login = _login(catalog.identity, catalog.client)
     assert login.status_code == 201, login.text
     catalog.csrf = login.json()["csrf_token"]
     application_id = archive.manifest.records["applications"][0]["id"]
     path = f"/api/v1/applications/{application_id}"
     current = catalog.client.get(path + "/conversation").json()
+    assert all(not turn["can_undo"] for turn in current["turns"])
+    historical = next(
+        turn
+        for turn in current["turns"]
+        if turn["historical"]
+        and not turn["undone_at"]
+        and turn["reply"]
+        and turn["reply"]["applied"]
+    )
+    before = _domain_rows(catalog)
+    denied = catalog.client.post(
+        path + f"/conversation/turns/{historical['id']}/undo",
+        json={},
+        headers=catalog.headers(current["application_version"]),
+    )
+    assert denied.status_code == 409 and denied.json()["code"] == "conversation_not_undoable"
+    assert _domain_rows(catalog) == before
     headers = catalog.headers(current["application_version"])
     response = catalog.client.post(
         path + "/conversation",
@@ -353,6 +441,7 @@ def test_complete_conversation_history_imports_inert_and_reexports_exactly(
         "reply",
         "declined",
         "undone",
+        "undone_pending",
         "duplicate_revision",
     ],
 )
@@ -393,6 +482,9 @@ def test_invalid_conversation_references_leave_live_workspace_unchanged(
         reply["declined"] = True
     elif damage == "undone":
         reply["applied"] = []
+    elif damage == "undone_pending":
+        turn["reply"] = None
+        turn["model_run_id"] = None
     else:
         reply["revisions"].append(deepcopy(reply["revisions"][0]))
     before = _snapshot(catalog)
@@ -447,7 +539,13 @@ def test_conversation_database_rejects_cross_owner_application_and_history_rewri
             conn.execute(insert, {**parameters, "historical": historical})
             conn.execute(publish, parameters)
         assert getattr(denied.value.orig, "sqlstate", None) == "55000"
-    for turn in archive.manifest.records["document_conversation_turns"][:2]:
+    turns = archive.manifest.records["document_conversation_turns"]
+    tone_turn = next(
+        turn
+        for turn in turns
+        if turn["reply"] and cast(dict[str, JsonValue], turn["reply"])["tones"]
+    )
+    for turn in [*turns[:2], tone_turn]:
         parameters.update(
             id=turn["id"],
             request=turn["request_text"],
@@ -465,8 +563,9 @@ def test_conversation_database_rejects_cross_owner_application_and_history_rewri
         with catalog.runtime.transaction() as conn:
             conn.execute(insert, parameters)
             conn.execute(publish, parameters)
-        applied = cast(dict[str, JsonValue], turn["reply"])["applied"]
-        if applied:
+        reply = cast(dict[str, JsonValue], turn["reply"])
+        changed = reply["applied"] or reply["tones"]
+        if changed:
             with catalog.runtime.transaction() as conn:
                 conn.execute(
                     text("""UPDATE bonafides.document_conversation_turns SET undone_at=clock_timestamp()
@@ -479,7 +578,7 @@ def test_conversation_database_rejects_cross_owner_application_and_history_rewri
             "model_run_id=NULL",
             "reply=jsonb_set(reply,'{text}','\"changed\"')",
             "context_snapshot='{}'::jsonb",
-            "undone_at=NULL" if applied else "undone_at=clock_timestamp()",
+            "undone_at=NULL" if changed else "undone_at=clock_timestamp()",
         ):
             with pytest.raises(DBAPIError), catalog.runtime.transaction() as conn:
                 conn.execute(

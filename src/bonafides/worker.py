@@ -125,7 +125,7 @@ class Worker:
                         publish(
                             conn, task, lambda active: publish_base(active, task, self.settings)
                         )
-                elif mode in {"tailored_ai", "section_regeneration"}:
+                elif mode in {"tailored_ai", "section_regeneration", "document_conversation"}:
                     suitability.execute_model(self.db, self.settings, task, interrupted)
                 elif mode == "page_fit":
                     from bonafides.print_fitting import execute_fit

@@ -58,12 +58,14 @@ def regeneration_projection(
     evidence: list[dict[str, object]],
     tone: str,
     language: str,
-    target: dict[str, object],
+    target: dict[str, object] | None,
 ) -> dict[str, object]:
     """Preserve the historical posting and validate the complete target-only wire."""
     projection = _projection(
         posting, posting["description_text"], requirements, claims, evidence, tone, language
     )
+    if target is None:
+        return projection
     projection["target"] = target
     return local_model.section_projection(projection)
 
@@ -74,18 +76,25 @@ def refinement_projection(
     turns: list[dict[str, object]],
     targets: list[dict[str, object]],
 ) -> dict[str, object]:
-    """Reuse minimized source builders; send nine completed turns plus this request."""
+    """Share identical professional sources across the selected documents."""
     sources = [
-        {
-            key: value
-            for key, value in local_model.section_projection(context).items()
-            if key != "target"
-        }
+        {key: value for key, value in context.items() if key != "target"}
         for context in base_contexts
     ]
+    if not sources:
+        raise local_model.ModelFailure("model_context_invalid")
+    shared = {
+        key: value
+        for key, value in sources[0].items()
+        if key != "document_id" and all(source.get(key) == value for source in sources)
+    }
     return local_model.refinement_context(
         {
-            "base_contexts": sources,
+            "shared": shared,
+            "documents": [
+                {key: value for key, value in source.items() if key not in shared}
+                for source in sources
+            ],
             "request": request,
             "turns": turns[-9:],
             "targets": targets,

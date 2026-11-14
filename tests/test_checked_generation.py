@@ -413,7 +413,9 @@ def test_output_limit_keeps_route_qualified_and_next_pair_succeeds(
 
     documents = _pair_documents(catalog, application)
     assert len(documents["items"]) == 2
-    assert documents["claim_json_rates"] == {
+    rates = documents["claim_json_rates"]
+    assert rates.pop("refine_documents") == rates["regenerate_section"]
+    assert rates == {
         "generate_documents": {
             "valid_first": 1,
             "valid_after_correction": 0,

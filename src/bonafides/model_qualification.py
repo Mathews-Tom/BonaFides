@@ -56,7 +56,6 @@ def load_cases(directory: Path, stage: str) -> tuple[list[dict[str, object]], st
                 "expected",
             }:
                 raise ValueError("qualification_case_invalid")
-            projection(case, stage)
             if not isinstance(case["id"], str) or not case["id"].strip():
                 raise ValueError("qualification_case_invalid")
             expected = case["expected"]
@@ -86,9 +85,10 @@ def load_cases(directory: Path, stage: str) -> tuple[list[dict[str, object]], st
                     for block in section.blocks
                     if block.block_key == target["block_key"]
                 ]
-                # Projection already binds the digest to before; bind before to the frozen unit.
+                # Also bind each selected unit to its exact frozen document body.
                 if len(blocks) != 1 or blocks[0].model_dump(mode="json") != target["before"]:
                     raise ValueError("qualification_case_invalid")
+            projection(case, stage)
             cases.append(case)
             continue
         if stage == "structure_import":
@@ -158,7 +158,14 @@ def load_cases(directory: Path, stage: str) -> tuple[list[dict[str, object]], st
 def projection(case: dict[str, object], stage: str) -> dict[str, object]:
     if stage == "refine_documents":
         return model_projections.refinement_projection(
-            cast(list[dict[str, object]], case["base_contexts"]),
+            [
+                {**context, "document_id": document["document_id"]}
+                for context, document in zip(
+                    cast(list[dict[str, object]], case["base_contexts"]),
+                    cast(list[dict[str, object]], case["documents"]),
+                    strict=True,
+                )
+            ],
             cast(str, case["request"]),
             cast(list[dict[str, object]], case["turns"]),
             cast(list[dict[str, object]], case["targets"]),

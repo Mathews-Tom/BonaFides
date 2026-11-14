@@ -444,7 +444,7 @@ def claim_json_rates(
             "failed_before_check": 0,
             "rate_percent": None,
         }
-        for stage in ("generate_documents", "regenerate_section")
+        for stage in sorted(suitability.CHECKED_STAGES)
     }
     if identity is None:
         return counts
@@ -454,7 +454,7 @@ def claim_json_rates(
             row_number() OVER (PARTITION BY m.workflow_run_id ORDER BY m.created_at DESC,m.id DESC) AS latest,
             bool_or(coalesce(m.metadata->>'corrective_retry','')='true') OVER (PARTITION BY m.workflow_run_id) AS corrected
             FROM bonafides.model_runs m
-            WHERE m.owner_id=:owner AND m.task_kind IN ('generate_documents','regenerate_section')
+            WHERE m.owner_id=:owner AND m.task_kind = ANY(:stages)
             AND m.parameters->'route_identity'=CAST(:identity AS jsonb))
         SELECT task_kind,
         count(*) FILTER (WHERE valid AND NOT corrected) AS valid_first,
@@ -468,7 +468,7 @@ def claim_json_rates(
             coalesce(metadata->>'error_code','')='model_output_limit' AS output_limited
             FROM runs WHERE latest=1 AND status NOT IN ('reserved','running')) finished
         GROUP BY task_kind"""),
-        {"owner": owner, "identity": canonical_json(identity)},
+        {"owner": owner, "identity": canonical_json(identity), "stages": list(counts)},
     ).mappings()
     for row in rows:
         valid = int(row["valid_first"]) + int(row["valid_after_correction"])
