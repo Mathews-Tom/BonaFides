@@ -71,7 +71,12 @@ def route_file(tmp_path: Path, data: dict[str, object]) -> Path:
 def fixture_receipt(
     capability_sha256: str, *, stage: str = "generate_documents", **overrides: object
 ) -> dict[str, object]:
-    if stage not in ("generate_documents", "regenerate_section", "structure_import"):
+    if stage not in (
+        "generate_documents",
+        "regenerate_section",
+        "refine_documents",
+        "structure_import",
+    ):
         return {
             "status": "passed",
             "capability_sha256": capability_sha256,

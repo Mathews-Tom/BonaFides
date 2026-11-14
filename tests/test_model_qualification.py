@@ -568,3 +568,237 @@ def test_import_dataset_requires_exactly_twenty_cases(tmp_path: Path, count: int
     )
     with pytest.raises(ValueError, match="qualification_case_count_invalid"):
         qualification.load_cases(tmp_path, "structure_import")
+
+
+def refinement_output(case: dict[str, object]) -> dict[str, object]:
+    expected = cast(dict[str, object], case["expected"])
+    edits = []
+    for target in cast(list[dict[str, object]], case["targets"]):
+        before = cast(dict[str, object], target["before"])
+        text = str(before["text"])
+        edits.append(
+            {
+                key: target[key]
+                for key in ("document_id", "section_key", "block_key", "previous_sha256")
+            }
+            | {"replacement": {**before, "text": text[:-1] if text.endswith(".") else text + "."}}
+        )
+    return {
+        "schema_version": "1",
+        "stage": "refine_documents",
+        "reply_text": "Reviewed.",
+        "declined": expected["declined"],
+        "tone": None,
+        "edits": edits if expected["minimum_edits"] else [],
+    }
+
+
+def test_refinement_protocol_and_pinned_projection() -> None:
+    from pydantic import ValidationError
+
+    from bonafides.conversation_protocol import ConversationReply
+    from bonafides.model_projections import refinement_projection
+
+    cases, _ = qualification.load_cases(DATASET, "refine_documents")
+    case = cases[1]
+    output = refinement_output(case)
+    output["edits"] = [*cast(list[object], output["edits"])] * 2
+    reply = ConversationReply.model_validate_json(canonical_json(output))
+    assert len(reply.edits) == 2
+    for field, value in (("schema_version", "2"), ("declined", True), ("reply_text", " ")):
+        with pytest.raises(ValidationError):
+            ConversationReply.model_validate_json(canonical_json({**output, field: value}))
+    target = cast(list[dict[str, object]], case["targets"])[0]
+    replacement = {**cast(dict[str, object], target["before"]), "block_key": "different"}
+    edit = {
+        key: target[key] for key in ("document_id", "section_key", "block_key", "previous_sha256")
+    }
+    with pytest.raises(ValidationError):
+        ConversationReply.model_validate_json(
+            canonical_json({**output, "edits": [{**edit, "replacement": replacement}]})
+        )
+    turns: list[dict[str, object]] = [
+        {"request_text": str(index), "reply_text": "Supported."} for index in range(14)
+    ]
+    projected = refinement_projection(
+        cast(list[dict[str, object]], case["base_contexts"]),
+        str(case["request"]),
+        turns,
+        cast(list[dict[str, object]], case["targets"]),
+    )
+    assert projected["turns"] == turns[-9:]
+    assert len(cast(list[object], projected["base_contexts"])) == 2
+    polluted = copy.deepcopy(projected)
+    cast(list[dict[str, object]], polluted["base_contexts"])[0]["private_notes"] = "PRIVATE"
+    with pytest.raises(local_model.ModelFailure, match="model_context_invalid"):
+        local_model.refinement_context(polluted)
+    target["previous_sha256"] = "0" * 64
+    with pytest.raises(local_model.ModelFailure, match="model_context_invalid"):
+        qualification.projection(case, "refine_documents")
+
+
+@pytest.mark.parametrize("corrected", [False, True])
+def test_packaged_refinement_cases_fit_installed_transport_budget(
+    tmp_path: Path, corrected: bool
+) -> None:
+    from test_local_model import fixture_server, response_body
+
+    cases, sha = qualification.load_cases(DATASET, "refine_documents")
+    responses = [
+        response_body(message={"role": "assistant", "content": canonical_json(output)})
+        for case in cases
+        for output in (
+            ({"schema_version": "1", "stage": "refine_documents"}, refinement_output(case))
+            if corrected
+            else (refinement_output(case),)
+        )
+    ]
+    with fixture_server(responses) as (endpoint, requests):
+        data = route_data(endpoint)
+        data.update(
+            context_window=32768,
+            max_input_tokens=12000,
+            max_output_tokens=6000,
+            framing_token_overhead=2048,
+        )
+        route = local_model.load_route(route_file(tmp_path, data))
+        assert route is not None
+        receipt = qualification.qualify(route, "refine_documents", cases, sha, "synthetic-only")
+    assert receipt["status"] == "passed"
+    assert receipt["counts"] == {
+        "valid_first": 0 if corrected else 20,
+        "valid_after_correction": 20 if corrected else 0,
+        "invalid_after_correction": 0,
+        "failed_before_check": 0,
+    }
+    assert receipt["usable_statement_rate_per_mille"] == 1000
+    assert len(requests) == (40 if corrected else 20)
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        "document_id",
+        "section_key",
+        "block_key",
+        "before",
+        "duplicate_document",
+        "noncanonical_id",
+        "nonstring_id",
+    ],
+)
+def test_refinement_dataset_binds_targets_to_frozen_units(tmp_path: Path, mutation: str) -> None:
+    cases, _ = qualification.load_cases(DATASET, "refine_documents")
+    target = cast(list[dict[str, object]], cases[0]["targets"])[0]
+    frozen = cast(list[dict[str, object]], cases[0]["documents"])
+    document = next(item for item in frozen if item["document_id"] == target["document_id"])
+    if mutation in {"document_id", "section_key"}:
+        target[mutation] = str(UUID(int=999)) if mutation == "document_id" else "missing-section"
+    elif mutation == "duplicate_document":
+        frozen.append(copy.deepcopy(document))
+    elif mutation == "nonstring_id":
+        document["document_id"] = 123
+    elif mutation == "noncanonical_id":
+        original_id = target["document_id"]
+        document["document_id"] = "AAAAAAAA-AAAA-4AAA-8AAA-AAAAAAAAAAAA"
+        for item in cast(list[dict[str, object]], cases[0]["targets"]):
+            if item["document_id"] == original_id:
+                item["document_id"] = document["document_id"]
+    else:
+        body = cast(dict[str, object], document["body"])
+        section = next(
+            item
+            for item in cast(list[dict[str, object]], body["sections"])
+            if item["key"] == target["section_key"]
+        )
+        block = next(
+            item
+            for item in cast(list[dict[str, object]], section["blocks"])
+            if item["block_key"] == target["block_key"]
+        )
+        block["block_key" if mutation == "block_key" else "text"] = "changed-frozen-unit"
+    (tmp_path / "refine_documents.jsonl").write_text(
+        "\n".join(canonical_json(case) for case in cases) + "\n"
+    )
+    with pytest.raises(ValueError, match="qualification_case_invalid"):
+        qualification.load_cases(tmp_path, "refine_documents")
+
+
+@pytest.mark.parametrize("unknown_field", ["document_id", "section_key", "block_key"])
+def test_refinement_qualification_checks_changes_refusal_and_single_correction(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, unknown_field: str
+) -> None:
+    cases, sha = qualification.load_cases(DATASET, "refine_documents")
+    route = local_model.load_route(route_file(tmp_path, route_data("http://127.0.0.1:11434")))
+    assert route is not None
+    calls = 0
+
+    def call(self: local_model.OllamaClient, *args: object) -> local_model.ModelResult:
+        nonlocal calls
+        calls += 1
+        context = cast(dict[str, object], args[1])
+        case = next(item for item in cases if item["request"] == context["request"])
+        if args[4] is None:
+            return local_model.ModelResult({}, {})
+        output = refinement_output(case)
+        edits = cast(list[dict[str, object]], output["edits"])
+        if not output["declined"]:
+            target = cast(list[dict[str, object]], case["targets"])[0]
+            unknown = {
+                key: target[key]
+                for key in ("document_id", "section_key", "block_key", "previous_sha256")
+            } | {"replacement": copy.deepcopy(target["before"])}
+            unknown[unknown_field] = (
+                str(UUID(int=999)) if unknown_field == "document_id" else "unselected"
+            )
+            replacement = cast(dict[str, object], unknown["replacement"])
+            replacement["block_key"] = unknown["block_key"]
+            replacement["text"] = "Invented unsupported achievement."
+            replacement["claim_revision_ids"] = (
+                cast(list[object], replacement["claim_revision_ids"]) * 2
+            )
+            edits.append(unknown)
+        return local_model.ModelResult(output, {})
+
+    monkeypatch.setattr(local_model.OllamaClient, "call", call)
+    receipt = qualification.qualify(route, "refine_documents", cases, sha, "synthetic-only")
+    assert receipt["status"] == "passed"
+    assert receipt["counts"] == {
+        "valid_first": 0,
+        "valid_after_correction": 20,
+        "invalid_after_correction": 0,
+        "failed_before_check": 0,
+    }
+    assert calls == 40
+    assert receipt["usable_statement_rate_per_mille"] == 1000
+    unchanged = refinement_output(cases[0])
+    unchanged["edits"] = []
+    with pytest.raises(model_calls.OutputMismatch):
+        qualification.checked_refinement(unchanged, cases[0])
+    unsafe = refinement_output(cases[0])
+    edit = cast(list[dict[str, object]], unsafe["edits"])[0]
+    cast(dict[str, object], edit["replacement"])["text"] = "Led a fabricated department."
+    with pytest.raises(model_calls.OutputMismatch):
+        qualification.checked_refinement(unsafe, cases[0])
+    no_change = next(
+        case
+        for case in cases
+        if cast(dict[str, object], case["expected"]) == {"declined": False, "minimum_edits": 0}
+    )
+    toned = refinement_output(no_change)
+    toned["tone"] = "concise"
+    with pytest.raises(model_calls.OutputMismatch):
+        qualification.checked_refinement(toned, no_change)
+
+
+def test_regeneration_receipt_cannot_qualify_refinement(tmp_path: Path) -> None:
+    data = route_data("http://127.0.0.1:11434")
+    route = local_model.load_route(route_file(tmp_path, data))
+    assert route is not None
+    data["qualification_receipts"] = {
+        "regenerate_section": fixture_receipt(route.capability_sha256, stage="regenerate_section")
+    }
+    route = local_model.load_route(route_file(tmp_path, data))
+    assert route is not None and route.qualified_for("regenerate_section")
+    assert not route.qualified_for("refine_documents")
+    assert route.receipt_details()["refine_documents"]["qualified"] is False

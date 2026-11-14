@@ -186,6 +186,10 @@ def test_process_exit_without_new_receipt_is_not_a_completed_result(
         ("structure_import", "passed", 0, "formatting"),
         ("regenerate_section", "failed", 1, "replacement"),
         ("regenerate_section", "failed", 1, "formatting"),
+        ("refine_documents", "passed", 0, "first"),
+        ("refine_documents", "failed", 1, "replacement"),
+        ("refine_documents", "passed", 0, "formatting"),
+        ("refine_documents", "passed", 0, "other_stage"),
         ("generate_documents", "passed", 0, "other_stage"),
     ],
 )
