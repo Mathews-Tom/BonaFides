@@ -9,11 +9,13 @@ from pathlib import Path
 from uuid import UUID, uuid4
 
 import pytest
+from alembic import command as alembic_command
+from alembic.config import Config
 from sqlalchemy import Connection, Engine, create_engine, text
 from sqlalchemy.engine import make_url
 from sqlalchemy.exc import DBAPIError
 
-from bonafides.commands import command
+from bonafides.commands import canonical_json, command
 from bonafides.db import (
     BASELINE_SHA256,
     SUPPORTED_MIGRATIONS,
@@ -222,6 +224,67 @@ def test_baseline_upgrade_preserves_existing_profile_and_adds_capture_and_import
             WHERE conrelid='bonafides.evidence_revisions'::regclass AND conname='evidence_revisions_origin_check'""")
         ).scalar_one()
         assert "evidence_capture" in constraint
+
+
+@pytest.mark.postgres
+def test_conversation_tone_undo_upgrade_preserves_history_checks(pg_context: PGContext) -> None:
+    with pg_context.migrator.begin() as conn:
+        checks = text("""SELECT conname,pg_get_constraintdef(oid) FROM pg_catalog.pg_constraint
+            WHERE conrelid='bonafides.document_conversation_turns'::regclass AND contype='c'
+            ORDER BY conname""")
+        current_checks = conn.execute(checks).all()
+        guard_query = text(
+            "SELECT pg_get_functiondef('bonafides.guard_document_conversation_turn()'::regprocedure)"
+        )
+        guard = conn.execute(guard_query).scalar_one()
+        conn.execute(
+            text("""ALTER TABLE bonafides.document_conversation_turns
+                DROP CONSTRAINT document_conversation_turns_undo_check,
+                ADD CHECK (undone_at IS NULL OR
+                    (reply IS NOT NULL AND jsonb_array_length(reply->'applied')>0))""")
+        )
+        conn.execute(text("DELETE FROM bonafides.schema_migrations WHERE version=9"))
+        conn.execute(
+            text(
+                "UPDATE bonafides_migrations.alembic_version SET version_num='0008_document_conversations'"
+            )
+        )
+        config = Config("alembic.ini")
+        config.attributes["connection"] = conn
+        alembic_command.upgrade(config, "head")
+        assert conn.execute(checks).all() == current_checks
+        assert conn.execute(
+            text("""SELECT pg_get_functiondef('bonafides.guard_document_conversation_turn()'::regprocedure),
+                source_sha256,(SELECT current_revision_id FROM bonafides.profiles WHERE owner_id=:owner)
+                FROM bonafides.schema_migrations WHERE version=9"""),
+            {"owner": pg_context.owner_id},
+        ).one() == (guard, SUPPORTED_MIGRATIONS[9], pg_context.revision_id)
+        undo_check = next(
+            row[1] for row in current_checks if row[0] == "document_conversation_turns_undo_check"
+        )
+        conn.execute(
+            text(
+                "CREATE TEMP TABLE conversation_undo_probe "
+                f"(reply jsonb,undone_at timestamptz,{undo_check}) ON COMMIT DROP"
+            )
+        )
+        cases: tuple[tuple[object, object, bool, bool], ...] = (
+            ([{}], [], False, True),
+            ([], [{}], False, True),
+            ([{}], [{}], False, True),
+            ([], [], False, False),
+            ([], [], True, False),
+        )
+        for applied, tones, declined, allowed in cases:
+            reply = canonical_json({"declined": declined, "applied": applied, "tones": tones})
+            insert = text("""INSERT INTO conversation_undo_probe (reply,undone_at)
+                VALUES(CAST(:reply AS jsonb),clock_timestamp())""")
+            if allowed:
+                conn.execute(insert, {"reply": reply})
+            else:
+                with pytest.raises(DBAPIError) as denied, conn.begin_nested():
+                    conn.execute(insert, {"reply": reply})
+                assert getattr(denied.value.orig, "sqlstate", None) == "23514"
 
 
 @pytest.mark.parametrize(

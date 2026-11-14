@@ -4,6 +4,8 @@
 The script builds revision 0001 in one empty PostgreSQL 18 database, dumps its
 schema with the server's own ``pg_dump`` inside the database container, normalises
 the dump and compares it with the historical reference byte for byte.
+This is a baseline-only proof; additive migrations (including conversation undo
+in 0009) are covered by database upgrade tests, not this frozen reference.
 
 Normalisation removes only what is not schema, or what differs between two dumps of
 the same schema:

@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: MIT OR Apache-2.0
+from typing import cast
 from uuid import UUID, uuid4
 
 import pytest
@@ -384,3 +385,39 @@ def test_archive_progress_is_current_fence_owned_and_survives_input_retention(
         cancel_workflow(conn, current.owner_id, current.id)
     with pytest.raises(DBAPIError), pg_context.runtime.begin() as conn:
         _progress(conn, current, 1, 3)
+
+
+@pytest.mark.postgres
+def test_conversation_model_attempts_and_expired_lease_block_republication(
+    pg_context: PGContext,
+) -> None:
+    with pg_context.runtime.begin() as conn:
+        identifier = enqueue(
+            conn,
+            pg_context.owner_id,
+            "document_generate",
+            {
+                "mode": "document_conversation",
+                "stage": "refine_documents",
+                "request_text": "Keep my request.",
+            },
+        )
+        queued = get_workflow(conn, pg_context.owner_id, identifier)
+        assert queued["max_attempts"] == 2
+        assert queued["mode"] == "document_conversation"
+        assert cast(dict[str, object], queued["usage"])["inference_post_limit"] == 2
+    task = _claim(pg_context)
+    with pg_context.migrator.begin() as conn:
+        conn.execute(
+            text("""UPDATE bonafides.workflow_runs SET model_network_attempts=2
+            WHERE owner_id=:owner AND id=:id"""),
+            {"owner": pg_context.owner_id, "id": identifier},
+        )
+    _expire(pg_context, task)
+    with pg_context.runtime.begin() as conn:
+        current = get_workflow(conn, pg_context.owner_id, identifier)
+        assert current["state"] == "permanent_failure"
+        assert current["last_error_code"] == "model_attempts_exhausted"
+        assert claim(conn, uuid4()) is None
+        with pytest.raises(DBAPIError), conn.begin_nested():
+            publish(conn, task, lambda _active: {"unexpected": "published"})

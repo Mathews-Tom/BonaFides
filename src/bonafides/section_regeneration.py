@@ -75,7 +75,13 @@ def _target(conn: Connection, owner: UUID, document: UUID) -> RowMapping:
 
 
 def _source_context(
-    conn: Connection, owner: UUID, document: UUID, section_key: str, tone: str
+    conn: Connection,
+    owner: UUID,
+    document: UUID,
+    section_key: str,
+    tone: str,
+    *,
+    refinement: bool = False,
 ) -> tuple[RowMapping, dict[str, object], dict[str, object]]:
     """Recheck eligibility, but never rebase historical professional/frame pins."""
     row = _target(conn, owner, document)
@@ -96,13 +102,14 @@ def _source_context(
     # The historical parent, not today's expanded profile, is the complete fact boundary.
     if facts != provenance.get("facts"):
         raise Problem(409, "document_source_changed")
-    permitted_claims = {str(fact["claim_revision_id"]) for fact in facts}
-    permitted_evidence = {str(fact["evidence_revision_id"]) for fact in facts}
-    for block in selected.blocks:
-        if {str(value) for value in block.claim_revision_ids} - permitted_claims or {
-            str(value) for value in block.evidence_revision_ids
-        } - permitted_evidence:
-            raise Problem(409, "document_source_changed")
+    if not refinement:
+        permitted_claims = {str(fact["claim_revision_id"]) for fact in facts}
+        permitted_evidence = {str(fact["evidence_revision_id"]) for fact in facts}
+        for block in selected.blocks:
+            if {str(value) for value in block.claim_revision_ids} - permitted_claims or {
+                str(value) for value in block.evidence_revision_ids
+            } - permitted_evidence:
+                raise Problem(409, "document_source_changed")
     if template_digest(str(row["template_version"])) != provenance.get("template_sha256"):
         raise Problem(409, "stale_regeneration_context")
     if provenance.get("policy_version") != generation.POLICY:
@@ -144,7 +151,9 @@ def _source_context(
             evidence,
             tone,
             cast(str, provenance.get("language", "en")),
-            {
+            None
+            if refinement
+            else {
                 "kind": row["kind"],
                 "section_key": selected.key,
                 "heading": selected.heading,

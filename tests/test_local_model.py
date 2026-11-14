@@ -1507,7 +1507,9 @@ def test_qualification_execution_is_explicit_and_stage_scoped(tmp_path: Path) ->
         assert not route.qualified_for("regenerate_section")
 
 
-@pytest.mark.parametrize("correction", [None, ["items: invalid_source_classification"]])
+@pytest.mark.parametrize(
+    "correction", [None, ["items: invalid_source_classification"], ["x" * 120] * 12]
+)
 def test_import_full_wire_limit_refuses_before_transport(
     tmp_path: Path, correction: list[str] | None
 ) -> None:

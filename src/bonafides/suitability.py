@@ -37,7 +37,7 @@ from bonafides.problems import Problem
 from bonafides.workflows import Claim, assert_fence, enqueue, publish
 
 # Stages whose claim-structured output gets one corrective call on a schema mismatch.
-CHECKED_STAGES = frozenset({"generate_documents", "regenerate_section"})
+CHECKED_STAGES = frozenset({"generate_documents", "regenerate_section", "refine_documents"})
 
 POLICY_VERSION = "ol-suitability-policy-v2"
 TEMPLATE_VERSION = "ol-suitability-review-v1"
@@ -1137,6 +1137,8 @@ def _check_workflow_context(
     if task.kind == "document_generate":
         if task.input.get("mode") == "section_regeneration":
             from bonafides.section_regeneration import check_context
+        elif task.input.get("mode") == "document_conversation":
+            from bonafides.document_conversations import check_context
         else:
             from bonafides.document_generation import check_context
 
@@ -1393,6 +1395,12 @@ def _execute_reserved_model(
                     from bonafides.section_regeneration import candidate_validator
 
                     validate_section = candidate_validator(conn, task)
+                elif stage == "refine_documents":
+                    from bonafides.document_conversations import (
+                        candidate_validator as reply_validator,
+                    )
+
+                    validate_reply = reply_validator(conn, task)
             if active_route.identity() != task.input.get("route_identity"):
                 raise Problem(409, "stale_model_route")
             if interrupted.is_set():
@@ -1415,6 +1423,12 @@ def _execute_reserved_model(
             elif stage == "regenerate_section":
                 section_candidate, result = _checked_call(
                     db, settings, task, interrupted, client, active_route, runs, validate_section
+                )
+                run_id = runs[-1]
+                output_valid = True
+            elif stage == "refine_documents":
+                reply, result = _checked_call(
+                    db, settings, task, interrupted, client, active_route, runs, validate_reply
                 )
                 run_id = runs[-1]
                 output_valid = True
@@ -1456,6 +1470,8 @@ def _execute_reserved_model(
                 proposal = pair.model_dump(mode="json")
             elif stage == "regenerate_section":
                 proposal = section_candidate.model_dump(mode="json")
+            elif stage == "refine_documents":
+                proposal = reply.model_dump(mode="json")
             elif stage == "structure_import":
                 proposal = dict(labels)
             else:
@@ -1517,6 +1533,11 @@ def _execute_reserved_model(
                     return publish_proposal(
                         active, task, settings, section_candidate, run_id, result.metadata
                     )
+                if stage == "refine_documents":
+                    from bonafides.document_conversations import publish_reply
+
+                    assert run_id is not None
+                    return publish_reply(active, task, reply, run_id, settings)
                 if stage == "structure_import":
                     from bonafides.imports import publish_structured
 

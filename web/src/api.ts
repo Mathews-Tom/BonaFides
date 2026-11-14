@@ -130,7 +130,7 @@ export interface DocumentArchivePreview {
 }
 export interface DocumentArchiveRequest { manifest_sha256: string }
 export interface Workflow {
-  id: string; version: number; state: WorkflowState; attempt: number; kind?: string; mode?: 'deterministic_base' | 'tailored_ai' | 'section_regeneration' | 'page_fit' | 'document_archive' | 'evidence_capture';
+  id: string; version: number; state: WorkflowState; attempt: number; kind?: string; mode?: 'deterministic_base' | 'tailored_ai' | 'section_regeneration' | 'document_conversation' | 'page_fit' | 'document_archive' | 'evidence_capture';
   progress?: { completed: number; total: number };
   max_attempts: number; next_attempt_at: string | null; last_error_code: string | null;
   created_at: string; updated_at: string; deadline_at: string; cancel_requested_at: string | null;
@@ -230,17 +230,27 @@ export interface SectionRegenerationRequest {
   revision_id: string; content_sha256: string; section_key: string; tone: 'professional' | 'concise'; context_sha256: string;
 }
 export interface SectionProposalApplyRequest { revision_id: string; content_sha256: string; reason: string }
+export interface ConversationUnit { document_id: string; section_key: string; block_key: string }
+export interface ConversationDocument {
+  document_id: string; kind: DocumentKind; revision_id: string; version: number; tone: 'professional' | 'concise';
+  units: (ConversationUnit & { heading: string; text: string; previous_sha256: string })[];
+}
 export interface ConversationReply {
-  text: string; declined: boolean; applied: unknown[]; skipped: unknown[]; tones: unknown[]; revisions: unknown[];
+  text: string; declined: boolean; revisions: unknown[];
+  applied: (ConversationUnit & { before: DocumentBlock; after: DocumentBlock })[];
+  skipped: (ConversationUnit & { reason: string })[];
+  tones: { document_id: string; before: string; after: string }[];
 }
 export interface ConversationTurn {
   id: string; application_id: string; created_at: string; request_text: string; reply: ConversationReply | null;
   undone_at: string | null; workflow_run_id: string | null; model_run_id: string | null; historical: boolean;
+  workflow_state: WorkflowState | null; can_undo: boolean;
 }
 export interface ApplicationConversation {
   application_id: string; application_version: number; context_sha256: string; turns: ConversationTurn[];
+  documents: ConversationDocument[]; active_workflow_id: string | null; route_status: GenerationRoute;
 }
-export interface ConversationRequest { message: string; context_sha256: string }
+export interface ConversationRequest { message: string; context_sha256: string; document_ids?: string[]; units?: ConversationUnit[] }
 export interface BaseResumeRequest { profile_revision_id: string; template_version: string }
 export interface GenerationRequest extends BaseResumeRequest {
   requirements_revision_id: string; tone: 'professional' | 'concise'; language: 'en'; context_sha256: string;
@@ -381,8 +391,11 @@ export class Api {
   getConversation(applicationId: string, signal?: AbortSignal): Promise<ApplicationConversation> {
     return this.request(`/applications/${encodeURIComponent(applicationId)}/conversation`, 'GET', undefined, undefined, false, signal);
   }
-  sendConversation(applicationId: string, body: ConversationRequest, version: number, key: string, signal?: AbortSignal): Promise<{ turn: ConversationTurn; application_version: number; context_sha256: string }> {
+  sendConversation(applicationId: string, body: ConversationRequest, version: number, key: string, signal?: AbortSignal): Promise<{ turn: ConversationTurn; workflow: Workflow | null; application_version: number; context_sha256: string }> {
     return this.request(`/applications/${encodeURIComponent(applicationId)}/conversation`, 'POST', body, version, key, signal);
+  }
+  undoConversation(applicationId: string, turnId: string, version: number, key: string, signal?: AbortSignal): Promise<{ turn: ConversationTurn }> {
+    return this.request(`/applications/${encodeURIComponent(applicationId)}/conversation/turns/${encodeURIComponent(turnId)}/undo`, 'POST', {}, version, key, signal);
   }
   async previewDocumentArchive(signal?: AbortSignal): Promise<DocumentArchivePreview> {
     return this.request<DocumentArchivePreview>('/document-archives/preview', 'GET', undefined, undefined, false, signal);

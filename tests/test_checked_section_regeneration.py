@@ -42,7 +42,7 @@ from test_suitability import _after_model_send
 from tools import stub_model
 from tools.stub_model import ABSENT_CLAIM_ID, StubModel
 
-STUB_STAGES = ("generate_documents", "regenerate_section")
+STUB_STAGES = ("generate_documents", "regenerate_section", "refine_documents")
 
 
 @contextmanager
@@ -84,9 +84,11 @@ def _proposal_count(context: SourceContext, document: dict[str, Any]) -> int:
 
 
 def _rates(context: SourceContext, application: dict[str, Any]) -> dict[str, dict[str, Any]]:
-    return cast(
+    rates = cast(
         dict[str, dict[str, Any]], _pair_documents(context, application)["claim_json_rates"]
     )
+    assert rates.pop("refine_documents") == _counts()
+    return rates
 
 
 def _counts(

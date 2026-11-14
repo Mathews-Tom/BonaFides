@@ -45,7 +45,7 @@ function fixture(document: DocumentRecord | null = saved, handler?: Handler, def
       if (method === 'GET') return remembered as T;
     }
     if (path === '/profile/base-resume' && method === 'GET') { if (document) return document as T; throw new ApiError(404, 'base_resume_not_found'); }
-    if (path.endsWith('/conversation') && method === 'GET') return { application_id: application.id, application_version: application.version, context_sha256: '2'.repeat(64), turns: [] } as T;
+    if (path.endsWith('/conversation') && method === 'GET') return { application_id: application.id, application_version: application.version, context_sha256: '2'.repeat(64), turns: [], documents: [], active_workflow_id: null, route_status: route } as T;
     if (handler) return await handler(path, method, body, version, key) as T;
     throw new ApiError(404, 'not_found');
   });
@@ -1552,8 +1552,8 @@ describe('application conversation document isolation', () => {
       if (path === '/applications/application-1/conversation' && method === 'POST') return { turn: {
         id: 'local-turn', application_id: application.id, created_at: '2026-11-14T12:00:00Z', request_text: 'Keep my review notes.',
         reply: { text: 'Local guidance. No model was called.', declined: false, applied: [], skipped: [], tones: [], revisions: [] },
-        workflow_run_id: null, model_run_id: null, undone_at: null, historical: false,
-      }, application_version: 8, context_sha256: '3'.repeat(64) };
+        workflow_run_id: null, model_run_id: null, undone_at: null, historical: false, workflow_state: null, can_undo: false,
+      }, workflow: null, application_version: 8, context_sha256: '3'.repeat(64) };
       throw new ApiError(404, 'not_found');
     });
     render(<Documents archiveRecovery={archiveRecovery} api={api} profile={profile} />); await ready();
@@ -1579,5 +1579,10 @@ describe('application conversation document isolation', () => {
     expect(screen.queryByRole('heading', { name: 'Exact minimized model projection' })).not.toBeInTheDocument();
     expect(screen.queryByRole('checkbox', { name: /I reviewed this exact projection/ })).not.toBeInTheDocument();
     expect(request.mock.calls.filter(call => call[1] === 'POST').map(call => call[0])).toEqual(['/applications/application-1/conversation']);
+    const pairReads = request.mock.calls.filter(call => call[0] === '/applications/application-1/documents').length;
+    await user.click(screen.getByRole('button', { name: 'Refresh saved documents for comparison' }));
+    expect(await screen.findByRole('heading', { name: /Current server document revision/ })).toBeVisible();
+    expect(screen.getByLabelText('Block text: b-1')).toHaveValue('Keep this unsaved document text.');
+    expect(request.mock.calls.filter(call => call[0] === '/applications/application-1/documents')).toHaveLength(pairReads + 1);
   });
 });

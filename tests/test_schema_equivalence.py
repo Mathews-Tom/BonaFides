@@ -119,3 +119,19 @@ def test_reference_injected_difference_in_committed_dump_reports_diff() -> None:
 
     assert compare(reference, reference) == []
     assert compare(reference, altered)
+
+
+def test_normalise_does_not_hide_the_additive_tone_undo_constraint_change() -> None:
+    undo = """
+-- Name: document_conversation_turns undo_check; Type: CHECK CONSTRAINT; Schema: bonafides; Owner: bonafides_migrator
+ALTER TABLE bonafides.document_conversation_turns
+    ADD CONSTRAINT undo_check CHECK (undone_at IS NULL OR
+        (reply IS NOT NULL AND jsonb_array_length(reply->'applied')>0));
+"""
+    broadened = undo.replace(
+        "jsonb_array_length(reply->'applied')>0",
+        "(jsonb_array_length(reply->'applied')>0 OR jsonb_array_length(reply->'tones')>0)",
+    )
+    difference = compare(normalise(DUMP + undo), normalise(DUMP + broadened))
+    assert difference
+    assert any("tones" in line for line in difference)
