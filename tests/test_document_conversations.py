@@ -27,9 +27,13 @@ from test_tracking import _application, _get, _write
 from bonafides import document_generation as generation
 from bonafides import local_model, suitability
 from bonafides.document_conversations import _local_reply, context_view
+from bonafides.document_frame import PrintableFrame, template_digest
+from bonafides.documents import parse_body
 from bonafides.import_parser import ImportParserClient
+from bonafides.letter_frame import closing_for, parts
 from bonafides.portable_previews import _counts as deletion_counts
 from bonafides.problems import Problem
+from bonafides.render_service import render_html
 from bonafides.workflows import Claim, cancel_workflow, fail
 from tools.stub_model import respond
 
@@ -834,3 +838,256 @@ def test_actual_refinement_projection_excludes_private_and_withheld_content(
         for source in sources
         for item in source["evidence"]
     )
+
+
+def _frame_save(
+    context: SourceContext, document: dict[str, Any], status: int = 200, /, **changes: str
+) -> dict[str, Any]:
+    revision = document["current_revision"]
+    frame = parts(
+        revision["provenance_snapshot"]["frame"],
+        revision["provenance_snapshot"]["tone"],
+        parse_body(revision["body"]),
+    ).model_dump(mode="json")
+    response = context.client.put(
+        f"/api/v1/documents/{document['id']}",
+        headers=context.headers(document["version"]),
+        json={
+            "base_revision_id": revision["id"],
+            "body": revision["body"],
+            "reason": "Correspondence edit",
+            "letter_frame": {**frame, **changes},
+        },
+    )
+    assert response.status_code == status, response.text
+    return cast(dict[str, Any], response.json())
+
+
+def _legacy_letter(context: SourceContext, letter: dict[str, Any], tone: str) -> dict[str, Any]:
+    from bonafides.section_regeneration import _target
+
+    with context.runtime.transaction() as conn:
+        row = _target(conn, context.owner_id, UUID(letter["id"]))
+        provenance = copy.deepcopy(row["provenance_snapshot"])
+        for key in ("greeting", "closing"):
+            provenance["frame"].pop(key, None)
+        provenance.pop("letter_closing_edited", None)
+        provenance["frame"]["recipient"] = "Hiring team"
+        template = str(row["template_version"]).replace("-v4", "-v3")
+        provenance.update(
+            tone=tone, template_version=template, template_sha256=template_digest(template)
+        )
+        body = copy.deepcopy(row["body"])
+        blocks = body["sections"][0]["blocks"]
+        for key, text in (
+            ("salutation", "Dear Hiring team,"),
+            ("signoff", "Sincerely,"),
+            ("thanks", "Thank you for your consideration."),
+        ):
+            blocks.append(
+                {
+                    "block_key": key,
+                    "text": text,
+                    "claim_kind": "greeting",
+                    "claim_revision_ids": [],
+                    "evidence_revision_ids": [],
+                }
+            )
+        generation.append_revision(
+            conn,
+            context.owner_id,
+            UUID(letter["id"]),
+            parse_body(body),
+            {**row, "template_version": template, "provenance_snapshot": provenance},
+            "manual",
+            "Pre-frame letter fixture",
+        )
+    return _document(context, letter["id"])
+
+
+@pytest.mark.postgres
+@pytest.mark.parametrize("tone", ["friendly", "concise", "professional"])
+@pytest.mark.parametrize(
+    "owner_edit", [None, "before", "during", "recipient", "after", "date_after"]
+)
+def test_letter_closing_follows_tone_with_exact_undo_and_owner_protection(
+    catalog: SourceContext,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    tone: str,
+    owner_edit: str | None,
+    parser: ImportParserClient,
+    renderer_spool: Path,
+) -> None:
+    def html(revision: dict[str, Any]) -> str:
+        return render_html(
+            parse_body(revision["body"]),
+            revision["template_version"],
+            PrintableFrame.model_validate(revision["provenance_snapshot"]["frame"]),
+        )
+
+    application, documents = _prepared(catalog, monkeypatch, tmp_path)
+    letter = _legacy_letter(
+        catalog,
+        next(item for item in documents if item["kind"] == "cover_letter"),
+        "concise" if tone == "professional" else "professional",
+    )
+    if owner_edit == "before":
+        letter = _frame_save(catalog, letter, closing="With appreciation,")
+    original = letter["current_revision"]
+    expected = original
+    task = _queue(catalog, application, [letter])
+    payload = _payload(catalog, cast(dict[str, object], task.input["context"]))
+    for private in (
+        '"correspondence_date"',
+        '"display_name"',
+        '"contact"',
+        '"signature"',
+        original["provenance_snapshot"]["frame"]["correspondence_date"],
+    ):
+        assert private.encode() not in payload
+
+    def intervene() -> None:
+        nonlocal expected
+        change = (
+            {"recipient": "Owner's recipient"}
+            if owner_edit == "recipient"
+            else {"closing": "With appreciation,"}
+        )
+        expected = _frame_save(catalog, letter, **change)["current_revision"]
+
+    _execute(
+        catalog,
+        task,
+        {**_output(task), "edits": [], "tone": tone},
+        intervene if owner_edit in {"during", "recipient"} else None,
+    )
+    turn = _view(catalog, application)["turns"][-1]
+    saved = _document(catalog, letter["id"])
+    provenance = saved["current_revision"]["provenance_snapshot"]
+    assert provenance["tone"] == tone
+    assert provenance["frame"]["closing"] == (
+        "With appreciation," if owner_edit in {"before", "during"} else closing_for(tone)
+    )
+    assert html(saved["current_revision"]).count("Dear Hiring team,") == 1
+    assert "Sincerely," not in html(saved["current_revision"])
+    assert turn["reply"]["tones"][0]["letter_before"]["body"] == expected["body"]
+    if owner_edit == "recipient":
+        assert provenance["frame"]["recipient"] == "Owner's recipient"
+    if owner_edit == "before" and tone == "friendly":
+        before = (_counts(catalog), saved, _view(catalog, application))
+        for wording in ("Kind regards,", "Hi team,", "Dear Hiring team,"):
+            body = copy.deepcopy(saved["current_revision"]["body"])
+            body["sections"][0]["blocks"][-1]["text"] = wording
+            refused = _save(catalog, saved, body)
+            assert refused.status_code == 422
+            assert refused.json()["code"] == "letter_body_use_greeting_closing_fields"
+            assert _counts(catalog) == before[0]
+            assert _document(catalog, letter["id"]) == before[1]
+            assert _view(catalog, application) == before[2]
+        for part in ("greeting", "closing"):
+            refused = _frame_save(
+                catalog, saved, 422, **{part: "Thank you for your consideration."}
+            )
+            assert refused["code"] == "letter_body_use_greeting_closing_fields"
+        saved = _frame_save(catalog, saved)
+        later = _queue(catalog, application, [saved])
+        _execute(catalog, later, {**_output(later), "edits": [], "tone": "concise"})
+        later_turn = _view(catalog, application)["turns"][-1]
+        before = (_counts(catalog), _document(catalog, letter["id"]), _view(catalog, application))
+        refused = _undo(catalog, application, turn)
+        assert refused.status_code == 409 and refused.json()["code"] == "conversation_undo_conflict"
+        assert _counts(catalog) == before[0]
+        assert _document(catalog, letter["id"]) == before[1]
+        assert _view(catalog, application) == before[2]
+        assert _undo(catalog, application, later_turn).status_code == 200
+        restored = _document(catalog, letter["id"])["current_revision"]
+        assert restored["provenance_snapshot"]["tone"] == "friendly"
+    if owner_edit in {"after", "date_after"}:
+        change = (
+            {"correspondence_date": "2024-02-29"}
+            if owner_edit == "date_after"
+            else {"closing": "With appreciation,"}
+        )
+        _frame_save(catalog, saved, **change)
+    undone = _undo(catalog, application, turn)
+    if owner_edit in {"after", "date_after"}:
+        assert undone.status_code == 409 and undone.json()["code"] == "conversation_undo_conflict"
+    else:
+        assert undone.status_code == 200, undone.text
+        restored = _document(catalog, letter["id"])["current_revision"]
+        for field in ("body", "provenance_snapshot", "template_version", "content_sha256"):
+            assert restored[field] == expected[field]
+        assert html(restored) == html(expected)
+        if owner_edit is None and tone == "friendly":
+            from test_portable_archive import _encoded
+            from test_portable_data import _export
+            from test_portable_workspace import _import
+
+            from bonafides.conversation_protocol import validate_reply
+            from bonafides.model_calls import OutputMismatch
+
+            frozen = cast(dict[str, Any], copy.deepcopy(task.input))
+            frozen["documents"][0].update(
+                body=saved["current_revision"]["body"],
+                provenance_snapshot=saved["current_revision"]["provenance_snapshot"],
+            )
+            target = next(item for item in frozen["targets"] if item["block_key"] == "thanks")
+            edit = {
+                key: target[key]
+                for key in ("document_id", "section_key", "block_key", "previous_sha256")
+            }
+            edit["replacement"] = {**target["before"], "text": "Dear Hiring team,"}
+            with pytest.raises(OutputMismatch) as refused:
+                validate_reply({**_output(task), "edits": [edit]}, frozen)
+            assert refused.value.summary == ["edits: letter_correspondence_in_body"]
+            archive = _export(catalog)
+            _import(catalog, parser, renderer_spool, _encoded(archive.manifest, archive.blobs))
+            archive.manifest.records["source_configs"] = [
+                {**row, "enabled": False, "current_policy_review_id": None}
+                for row in archive.manifest.records["source_configs"]
+            ]
+            assert _export(catalog).manifest.records == archive.manifest.records
+
+
+@pytest.mark.postgres
+@pytest.mark.parametrize("part", ["sender", "date", "signature"])
+def test_protected_letter_refinement_refuses_before_work(
+    catalog: SourceContext,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    part: str,
+) -> None:
+    application, documents = _prepared(catalog, monkeypatch, tmp_path)
+    before = _counts(catalog)
+    response = _post(
+        catalog,
+        application,
+        [item["id"] for item in documents],
+        units=[{"document_id": documents[0]["id"], "section_key": part, "block_key": part}],
+    )
+    assert response.status_code == 422 and response.json()["code"] == "letter_frame_not_regenerable"
+    assert _counts(catalog) == before
+
+
+@pytest.mark.postgres
+@pytest.mark.parametrize(
+    "message",
+    [
+        "Shorten the Experience bullets but keep each end date",
+        "Mention I can start at a later date",
+        "Keep my résumé up-to-date with the Rust skills",
+    ],
+)
+def test_free_text_date_mentions_do_not_refuse(
+    catalog: SourceContext,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    message: str,
+) -> None:
+    application, documents = _prepared(catalog, monkeypatch, tmp_path)
+    letter = _legacy_letter(
+        catalog, next(item for item in documents if item["kind"] == "cover_letter"), "professional"
+    )
+    response = _post(catalog, application, [letter["id"]], message=message)
+    assert response.status_code == 202, response.text

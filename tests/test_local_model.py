@@ -1164,7 +1164,7 @@ def _section_context() -> dict[str, object]:
 def test_document_prompts_pin_prefix_cut_shape(stage: str) -> None:
     from bonafides import local_model
 
-    assert PROMPT_VERSIONS[stage] == f"ol-{stage.replace('_', '-')}-v7"
+    assert PROMPT_VERSIONS[stage] == f"ol-{stage.replace('_', '-')}-v8"
     prompt = local_model._SUFFIXES[stage]
     assert "claim's exact printable text" in prompt
     assert "whole-phrase prefix of its claim text" in prompt
@@ -1591,3 +1591,50 @@ def test_import_receipt_cannot_credit_units_from_invalid_cases() -> None:
     )
     with pytest.raises(ModelFailure, match="model_route_invalid"):
         qualification_receipt(receipt, stage="structure_import")
+
+
+def test_friendly_generation_request_omits_private_letter_frame(tmp_path: Path) -> None:
+    from bonafides import local_model, model_projections
+
+    context = _section_context()
+    context.pop("target")
+    private_frame = {
+        "display_name": "PRIVATE-SENDER",
+        "contact": {"email": "private-signature@example.test"},
+        "correspondence_date": "1901-02-03",
+    }
+    posting = cast(dict[str, object], context["posting"])
+    context = model_projections.generation_projection(
+        {
+            **private_frame,
+            "title": posting["title"],
+            "company": posting["organization"],
+            "description_text": posting["source_text"],
+        },
+        cast(list[dict[str, object]], context["requirements"]),
+        cast(list[dict[str, object]], context["claims"]),
+        cast(list[dict[str, object]], context["evidence"]),
+        "friendly",
+        "en",
+    )
+    route = qualified_route(tmp_path, route_data("http://127.0.0.1:1"))
+    payload, _, _, projected = OllamaClient(route).prepare(
+        "generate_documents", context, PROMPT_VERSIONS["generate_documents"]
+    )
+    wire = json.loads(payload)
+    assert json.loads(wire["messages"][1]["content"]) == projected
+    assert projected["tone"] == "friendly" and "frame" not in projected
+    for private in ("PRIVATE-SENDER", "private-signature@example.test", "1901-02-03"):
+        assert private not in payload.decode()
+    document_schema = wire["format"]["properties"]["documents"]["items"]
+    assert "letter_frame" not in document_schema["required"]
+    frame_schema = document_schema["properties"]["letter_frame"]["anyOf"][1]
+    assert set(frame_schema["properties"]) == {"recipient", "greeting"}
+    assert frame_schema["additionalProperties"] is False
+    assert local_model.PROMPT_VERSIONS["refine_documents"] == "ol-refine-documents-v3"
+    with pytest.raises(ModelFailure, match="model_context_invalid"):
+        OllamaClient(route).prepare(
+            "generate_documents",
+            {**context, "frame": private_frame},
+            PROMPT_VERSIONS["generate_documents"],
+        )

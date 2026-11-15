@@ -21,7 +21,7 @@ from bonafides.problems import Problem
 class Selection(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True, frozen=True)
     template_version: str = Field(min_length=1, max_length=100)
-    tone: Literal["professional", "concise"]
+    tone: Literal["professional", "concise", "friendly"]
 
     @field_validator("template_version")
     @classmethod
@@ -34,7 +34,7 @@ class Selection(BaseModel):
 class PatchRequest(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True, frozen=True)
     template_version: str | None = Field(default=None, min_length=1, max_length=100)
-    tone: Literal["professional", "concise"] | None = None
+    tone: Literal["professional", "concise", "friendly"] | None = None
 
     @field_validator("template_version")
     @classmethod

@@ -23,6 +23,7 @@ from sqlalchemy.engine import RowMapping
 from bonafides import (
     document_defaults,
     documents,
+    letter_frame,
     local_model,
     model_calls,
     model_context,
@@ -36,6 +37,7 @@ from bonafides.commands import append_outbox, canonical_json, command, lock_inst
 from bonafides.config import Settings
 from bonafides.db import Database
 from bonafides.document_frame import TEMPLATE_PAPER, TEMPLATES, PrintableFrame, template_digest
+from bonafides.letter_frame import LetterParts, Tone
 from bonafides.problems import Problem
 from bonafides.profile_breadth import selected_claim_ids, snapshot_claim_ids
 from bonafides.profile_identity import age_on
@@ -284,7 +286,7 @@ def _frame(
         "display_name": snapshot.get("display_name", ""),
         "contact": snapshot.get("contact"),
     }
-    if template.endswith("-v3"):
+    if template.endswith(("-v3", "-v4")):
         if snapshot.get("include_age") is True:
             birth_date = snapshot.get("birth_date")
             values["age"] = age_on(
@@ -528,7 +530,7 @@ def generation_plan(
     require_template(template)
     if language != "en":
         raise Problem(422, "unsupported_document_language")
-    if tone not in {"professional", "concise"}:
+    if tone not in {"professional", "concise", "friendly"}:
         raise Problem(422, "unsupported_document_tone")
     app = _application(conn, owner, application, active=active)
     posting = suitability._posting(conn, owner, app["posting_id"])
@@ -723,9 +725,28 @@ class CandidateSection(documents.StrictModel):
     blocks: list[CandidateStatement] = Field(min_length=1, max_length=30)
 
 
+class CandidateLetterFrame(documents.StrictModel):
+    recipient: str = Field(default="", max_length=1000)
+    greeting: str = Field(default="", max_length=300)
+
+    @field_validator("recipient", "greeting")
+    @classmethod
+    def safe_text(cls, value: str) -> str:
+        from bonafides.document_frame import ProfileContact
+
+        return ProfileContact.safe_literal(value)
+
+
 class CandidateDocument(documents.StrictModel):
     kind: Literal["resume", "cover_letter"]
     sections: list[CandidateSection] = Field(min_length=1, max_length=12)
+    letter_frame: CandidateLetterFrame | None = None
+
+    @model_validator(mode="after")
+    def letter_only(self) -> CandidateDocument:
+        if self.kind != "cover_letter" and self.letter_frame is not None:
+            raise ValueError("letter_frame_requires_cover_letter")
+        return self
 
 
 class Gap(documents.StrictModel):
@@ -834,15 +855,39 @@ def candidate_block(
     )
 
 
-def _candidate_body(item: CandidateDocument, plan: dict[str, object]) -> documents.DocumentBody:
-    sections = [
-        documents.DocumentSection(
-            key=f"section-{index}",
-            heading=section.heading,
-            blocks=[candidate_block(block, plan) for block in section.blocks],
+def _letter_parts(item: CandidateDocument, plan: dict[str, object]) -> LetterParts:
+    frame = dict(cast(dict[str, object], plan["frame"]))
+    if item.letter_frame is not None:
+        frame.update(
+            {key: value for key, value in item.letter_frame.model_dump().items() if value.strip()}
         )
-        for index, section in enumerate(item.sections)
-    ]
+    return letter_frame.parts(frame, str(plan.get("tone", "professional")))
+
+
+def _candidate_body(item: CandidateDocument, plan: dict[str, object]) -> documents.DocumentBody:
+    frame = (
+        {**cast(dict[str, object], plan["frame"]), **_letter_parts(item, plan).model_dump()}
+        if item.kind == "cover_letter"
+        else None
+    )
+    sections = []
+    for index, candidate_section in enumerate(item.sections):
+        blocks = [
+            candidate_block(block, plan)
+            for block in candidate_section.blocks
+            if block.text.strip()
+            and not (
+                frame is not None
+                and block.kind == "connective"
+                and letter_frame.role(block.text, frame) is not None
+            )
+        ]
+        if blocks:
+            sections.append(
+                documents.DocumentSection(
+                    key=f"section-{index}", heading=candidate_section.heading, blocks=blocks
+                )
+            )
     publications = [
         fact
         for fact in cast(list[dict[str, object]], plan["facts"])
@@ -1087,6 +1132,34 @@ def publish_pair(
             "posting_snapshot": plan["posting_snapshot"],
             "model_run_id": run,
         }
+        if item.kind == "cover_letter":
+            parts = _letter_parts(item, plan)
+            if target is not None and target["revision_id"] is not None:
+                old = (
+                    conn.execute(
+                        text("""SELECT provenance_snapshot,body FROM bonafides.document_revisions
+                    WHERE owner_id=:owner AND id=:revision"""),
+                        {"owner": task.owner_id, "revision": UUID(str(target["revision_id"]))},
+                    )
+                    .mappings()
+                    .one()
+                )
+                previous = cast(dict[str, object], old["provenance_snapshot"])
+                old_body = documents.parse_body(old["body"])
+                saved = letter_frame.parts(
+                    cast(dict[str, object], previous["frame"]),
+                    str(previous.get("tone", "professional")),
+                    old_body,
+                )
+                custom = letter_frame.is_custom(previous, old_body)
+                parts = parts.model_copy(
+                    update={
+                        "correspondence_date": saved.correspondence_date,
+                        **({"closing": saved.closing} if custom else {}),
+                    }
+                )
+                source["provenance_snapshot"] = {**provenance, "letter_closing_edited": custom}
+            source = letter_frame.pin(source, parts)
         revision = append_revision(
             conn,
             task.owner_id,
@@ -1213,7 +1286,7 @@ class BaseRequest(documents.StrictModel):
 
 class GenerationRequest(BaseRequest):
     requirements_revision_id: Annotated[UUID, Field(strict=False)]
-    tone: Literal["professional", "concise"]
+    tone: Tone
     language: Literal["en"]
     context_sha256: Annotated[str, Field(pattern=r"^[0-9a-f]{64}$")]
     page_target: Literal[1, 2] | None = None
@@ -1230,6 +1303,7 @@ class SaveRequest(documents.StrictModel):
     base_revision_id: Annotated[UUID, Field(strict=False)]
     body: documents.DocumentBody
     reason: str = Field(min_length=1, max_length=300)
+    letter_frame: LetterParts | None = None
 
     @field_validator("body", mode="before")
     @classmethod
@@ -1363,7 +1437,7 @@ def install_routes(router: APIRouter, db: Database, settings: Settings) -> None:
         owner: Annotated[Owner, Depends(require_owner)],
         profile_revision_id: UUID,
         template_version: str,
-        tone: Literal["professional", "concise"] = "professional",
+        tone: Tone = "professional",
         language: str = "en",
         page_target: Annotated[int | None, Query(ge=1, le=2)] = None,
     ) -> Response:
@@ -1525,6 +1599,31 @@ def install_routes(router: APIRouter, db: Database, settings: Settings) -> None:
             content = (
                 documents.parse_body(row["body"]) if isinstance(body, RestoreRequest) else body.body
             )
+            if isinstance(body, SaveRequest):
+                if body.letter_frame is not None and record["kind"] != "cover_letter":
+                    raise Problem(422, "letter_frame_requires_cover_letter")
+                if record["kind"] == "cover_letter":
+                    provenance = cast(dict[str, object], source["provenance_snapshot"])
+                    frame = cast(dict[str, object], provenance["frame"])
+                    original = documents.parse_body(row["body"])
+                    parts = body.letter_frame or letter_frame.parts(
+                        frame, str(provenance.get("tone", "professional")), original
+                    )
+                    frame = {**frame, **parts.model_dump()}
+                    old_blocks = [
+                        block for section in original.sections for block in section.blocks
+                    ]
+                    legacy = not str(source["template_version"]).endswith("-v4")
+                    if any(
+                        block.claim_kind == "greeting"
+                        and letter_frame.role(block.text, frame)
+                        and (not legacy or block not in old_blocks)
+                        for section in content.sections
+                        for block in section.blocks
+                    ):
+                        raise Problem(422, "letter_body_use_greeting_closing_fields")
+                    content = letter_frame.split(content, frame)
+                    source = letter_frame.pin(source, parts, owner_edit=True)
             append_revision(
                 conn,
                 owner.id,

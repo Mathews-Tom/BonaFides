@@ -823,3 +823,23 @@ def test_regeneration_receipt_cannot_qualify_refinement(tmp_path: Path) -> None:
     assert route is not None and route.qualified_for("regenerate_section")
     assert not route.qualified_for("refine_documents")
     assert route.receipt_details()["refine_documents"]["qualified"] is False
+
+
+@pytest.mark.parametrize(
+    ("stage", "expected_sha"),
+    [
+        ("generate_documents", "91edf93345fa4037cce0061ee4411ddf923848d67a0d75aa06afc472c6292ebe"),
+        ("regenerate_section", "d46456d6bbf510e04c299ee9f805179f64e63903f58d48e9a74b04eeab9761c8"),
+        ("refine_documents", "48e520b40d6f47ba0cad9d3a74df7c104fa702d48edab481342af63cbd496eff"),
+    ],
+)
+def test_packaged_document_cases_pin_digest_count_and_friendly_coverage(
+    stage: str, expected_sha: str
+) -> None:
+    cases, sha = qualification.load_cases(DATASET, stage)
+    assert len(cases) == 20 and sha == expected_sha
+    projected = qualification.projection(cases[0], stage)
+    source = (
+        cast(dict[str, object], projected["shared"]) if stage == "refine_documents" else projected
+    )
+    assert source["tone"] == "friendly"

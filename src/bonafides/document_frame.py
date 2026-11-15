@@ -25,6 +25,10 @@ TEMPLATES: Final = {
     "bonafides-compact-v3": ("Compact — identity", "profile-v3.html"),
     "bonafides-evidence-letter-v3": ("Evidence — identity", "profile-v3.html"),
     "bonafides-compact-letter-v3": ("Compact — identity", "profile-v3.html"),
+    "bonafides-evidence-v4": ("Evidence — letters", "profile-v4.html"),
+    "bonafides-compact-v4": ("Compact — letters", "profile-v4.html"),
+    "bonafides-evidence-letter-v4": ("Evidence — letters", "profile-v4.html"),
+    "bonafides-compact-letter-v4": ("Compact — letters", "profile-v4.html"),
 }
 TEMPLATE_PAPER: Final[dict[str, Literal["A4", "Letter"]]] = {
     "bonafides-evidence-v1": "A4",
@@ -39,6 +43,10 @@ TEMPLATE_PAPER: Final[dict[str, Literal["A4", "Letter"]]] = {
     "bonafides-compact-v3": "A4",
     "bonafides-evidence-letter-v3": "Letter",
     "bonafides-compact-letter-v3": "Letter",
+    "bonafides-evidence-v4": "A4",
+    "bonafides-compact-v4": "A4",
+    "bonafides-evidence-letter-v4": "Letter",
+    "bonafides-compact-letter-v4": "Letter",
 }
 TemplateVersion = Literal[
     "bonafides-base-v1",
@@ -54,6 +62,10 @@ TemplateVersion = Literal[
     "bonafides-compact-v3",
     "bonafides-evidence-letter-v3",
     "bonafides-compact-letter-v3",
+    "bonafides-evidence-v4",
+    "bonafides-compact-v4",
+    "bonafides-evidence-letter-v4",
+    "bonafides-compact-letter-v4",
 ]
 
 
@@ -114,7 +126,9 @@ class PrintableFrame(BaseModel):
     )
     organization: str | None = Field(default=None, max_length=300)
     role: str | None = Field(default=None, max_length=300)
-    recipient: Literal["Hiring team"] | None = None
+    recipient: str | None = Field(default=None, max_length=1000)
+    greeting: str | None = Field(default=None, max_length=300, exclude_if=lambda v: v is None)
+    closing: str | None = Field(default=None, max_length=300, exclude_if=lambda v: v is None)
     publication_styles: dict[str, PublicationPresentation] = Field(
         default_factory=dict, max_length=100, exclude_if=lambda value: not value
     )
@@ -124,9 +138,16 @@ class PrintableFrame(BaseModel):
         default_factory=list, max_length=20, exclude_if=lambda value: not value
     )
 
-    @field_validator("display_name", "organization", "role")
+    @field_validator("display_name", "organization", "role", "greeting", "closing")
     @classmethod
     def safe_literal(cls, value: str | None) -> str | None:
         if value is not None:
             ProfileContact.safe_literal(value)
+        return value
+
+    @field_validator("recipient")
+    @classmethod
+    def recipient_literal(cls, value: str | None) -> str | None:
+        if value is not None:
+            ProfileContact.safe_literal(value.replace("\n", ""))
         return value

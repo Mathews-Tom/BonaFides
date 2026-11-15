@@ -33,7 +33,7 @@ from test_sources import catalog as catalog
 from test_suitability import FixtureModel, _after_model_send, _profile, _requirement, _route, _write
 
 from bonafides import document_generation as generation
-from bonafides import documents, local_model, section_regeneration, suitability
+from bonafides import documents, local_model, model_calls, section_regeneration, suitability
 from bonafides.commands import canonical_json
 from bonafides.problems import Problem
 from bonafides.storage import BlobStore
@@ -973,3 +973,76 @@ def test_pinned_posting_context_refuses_preview_instead_of_rebasing(
             ).scalar_one()
             == 0
         )
+
+
+@pytest.mark.parametrize("section_key", ["sender", "date", "correspondence_date", "signature"])
+def test_protected_frame_refused_before_target_lookup(
+    monkeypatch: pytest.MonkeyPatch, section_key: str
+) -> None:
+    def forbidden_lookup(*args: object) -> Any:
+        raise AssertionError("Protected frame must not reach document or model context lookup")
+
+    monkeypatch.setattr(section_regeneration, "_target", forbidden_lookup)
+    with pytest.raises(Problem) as error:
+        section_regeneration._source_context(
+            cast(Any, None), uuid4(), uuid4(), section_key, "friendly"
+        )
+    assert error.value.status == 422 and error.value.code == "letter_frame_not_regenerable"
+
+
+@pytest.mark.postgres
+def test_protected_frame_api_refusal_precedes_document_lookup(catalog: SourceContext) -> None:
+    document_id = uuid4()
+    for section_key in ("sender", "date", "correspondence_date", "signature"):
+        preview = catalog.client.get(
+            f"/api/v1/documents/{document_id}/regeneration-context",
+            params={"section_key": section_key, "tone": "friendly"},
+        )
+        assert preview.status_code == 422
+        assert preview.json()["code"] == "letter_frame_not_regenerable"
+        proposed = catalog.client.post(
+            f"/api/v1/documents/{document_id}/regeneration-proposals",
+            json={
+                "revision_id": str(uuid4()),
+                "content_sha256": "0" * 64,
+                "context_sha256": "0" * 64,
+                "section_key": section_key,
+                "tone": "friendly",
+            },
+            headers=catalog.headers(1),
+        )
+        assert proposed.status_code == 422
+        assert proposed.json()["code"] == "letter_frame_not_regenerable"
+
+
+@pytest.mark.postgres
+@pytest.mark.parametrize("wording", ["Dear Hiring team,", "Sincerely,", "Kind regards,"])
+def test_v4_section_rejects_correspondence_before_publication(
+    catalog: SourceContext,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    wording: str,
+) -> None:
+    from test_document_conversations import _legacy_letter
+
+    _, _, pair = _setup(catalog, monkeypatch, tmp_path)
+    letter = _legacy_letter(
+        catalog, next(item for item in pair if item["kind"] == "cover_letter"), "professional"
+    )
+    assert letter["current_revision"]["template_version"].endswith("-v3")
+    saved = _save(catalog, letter, letter["current_revision"]["body"]).json()["current_revision"]
+    body = documents.parse_body(saved["body"])
+    output: dict[str, object] = {
+        "schema_version": "2",
+        "stage": "regenerate_section",
+        "warnings": [],
+        "blocks": [{"block_key": "b-1", "kind": "connective", "text": wording, "claim_id": None}],
+    }
+    frozen: dict[str, object] = {
+        "template_version": "bonafides-evidence-v4",
+        "original_section": body.sections[0].model_dump(mode="json"),
+    }
+    provenance = cast(dict[str, object], saved["provenance_snapshot"])
+    with pytest.raises(model_calls.OutputMismatch) as error:
+        section_regeneration.validate_replacement(output, body, frozen, provenance, uuid4())
+    assert error.value.summary == ["blocks: letter_correspondence_in_body"]

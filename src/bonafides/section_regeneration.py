@@ -14,7 +14,15 @@ from sqlalchemy import Connection, text
 from sqlalchemy.engine import RowMapping
 
 from bonafides import document_generation as generation
-from bonafides import documents, local_model, model_context, model_projections, suitability
+from bonafides import (
+    documents,
+    letter_frame,
+    local_model,
+    model_calls,
+    model_context,
+    model_projections,
+    suitability,
+)
 from bonafides.auth import Owner, require_owner
 from bonafides.commands import canonical_json, command
 from bonafides.config import Settings
@@ -27,11 +35,16 @@ STAGE = "regenerate_section"
 MODE = "section_regeneration"
 
 
+def _require_regenerable(section_key: str) -> None:
+    if section_key in {"sender", "date", "correspondence_date", "signature"}:
+        raise Problem(422, "letter_frame_not_regenerable")
+
+
 class ProposalRequest(documents.StrictModel):
     revision_id: Annotated[UUID, Field(strict=False)]
     content_sha256: Annotated[str, Field(pattern=r"^[0-9a-f]{64}$")]
     section_key: documents.Key
-    tone: Literal["professional", "concise"]
+    tone: Literal["professional", "concise", "friendly"]
     context_sha256: Annotated[str, Field(pattern=r"^[0-9a-f]{64}$")]
 
 
@@ -84,6 +97,7 @@ def _source_context(
     refinement: bool = False,
 ) -> tuple[RowMapping, dict[str, object], dict[str, object]]:
     """Recheck eligibility, but never rebase historical professional/frame pins."""
+    _require_regenerable(section_key)
     row = _target(conn, owner, document)
     if row["scope"] != "tailored":
         raise Problem(409, "section_regeneration_requires_tailored_document")
@@ -242,6 +256,15 @@ def _replacement(
 def _candidate_section(
     candidate: Candidate, frozen: dict[str, object], provenance: dict[str, object], task_id: UUID
 ) -> documents.DocumentSection:
+    frame = cast(dict[str, object], provenance["frame"])
+    if (
+        str(frozen.get("template_version")).endswith("-v4")
+        and frame.get("greeting")
+        and any(
+            letter_frame.role(statement.text, frame) is not None for statement in candidate.blocks
+        )
+    ):
+        raise model_calls.OutputMismatch(["blocks: letter_correspondence_in_body"])
     original = documents.DocumentSection.model_validate_json(
         canonical_json(frozen["original_section"]), strict=True
     )
@@ -305,7 +328,7 @@ def publish_proposal(
     try:
         proposed = _candidate_section(candidate, frozen, provenance, task.id)
         body = _replacement(documents.parse_body(row["body"]), original.key, proposed)
-    except ValidationError as exc:
+    except (ValidationError, model_calls.OutputMismatch) as exc:
         raise Problem(422, "invalid_model_output") from exc
     validation = generation.validation_issues(body, provenance, str(row["kind"]))
     model_run: dict[str, object] = {
@@ -418,7 +441,7 @@ def install_routes(router: APIRouter, db: Database, settings: Settings) -> None:
         document_id: UUID,
         owner: Annotated[Owner, Depends(require_owner)],
         section_key: documents.Key,
-        tone: Literal["professional", "concise"] = "professional",
+        tone: Literal["professional", "concise", "friendly"] = "professional",
     ) -> Response:
         with db.transaction() as conn:
             frozen = plan(conn, owner.id, document_id, section_key, tone, settings)
@@ -449,6 +472,8 @@ def install_routes(router: APIRouter, db: Database, settings: Settings) -> None:
         request: Request,
         owner: Annotated[Owner, Depends(require_owner)],
     ) -> Response:
+        _require_regenerable(body.section_key)
+
         def effect(conn: Connection) -> tuple[int, dict[str, object]]:
             frozen = plan(conn, owner.id, document_id, body.section_key, body.tone, settings)
             if (

@@ -108,7 +108,7 @@ class RenderRequest(StrictModel):
 def _validate_portrait(
     template_version: str, frame: PrintableFrame | None, data: bytes | None
 ) -> None:
-    if not template_version.endswith("-v3"):
+    if not template_version.endswith(("-v3", "-v4")):
         if data is not None or (
             frame is not None
             and frame.model_fields_set.intersection({"age", "portrait", "references"})
@@ -178,7 +178,7 @@ def render_html(
         if frame is not None:
             raise RenderFailure("render_invalid_input")
         return environment.get_template("base-v1.html").render(document=body)
-    if not template_version.endswith("-v3"):
+    if not template_version.endswith(("-v3", "-v4")):
         try:
             _validate_portrait(template_version, frame, None)
         except ValueError:
