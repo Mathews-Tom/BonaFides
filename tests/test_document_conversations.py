@@ -849,21 +849,14 @@ def _frame_save(
         revision["provenance_snapshot"]["tone"],
         parse_body(revision["body"]),
     ).model_dump(mode="json")
-    response = context.client.put(
-        f"/api/v1/documents/{document['id']}",
-        headers=context.headers(document["version"]),
-        json={
-            "base_revision_id": revision["id"],
-            "body": revision["body"],
-            "reason": "Correspondence edit",
-            "letter_frame": {**frame, **changes},
-        },
-    )
+    response = _save(context, document, revision["body"], letter_frame={**frame, **changes})
     assert response.status_code == status, response.text
     return cast(dict[str, Any], response.json())
 
 
-def _legacy_letter(context: SourceContext, letter: dict[str, Any], tone: str) -> dict[str, Any]:
+def _legacy_letter(
+    context: SourceContext, letter: dict[str, Any], tone: str, *, framed: bool = True
+) -> dict[str, Any]:
     from bonafides.section_regeneration import _target
 
     with context.runtime.transaction() as conn:
@@ -877,8 +870,14 @@ def _legacy_letter(context: SourceContext, letter: dict[str, Any], tone: str) ->
         provenance.update(
             tone=tone, template_version=template, template_sha256=template_digest(template)
         )
+        if not framed:
+            template = "bonafides-base-v1"
+            provenance.update(schema_version=1, template_version=template)
+            for key in ("frame", "template_sha256"):
+                provenance.pop(key)
         body = copy.deepcopy(row["body"])
         blocks = body["sections"][0]["blocks"]
+        blocks[:] = [block for block in blocks if block["block_key"] != "thanks"]
         for key, text in (
             ("salutation", "Dear Hiring team,"),
             ("signoff", "Sincerely,"),

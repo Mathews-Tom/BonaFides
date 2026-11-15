@@ -1145,20 +1145,21 @@ def publish_pair(
                     .one()
                 )
                 previous = cast(dict[str, object], old["provenance_snapshot"])
-                old_body = documents.parse_body(old["body"])
-                saved = letter_frame.parts(
-                    cast(dict[str, object], previous["frame"]),
-                    str(previous.get("tone", "professional")),
-                    old_body,
-                )
-                custom = letter_frame.is_custom(previous, old_body)
-                parts = parts.model_copy(
-                    update={
-                        "correspondence_date": saved.correspondence_date,
-                        **({"closing": saved.closing} if custom else {}),
-                    }
-                )
-                source["provenance_snapshot"] = {**provenance, "letter_closing_edited": custom}
+                if isinstance(previous.get("frame"), dict):
+                    old_body = documents.parse_body(old["body"])
+                    saved = letter_frame.parts(
+                        cast(dict[str, object], previous["frame"]),
+                        str(previous.get("tone", "professional")),
+                        old_body,
+                    )
+                    custom = letter_frame.is_custom(previous, old_body)
+                    parts = parts.model_copy(
+                        update={
+                            "correspondence_date": saved.correspondence_date,
+                            **({"closing": saved.closing} if custom else {}),
+                        }
+                    )
+                    source["provenance_snapshot"] = {**provenance, "letter_closing_edited": custom}
             source = letter_frame.pin(source, parts)
         revision = append_revision(
             conn,
@@ -1602,9 +1603,11 @@ def install_routes(router: APIRouter, db: Database, settings: Settings) -> None:
             if isinstance(body, SaveRequest):
                 if body.letter_frame is not None and record["kind"] != "cover_letter":
                     raise Problem(422, "letter_frame_requires_cover_letter")
-                if record["kind"] == "cover_letter":
-                    provenance = cast(dict[str, object], source["provenance_snapshot"])
-                    frame = cast(dict[str, object], provenance["frame"])
+                provenance = cast(dict[str, object], source["provenance_snapshot"])
+                frame = provenance.get("frame")
+                if body.letter_frame is not None and not isinstance(frame, dict):
+                    raise Problem(422, "letter_frame_requires_framed_letter")
+                if record["kind"] == "cover_letter" and isinstance(frame, dict):
                     original = documents.parse_body(row["body"])
                     parts = body.letter_frame or letter_frame.parts(
                         frame, str(provenance.get("tone", "professional")), original

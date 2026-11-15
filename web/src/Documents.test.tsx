@@ -1613,8 +1613,9 @@ describe('letter frame editing and friendly writing tone', () => {
     expect(letterParts({ ...letter.current_revision, body })).toMatchObject({ greeting, closing });
   });
 
-  it('saves frame-only changes with the existing body and version, locks in-flight edits, reloads and previews historical frames', async () => {
-    const user = userEvent.setup(); let stored = letter; let released = false;
+  it('validates displayed fields for body-only and frame-only edits, locks saves, reloads and previews historical frames', async () => {
+    const user = userEvent.setup(); let released = false;
+    let stored: DocumentRecord = { ...letter, current_revision: { ...letter.current_revision, provenance_snapshot: { ...letter.current_revision.provenance_snapshot, frame: { ...letter.current_revision.provenance_snapshot.frame, recipient: ' \n ' } } } };
     const historical = { ...letter.current_revision, body: tailored.current_revision.body, id: 'old-letter', revision_no: 1, provenance_snapshot: { frame: { display_name: 'Historical sender', correspondence_date: '2025-02-03', recipient: 'Historical recipient', greeting: 'Dear past team,', closing: 'Past closing,' } } };
     const { api, request } = fixture(saved, async (path, method, body) => {
       if (path === '/applications') return { items: [application], next_cursor: null };
@@ -1622,7 +1623,7 @@ describe('letter frame editing and friendly writing tone', () => {
       if (path === '/documents/letter-doc' && method === 'PUT') {
         await waitFor(() => expect(released).toBe(true));
         const submitted = body as DocumentSaveRequest;
-        stored = { ...stored, version: 5, current_revision: { ...stored.current_revision, id: 'saved-letter', revision_no: 3, template_version: 'bonafides-evidence-v4', body: { ...submitted.body, sections: submitted.body.sections.map(section => ({ ...section, blocks: section.blocks.filter(block => !['salutation', 'signoff'].includes(block.block_key)) })) }, provenance_snapshot: { ...stored.current_revision.provenance_snapshot, frame: { ...stored.current_revision.provenance_snapshot.frame, ...submitted.letter_frame } } } };
+        stored = { ...stored, version: 5, current_revision: { ...stored.current_revision, id: 'saved-letter', revision_no: 3, template_version: submitted.letter_frame ? 'bonafides-evidence-v4' : stored.current_revision.template_version, body: submitted.letter_frame ? { ...submitted.body, sections: submitted.body.sections.map(section => ({ ...section, blocks: section.blocks.filter(block => !['salutation', 'signoff'].includes(block.block_key)) })) } : submitted.body, provenance_snapshot: submitted.letter_frame ? { ...stored.current_revision.provenance_snapshot, frame: { ...stored.current_revision.provenance_snapshot.frame, ...submitted.letter_frame } } : stored.current_revision.provenance_snapshot } };
         return stored;
       }
       if (path === '/documents/letter-doc/revisions?limit=20') return { items: [historical], next_cursor: null };
@@ -1637,6 +1638,19 @@ describe('letter frame editing and friendly writing tone', () => {
     await user.click(screen.getByText('Saved letter preview'));
     const preview = screen.getByText('Saved letter preview').closest('details')!;
     for (const text of ['Dear Hiring team,', 'Sincerely,', 'Maintained Linux service checks.', 'Thank you for considering my application.']) expect(within(preview).getAllByText(text)).toHaveLength(1);
+    const save = screen.getByRole('button', { name: 'Save document revision' });
+    fireEvent.change(screen.getByLabelText('Block text: b-1'), { target: { value: 'Unsaved body edit.' } });
+    expect(save).toBeDisabled();
+    fireEvent.change(screen.getByLabelText('Recipient'), { target: { value: 'Hiring team' } });
+    expect(save).toBeEnabled();
+    fireEvent.change(screen.getByLabelText('Block text: b-1'), { target: { value: letter.current_revision.body.sections[0]!.blocks[1]!.text } });
+    for (const label of ['Correspondence date', 'Recipient', 'Greeting', 'Closing']) {
+      const input = screen.getByLabelText<HTMLInputElement | HTMLTextAreaElement>(label); const value = input.value;
+      fireEvent.change(input, { target: { value: label === 'Correspondence date' ? '' : '   ' } });
+      expect(save).toBeDisabled(); await user.click(save);
+      expect(request.mock.calls.filter(call => call[1] === 'PUT')).toHaveLength(0);
+      fireEvent.change(input, { target: { value } }); expect(save).toBeEnabled();
+    }
     const edits = { correspondence_date: '2026-12-02', recipient: 'Pat\nHiring committee', greeting: 'Dear Hiring team,', closing: 'Sincerely,' };
     for (const [label, value] of [['Correspondence date', edits.correspondence_date], ['Recipient', edits.recipient], ['Greeting', edits.greeting], ['Closing', edits.closing]]) fireEvent.change(screen.getByLabelText(label!), { target: { value } });
     expect(screen.getByRole('button', { name: 'Render reviewed PDF' })).toBeDisabled();
@@ -1667,32 +1681,62 @@ describe('letter frame editing and friendly writing tone', () => {
     expect(screen.getByText('Past closing,')).toBeVisible();
     await user.click(screen.getByRole('button', { name: 'Return to current saved revision' }));
     expect(screen.getByLabelText('Recipient')).toHaveValue(edits.recipient);
+    stored = { ...stored, current_revision: { ...letter.current_revision, template_version: 'bonafides-base-v1', provenance_snapshot: { tone: 'professional' } } };
+    await user.click(screen.getByRole('button', { name: 'Reload application documents' }));
+    await waitFor(() => expect(screen.queryByLabelText('Recipient')).not.toBeInTheDocument());
+    for (const label of ['Correspondence date', 'Recipient', 'Greeting', 'Closing']) expect(screen.queryByLabelText(label)).not.toBeInTheDocument();
+    const textOnlyPreview = screen.getByText('Saved letter preview').closest('details')!;
+    expect(textOnlyPreview.querySelector('header, footer')).toBeNull();
+    expect(within(textOnlyPreview).getAllByText('Dear Hiring team,')).toHaveLength(1);
+    fireEvent.change(screen.getByLabelText('Block text: b-1'), { target: { value: 'Edited text-only letter.' } });
+    await user.click(screen.getByRole('button', { name: 'Save document revision' }));
+    await waitFor(() => expect(request.mock.calls.filter(call => call[1] === 'PUT')).toHaveLength(2));
+    await screen.findByText(/Saved document revision 3/);
+    expect(request.mock.calls.filter(call => call[1] === 'PUT').at(-1)?.[2]).not.toHaveProperty('letter_frame');
+    expect(stored.current_revision.provenance_snapshot).not.toHaveProperty('frame');
+    expect(stored.current_revision.body.sections[0]!.blocks.find(block => block.block_key === 'b-1')?.text).toBe('Edited text-only letter.');
   });
 
-  it('retains frame edits after a conflict and rebases only changed fields before explicit resave', async () => {
-    const user = userEvent.setup(); const server = { ...letter, version: 5, current_revision: { ...letter.current_revision, id: 'server-letter', provenance_snapshot: { frame: { display_name: 'Frozen sender', correspondence_date: '2026-11-03', greeting: 'Dear server team,', closing: 'Server closing,' } } } };
-    const { api, request } = proposalFixture(async (path, method) => {
-      if (path === '/documents/letter-doc' && method === 'PUT') throw new ApiError(412, 'version_conflict');
-      if (path === '/documents/letter-doc') return server;
-      throw new ApiError(404, 'not_found');
-    }, [tailored, letter]);
-    render(<Documents archiveRecovery={archiveRecovery} api={api} profile={profile} />); await openTailored(user);
-    await user.click(screen.getByRole('button', { name: 'Cover letter' }));
-    fireEvent.change(screen.getByLabelText('Recipient'), { target: { value: 'Local recipient' } });
-    await user.click(screen.getByRole('button', { name: 'Save document revision' }));
-    await waitFor(() => expect(screen.getByRole('button', { name: 'Compare current document revision' })).toBeEnabled());
-    expect(screen.getByLabelText('Recipient')).toHaveValue('Local recipient');
-    await user.click(screen.getByRole('button', { name: 'Compare current document revision' }));
-    await user.click(await screen.findByRole('checkbox', { name: /I compared both revisions/ }));
-    await user.click(screen.getByRole('button', { name: 'Rebase my edits onto compared revision' }));
-    expect(screen.getByLabelText('Recipient')).toHaveValue('Local recipient');
-    expect(screen.getByLabelText('Greeting')).toHaveValue('Dear server team,');
-    expect(screen.getByLabelText('Correspondence date')).toHaveValue('2026-11-03');
-    expect(request.mock.calls.filter(call => call[1] === 'PUT')).toHaveLength(1);
-    expect(screen.getByRole('button', { name: 'Save document revision' })).toBeEnabled();
-    await user.click(screen.getByRole('button', { name: 'Discard document changes' }));
-    expect(screen.getByLabelText('Recipient')).toHaveValue('Hiring team');
-    expect(screen.getByLabelText('Closing')).toHaveValue('Server closing,');
+  it.each([false, true])('rebases legacy frame edits across a date rollover against their fixed baseline (body first: %s)', async bodyFirst => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    try {
+      vi.setSystemTime(new Date(2026, 10, 15, 12));
+      const user = userEvent.setup();
+      const legacy = { ...letter, current_revision: { ...letter.current_revision, provenance_snapshot: { frame: { display_name: 'Frozen sender' } } } };
+      const server = { ...letter, version: 5, current_revision: { ...letter.current_revision, id: 'server-letter', provenance_snapshot: { frame: { display_name: 'Frozen sender', correspondence_date: '2026-11-17', greeting: 'Dear server team,', closing: 'Server closing,' } } } };
+      const { api, request } = proposalFixture(async (path, method) => {
+        if (path === '/documents/letter-doc' && method === 'PUT') throw new ApiError(412, 'version_conflict');
+        if (path === '/documents/letter-doc') return server;
+        throw new ApiError(404, 'not_found');
+      }, [tailored, legacy]);
+      render(<Documents archiveRecovery={archiveRecovery} api={api} profile={profile} />); await openTailored(user);
+      await user.click(screen.getByRole('button', { name: 'Cover letter' }));
+      if (bodyFirst) {
+        fireEvent.change(screen.getByLabelText('Block text: b-1'), { target: { value: 'Local body edit.' } });
+        vi.setSystemTime(new Date(2026, 10, 16, 12));
+      }
+      fireEvent.change(screen.getByLabelText('Recipient'), { target: { value: 'Local recipient' } });
+      expect(screen.getByLabelText('Correspondence date')).toHaveValue('2026-11-15');
+      vi.setSystemTime(new Date(2026, 10, 16, 12));
+      await user.click(screen.getByRole('button', { name: 'Save document revision' }));
+      await waitFor(() => expect(screen.getByRole('button', { name: 'Compare current document revision' })).toBeEnabled());
+      expect(screen.getByLabelText('Recipient')).toHaveValue('Local recipient');
+      fireEvent.change(screen.getByLabelText('Recipient'), { target: { value: 'Local recipient revised' } });
+      expect(screen.getByRole('button', { name: 'Save document revision' })).toBeDisabled();
+      await user.click(screen.getByRole('button', { name: 'Compare current document revision' }));
+      await user.click(await screen.findByRole('checkbox', { name: /I compared both revisions/ }));
+      await user.click(screen.getByRole('button', { name: 'Rebase my edits onto compared revision' }));
+      for (const [label, value] of [['Recipient', 'Local recipient revised'], ['Greeting', 'Dear server team,'], ['Correspondence date', '2026-11-17'], ['Closing', 'Server closing,']]) expect(screen.getByLabelText(label!)).toHaveValue(value);
+      expect(request.mock.calls.filter(call => call[1] === 'PUT')).toHaveLength(1);
+      expect(screen.getByLabelText('Block text: b-1')).toHaveValue(bodyFirst ? 'Local body edit.' : letter.current_revision.body.sections[0]!.blocks[1]!.text);
+      expect(screen.getByRole('button', { name: 'Save document revision' })).toBeEnabled();
+      fireEvent.change(screen.getByLabelText('Recipient'), { target: { value: 'Hiring team' } });
+      expect(screen.getByRole('button', { name: 'Save document revision' })).toHaveProperty('disabled', !bodyFirst);
+      fireEvent.change(screen.getByLabelText('Recipient'), { target: { value: 'Local recipient' } });
+      await user.click(screen.getByRole('button', { name: 'Discard document changes' }));
+      expect(screen.getByLabelText('Recipient')).toHaveValue('Hiring team');
+      expect(screen.getByLabelText('Closing')).toHaveValue('Server closing,');
+    } finally { vi.useRealTimers(); }
   });
 
   it('offers Traditional formal and Friendly across defaults, pair generation and section regeneration', async () => {

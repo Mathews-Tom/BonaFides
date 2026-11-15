@@ -125,13 +125,16 @@ def _review(context: SourceContext, document: dict[str, Any], keys: list[str] | 
     )
 
 
-def _save(context: SourceContext, document: dict[str, Any], body: dict[str, Any]) -> Any:
+def _save(
+    context: SourceContext, document: dict[str, Any], body: dict[str, Any], **extra: object
+) -> Any:
     return context.client.put(
         f"/api/v1/documents/{document['id']}",
         json={
             "base_revision_id": document["current_revision"]["id"],
             "body": body,
             "reason": "Synthetic explicit document edit",
+            **extra,
         },
         headers=context.headers(document["version"]),
     )
@@ -2506,16 +2509,8 @@ def test_generated_letter_pins_frame_and_manual_edits_preserve_it(
     }
 
     def save_parts(document: dict[str, Any]) -> Any:
-        return catalog.client.put(
-            f"/api/v1/documents/{document['id']}",
-            json={
-                "base_revision_id": document["current_revision"]["id"],
-                "body": document["current_revision"]["body"],
-                "reason": "Edit correspondence details",
-                "letter_frame": edited_parts,
-            },
-            headers=catalog.headers(document["version"]),
-        )
+        revision = document["current_revision"]
+        return _save(catalog, document, revision["body"], letter_frame=edited_parts)
 
     refused = save_parts(_document(catalog, resume["id"]))
     assert refused.status_code == 422
@@ -2532,7 +2527,7 @@ def test_generated_letter_pins_frame_and_manual_edits_preserve_it(
     retained = catalog.client.get(f"/api/v1/documents/{letter['id']}/revisions/{original['id']}")
     assert retained.status_code == 200 and retained.json() == original
     regenerate("2025-12-25", "With thanks,", True)
-    from test_document_conversations import _legacy_letter
+    from test_document_conversations import _counts, _legacy_letter
 
     legacy = _legacy_letter(catalog, _document(catalog, letter["id"]), "professional")
     legacy_frame = legacy["current_revision"]["provenance_snapshot"]["frame"]
@@ -2560,6 +2555,23 @@ def test_generated_letter_pins_frame_and_manual_edits_preserve_it(
         f"/api/v1/documents/{letter['id']}/revisions/{legacy['current_revision']['id']}"
     )
     assert retained.json() == legacy["current_revision"]
+    preframe = _legacy_letter(catalog, legacy, "professional", framed=False)
+    edited = copy.deepcopy(preframe["current_revision"]["body"])
+    edited["sections"][0]["blocks"][-1]["text"] = "Kind regards,"
+    before = _counts(catalog)
+    refused = _save(catalog, preframe, edited, letter_frame=edited_parts)
+    assert refused.status_code == 422
+    assert refused.json()["code"] == "letter_frame_requires_framed_letter"
+    assert _counts(catalog) == before
+    assert _document(catalog, preframe["id"]) == preframe
+    saved = _save(catalog, preframe, edited)
+    assert saved.status_code == 200, saved.text
+    revision = saved.json()["current_revision"]
+    assert revision["body"] == edited
+    for field in ("template_version", "provenance_snapshot"):
+        assert revision[field] == preframe["current_revision"][field]
+    assert revision["content_sha256"] == documents.body_digest(documents.parse_body(edited))
+    regenerate("2026-01-03", "Yours sincerely,", False)
 
 
 @pytest.mark.parametrize("tone", ["professional", "concise", "friendly"])

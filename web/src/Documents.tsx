@@ -102,11 +102,12 @@ function PageFitInventory({ revision, disabled = true, onRestore }: { revision: 
 function ReadonlyBody({ revision, letter = false }: { revision: DocumentRevision; letter?: boolean }) {
   const frame = revision.provenance_snapshot.frame;
   const parts = letterParts(revision);
+  const framedLetter = letter && !!frame && typeof frame === 'object' && !Array.isArray(frame);
   return <><OmittedClaims revision={revision} /><PageFitInventory revision={revision} /><article className="paper">
-    {letter && <header><p>{frame?.display_name}</p><p>{parts.correspondence_date}</p><p style={{ whiteSpace: 'pre-line' }}>{parts.recipient}</p></header>}
-    <h3>{revision.body.title}</h3>{letter && frame?.greeting !== undefined && <p>{parts.greeting}</p>}
+    {framedLetter && <header><p>{frame?.display_name}</p><p>{parts.correspondence_date}</p><p style={{ whiteSpace: 'pre-line' }}>{parts.recipient}</p></header>}
+    <h3>{revision.body.title}</h3>{framedLetter && frame?.greeting !== undefined && <p>{parts.greeting}</p>}
     {revision.body.sections.map(section => <section key={section.key}><h4>{section.heading}</h4>{section.blocks.map(block => <div className="evidence-seam" key={block.block_key}><p>{block.text}</p><details><summary>Statement sources ({block.claim_kind})</summary><Sources facts={revision.provenance_snapshot.facts ?? []} claimIds={block.claim_revision_ids} evidenceIds={block.evidence_revision_ids} /></details></div>)}</section>)}
-    {letter && frame?.closing !== undefined && <footer><p>{parts.closing}</p><p>{frame?.display_name}</p></footer>}
+    {framedLetter && frame?.closing !== undefined && <footer><p>{parts.closing}</p><p>{frame?.display_name}</p></footer>}
   </article></>;
 }
 
@@ -139,6 +140,7 @@ export function Documents({ api, profile, archiveRecovery, disabled = false, ext
   const [doc, setDoc] = useState<DocumentRecord | null>(null);
   const [buffer, setBuffer] = useState<DocumentBody | null>(null);
   const [letterBuffer, setLetterBuffer] = useState<LetterParts | null>(null);
+  const [letterBaseline, setLetterBaseline] = useState<LetterParts | null>(null);
   const [comparison, setComparison] = useState<DocumentRecord | null>(null);
   const [reconcile, setReconcile] = useState(false);
   const [rebaseConfirmed, setRebaseConfirmed] = useState(false);
@@ -232,7 +234,7 @@ export function Documents({ api, profile, archiveRecovery, disabled = false, ext
     }
     current.current.doc = value; current.current.buffer = null; current.current.letterBuffer = null; current.current.dirty = false;
     setPair(previous => previous && previous.application_id === value.application_id ? { ...previous, items: previous.items.map(item => item.id === value.id ? value : item) } : previous);
-    setDoc(value); setBuffer(null); setLetterBuffer(null); setComparison(null); setReconcile(false); setRebaseConfirmed(false);
+    setDoc(value); setBuffer(null); setLetterBuffer(null); setLetterBaseline(null); setComparison(null); setReconcile(false); setRebaseConfirmed(false);
     setPreview(null); setRestoreConfirmed(false); setReviewedKeys([]); setHistory(null);
     setUndoOmission(null);
   }, []);
@@ -454,14 +456,16 @@ export function Documents({ api, profile, archiveRecovery, disabled = false, ext
     if (!doc || locked || lock.current || preview) return;
     const next = copyBody(buffer ?? doc.current_revision.body); change(next);
     const value = sameBody(next, doc.current_revision.body) ? null : next;
+    if (doc.kind === 'cover_letter') setLetterBaseline(value || letterBuffer || reconcile ? letterBaseline ?? letterParts(doc.current_revision) : null);
     current.current.buffer = value; current.current.dirty = value !== null || letterBuffer !== null || reconcile;
     setBuffer(value); setReviewedKeys([]); setRebaseConfirmed(false); setNotice('Unsaved document changes. Save explicitly to create a revision.');
   }
   function editLetter(field: keyof LetterParts, text: string) {
     if (!doc || doc.kind !== 'cover_letter' || locked || lock.current || preview) return;
-    const savedParts = letterParts(doc.current_revision);
+    const savedParts = letterBaseline ?? letterParts(doc.current_revision);
     const next = { ...(letterBuffer ?? savedParts), [field]: text };
     const value = sameLetter(next, savedParts) ? null : next;
+    setLetterBaseline(value || buffer || reconcile ? savedParts : null);
     current.current.letterBuffer = value; current.current.dirty = value !== null || buffer !== null || reconcile;
     setLetterBuffer(value); setReviewedKeys([]); setRebaseConfirmed(false); setNotice('Unsaved document changes. Save explicitly to create a revision.');
   }
@@ -531,7 +535,7 @@ export function Documents({ api, profile, archiveRecovery, disabled = false, ext
     const documentId = doc.id;
     void run(async signal => {
       const path = docPath(documentId); const body: DocumentSaveRequest = { base_revision_id: doc.current_revision.id, body: buffer ?? doc.current_revision.body, reason: 'Owner edited document text' };
-      if (doc.kind === 'cover_letter') body.letter_frame = letterBuffer ?? letterParts(doc.current_revision);
+      if (displayedLetter) body.letter_frame = displayedLetter;
       try {
         const value = await request<DocumentRecord>(signal, path, 'PUT', body, doc.version, keyFor(path, body, doc.version));
         mutation.current = null; receive(value, true); setNotice(`Saved document revision ${value.current_revision.revision_no}. Review must match this saved revision.`);
@@ -552,14 +556,15 @@ export function Documents({ api, profile, archiveRecovery, disabled = false, ext
     const merged = buffer ? rebaseBody(doc.current_revision.body, buffer, comparison.current_revision.body) : null;
     if (buffer && !merged) { setError('A locally edited block was removed on the server. Copy your attempted text, then explicitly replace the editor with the server revision and edit again. Nothing has been saved.'); return; }
     let nextLetter: LetterParts | null = null;
-    if (letterBuffer) {
-      const original = letterParts(doc.current_revision); const server = letterParts(comparison.current_revision);
-      const mergedLetter = { ...server };
-      for (const key of Object.keys(original) as (keyof LetterParts)[]) if (letterBuffer[key] !== original[key]) mergedLetter[key] = letterBuffer[key];
-      if (!sameLetter(mergedLetter, server)) nextLetter = mergedLetter;
+    const serverLetter = comparison.kind === 'cover_letter' ? letterParts(comparison.current_revision) : null;
+    if (letterBuffer && letterBaseline && serverLetter) {
+      const mergedLetter = { ...serverLetter };
+      for (const key of Object.keys(letterBaseline) as (keyof LetterParts)[]) if (letterBuffer[key] !== letterBaseline[key]) mergedLetter[key] = letterBuffer[key];
+      if (!sameLetter(mergedLetter, serverLetter)) nextLetter = mergedLetter;
     }
     receive(comparison, true); const nextBuffer = merged && !sameBody(merged, comparison.current_revision.body) ? merged : null;
     setBuffer(nextBuffer); setLetterBuffer(nextLetter); current.current.buffer = nextBuffer; current.current.letterBuffer = nextLetter; current.current.dirty = nextBuffer !== null || nextLetter !== null;
+    setLetterBaseline(nextBuffer || nextLetter ? serverLetter : null);
     setNotice('Compared server revision is now the save precondition. Your changed fields are retained; inspect them and explicitly save again if any changes remain.');
   }
   function historyPage(before?: number) {
@@ -827,7 +832,9 @@ export function Documents({ api, profile, archiveRecovery, disabled = false, ext
     workflow.remaining_attempts > 0 && Date.parse(workflow.deadline_at) > archiveClock &&
     (!workflow.next_attempt_at || Date.parse(workflow.next_attempt_at) <= archiveClock) && !workflow.cancel_requested_at && workflow.delivery_state !== 'unknown';
   const displayed = buffer ?? doc?.current_revision.body;
-  const displayedLetter = letterBuffer ?? (doc ? letterParts(doc.current_revision) : null);
+  const frame = doc?.current_revision.provenance_snapshot.frame;
+  const displayedLetter = doc?.kind === 'cover_letter' && frame && typeof frame === 'object' && !Array.isArray(frame)
+    ? letterBuffer ?? letterBaseline ?? letterParts(doc.current_revision) : null;
   const route = context?.generation_route ?? pair?.generation_route;
   return <section className="documents document-panel" aria-labelledby="documents-heading">
     <header className="documents-intro"><h2 id="documents-heading" ref={headingRef} tabIndex={-1}>Documents</h2>
@@ -915,7 +922,7 @@ export function Documents({ api, profile, archiveRecovery, disabled = false, ext
         </section>}
         <PageFitInventory revision={doc.current_revision} disabled={locked || dirty || !!application?.archived_at || doc.scope !== 'tailored' || doc.kind !== 'resume'} {...(doc.scope === 'tailored' && doc.kind === 'resume' ? { onRestore: (key: string) => changeOmission('restore', key) } : {})} />
         {issues.length > 0 && <div className="error" tabIndex={-1}><strong>Export blocked: unresolved factual or source issues.</strong><ul>{issues.map((issue, index) => <li key={`${issue.path}-${issue.code}-${index}`}><a href="#/documents" onClick={event => { event.preventDefault(); const target = document.getElementById(issueAnchor(issue.path, doc.current_revision.body, displayed)); target?.focus(); target?.scrollIntoView({ block: 'center' }); }}>{ISSUE_REASONS[issue.code] ?? `Unsupported (${issue.code}).`}</a>{issue.statement !== undefined && <> Statement: <q>{issue.statement}</q></>} <small>{issue.path} · {issue.code}</small></li>)}</ul><p>These issues belong to the saved revision. Unsaved corrections or removals must be saved and revalidated before review/export. Remove/reword unsupported assertions or add a genuinely accepted profile claim/evidence and explicitly rebuild. Human review cannot waive unsupported content. Conservative checks do not establish the meaning of paraphrases.</p></div>}
-        <div className="actions"><button disabled={locked || (!buffer && !letterBuffer) || reconcile || !displayed.title.trim() || displayed.sections.some(section => !section.heading.trim() || section.blocks.some(block => !block.text.trim()))} onClick={save}>Save document revision</button><button className="secondary" disabled={locked} onClick={compare}>Compare current document revision</button>{dirty && <button className="secondary" disabled={locked} onClick={() => { current.current.buffer = null; current.current.letterBuffer = null; current.current.dirty = false; setBuffer(null); setLetterBuffer(null); setComparison(null); setReconcile(false); setReviewedKeys([]); mutation.current = null; setNotice('Local document edits discarded. Saved wording is unchanged.'); }}>Discard document changes</button>}</div>
+        <div className="actions"><button disabled={locked || (!buffer && !letterBuffer) || reconcile || (doc.kind === 'cover_letter' && !!displayedLetter && Object.values(displayedLetter).some(value => !value.trim())) || !displayed.title.trim() || displayed.sections.some(section => !section.heading.trim() || section.blocks.some(block => !block.text.trim()))} onClick={save}>Save document revision</button><button className="secondary" disabled={locked} onClick={compare}>Compare current document revision</button>{dirty && <button className="secondary" disabled={locked} onClick={() => { current.current.buffer = null; current.current.letterBuffer = null; current.current.dirty = false; setBuffer(null); setLetterBuffer(null); setLetterBaseline(null); setComparison(null); setReconcile(false); setReviewedKeys([]); mutation.current = null; setNotice('Local document edits discarded. Saved wording is unchanged.'); }}>Discard document changes</button>}</div>
         {doc.kind === 'cover_letter' && displayedLetter && <fieldset disabled={locked}><legend>Letter frame</legend>
           <label>Correspondence date<input type="date" value={displayedLetter.correspondence_date} onChange={event => editLetter('correspondence_date', event.target.value)} /></label>
           <label>Recipient<textarea maxLength={500} value={displayedLetter.recipient} onChange={event => editLetter('recipient', event.target.value)} /></label>
