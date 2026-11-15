@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Api, ApiError, errorText, terminal, type ApplicationDocuments, type BaseResumeRequest, type DocumentArchivePreview, type DocumentBody, type DocumentDefaults, type DocumentDefaultsPatch, type DocumentFact, type DocumentFitRequest, type DocumentIssue, type DocumentOmissionRequest, type DocumentRecord, type DocumentRenderRequest, type DocumentRestoreRequest, type DocumentReviewRequest, type DocumentRevision, type DocumentRevisionPage, type DocumentSaveRequest, type DocumentTemplate, type GenerationContext, type GenerationRequest, type Profile, type ProfileRevisionSummary, type RevisionPage, type SectionProposal, type SectionProposalApplyRequest, type SectionProposalPage, type SectionRegenerationContext, type SectionRegenerationRequest, type Workflow } from './api';
+import { Api, ApiError, errorText, terminal, type ApplicationDocuments, type BaseResumeRequest, type DocumentArchivePreview, type DocumentBody, type DocumentDefaults, type DocumentDefaultsPatch, type DocumentFact, type DocumentFitRequest, type DocumentIssue, type DocumentOmissionRequest, type DocumentRecord, type DocumentRenderRequest, type DocumentRestoreRequest, type DocumentReviewRequest, type DocumentRevision, type DocumentRevisionPage, type DocumentSaveRequest, type DocumentTemplate, type DocumentTone, type LetterParts, type GenerationContext, type GenerationRequest, type Profile, type ProfileRevisionSummary, type RevisionPage, type SectionProposal, type SectionProposalApplyRequest, type SectionProposalPage, type SectionRegenerationContext, type SectionRegenerationRequest, type Workflow } from './api';
 import type { ApplicationPage, ApplicationSummary } from './tracking-api';
-import { copyBody, ISSUE_REASONS, issueAnchor, linkedClaim, rebaseBody, sameBody } from './document-state';
+import { copyBody, ISSUE_REASONS, issueAnchor, letterParts, linkedClaim, rebaseBody, sameBody, sameLetter } from './document-state';
 import { proposalMatches, SectionProposals } from './SectionProposals';
 import { Conversation, type ConversationDraft } from './Conversation';
 import './Documents.css';
@@ -99,8 +99,16 @@ function PageFitInventory({ revision, disabled = true, onRestore }: { revision: 
     </li>)}</ul> : <p>No recoverably omitted blocks.</p>}
   </aside>;
 }
-function ReadonlyBody({ revision }: { revision: DocumentRevision }) {
-  return <><OmittedClaims revision={revision} /><PageFitInventory revision={revision} /><article className="paper"><h3>{revision.body.title}</h3>{revision.body.sections.map(section => <section key={section.key}><h4>{section.heading}</h4>{section.blocks.map(block => <div className="evidence-seam" key={block.block_key}><p>{block.text}</p><details><summary>Statement sources ({block.claim_kind})</summary><Sources facts={revision.provenance_snapshot.facts ?? []} claimIds={block.claim_revision_ids} evidenceIds={block.evidence_revision_ids} /></details></div>)}</section>)}</article></>;
+function ReadonlyBody({ revision, letter = false }: { revision: DocumentRevision; letter?: boolean }) {
+  const frame = revision.provenance_snapshot.frame;
+  const parts = letterParts(revision);
+  const framedLetter = letter && !!frame && typeof frame === 'object' && !Array.isArray(frame);
+  return <><OmittedClaims revision={revision} /><PageFitInventory revision={revision} /><article className="paper">
+    {framedLetter && <header><p>{frame?.display_name}</p><p>{parts.correspondence_date}</p><p style={{ whiteSpace: 'pre-line' }}>{parts.recipient}</p></header>}
+    <h3>{revision.body.title}</h3>{framedLetter && frame?.greeting !== undefined && <p>{parts.greeting}</p>}
+    {revision.body.sections.map(section => <section key={section.key}><h4>{section.heading}</h4>{section.blocks.map(block => <div className="evidence-seam" key={block.block_key}><p>{block.text}</p><details><summary>Statement sources ({block.claim_kind})</summary><Sources facts={revision.provenance_snapshot.facts ?? []} claimIds={block.claim_revision_ids} evidenceIds={block.evidence_revision_ids} /></details></div>)}</section>)}
+    {framedLetter && frame?.closing !== undefined && <footer><p>{parts.closing}</p><p>{frame?.display_name}</p></footer>}
+  </article></>;
 }
 
 export function Documents({ api, profile, archiveRecovery, disabled = false, externalDocumentId, externalRequestKey, onDirtyChange, onBusyChange }: DocumentsProps) {
@@ -125,12 +133,14 @@ export function Documents({ api, profile, archiveRecovery, disabled = false, ext
   const [pair, setPair] = useState<ApplicationDocuments | null>(null);
   const [context, setContext] = useState<GenerationContext | null>(null);
   const [contextConfirmed, setContextConfirmed] = useState(false);
-  const [tone, setTone] = useState<'professional' | 'concise'>('professional');
+  const [tone, setTone] = useState<DocumentTone>('professional');
   const [initialPageTarget, setInitialPageTarget] = useState<'' | '1' | '2'>('');
   const [fitTarget, setFitTarget] = useState<1 | 2>(1);
   const [undoOmission, setUndoOmission] = useState<{ documentId: string; revisionId: string; blockKey: string } | null>(null);
   const [doc, setDoc] = useState<DocumentRecord | null>(null);
   const [buffer, setBuffer] = useState<DocumentBody | null>(null);
+  const [letterBuffer, setLetterBuffer] = useState<LetterParts | null>(null);
+  const [letterBaseline, setLetterBaseline] = useState<LetterParts | null>(null);
   const [comparison, setComparison] = useState<DocumentRecord | null>(null);
   const [reconcile, setReconcile] = useState(false);
   const [rebaseConfirmed, setRebaseConfirmed] = useState(false);
@@ -139,7 +149,7 @@ export function Documents({ api, profile, archiveRecovery, disabled = false, ext
   const [restoreConfirmed, setRestoreConfirmed] = useState(false);
   const [reviewedKeys, setReviewedKeys] = useState<string[]>([]);
   const [sectionKey, setSectionKey] = useState('');
-  const [sectionTone, setSectionTone] = useState<'professional' | 'concise'>('professional');
+  const [sectionTone, setSectionTone] = useState<DocumentTone>('professional');
   const [sectionContext, setSectionContext] = useState<SectionRegenerationContext | null>(null);
   const [sectionConfirmed, setSectionConfirmed] = useState(false);
   const [proposals, setProposals] = useState<SectionProposalPage | null>(null);
@@ -177,10 +187,10 @@ export function Documents({ api, profile, archiveRecovery, disabled = false, ext
   const callbacks = useRef({ onDirtyChange, onBusyChange });
   callbacks.current = { onDirtyChange, onBusyChange };
   const activeTask = !!workflow && !terminal(workflow.state);
-  const dirty = buffer !== null || reconcile;
+  const dirty = buffer !== null || letterBuffer !== null || reconcile;
   const locked = disabled || busy || activeTask || conversationBusy;
-  const current = useRef({ doc, buffer, dirty, disabled, profile, mode, applicationId, activeTask });
-  current.current = { doc, buffer, dirty, disabled, profile, mode, applicationId, activeTask };
+  const current = useRef({ doc, buffer, letterBuffer, dirty, disabled, profile, mode, applicationId, activeTask });
+  current.current = { doc, buffer, letterBuffer, dirty, disabled, profile, mode, applicationId, activeTask };
   const profileId = selectedProfile || profile?.current_revision.id || '';
   const upstreamChanged = !!doc && !!profile && doc.current_revision.profile_revision_id !== profile.current_revision.id;
   const application = applications.find(item => item.id === applicationId);
@@ -222,9 +232,9 @@ export function Documents({ api, profile, archiveRecovery, disabled = false, ext
       if (live.doc?.id !== value.id) { setNotice('A different result is available. Your dirty document has not been replaced; save or discard before opening it.'); return; }
       setComparison(value); setReconcile(true); setRebaseConfirmed(false); return;
     }
-    current.current.doc = value; current.current.buffer = null; current.current.dirty = false;
+    current.current.doc = value; current.current.buffer = null; current.current.letterBuffer = null; current.current.dirty = false;
     setPair(previous => previous && previous.application_id === value.application_id ? { ...previous, items: previous.items.map(item => item.id === value.id ? value : item) } : previous);
-    setDoc(value); setBuffer(null); setComparison(null); setReconcile(false); setRebaseConfirmed(false);
+    setDoc(value); setBuffer(null); setLetterBuffer(null); setLetterBaseline(null); setComparison(null); setReconcile(false); setRebaseConfirmed(false);
     setPreview(null); setRestoreConfirmed(false); setReviewedKeys([]); setHistory(null);
     setUndoOmission(null);
   }, []);
@@ -443,11 +453,21 @@ export function Documents({ api, profile, archiveRecovery, disabled = false, ext
     });
   }
   function edit(change: (body: DocumentBody) => void) {
-    if (!doc || locked || preview) return;
+    if (!doc || locked || lock.current || preview) return;
     const next = copyBody(buffer ?? doc.current_revision.body); change(next);
     const value = sameBody(next, doc.current_revision.body) ? null : next;
-    current.current.buffer = value; current.current.dirty = value !== null || reconcile;
+    if (doc.kind === 'cover_letter') setLetterBaseline(value || letterBuffer || reconcile ? letterBaseline ?? letterParts(doc.current_revision) : null);
+    current.current.buffer = value; current.current.dirty = value !== null || letterBuffer !== null || reconcile;
     setBuffer(value); setReviewedKeys([]); setRebaseConfirmed(false); setNotice('Unsaved document changes. Save explicitly to create a revision.');
+  }
+  function editLetter(field: keyof LetterParts, text: string) {
+    if (!doc || doc.kind !== 'cover_letter' || locked || lock.current || preview) return;
+    const savedParts = letterBaseline ?? letterParts(doc.current_revision);
+    const next = { ...(letterBuffer ?? savedParts), [field]: text };
+    const value = sameLetter(next, savedParts) ? null : next;
+    setLetterBaseline(value || buffer || reconcile ? savedParts : null);
+    current.current.letterBuffer = value; current.current.dirty = value !== null || buffer !== null || reconcile;
+    setLetterBuffer(value); setReviewedKeys([]); setRebaseConfirmed(false); setNotice('Unsaved document changes. Save explicitly to create a revision.');
   }
   function startBase() {
     if (!profile || !profileId || !template || dirty || locked) return;
@@ -511,10 +531,11 @@ export function Documents({ api, profile, archiveRecovery, disabled = false, ext
     });
   }
   function save() {
-    if (!doc || !buffer || locked || preview || reconcile) return;
+    if (!doc || (!buffer && !letterBuffer) || locked || preview || reconcile) return;
     const documentId = doc.id;
     void run(async signal => {
-      const path = docPath(documentId); const body: DocumentSaveRequest = { base_revision_id: doc.current_revision.id, body: buffer, reason: 'Owner edited document text' };
+      const path = docPath(documentId); const body: DocumentSaveRequest = { base_revision_id: doc.current_revision.id, body: buffer ?? doc.current_revision.body, reason: 'Owner edited document text' };
+      if (displayedLetter) body.letter_frame = displayedLetter;
       try {
         const value = await request<DocumentRecord>(signal, path, 'PUT', body, doc.version, keyFor(path, body, doc.version));
         mutation.current = null; receive(value, true); setNotice(`Saved document revision ${value.current_revision.revision_no}. Review must match this saved revision.`);
@@ -532,10 +553,20 @@ export function Documents({ api, profile, archiveRecovery, disabled = false, ext
   }
   function rebase() {
     if (!doc || !comparison || !rebaseConfirmed || locked) return;
+    const frame = comparison.current_revision.provenance_snapshot.frame;
+    const serverLetter = comparison.kind === 'cover_letter' && frame && typeof frame === 'object' && !Array.isArray(frame) ? letterParts(comparison.current_revision) : null;
+    if (!serverLetter && letterBuffer && letterBaseline && !sameLetter(letterBuffer, letterBaseline)) { setError('The restored version cannot hold letter fields. Your local letter edits are kept; restore a framed version or discard those edits before rebasing. Nothing has been saved.'); return; }
     const merged = buffer ? rebaseBody(doc.current_revision.body, buffer, comparison.current_revision.body) : null;
     if (buffer && !merged) { setError('A locally edited block was removed on the server. Copy your attempted text, then explicitly replace the editor with the server revision and edit again. Nothing has been saved.'); return; }
+    let nextLetter: LetterParts | null = null;
+    if (letterBuffer && letterBaseline && serverLetter) {
+      const mergedLetter = { ...serverLetter };
+      for (const key of Object.keys(letterBaseline) as (keyof LetterParts)[]) if (letterBuffer[key] !== letterBaseline[key]) mergedLetter[key] = letterBuffer[key];
+      if (!sameLetter(mergedLetter, serverLetter)) nextLetter = mergedLetter;
+    }
     receive(comparison, true); const nextBuffer = merged && !sameBody(merged, comparison.current_revision.body) ? merged : null;
-    setBuffer(nextBuffer); current.current.buffer = nextBuffer; current.current.dirty = nextBuffer !== null;
+    setBuffer(nextBuffer); setLetterBuffer(nextLetter); current.current.buffer = nextBuffer; current.current.letterBuffer = nextLetter; current.current.dirty = nextBuffer !== null || nextLetter !== null;
+    setLetterBaseline(nextBuffer || nextLetter ? serverLetter : null);
     setNotice('Compared server revision is now the save precondition. Your changed fields are retained; inspect them and explicitly save again if any changes remain.');
   }
   function historyPage(before?: number) {
@@ -803,6 +834,9 @@ export function Documents({ api, profile, archiveRecovery, disabled = false, ext
     workflow.remaining_attempts > 0 && Date.parse(workflow.deadline_at) > archiveClock &&
     (!workflow.next_attempt_at || Date.parse(workflow.next_attempt_at) <= archiveClock) && !workflow.cancel_requested_at && workflow.delivery_state !== 'unknown';
   const displayed = buffer ?? doc?.current_revision.body;
+  const frame = doc?.current_revision.provenance_snapshot.frame;
+  const displayedLetter = doc?.kind === 'cover_letter' && frame && typeof frame === 'object' && !Array.isArray(frame)
+    ? letterBuffer ?? letterBaseline ?? letterParts(doc.current_revision) : null;
   const route = context?.generation_route ?? pair?.generation_route;
   return <section className="documents document-panel" aria-labelledby="documents-heading">
     <header className="documents-intro"><h2 id="documents-heading" ref={headingRef} tabIndex={-1}>Documents</h2>
@@ -847,7 +881,7 @@ export function Documents({ api, profile, archiveRecovery, disabled = false, ext
         {applicationId && <><button className="secondary" onClick={() => { void run(signal => loadPair(signal, applicationId, selection.current, doc?.id)); }}>Reload application documents</button>{pair && <><p>{pair.items.some(item => item.kind === 'resume') && pair.items.some(item => item.kind === 'cover_letter') ? 'Saved résumé and cover letter available.' : pair.items.length ? 'The requested pair is incomplete. A missing member is not a successful pair.' : 'No saved pair. Existing application data remains available.'}</p><div className="actions">{(['resume', 'cover_letter'] as const).map(kind => { const member = pair.items.find(item => item.kind === kind); return <button key={kind} className="secondary" disabled={!member} aria-pressed={doc?.id === member?.id} onClick={() => { if (member) { selection.current++; receive(member, true); } }}>{kind === 'resume' ? 'Résumé' : 'Cover letter'}{!member ? ' unavailable' : ''}</button>; })}</div></>}
           {route && <p className="disclosure"><strong>Generation route: {route.status}.</strong> {route.reason}</p>}{pair && <><QualificationReceipts details={pair.receipt_details} /><ClaimJsonRates rates={pair.claim_json_rates} /></>}{!pair?.requirements_revision_id && <p>Reviewed, current, nonempty requirements are required. Review them in the posting workspace before preparing a pair.</p>}{application?.archived_at && <p>Archived applications remain readable. Generation is unavailable.</p>}
           {pair && !pair.items.some(item => item.kind === 'resume') ? <label>Initial résumé page target (optional)<select value={initialPageTarget} disabled={!!application?.archived_at} onChange={event => setInitialPageTarget(event.target.value as '' | '1' | '2')}><option value="">No automatic fitting</option><option value="1">One page</option><option value="2">Two pages</option></select></label> : <p>Regenerating an existing résumé does not refit it. Use Fit saved résumé to target explicitly after generation.</p>}
-          <label>Writing tone<select value={tone} onChange={event => { choicesInitialized.current = true; setTone(event.target.value as 'professional' | 'concise'); }}><option value="professional">Professional</option><option value="concise">Concise</option></select></label><button className="secondary" disabled={!profile || !profileId || !template || !!application?.archived_at} onClick={previewContext}>Preview reviewed generation context</button>
+          <label>Writing tone<select value={tone} onChange={event => { choicesInitialized.current = true; setTone(event.target.value as DocumentTone); }}><option value="professional">Traditional formal</option><option value="concise">Concise</option><option value="friendly">Friendly</option></select></label><button className="secondary" disabled={!profile || !profileId || !template || !!application?.archived_at} onClick={previewContext}>Preview reviewed generation context</button>
           {context && <section className="disclosure"><h3>Exact minimized model projection</h3>
             <p>{context.page_target ? `After the original pair is saved, a separate model-free task will try to fit the new résumé to ${context.page_target} ${context.page_target === 1 ? 'page' : 'pages'}. It may remain above target. Original content stays in history; a failed fit leaves it available.` : 'No automatic page fitting requested.'} Fitting never applies to the cover letter.</p>
             <p>Destination from this operation’s route: <code>{typeof context.generation_route.identity?.endpoint === 'string' ? context.generation_route.identity.endpoint : 'No endpoint supplied — inspect route identity below'}</code>. Model: {typeof context.generation_route.identity?.model === 'string' ? context.generation_route.identity.model : 'Not supplied'}. A local endpoint is not a universal no-network guarantee; prose may still contain personal information, not anonymization. No hosted fallback.</p>
@@ -879,7 +913,7 @@ export function Documents({ api, profile, archiveRecovery, disabled = false, ext
         <p className={`document-save-state${dirty || issues.length ? ' needs-attention' : ''}`} aria-label="Document state">{preview ? 'Historical preview · read-only' : reconcile ? 'Reconciliation required · local edits retained' : dirty ? 'Unsaved changes · review and export locked' : issues.length ? 'Saved · export blocked' : doc.reviewed ? 'Saved · exact revision reviewed' : 'Saved · review required'}</p>
       </header>
       {(doc.stale || upstreamChanged) && <aside className="disclosure"><strong>Outdated frozen inputs.</strong> {doc.stale_reason ?? 'upstream_profile_revision_changed'}. Profile/contact updates do not change this wording, printable frame, history or existing PDF. Rebuild is explicit.</aside>}
-      {preview ? <section className="document-history-preview"><h3>Historical revision {preview.revision_no} — read-only</h3><p>Viewing does not change the current document. Restore copies this historical frozen context into a new revision, not the newest profile.</p><ReadonlyBody revision={preview} /><details><summary>Historical provenance and validation issues</summary><pre className="import-source">{JSON.stringify({ provenance: preview.provenance_snapshot, issues: preview.validation_issues }, null, 2)}</pre></details><button className="secondary" disabled={busy} onClick={() => { setPreview(null); setRestoreConfirmed(false); }}>Return to current saved revision</button><label className="check"><input type="checkbox" disabled={locked || dirty} checked={restoreConfirmed} onChange={event => setRestoreConfirmed(event.target.checked)} />Restore this historical revision as a new current revision, retaining displaced history</label><button disabled={locked || dirty || !restoreConfirmed} onClick={restore}>Restore historical revision</button>{reconcile && <p>Return to the current revision, compare the server version and reconfirm before restoring. No history has been replaced.</p>}</section> : <>
+      {preview ? <section className="document-history-preview"><h3>Historical revision {preview.revision_no} — read-only</h3><p>Viewing does not change the current document. Restore copies this historical frozen context into a new revision, not the newest profile.</p><ReadonlyBody revision={preview} letter={doc.kind === 'cover_letter'} /><details><summary>Historical provenance and validation issues</summary><pre className="import-source">{JSON.stringify({ provenance: preview.provenance_snapshot, issues: preview.validation_issues }, null, 2)}</pre></details><button className="secondary" disabled={busy} onClick={() => { setPreview(null); setRestoreConfirmed(false); }}>Return to current saved revision</button><label className="check"><input type="checkbox" disabled={locked || dirty} checked={restoreConfirmed} onChange={event => setRestoreConfirmed(event.target.checked)} />Restore this historical revision as a new current revision, retaining displaced history</label><button disabled={locked || dirty || !restoreConfirmed} onClick={restore}>Restore historical revision</button>{reconcile && <p>Return to the current revision, compare the server version and reconfirm before restoring. No history has been replaced.</p>}</section> : <>
         <OmittedClaims revision={doc.current_revision} />
         {doc.scope === 'tailored' && doc.kind === 'resume' && <section className="disclosure" aria-label="Fit saved résumé">
           <h3>Fit saved résumé</h3><p>Measure this exact saved résumé and, if needed, omit whole blocks from the end to try to reach your target. No model calls or wording changes. A new fitted revision needs review; no measurement PDF is published.</p>
@@ -890,7 +924,15 @@ export function Documents({ api, profile, archiveRecovery, disabled = false, ext
         </section>}
         <PageFitInventory revision={doc.current_revision} disabled={locked || dirty || !!application?.archived_at || doc.scope !== 'tailored' || doc.kind !== 'resume'} {...(doc.scope === 'tailored' && doc.kind === 'resume' ? { onRestore: (key: string) => changeOmission('restore', key) } : {})} />
         {issues.length > 0 && <div className="error" tabIndex={-1}><strong>Export blocked: unresolved factual or source issues.</strong><ul>{issues.map((issue, index) => <li key={`${issue.path}-${issue.code}-${index}`}><a href="#/documents" onClick={event => { event.preventDefault(); const target = document.getElementById(issueAnchor(issue.path, doc.current_revision.body, displayed)); target?.focus(); target?.scrollIntoView({ block: 'center' }); }}>{ISSUE_REASONS[issue.code] ?? `Unsupported (${issue.code}).`}</a>{issue.statement !== undefined && <> Statement: <q>{issue.statement}</q></>} <small>{issue.path} · {issue.code}</small></li>)}</ul><p>These issues belong to the saved revision. Unsaved corrections or removals must be saved and revalidated before review/export. Remove/reword unsupported assertions or add a genuinely accepted profile claim/evidence and explicitly rebuild. Human review cannot waive unsupported content. Conservative checks do not establish the meaning of paraphrases.</p></div>}
-        <div className="actions"><button disabled={locked || !buffer || reconcile || !displayed.title.trim() || displayed.sections.some(section => !section.heading.trim() || section.blocks.some(block => !block.text.trim()))} onClick={save}>Save document revision</button><button className="secondary" disabled={locked} onClick={compare}>Compare current document revision</button>{dirty && <button className="secondary" disabled={locked} onClick={() => { setBuffer(null); setComparison(null); setReconcile(false); setReviewedKeys([]); mutation.current = null; setNotice('Local document edits discarded. Saved wording is unchanged.'); }}>Discard document changes</button>}</div>
+        <div className="actions"><button disabled={locked || (!buffer && !letterBuffer) || reconcile || (doc.kind === 'cover_letter' && !!displayedLetter && Object.values(displayedLetter).some(value => !value.trim())) || !displayed.title.trim() || displayed.sections.some(section => !section.heading.trim() || section.blocks.some(block => !block.text.trim()))} onClick={save}>Save document revision</button><button className="secondary" disabled={locked} onClick={compare}>Compare current document revision</button>{dirty && <button className="secondary" disabled={locked} onClick={() => { current.current.buffer = null; current.current.letterBuffer = null; current.current.dirty = false; setBuffer(null); setLetterBuffer(null); setLetterBaseline(null); setComparison(null); setReconcile(false); setReviewedKeys([]); mutation.current = null; setNotice('Local document edits discarded. Saved wording is unchanged.'); }}>Discard document changes</button>}</div>
+        {doc.kind === 'cover_letter' && displayedLetter && <fieldset disabled={locked}><legend>Letter frame</legend>
+          <label>Correspondence date<input type="date" value={displayedLetter.correspondence_date} onChange={event => editLetter('correspondence_date', event.target.value)} /></label>
+          <label>Recipient<textarea maxLength={500} value={displayedLetter.recipient} onChange={event => editLetter('recipient', event.target.value)} /></label>
+          <label>Greeting<input maxLength={200} value={displayedLetter.greeting} onChange={event => editLetter('greeting', event.target.value)} /></label>
+          <label>Closing<input maxLength={200} value={displayedLetter.closing} onChange={event => editLetter('closing', event.target.value)} /></label>
+          <p>Sender and signature use this revision’s frozen profile name. These fields are saved separately from letter body text.</p>
+        </fieldset>}
+        {doc.kind === 'cover_letter' && <details><summary>Saved letter preview</summary><ReadonlyBody revision={doc.current_revision} letter /></details>}
         <article className="paper document-editor">
           <h3>{displayed.title}</h3>
           <label>Document title<input id="document-saved-title" maxLength={160} value={displayed.title} disabled={locked} onChange={event => edit(body => { body.title = event.target.value; })} /></label>
@@ -909,7 +951,7 @@ export function Documents({ api, profile, archiveRecovery, disabled = false, ext
           </section>)}
         </article>
         <p className="hint">{dirty ? 'Unsaved/reconciliation pending. Review and PDF use saved revisions only.' : 'Edits are saved. Check each factual block against its frozen sources before accepting this revision.'} Source references and structural checks are not semantic proof or independently verified credentials. Meaning needs your review.</p>
-        {comparison && <section className="comparison"><h4>Current server document revision {comparison.current_revision.revision_no}</h4><ReadonlyBody revision={comparison.current_revision} /><p>Your editor above is unchanged. Rebase preserves unrelated server fields and applies your changed fields only; inspect both versions before reconfirming. Any overlapping edits will use your displayed local wording.</p><label className="check"><input type="checkbox" checked={rebaseConfirmed} disabled={locked} onChange={event => setRebaseConfirmed(event.target.checked)} />I compared both revisions and reconfirm my changed fields against this server version</label><div className="actions"><button className="secondary" disabled={locked || !rebaseConfirmed} onClick={rebase}>Rebase my edits onto compared revision</button><button className="secondary" disabled={locked || !rebaseConfirmed} onClick={() => { receive(comparison, true); mutation.current = null; setNotice('Editor explicitly replaced with compared saved revision.'); }}>Replace editor with compared revision</button></div></section>}
+        {comparison && <section className="comparison"><h4>Current server document revision {comparison.current_revision.revision_no}</h4><ReadonlyBody revision={comparison.current_revision} letter={doc.kind === 'cover_letter'} /><p>Your editor above is unchanged. Rebase preserves unrelated server fields and applies your changed fields only; inspect both versions before reconfirming. Any overlapping edits will use your displayed local wording.</p><label className="check"><input type="checkbox" checked={rebaseConfirmed} disabled={locked} onChange={event => setRebaseConfirmed(event.target.checked)} />I compared both revisions and reconfirm my changed fields against this server version</label><div className="actions"><button className="secondary" disabled={locked || !rebaseConfirmed} onClick={rebase}>Rebase my edits onto compared revision</button><button className="secondary" disabled={locked || !rebaseConfirmed} onClick={() => { receive(comparison, true); mutation.current = null; setNotice('Editor explicitly replaced with compared saved revision.'); }}>Replace editor with compared revision</button></div></section>}
         {reconcile && !comparison && <p className="disclosure">Your attempted text is retained. Compare the server revision, explicitly rebase/reconfirm, then save again. No automatic overwrite or retry.</p>}
         <section className="document-review" aria-label="Review and export">
           <div><h3>Review and export</h3><p>{dirty ? 'Save and revalidate your changes before reviewing or rendering a PDF.' : issues.length ? 'Resolve the factual or source issues shown above before review or export.' : doc.reviewed ? 'This saved revision is reviewed and ready to render.' : `Checked ${factualKeys.filter(key => reviewedKeys.includes(key)).length} of ${factualKeys.length} factual blocks. Accept only after checking the wording and sources.`}</p></div>
@@ -933,7 +975,7 @@ export function Documents({ api, profile, archiveRecovery, disabled = false, ext
       <button className="secondary" onClick={() => { void run(signal => loadDefaults(signal)); }}>Reload remembered defaults</button>
       {defaults && <>
         <label>Remembered built-in presentation<select value={defaultsDraft.template_version} onChange={event => setDefaultsDraft(value => ({ ...value, template_version: event.target.value }))}>{!templates.length && <option value={defaultsDraft.template_version}>{defaultsDraft.template_version} · catalog unavailable</option>}{templates.map(item => <option key={item.version} value={item.version}>{item.label} · English · {item.paper}</option>)}</select></label>
-        <label>Remembered writing tone<select value={defaultsDraft.tone} onChange={event => setDefaultsDraft(value => ({ ...value, tone: event.target.value as DocumentDefaults['tone'] }))}><option value="professional">Professional</option><option value="concise">Concise</option></select></label>
+        <label>Remembered writing tone<select value={defaultsDraft.tone} onChange={event => setDefaultsDraft(value => ({ ...value, tone: event.target.value as DocumentDefaults['tone'] }))}><option value="professional">Traditional formal</option><option value="concise">Concise</option><option value="friendly">Friendly</option></select></label>
         {defaultsConflict && <p className="disclosure">The saved version changed. Reload remembered defaults, compare the last loaded values with your retained choices, then explicitly save again.</p>}
         <button disabled={defaultsConflict || !templates.some(item => item.version === defaultsDraft.template_version) || (defaultsDraft.template_version === defaults.template_version && defaultsDraft.tone === defaults.tone)} onClick={saveDefaults}>Save remembered defaults</button>
         <button className="secondary" disabled={dirty || defaultsConflict || !!defaultsError} onClick={() => { choicesInitialized.current = true; setTemplate(defaults.template_version); setTone(defaults.tone); setSectionTone(defaults.tone); setNotice('Last loaded remembered defaults selected for this operation. Saved documents are unchanged.'); }}>Use remembered defaults for current operation</button>

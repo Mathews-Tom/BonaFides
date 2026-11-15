@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
-import type { DocumentBody, DocumentFact, DocumentRecord, SectionProposal, SectionProposalPage, SectionRegenerationContext } from './api';
+import type { DocumentBody, DocumentFact, DocumentRecord, DocumentTone, SectionProposal, SectionProposalPage, SectionRegenerationContext } from './api';
 import { ISSUE_REASONS, linkedClaim } from './document-state';
 
 export function proposalMatches(proposal: SectionProposal, document: DocumentRecord) {
@@ -17,9 +17,9 @@ function ProposalSection({ section, label, facts }: { section: DocumentBody['sec
 
 interface Props {
   document: DocumentRecord; dirty: boolean; locked: boolean; archived: boolean;
-  sectionKey: string; tone: 'professional' | 'concise'; context: SectionRegenerationContext | null;
+  sectionKey: string; tone: DocumentTone; context: SectionRegenerationContext | null;
   confirmed: boolean; proposals: SectionProposalPage | null; proposal: SectionProposal | null; applyConfirmed: boolean;
-  onSection: (key: string) => void; onTone: (tone: 'professional' | 'concise') => void;
+  onSection: (key: string) => void; onTone: (tone: DocumentTone) => void;
   onPreview: () => void; onConfirm: (value: boolean) => void; onRequest: () => void;
   onReload: (before?: string) => void; onOpen: (id: string) => void;
   onApplyConfirm: (value: boolean) => void; onApply: () => void;
@@ -36,7 +36,7 @@ export function SectionProposals({ document, dirty, locked, archived, sectionKey
     {archived && <p>Archived applications cannot request new model proposals. Stored proposals remain readable.</p>}
     <fieldset disabled={unavailable}><legend>Saved section regeneration</legend>
       <label>Section to regenerate<select value={sectionKey} onChange={event => onSection(event.target.value)}>{document.current_revision.body.sections.map(section => <option key={section.key} value={section.key}>{section.heading}</option>)}</select></label>
-      <label>Section writing tone<select value={tone} onChange={event => onTone(event.target.value as 'professional' | 'concise')}><option value="professional">Professional</option><option value="concise">Concise</option></select></label>
+      <label>Section writing tone<select value={tone} onChange={event => onTone(event.target.value as DocumentTone)}><option value="professional">Traditional formal</option><option value="concise">Concise</option><option value="friendly">Friendly</option></select></label>
       <button className="secondary" disabled={!sectionKey} onClick={onPreview}>Preview selected-section model projection</button>
       {context && <section className="disclosure" aria-label="Exact selected-section model projection"><h4>Exact selected-section model projection</h4>
         <p>This is the exact professional projection for this one section and tone. Dedicated identity/contact fields, printable frame, other document sections and private tracking data are excluded. Evidence currently classified confidential or employer-owned on its record is sent as a reference without its content. Reclassification applies immediately without re-saving or re-pinning claims. Professional prose can still contain personal information; this is not anonymization. No hosted fallback.</p>

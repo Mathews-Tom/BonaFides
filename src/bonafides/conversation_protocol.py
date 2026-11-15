@@ -32,7 +32,7 @@ class ConversationReply(StrictModel):
     stage: Literal["refine_documents"]
     reply_text: str = Field(min_length=1, max_length=2000)
     declined: bool
-    tone: Literal["professional", "concise"] | None
+    tone: Literal["professional", "concise", "friendly"] | None
     edits: list[ConversationEdit] = Field(max_length=256)
 
     @model_validator(mode="after")
@@ -55,7 +55,7 @@ class ConversationReply(StrictModel):
 def validate_reply(output: dict[str, object], frozen: dict[str, object]) -> ConversationReply:
     """Check selected-unit replacements against the original document's pinned facts."""
     from bonafides import document_generation as generation
-    from bonafides import documents, model_calls
+    from bonafides import documents, letter_frame, model_calls
 
     candidate = generation.parse_candidate(output, ConversationReply)
     targets = {
@@ -77,6 +77,11 @@ def validate_reply(output: dict[str, object], frozen: dict[str, object]) -> Conv
                 for name in ("claim_kind", "claim_revision_ids", "evidence_revision_ids")
             ):
                 raise model_calls.OutputMismatch(["edits: changed_source_annotations"])
+            provenance = cast(dict[str, object], document["provenance_snapshot"])
+            if document["kind"] == "cover_letter" and letter_frame.role(
+                edit.replacement.text, cast(dict[str, object], provenance["frame"])
+            ):
+                raise model_calls.OutputMismatch(["edits: letter_correspondence_in_body"])
             replacements[(edit.section_key, edit.block_key)] = edit.replacement
         if not replacements:
             continue

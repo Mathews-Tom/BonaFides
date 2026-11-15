@@ -3,9 +3,10 @@
 Original synthetic fixtures, distributed under `MIT OR Apache-2.0`. No real person,
 organization, résumé or employer data is included. No model weights are distributed.
 
-Each stage file contains 20 cases: ten professional roles in professional and concise
-tones, with two separately cited claims and their evidence, a posting, reviewed
-requirements and a pinned existing section. The posting includes a preferred skill
+Each stage file contains 20 cases across ten professional roles. Document stages
+cover professional, concise and friendly tones (the first case is friendly), with
+two separately cited claims and their evidence, a posting, reviewed requirements
+and a pinned existing section. The posting includes a preferred skill
 not established by the claims, so it cannot be borrowed into factual statements.
 `generate_documents.jsonl` exercises complete résumé/letter pairs;
 `regenerate_section.jsonl` exercises replacement blocks for the pinned section, with

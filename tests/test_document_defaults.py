@@ -358,10 +358,15 @@ def test_defaults_do_not_mutate_saved_pins_artifacts_or_pending_explicit_generat
     )
     for saved in _pair_documents(catalog, application)["items"]:
         current = saved["current_revision"]
-        assert current["template_version"] == preview["template_version"]
+        expected_template = (
+            "bonafides-evidence-v4"
+            if saved["kind"] == "cover_letter"
+            else preview["template_version"]
+        )
+        assert current["template_version"] == expected_template
         assert current["provenance_snapshot"]["tone"] == preview["tone"]
         assert current["provenance_snapshot"]["template_sha256"] == template_digest(
-            preview["template_version"]
+            expected_template
         )
 
 
@@ -446,3 +451,15 @@ def test_retained_history_has_no_fifty_revision_cap_and_old_restore_preserves_di
             f"/api/v1/documents/{document['id']}/revisions/{retained['id']}"
         )
         assert response.status_code == 200 and response.json() == retained
+
+
+@pytest.mark.postgres
+def test_friendly_default_round_trips(catalog: SourceContext) -> None:
+    before = _defaults(catalog)
+    saved = catalog.client.patch(
+        "/api/v1/document-defaults",
+        json={"tone": "friendly"},
+        headers=catalog.headers(before["version"]),
+    )
+    assert saved.status_code == 200, saved.text
+    assert saved.json()["tone"] == "friendly" and _defaults(catalog) == saved.json()

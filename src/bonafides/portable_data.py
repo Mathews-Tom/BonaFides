@@ -518,6 +518,9 @@ def _semantic_hashes(archive: PortableArchive) -> None:
 
 def _conversation_history(records: Mapping[str, list[JsonRow]]) -> None:
     """Resolve inert JSON pins only against this archive, never live owner data."""
+    from bonafides import letter_frame
+    from bonafides.documents import parse_body
+
     documents = {cast(str, row["id"]): row for row in records["document_drafts"]}
     revisions = {cast(str, row["id"]): row for row in records["document_revisions"]}
     references = {
@@ -664,6 +667,16 @@ def _conversation_history(records: Mapping[str, list[JsonRow]]) -> None:
             for tone in cast(list[JsonRow], reply["tones"]):
                 if tone["document_id"] not in selected:
                     raise ValueError("conversation_tone_membership")
+                if "letter_before" in tone:
+                    pair = pairs[cast(str, tone["document_id"])]
+                    for side in ("before", "after"):
+                        revision = revisions[cast(str, pair[side + "_revision_id"])]
+                        if tone["letter_" + side] != letter_frame.state(
+                            parse_body(revision["body"]), cast(dict[str, object], revision)
+                        ):
+                            raise ValueError("conversation_letter_membership")
+                    if tone["after_sha256"] != revision["content_sha256"]:
+                        raise ValueError("conversation_letter_digest")
     except (KeyError, TypeError, ValueError, StopIteration, ValidationError) as exc:
         raise ArchiveError("invalid_portable_conversation") from exc
 

@@ -164,7 +164,7 @@ You need all four:
 
 1. Open **Documents** and choose **Tracked application documents**.
 2. Select **Reload tracked applications** and choose one under **Tracked application**.
-3. Choose a **Writing tone**: **Professional** or **Concise**. For a new résumé, optionally choose **Initial résumé page target (optional)**; see [page fitting](#fit-a-tailored-résumé-to-one-or-two-pages).
+3. Choose a **Writing tone**: **Friendly**, **Concise** or **Traditional formal**. For a new résumé, optionally choose **Initial résumé page target (optional)**; see [page fitting](#fit-a-tailored-résumé-to-one-or-two-pages).
 4. Select **Preview reviewed generation context**. BonaFides shows exactly what it will send to the model, where it will send it, and what it leaves out. See [what the model receives](ai-tailoring.md#what-the-model-receives).
 5. If you're happy with it, tick **I reviewed this exact projection, route, frozen inputs and privacy limitation for this one task**.
 6. Select **Generate résumé and cover letter pair**.
@@ -172,6 +172,12 @@ You need all four:
 Generation runs in the background; a status line shows progress, and you can select **Cancel document task**. When it finishes, check, approve and export each document as described above.
 
 If generation fails, nothing is created and your existing documents are untouched. The message explains why. Unsupported profile entries are named and refuse tailored generation; they are not silently omitted as they may be in a base build. Save supported entry revisions before previewing again. If your profile, the posting or your settings changed after you previewed, preview and generate again.
+
+### Edit a letter's correspondence
+
+A letter saves its date, recipient, greeting and closing separately from its body. Edit these in the letter editor and save a new draft revision; the date you choose stays saved, rather than changing to today's date. New salutations and sign-offs belong in the greeting and closing fields; body edits that add them are refused. Older framed letters show their existing body greeting and closing until first edited, when those exact parts move into the frame without duplication. Early text-only letters keep their original layout when saved. Sender details and the signature come only from the saved profile identity, never from the model. Regenerating the pair preserves the saved date and any owner-edited closing.
+
+English closings follow the writing tone: **Friendly** uses “Best wishes,”, **Concise** uses “Regards,” and **Traditional formal** uses “Yours sincerely,”. A conversation tone change updates an unchanged, tone-derived closing in the same undoable reply. A custom closing, or one you changed while the request ran, is preserved. Undo restores the letter's exact pre-reply body, frame and template, and refuses if that letter has since changed. Sender, correspondence date and signature cannot be structured AI rewrite targets; ordinary messages may mention dates or signatures. Edit the date manually or update your profile and explicitly regenerate to pick up identity changes.
 
 ### Rewrite one section
 

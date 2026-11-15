@@ -157,6 +157,9 @@ export interface Workflow {
   } | null;
 }
 export type DocumentKind = 'resume' | 'cover_letter';
+export type DocumentTone = 'professional' | 'concise' | 'friendly';
+export interface LetterParts { correspondence_date: string; recipient: string; greeting: string; closing: string }
+export interface DocumentFrame extends Partial<LetterParts> { display_name?: string; [key: string]: unknown }
 export interface DocumentBlock { block_key: string; text: string; claim_kind: 'factual' | 'intent' | 'greeting'; claim_revision_ids: string[]; evidence_revision_ids: string[] }
 export interface DocumentBody { title: string; sections: { key: string; heading: string; blocks: DocumentBlock[] }[] }
 export interface DocumentFact {
@@ -169,7 +172,7 @@ export interface DocumentPageFit {
   omissions: { section_key: string; block: DocumentBlock; reason: 'page_target' | 'owner' }[];
 }
 export interface DocumentProvenance {
-  facts?: DocumentFact[]; frame?: Record<string, unknown>; mode?: string; schema_version?: number | string;
+  facts?: DocumentFact[]; frame?: DocumentFrame; mode?: string; schema_version?: number | string;
   omitted_claims?: { claim_revision_id: string; claim_text: string; code: 'literal_claim_not_grounded' }[];
   page_fit?: DocumentPageFit;
   model_run?: Record<string, unknown> | null; [key: string]: unknown;
@@ -188,7 +191,7 @@ export interface DocumentRecord {
 export interface DocumentRevisionPage { items: DocumentRevision[]; next_cursor: number | null }
 export interface DocumentTemplate { version: string; label: string; language: 'en'; paper: 'A4' | 'Letter' }
 export interface DocumentDefaults {
-  version: number; template_version: string; tone: 'professional' | 'concise'; language: 'en';
+  version: number; template_version: string; tone: DocumentTone; language: 'en';
   revision_retention: 'until_owner_erasure'; task_input_retention_seconds: 86400;
   temporary_export_retention_seconds: 86400; extension_supported: false;
 }
@@ -208,7 +211,7 @@ export interface QualificationReceiptDetails {
 }
 export interface GenerationContext {
   application_id: string; application_version: number; profile_revision_id: string; profile_version: number;
-  requirements_revision_id: string; template_version: string; tone: 'professional' | 'concise'; language: 'en';
+  requirements_revision_id: string; template_version: string; tone: DocumentTone; language: 'en';
   context_sha256: string; model_projection: Record<string, unknown>; frame: Record<string, unknown>; generation_route: GenerationRoute;
   withheld_evidence: WithheldEvidence[];
   page_target?: 1 | 2 | null;
@@ -216,7 +219,7 @@ export interface GenerationContext {
 export interface WithheldEvidence { evidence_revision_id: string; source: string; reasons: ('confidential' | 'employer_owned')[]; claim_revision_ids: string[] }
 export interface SectionRegenerationContext {
   document_id: string; document_version: number; revision_id: string; content_sha256: string;
-  section_key: string; tone: 'professional' | 'concise'; context_sha256: string;
+  section_key: string; tone: DocumentTone; context_sha256: string;
   model_projection: Record<string, unknown>; generation_route: GenerationRoute;
 }
 export interface SectionProposal {
@@ -227,12 +230,12 @@ export interface SectionProposal {
 }
 export interface SectionProposalPage { items: SectionProposal[]; next_cursor: string | null }
 export interface SectionRegenerationRequest {
-  revision_id: string; content_sha256: string; section_key: string; tone: 'professional' | 'concise'; context_sha256: string;
+  revision_id: string; content_sha256: string; section_key: string; tone: DocumentTone; context_sha256: string;
 }
 export interface SectionProposalApplyRequest { revision_id: string; content_sha256: string; reason: string }
 export interface ConversationUnit { document_id: string; section_key: string; block_key: string }
 export interface ConversationDocument {
-  document_id: string; kind: DocumentKind; revision_id: string; version: number; tone: 'professional' | 'concise';
+  document_id: string; kind: DocumentKind; revision_id: string; version: number; tone: DocumentTone;
   units: (ConversationUnit & { heading: string; text: string; previous_sha256: string })[];
 }
 export interface ConversationReply {
@@ -253,10 +256,10 @@ export interface ApplicationConversation {
 export interface ConversationRequest { message: string; context_sha256: string; document_ids?: string[]; units?: ConversationUnit[] }
 export interface BaseResumeRequest { profile_revision_id: string; template_version: string }
 export interface GenerationRequest extends BaseResumeRequest {
-  requirements_revision_id: string; tone: 'professional' | 'concise'; language: 'en'; context_sha256: string;
+  requirements_revision_id: string; tone: DocumentTone; language: 'en'; context_sha256: string;
   page_target?: 1 | 2;
 }
-export interface DocumentSaveRequest { base_revision_id: string; body: DocumentBody; reason: string }
+export interface DocumentSaveRequest { base_revision_id: string; body: DocumentBody; reason: string; letter_frame?: LetterParts }
 export interface DocumentRestoreRequest { revision_id: string; reason: string }
 export interface DocumentReviewRequest { revision_id: string; decision: 'accepted'; content_sha256: string; reviewed_block_keys: string[] }
 export interface DocumentRenderRequest { revision_id: string; content_sha256: string; format: 'pdf' }

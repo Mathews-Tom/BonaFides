@@ -1,8 +1,31 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
-import type { DocumentBody, DocumentFact } from './api';
+import type { DocumentBody, DocumentFact, DocumentRevision, LetterParts } from './api';
 
 export const copyBody = (body: DocumentBody): DocumentBody => ({ ...body, sections: body.sections.map(section => ({ ...section, blocks: section.blocks.map(block => ({ ...block, claim_revision_ids: [...block.claim_revision_ids], evidence_revision_ids: [...block.evidence_revision_ids] })) })) });
 export const sameBody = (left: DocumentBody, right: DocumentBody) => JSON.stringify(left) === JSON.stringify(right);
+
+const letterClosings: Readonly<Record<string, true>> = { 'Yours sincerely,': true, 'Regards,': true, 'Best wishes,': true, 'Sincerely,': true, 'Kind regards,': true };
+
+export function letterParts(revision: DocumentRevision): LetterParts {
+  const frame = revision.provenance_snapshot.frame ?? {};
+  const today = new Date();
+  const date = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
+  const tone = revision.provenance_snapshot.tone;
+  let greeting: string | undefined; let closing: string | undefined;
+  for (const section of revision.body.sections) for (const block of section.blocks) {
+    if (block.claim_kind !== 'greeting') continue;
+    const text = block.text.trim();
+    if (text.startsWith('Dear ') || text.startsWith('Hello ') || text.startsWith('Hi ')) greeting ??= block.text;
+    if (letterClosings[text] === true) closing = block.text;
+  }
+  return {
+    correspondence_date: frame.correspondence_date ?? date,
+    recipient: frame.recipient ?? 'Hiring team',
+    greeting: frame.greeting ?? greeting ?? 'Dear Hiring Team,',
+    closing: frame.closing ?? closing ?? (tone === 'friendly' ? 'Best wishes,' : tone === 'concise' ? 'Regards,' : 'Yours sincerely,'),
+  };
+}
+export const sameLetter = (left: LetterParts, right: LetterParts) => Object.keys(left).every(key => left[key as keyof LetterParts] === right[key as keyof LetterParts]);
 
 // Rebase only the explicitly edited fields. Never replace unrelated server sections or
 // resurrect a block removed by another editor. The caller requires comparison/consent.

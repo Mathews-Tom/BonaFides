@@ -5,6 +5,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { Documents, type DocumentArchiveRecovery } from './Documents';
 import { Api, ApiError, type ApplicationDocuments, type DocumentDefaults, type DocumentDefaultsPatch, type DocumentOmissionRequest, type DocumentRecord, type DocumentSaveRequest, type GenerationContext, type Profile, type SectionProposal, type SectionRegenerationContext, type Workflow } from './api';
 import type { ApplicationSummary } from './tracking-api';
+import { letterParts } from './document-state';
 
 let archiveRecovery: { current: DocumentArchiveRecovery };
 beforeEach(() => { archiveRecovery = { current: { generation: 0, request: null } }; });
@@ -578,7 +579,7 @@ const completedSectionWorkflow: Workflow = {
 function sectionPreview(path: string, status: 'qualified' | 'unqualified' | 'disabled' = 'qualified'): SectionRegenerationContext {
   const query = new URL(path, 'https://bonafides.test').searchParams;
   const section = tailored.current_revision.body.sections.find(item => item.key === query.get('section_key'))!;
-  const tone = query.get('tone') === 'concise' ? 'concise' : 'professional';
+  const tone = query.get('tone') === 'friendly' ? 'friendly' : query.get('tone') === 'concise' ? 'concise' : 'professional';
   return {
     document_id: tailored.id, document_version: tailored.version, revision_id: tailored.current_revision.id,
     content_sha256: tailored.current_revision.content_sha256, section_key: section.key, tone, context_sha256: '2'.repeat(64),
@@ -1584,5 +1585,208 @@ describe('application conversation document isolation', () => {
     expect(await screen.findByRole('heading', { name: /Current server document revision/ })).toBeVisible();
     expect(screen.getByLabelText('Block text: b-1')).toHaveValue('Keep this unsaved document text.');
     expect(request.mock.calls.filter(call => call[0] === '/applications/application-1/documents')).toHaveLength(pairReads + 1);
+  });
+});
+
+describe('letter frame editing and friendly writing tone', () => {
+  const letter: DocumentRecord = { ...tailored, id: 'letter-doc', kind: 'cover_letter', current_revision: { ...tailored.current_revision,
+    template_version: 'bonafides-evidence-v3',
+    body: { title: 'Cover letter', sections: [{ key: 'letter', heading: 'Letter', blocks: [
+      { block_key: 'salutation', text: 'Dear Hiring team,', claim_kind: 'greeting', claim_revision_ids: [], evidence_revision_ids: [] },
+      { ...tailored.current_revision.body.sections[0]!.blocks[0]! },
+      { block_key: 'gratitude', text: 'Thank you for considering my application.', claim_kind: 'greeting', claim_revision_ids: [], evidence_revision_ids: [] },
+      { block_key: 'signoff', text: 'Sincerely,', claim_kind: 'greeting', claim_revision_ids: [], evidence_revision_ids: [] },
+    ] }] },
+    provenance_snapshot: { ...tailored.current_revision.provenance_snapshot, tone: 'professional', frame: { display_name: 'Frozen sender', correspondence_date: '2026-11-01' } },
+  } };
+
+  it.each([['professional', 'Yours sincerely,'], ['concise', 'Regards,'], ['friendly', 'Best wishes,']])('derives legacy English frame defaults for %s without replacing pinned fields', (tone, closing) => {
+    const revision = { ...letter.current_revision, body: tailored.current_revision.body, provenance_snapshot: { tone, frame: { display_name: 'Frozen sender' } } };
+    const today = new Date();
+    expect(letterParts(revision)).toEqual({ correspondence_date: `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`, recipient: 'Hiring team', greeting: 'Dear Hiring Team,', closing });
+    expect(letterParts({ ...revision, provenance_snapshot: { tone, frame: { correspondence_date: '2025-01-02', recipient: 'Pat\nPeople team', greeting: 'Hello Pat,', closing: 'Thank you,' } } })).toEqual({ correspondence_date: '2025-01-02', recipient: 'Pat\nPeople team', greeting: 'Hello Pat,', closing: 'Thank you,' });
+  });
+
+  it.each([['Dear Pat,', 'Sincerely,'], ['Hello Pat,', 'Kind regards,'], ['Hi Pat,', 'Best wishes,'], ['Dear Pat,', 'Regards,'], ['Hello Pat,', 'Yours sincerely,']])('retains legacy connective text %s / %s', (greeting, closing) => {
+    const blocks = letter.current_revision.body.sections[0]!.blocks;
+    const body = { ...letter.current_revision.body, sections: [{ key: 'letter', heading: 'Letter', blocks: [{ ...blocks[0]!, text: greeting }, blocks[2]!, { ...blocks[3]!, text: closing }] }] };
+    expect(letterParts({ ...letter.current_revision, body })).toMatchObject({ greeting, closing });
+  });
+
+  it('validates displayed fields for body-only and frame-only edits, locks saves, reloads and previews historical frames', async () => {
+    const user = userEvent.setup(); let released = false;
+    let stored: DocumentRecord = { ...letter, current_revision: { ...letter.current_revision, provenance_snapshot: { ...letter.current_revision.provenance_snapshot, frame: { ...letter.current_revision.provenance_snapshot.frame, recipient: ' \n ' } } } };
+    const historical = { ...letter.current_revision, body: tailored.current_revision.body, id: 'old-letter', revision_no: 1, provenance_snapshot: { frame: { display_name: 'Historical sender', correspondence_date: '2025-02-03', recipient: 'Historical recipient', greeting: 'Dear past team,', closing: 'Past closing,' } } };
+    const { api, request } = fixture(saved, async (path, method, body) => {
+      if (path === '/applications') return { items: [application], next_cursor: null };
+      if (path === '/applications/application-1/documents') return { ...pair, items: [tailored, stored] };
+      if (path === '/documents/letter-doc' && method === 'PUT') {
+        await waitFor(() => expect(released).toBe(true));
+        const submitted = body as DocumentSaveRequest;
+        stored = { ...stored, version: 5, current_revision: { ...stored.current_revision, id: 'saved-letter', revision_no: 3, template_version: submitted.letter_frame ? 'bonafides-evidence-v4' : stored.current_revision.template_version, body: submitted.letter_frame ? { ...submitted.body, sections: submitted.body.sections.map(section => ({ ...section, blocks: section.blocks.filter(block => !['salutation', 'signoff'].includes(block.block_key)) })) } : submitted.body, provenance_snapshot: submitted.letter_frame ? { ...stored.current_revision.provenance_snapshot, frame: { ...stored.current_revision.provenance_snapshot.frame, ...submitted.letter_frame } } : stored.current_revision.provenance_snapshot } };
+        return stored;
+      }
+      if (path === '/documents/letter-doc/revisions?limit=20') return { items: [historical], next_cursor: null };
+      if (path === '/documents/letter-doc/revisions/old-letter') return historical;
+      throw new ApiError(404, 'not_found');
+    });
+    render(<Documents archiveRecovery={archiveRecovery} api={api} profile={profile} />);
+    await openTailored(user); await user.click(screen.getByRole('button', { name: 'Cover letter' }));
+    expect(screen.getByLabelText('Correspondence date')).toHaveValue('2026-11-01');
+    expect(screen.getByLabelText('Greeting')).toHaveValue('Dear Hiring team,');
+    expect(screen.getByLabelText('Closing')).toHaveValue('Sincerely,');
+    await user.click(screen.getByText('Saved letter preview'));
+    const preview = screen.getByText('Saved letter preview').closest('details')!;
+    for (const text of ['Dear Hiring team,', 'Sincerely,', 'Maintained Linux service checks.', 'Thank you for considering my application.']) expect(within(preview).getAllByText(text)).toHaveLength(1);
+    const save = screen.getByRole('button', { name: 'Save document revision' });
+    fireEvent.change(screen.getByLabelText('Block text: b-1'), { target: { value: 'Unsaved body edit.' } });
+    expect(save).toBeDisabled();
+    fireEvent.change(screen.getByLabelText('Recipient'), { target: { value: 'Hiring team' } });
+    expect(save).toBeEnabled();
+    fireEvent.change(screen.getByLabelText('Block text: b-1'), { target: { value: letter.current_revision.body.sections[0]!.blocks[1]!.text } });
+    for (const label of ['Correspondence date', 'Recipient', 'Greeting', 'Closing']) {
+      const input = screen.getByLabelText<HTMLInputElement | HTMLTextAreaElement>(label); const value = input.value;
+      fireEvent.change(input, { target: { value: label === 'Correspondence date' ? '' : '   ' } });
+      expect(save).toBeDisabled(); await user.click(save);
+      expect(request.mock.calls.filter(call => call[1] === 'PUT')).toHaveLength(0);
+      fireEvent.change(input, { target: { value } }); expect(save).toBeEnabled();
+    }
+    const edits = { correspondence_date: '2026-12-02', recipient: 'Pat\nHiring committee', greeting: 'Dear Hiring team,', closing: 'Sincerely,' };
+    for (const [label, value] of [['Correspondence date', edits.correspondence_date], ['Recipient', edits.recipient], ['Greeting', edits.greeting], ['Closing', edits.closing]]) fireEvent.change(screen.getByLabelText(label!), { target: { value } });
+    expect(screen.getByRole('button', { name: 'Render reviewed PDF' })).toBeDisabled();
+    await user.click(screen.getByRole('button', { name: 'Save document revision' }));
+    expect(screen.getByLabelText('Recipient')).toBeDisabled();
+    fireEvent.change(screen.getByLabelText('Recipient'), { target: { value: 'Must not overwrite' } });
+    await act(async () => { released = true; });
+    await screen.findByText(/Saved document revision 3/);
+    expect(screen.getByLabelText('Recipient')).toHaveValue(edits.recipient);
+    const write = request.mock.calls.find(call => call[1] === 'PUT');
+    expect(write?.[2]).toEqual({ base_revision_id: letter.current_revision.id, body: letter.current_revision.body, reason: 'Owner edited document text', letter_frame: edits });
+    expect(write?.[3]).toBe(letter.version); expect(write?.[4]).toBeTypeOf('string');
+    await user.click(screen.getByRole('button', { name: 'Reload application documents' }));
+    await waitFor(() => expect(screen.getByLabelText('Recipient')).toBeEnabled());
+    expect(screen.getByLabelText('Closing')).toHaveValue(edits.closing);
+    expect(stored.current_revision.template_version).toBe('bonafides-evidence-v4');
+    expect(stored.current_revision.body.sections[0]!.blocks.map(block => block.block_key)).toEqual(['b-1', 'gratitude']);
+    const savedPreview = screen.getByText('Saved letter preview').closest('details')!;
+    expect(within(savedPreview).getAllByText('Frozen sender')).toHaveLength(2);
+    for (const text of [edits.greeting, edits.closing, 'Maintained Linux service checks.', 'Thank you for considering my application.']) expect(within(savedPreview).getAllByText(text)).toHaveLength(1);
+    expect(savedPreview).not.toHaveTextContent(profile.current_revision.snapshot.display_name);
+    await user.click(screen.getByRole('button', { name: 'Load document history' }));
+    await user.click(await screen.findByRole('button', { name: 'Preview revision 1 — deterministic' }));
+    await screen.findByRole('heading', { name: 'Historical revision 1 — read-only' });
+    expect(screen.queryByLabelText('Recipient')).not.toBeInTheDocument();
+    expect(screen.getAllByText('Historical sender')).toHaveLength(2);
+    expect(screen.getByText('Historical recipient')).toBeVisible();
+    expect(screen.getByText('Past closing,')).toBeVisible();
+    await user.click(screen.getByRole('button', { name: 'Return to current saved revision' }));
+    expect(screen.getByLabelText('Recipient')).toHaveValue(edits.recipient);
+    stored = { ...stored, current_revision: { ...letter.current_revision, template_version: 'bonafides-base-v1', provenance_snapshot: { tone: 'professional' } } };
+    await user.click(screen.getByRole('button', { name: 'Reload application documents' }));
+    await waitFor(() => expect(screen.queryByLabelText('Recipient')).not.toBeInTheDocument());
+    for (const label of ['Correspondence date', 'Recipient', 'Greeting', 'Closing']) expect(screen.queryByLabelText(label)).not.toBeInTheDocument();
+    const textOnlyPreview = screen.getByText('Saved letter preview').closest('details')!;
+    expect(textOnlyPreview.querySelector('header, footer')).toBeNull();
+    expect(within(textOnlyPreview).getAllByText('Dear Hiring team,')).toHaveLength(1);
+    fireEvent.change(screen.getByLabelText('Block text: b-1'), { target: { value: 'Edited text-only letter.' } });
+    await user.click(screen.getByRole('button', { name: 'Save document revision' }));
+    await waitFor(() => expect(request.mock.calls.filter(call => call[1] === 'PUT')).toHaveLength(2));
+    await screen.findByText(/Saved document revision 3/);
+    expect(request.mock.calls.filter(call => call[1] === 'PUT').at(-1)?.[2]).not.toHaveProperty('letter_frame');
+    expect(stored.current_revision.provenance_snapshot).not.toHaveProperty('frame');
+    expect(stored.current_revision.body.sections[0]!.blocks.find(block => block.block_key === 'b-1')?.text).toBe('Edited text-only letter.');
+  });
+
+  it.each([false, true])('rebases legacy frame edits across a date rollover against their fixed baseline (body first: %s)', async bodyFirst => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    try {
+      vi.setSystemTime(new Date(2026, 10, 15, 12));
+      const user = userEvent.setup();
+      const legacy = { ...letter, current_revision: { ...letter.current_revision, provenance_snapshot: { frame: { display_name: 'Frozen sender' } } } };
+      let server: DocumentRecord = { ...letter, version: 5, current_revision: { ...letter.current_revision, id: 'server-letter', provenance_snapshot: { frame: { display_name: 'Frozen sender', correspondence_date: '2026-11-17', greeting: 'Dear server team,', closing: 'Server closing,' } } } };
+      const { api, request } = proposalFixture(async (path, method) => {
+        if (path === '/documents/letter-doc' && method === 'PUT') throw new ApiError(412, 'version_conflict');
+        if (path === '/documents/letter-doc') return server;
+        throw new ApiError(404, 'not_found');
+      }, [tailored, legacy]);
+      render(<Documents archiveRecovery={archiveRecovery} api={api} profile={profile} />); await openTailored(user);
+      await user.click(screen.getByRole('button', { name: 'Cover letter' }));
+      if (bodyFirst) {
+        fireEvent.change(screen.getByLabelText('Block text: b-1'), { target: { value: 'Local body edit.' } });
+        vi.setSystemTime(new Date(2026, 10, 16, 12));
+      }
+      fireEvent.change(screen.getByLabelText('Recipient'), { target: { value: 'Local recipient' } });
+      expect(screen.getByLabelText('Correspondence date')).toHaveValue('2026-11-15');
+      vi.setSystemTime(new Date(2026, 10, 16, 12));
+      await user.click(screen.getByRole('button', { name: 'Save document revision' }));
+      await waitFor(() => expect(screen.getByRole('button', { name: 'Compare current document revision' })).toBeEnabled());
+      expect(screen.getByLabelText('Recipient')).toHaveValue('Local recipient');
+      fireEvent.change(screen.getByLabelText('Recipient'), { target: { value: 'Local recipient revised' } });
+      expect(screen.getByRole('button', { name: 'Save document revision' })).toBeDisabled();
+      await user.click(screen.getByRole('button', { name: 'Compare current document revision' }));
+      await user.click(await screen.findByRole('checkbox', { name: /I compared both revisions/ }));
+      await user.click(screen.getByRole('button', { name: 'Rebase my edits onto compared revision' }));
+      for (const [label, value] of [['Recipient', 'Local recipient revised'], ['Greeting', 'Dear server team,'], ['Correspondence date', '2026-11-17'], ['Closing', 'Server closing,']]) expect(screen.getByLabelText(label!)).toHaveValue(value);
+      expect(request.mock.calls.filter(call => call[1] === 'PUT')).toHaveLength(1);
+      expect(screen.getByLabelText('Block text: b-1')).toHaveValue(bodyFirst ? 'Local body edit.' : letter.current_revision.body.sections[0]!.blocks[1]!.text);
+      expect(screen.getByRole('button', { name: 'Save document revision' })).toBeEnabled();
+      fireEvent.change(screen.getByLabelText('Recipient'), { target: { value: 'Hiring team' } });
+      expect(screen.getByRole('button', { name: 'Save document revision' })).toHaveProperty('disabled', !bodyFirst);
+      fireEvent.change(screen.getByLabelText('Recipient'), { target: { value: 'Local recipient' } });
+      await user.click(screen.getByRole('button', { name: 'Discard document changes' }));
+      expect(screen.getByLabelText('Recipient')).toHaveValue('Hiring team');
+      expect(screen.getByLabelText('Closing')).toHaveValue('Server closing,');
+      fireEvent.change(screen.getByLabelText('Recipient'), { target: { value: 'Keep my recipient edit' } });
+      server = { ...server, version: 6, current_revision: { ...server.current_revision, id: 'restored-text-only', template_version: 'bonafides-base-v1', provenance_snapshot: {} } };
+      await user.click(screen.getByRole('button', { name: 'Compare current document revision' }));
+      await user.click(await screen.findByRole('checkbox', { name: /I compared both revisions/ }));
+      await user.click(screen.getByRole('button', { name: 'Rebase my edits onto compared revision' }));
+      await screen.findByText(/restored version cannot hold letter fields/);
+      expect(screen.getByLabelText('Recipient')).toHaveValue('Keep my recipient edit');
+      expect(screen.getByLabelText('Closing')).toHaveValue('Server closing,');
+      expect(screen.getByRole('button', { name: 'Save document revision' })).toBeDisabled();
+      await user.click(screen.getByRole('button', { name: 'Save document revision' }));
+      expect(request.mock.calls.filter(call => call[1] === 'PUT')).toHaveLength(1);
+      expect(screen.getByLabelText('Recipient')).toHaveValue('Keep my recipient edit');
+      fireEvent.change(screen.getByLabelText('Recipient'), { target: { value: 'Hiring team' } });
+      fireEvent.change(screen.getByLabelText('Block text: b-1'), { target: { value: 'Body-only edit after reverting letter fields.' } });
+      await user.click(screen.getByRole('button', { name: 'Compare current document revision' }));
+      await user.click(await screen.findByRole('checkbox', { name: /I compared both revisions/ }));
+      await user.click(screen.getByRole('button', { name: 'Rebase my edits onto compared revision' }));
+      expect(screen.queryByLabelText('Recipient')).not.toBeInTheDocument();
+      expect(screen.getByLabelText('Block text: b-1')).toHaveValue('Body-only edit after reverting letter fields.');
+      expect(screen.getByRole('button', { name: 'Save document revision' })).toBeEnabled();
+    } finally { vi.useRealTimers(); }
+  });
+
+  it('offers Traditional formal and Friendly across defaults, pair generation and section regeneration', async () => {
+    const user = userEvent.setup(); let defaults = remembered;
+    const { api, request } = fixture(saved, async path => {
+      if (path === '/applications') return { items: [application], next_cursor: null };
+      if (path === '/applications/application-1/documents') return pair;
+      if (path.includes('/regeneration-context?')) return sectionPreview(path);
+      if (path.includes('/generation-context?')) return { ...context, tone: 'friendly' };
+      throw new ApiError(404, 'not_found');
+    }, async (_path, method, body) => {
+      if (method === 'PATCH') defaults = { ...defaults, ...body as DocumentDefaultsPatch, version: 9 };
+      return defaults;
+    });
+    render(<Documents archiveRecovery={archiveRecovery} api={api} profile={profile} />); await ready();
+    await user.click(screen.getByText('Remembered defaults and retention'));
+    await user.selectOptions(screen.getByLabelText('Remembered writing tone'), 'friendly');
+    await user.click(screen.getByRole('button', { name: 'Save remembered defaults' }));
+    await screen.findByText(/Remembered defaults saved for future work/);
+    expect(defaults.tone).toBe('friendly');
+    await openTailored(user);
+    for (const label of ['Writing tone', 'Section writing tone']) {
+      const selector = screen.getByLabelText(label);
+      expect(within(selector).getByRole('option', { name: 'Traditional formal' })).toHaveValue('professional');
+      await user.selectOptions(selector, 'friendly');
+    }
+    await user.click(screen.getByRole('button', { name: 'Preview reviewed generation context' }));
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Preview selected-section model projection' })).toBeEnabled());
+    await inspectSection(user);
+    expect(request.mock.calls.find(call => call[0].includes('/generation-context?'))?.[0]).toContain('tone=friendly');
+    expect(request.mock.calls.find(call => call[0].includes('/regeneration-context?'))?.[0]).toContain('tone=friendly');
   });
 });

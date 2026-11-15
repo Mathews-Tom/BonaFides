@@ -125,13 +125,16 @@ def _review(context: SourceContext, document: dict[str, Any], keys: list[str] | 
     )
 
 
-def _save(context: SourceContext, document: dict[str, Any], body: dict[str, Any]) -> Any:
+def _save(
+    context: SourceContext, document: dict[str, Any], body: dict[str, Any], **extra: object
+) -> Any:
     return context.client.put(
         f"/api/v1/documents/{document['id']}",
         json={
             "base_revision_id": document["current_revision"]["id"],
             "body": body,
             "reason": "Synthetic explicit document edit",
+            **extra,
         },
         headers=context.headers(document["version"]),
     )
@@ -2421,3 +2424,191 @@ def test_birthday_rollover_keeps_queued_age_and_only_changes_a_new_composition(
     assert rebuilt["current_revision"]["provenance_snapshot"]["frame"]["age"] == 36
     history = catalog.client.get(f"/api/v1/documents/{rebuilt['id']}/revisions").json()
     assert next(item for item in history["items"] if item["id"] == original["id"]) == original
+
+
+@pytest.mark.postgres
+def test_generated_letter_pins_frame_and_manual_edits_preserve_it(
+    catalog: SourceContext, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    profile, application = _setup_pair(catalog)
+    _route(monkeypatch, tmp_path)
+    monkeypatch.setattr(generation, "date", SimpleNamespace(today=lambda: date(2026, 1, 2)))
+    response = catalog.client.get(
+        f"/api/v1/applications/{application['id']}/generation-context",
+        params={
+            "profile_revision_id": profile["current_revision"]["id"],
+            "template_version": "bonafides-evidence-v1",
+            "tone": "friendly",
+            "language": "en",
+        },
+    )
+    assert response.status_code == 200, response.text
+    preview = response.json()
+    task = _queue_pair(catalog, preview)
+    candidate = cast(dict[str, Any], _candidate(preview))
+    candidate["documents"][1]["letter_frame"] = {
+        "recipient": "Recruitment team, Synthetic Workshop",
+        "greeting": "Hello recruitment team,",
+    }
+    blocks = candidate["documents"][1]["sections"][0]["blocks"]
+    blocks.extend(
+        {"block_key": f"b-{index}", "kind": "connective", "text": wording, "claim_id": None}
+        for index, wording in enumerate(
+            ("Hello recruitment team,", "Best wishes,", "Sincerely,", " "), start=3
+        )
+    )
+    monkeypatch.setattr(generation, "date", SimpleNamespace(today=lambda: date(2026, 1, 3)))
+    suitability.execute_model(
+        catalog.runtime, catalog.identity.settings, task, Event(), FixtureModel(candidate)
+    )
+    assert catalog.workflow(task.id)["state"] == "succeeded"
+    records = _pair_documents(catalog, application)["items"]
+    letter = next(item for item in records if item["kind"] == "cover_letter")
+    resume = next(item for item in records if item["kind"] == "resume")
+    original = letter["current_revision"]
+    assert original["template_version"] == "bonafides-evidence-v4"
+    frame = original["provenance_snapshot"]["frame"]
+    assert frame == {
+        **preview["frame"],
+        "recipient": "Recruitment team, Synthetic Workshop",
+        "greeting": "Hello recruitment team,",
+        "closing": "Best wishes,",
+    }
+    assert frame["correspondence_date"] == "2026-01-02"
+    assert original["provenance_snapshot"]["template_sha256"] == template_digest(
+        "bonafides-evidence-v4"
+    )
+    assert not letter["unsupported_claims"]
+    assert sum(len(section["blocks"]) for section in original["body"]["sections"]) == 1
+    assert resume["current_revision"]["provenance_snapshot"]["frame"] == preview["frame"]
+
+    def regenerate(expected_date: str, expected_closing: str, custom: bool) -> dict[str, Any]:
+        context = _preview(catalog, profile, application)
+        queued = _queue_pair(catalog, context)
+        suitability.execute_model(
+            catalog.runtime,
+            catalog.identity.settings,
+            queued,
+            Event(),
+            FixtureModel(_candidate(context)),
+        )
+        assert catalog.workflow(queued.id)["state"] == "succeeded"
+        rebuilt = _document(catalog, letter["id"])
+        pinned = rebuilt["current_revision"]["provenance_snapshot"]
+        assert pinned["frame"]["correspondence_date"] == expected_date
+        assert pinned["frame"]["closing"] == expected_closing
+        assert pinned["letter_closing_edited"] is custom
+        return rebuilt
+
+    letter = regenerate("2026-01-02", "Yours sincerely,", False)
+    edited_parts = {
+        "correspondence_date": "2025-12-25",
+        "recipient": "Named recipient",
+        "greeting": "Dear selection panel,",
+        "closing": "With thanks,",
+    }
+
+    def save_parts(document: dict[str, Any]) -> Any:
+        revision = document["current_revision"]
+        return _save(catalog, document, revision["body"], letter_frame=edited_parts)
+
+    refused = save_parts(_document(catalog, resume["id"]))
+    assert refused.status_code == 422
+    assert refused.json()["code"] == "letter_frame_requires_cover_letter"
+    saved = save_parts(letter)
+    assert saved.status_code == 200, saved.text
+    assert save_parts(letter).status_code == 412
+    current = saved.json()
+    preserved = _save(catalog, current, current["current_revision"]["body"])
+    assert preserved.status_code == 200, preserved.text
+    loaded = _document(catalog, letter["id"])["current_revision"]
+    assert loaded["provenance_snapshot"]["frame"] == {**frame, **edited_parts}
+    assert loaded["content_sha256"] != original["content_sha256"]
+    retained = catalog.client.get(f"/api/v1/documents/{letter['id']}/revisions/{original['id']}")
+    assert retained.status_code == 200 and retained.json() == original
+    regenerate("2025-12-25", "With thanks,", True)
+    from test_document_conversations import _counts, _legacy_letter
+
+    legacy = _legacy_letter(catalog, _document(catalog, letter["id"]), "professional")
+    legacy_frame = legacy["current_revision"]["provenance_snapshot"]["frame"]
+    assert legacy["current_revision"]["template_version"] == "bonafides-evidence-v3"
+    pinned = _save(catalog, legacy, legacy["current_revision"]["body"])
+    assert pinned.status_code == 200, pinned.text
+    migrated = pinned.json()["current_revision"]
+    assert migrated["provenance_snapshot"]["frame"] == {
+        **legacy_frame,
+        "greeting": "Dear Hiring team,",
+        "closing": "Sincerely,",
+    }
+    assert migrated["template_version"] == "bonafides-evidence-v4"
+    assert [block["text"] for block in migrated["body"]["sections"][0]["blocks"]] == [
+        original["body"]["sections"][0]["blocks"][0]["text"],
+        "Thank you for your consideration.",
+    ]
+    html = render_html(
+        documents.parse_body(migrated["body"]),
+        migrated["template_version"],
+        PrintableFrame.model_validate(migrated["provenance_snapshot"]["frame"]),
+    )
+    assert html.count("Dear Hiring team,") == html.count("Sincerely,") == 1
+    retained = catalog.client.get(
+        f"/api/v1/documents/{letter['id']}/revisions/{legacy['current_revision']['id']}"
+    )
+    assert retained.json() == legacy["current_revision"]
+    preframe = _legacy_letter(catalog, legacy, "professional", framed=False)
+    edited = copy.deepcopy(preframe["current_revision"]["body"])
+    edited["sections"][0]["blocks"][-1]["text"] = "Kind regards,"
+    before = _counts(catalog)
+    refused = _save(catalog, preframe, edited, letter_frame=edited_parts)
+    assert refused.status_code == 422
+    assert refused.json()["code"] == "letter_frame_requires_framed_letter"
+    assert _counts(catalog) == before
+    assert _document(catalog, preframe["id"]) == preframe
+    saved = _save(catalog, preframe, edited)
+    assert saved.status_code == 200, saved.text
+    revision = saved.json()["current_revision"]
+    assert revision["body"] == edited
+    for field in ("template_version", "provenance_snapshot"):
+        assert revision[field] == preframe["current_revision"][field]
+    assert revision["content_sha256"] == documents.body_digest(documents.parse_body(edited))
+    regenerate("2026-01-03", "Yours sincerely,", False)
+
+
+@pytest.mark.parametrize("tone", ["professional", "concise", "friendly"])
+def test_generated_letter_defaults_and_model_frame_identity_boundary(tone: str) -> None:
+    from bonafides.letter_frame import closing_for
+
+    item = generation.CandidateDocument(
+        kind="cover_letter",
+        sections=[
+            generation.CandidateSection(
+                heading="Letter",
+                blocks=[
+                    generation.CandidateStatement(
+                        block_key="b-1", kind="connective", text="Sincerely,", claim_id=None
+                    )
+                ],
+            )
+        ],
+        letter_frame=generation.CandidateLetterFrame(recipient=" ", greeting=""),
+    )
+    parts = generation._letter_parts(
+        item, {"frame": {"correspondence_date": "2026-01-02"}, "tone": tone}
+    )
+    assert parts.recipient == "Hiring team" and parts.greeting == "Dear Hiring Team,"
+    assert parts.correspondence_date == "2026-01-02" and parts.closing == closing_for(tone)
+    for protected in ("sender", "date", "correspondence_date", "signature", "closing"):
+        payload = item.model_dump(mode="json")
+        payload["letter_frame"] = {protected: "Never model-generated"}
+        with pytest.raises(ValueError):
+            generation.CandidateDocument.model_validate(payload)
+    with pytest.raises(ValueError):
+        generation.CandidateLetterFrame(greeting="bad\x00value")
+    with pytest.raises(ValueError):
+        generation.CandidateDocument.model_validate(
+            {**item.model_dump(mode="json"), "kind": "resume"}
+        )
+    with pytest.raises(ValueError):
+        generation._candidate_body(
+            item, {"frame": {"correspondence_date": "2026-01-02"}, "tone": tone, "facts": []}
+        )

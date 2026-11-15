@@ -1,0 +1,27 @@
+{# SPDX-License-Identifier: MIT OR Apache-2.0 #}
+{% if document.title != 'Cover letter' %}{% include 'profile-v3.html' %}{% else %}
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>{{ document.title }}</title>
+<style>
+@page { size: {{ paper }}; margin: {% if compact %}18mm 19mm{% else %}20mm{% endif %}; }
+body { font-family: "DejaVu Sans", sans-serif; color: #152c35; font-size: {% if compact %}10{% else %}10.5{% endif %}pt; line-height: 1.5; }
+header { margin-bottom: 6mm; } h1 { font-size: 23pt; margin: 0 0 3mm; } h2 { font-size: 12pt; color: #245b65; break-after: avoid; }
+p { margin: 0 0 3mm; white-space: pre-wrap; overflow-wrap: anywhere; } .contact { font-size: 9pt; }
+</style></head><body>
+<header>
+{% if frame.display_name %}<h1>{{ frame.display_name }}</h1>{% endif %}
+{% if frame.contact %}{% for value in [frame.contact.email, frame.contact.phone, frame.contact.location, frame.contact.postal_address] %}
+{% if value %}<p class="contact">{{ value }}</p>{% endif %}
+{% endfor %}{% endif %}
+<p>{{ document.title }}</p>
+</header>
+{% for value in [frame.correspondence_date, frame.recipient, frame.organization, frame.role, frame.greeting] %}
+{% if value %}<p>{{ value }}</p>{% endif %}
+{% endfor %}
+{% for section in document.sections %}<section><h2>{{ section.heading }}</h2>
+{% for block in section.blocks %}<p>{{ publication_html(block, frame) }}</p>{% endfor %}
+</section>{% endfor %}
+{% if frame.closing %}<p>{{ frame.closing }}</p>{% endif %}
+{% if frame.display_name %}<p>{{ frame.display_name }}</p>{% endif %}
+</body></html>
+{% endif %}

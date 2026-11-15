@@ -11,6 +11,7 @@ from pydantic import JsonValue
 from sqlalchemy import text
 from sqlalchemy.exc import DBAPIError
 from test_claim_usage import _pair
+from test_document_conversations import _frame_save
 from test_document_generation import _document, _pair_documents, _save
 from test_identity import _login
 from test_identity import identity as identity
@@ -71,6 +72,14 @@ def _history(
         item
         for item in _pair_documents(context, application)["items"]
         if item["kind"] == "cover_letter"
+    )
+    document = _frame_save(
+        context,
+        document,
+        correspondence_date="2024-02-29",
+        recipient="Recruitment panel",
+        greeting="Dear Panel,",
+        closing="With appreciation,",
     )
     before_id = document["current_revision"]["id"]
     body = deepcopy(document["current_revision"]["body"])
@@ -280,6 +289,17 @@ def test_complete_conversation_history_imports_inert_and_reexports_exactly(
 ) -> None:
     archive = _history(catalog, monkeypatch, tmp_path)
     assert archive.manifest.format_version == 4
+    frames = [
+        cast(dict[str, Any], row["provenance_snapshot"])["frame"]
+        for row in archive.manifest.records["document_revisions"]
+    ]
+    assert any(
+        frame.get("correspondence_date") == "2024-02-29"
+        and frame.get("recipient") == "Recruitment panel"
+        and frame.get("greeting") == "Dear Panel,"
+        and frame.get("closing") == "With appreciation,"
+        for frame in frames
+    )
     assert archive.manifest.source_schema_version == 2
     replies = [
         cast(dict[str, JsonValue], turn["reply"])

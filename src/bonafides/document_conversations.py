@@ -14,7 +14,14 @@ from sqlalchemy import Connection, text
 from sqlalchemy.engine import RowMapping
 
 from bonafides import document_generation as generation
-from bonafides import documents, local_model, model_calls, model_projections, section_regeneration
+from bonafides import (
+    documents,
+    letter_frame,
+    local_model,
+    model_calls,
+    model_projections,
+    section_regeneration,
+)
 from bonafides.auth import Owner, require_owner
 from bonafides.commands import canonical_json, command
 from bonafides.config import Settings
@@ -85,6 +92,11 @@ def _targets(
             block.text.strip()
             and not publications.intersection(map(str, block.claim_revision_ids))
             and section.key != "profile-publications"
+            and not (
+                row["kind"] == "cover_letter"
+                and block.claim_kind == "greeting"
+                and letter_frame.role(block.text, cast(dict[str, object], provenance["frame"]))
+            )
             and f"/sections/{si}/blocks/{bi}" not in blocked
         )
     ]
@@ -111,7 +123,17 @@ def _source(
     ):
         binding.pop(name, None)
     provenance = cast(dict[str, object], row["provenance_snapshot"])
-    binding["frame_sha256"] = generation.sha(provenance["frame"])
+    frame = cast(dict[str, object], provenance["frame"])
+    if row["kind"] == "cover_letter":
+        # Correspondence is independently owner-editable, not a source-context fence.
+        frame = {
+            key: value
+            for key, value in frame.items()
+            if key not in letter_frame.LetterParts.model_fields
+        }
+        binding["template_version"] = str(row["template_version"]).rsplit("-v", 1)[0]
+        binding.pop("template_sha256", None)
+    binding["frame_sha256"] = generation.sha(frame)
     return row, binding, projection
 
 
@@ -282,6 +304,13 @@ def _bump(conn: Connection, owner: UUID, application: UUID) -> None:
 def request_turn(
     conn: Connection, owner: UUID, application: UUID, body: ConversationRequest, settings: Settings
 ) -> tuple[int, dict[str, object]]:
+    protected = {"sender", "date", "correspondence_date", "signature"}
+    if any(unit.section_key in protected or unit.block_key in protected for unit in body.units):
+        raise Problem(
+            422,
+            "letter_frame_not_regenerable",
+            "Edit sender, date or signature manually; they are not sent to the model.",
+        )
     current = context_view(conn, owner, application, settings)
     generation._application(conn, owner, application, active=True)
     if current["active_workflow_id"]:
@@ -560,11 +589,45 @@ def publish_reply(
             frozen = frozen_documents[document]
             before = cast(dict[str, object], frozen["provenance_snapshot"]).get("tone")
             if provenance.get("tone") == before:
-                _objects(reply["tones"]).append(
-                    {"document_id": document, "before": before, "after": candidate.tone}
-                )
+                change: dict[str, object] = {
+                    "document_id": document,
+                    "before": before,
+                    "after": candidate.tone,
+                }
+                if row["kind"] == "cover_letter":
+                    frame = cast(dict[str, object], provenance["frame"])
+                    frozen_provenance = cast(dict[str, object], frozen["provenance_snapshot"])
+                    previous_tone = str(before or "professional")
+                    current_parts = letter_frame.parts(frame, previous_tone, body)
+                    original_parts = letter_frame.parts(
+                        cast(dict[str, object], frozen_provenance["frame"]),
+                        previous_tone,
+                        documents.parse_body(frozen["body"]),
+                    )
+                    if (
+                        not letter_frame.is_custom(provenance, body)
+                        and current_parts.closing == original_parts.closing
+                    ):
+                        current_parts = current_parts.model_copy(
+                            update={"closing": letter_frame.closing_for(candidate.tone)}
+                        )
+                    change["letter_before"] = letter_frame.state(
+                        documents.parse_body(row["body"]), dict(row)
+                    )
+                    body = letter_frame.split(body, frame)
+                    pinned = letter_frame.pin(dict(row), current_parts)
+                    provenance.update(cast(dict[str, object], pinned["provenance_snapshot"]))
+                _objects(reply["tones"]).append(change)
                 provenance["tone"] = candidate.tone
-        source = {**row, "provenance_snapshot": provenance, "model_run_id": model_run_id}
+        source = {
+            **row,
+            "template_version": provenance["template_version"],
+            "provenance_snapshot": provenance,
+            "model_run_id": model_run_id,
+        }
+        for change in _objects(reply["tones"]):
+            if change["document_id"] == document and "letter_before" in change:
+                change["letter_after"] = letter_frame.state(body, source)
         if replacements or provenance != row["provenance_snapshot"]:
             prepared.append((document, row, source, body))
     for document, row, source, body in prepared:
@@ -584,6 +647,10 @@ def publish_reply(
                 "after_revision_id": str(revision),
             }
         )
+        for change in _objects(reply["tones"]):
+            if change["document_id"] == document and "letter_before" in change:
+                published = section_regeneration._target(conn, task.owner_id, UUID(document))
+                change["after_sha256"] = published["content_sha256"]
     assert_fence(conn, task)
     conn.execute(
         text("""UPDATE bonafides.document_conversation_turns SET reply=CAST(:reply AS jsonb),model_run_id=:run
@@ -613,12 +680,37 @@ def undo_turn(
     reply = cast(dict[str, object], turn["reply"])
     documents_changed = {str(item["document_id"]) for item in _objects(reply["applied"])}
     documents_changed.update(str(item["document_id"]) for item in _objects(reply["tones"]))
+    letters = {
+        str(item["document_id"]): item
+        for item in _objects(reply["tones"])
+        if "letter_before" in item
+    }
+    pairs = {str(item["document_id"]): item for item in _objects(reply["revisions"])}
     prepared = []
     for document in sorted(documents_changed):
         try:
             row = section_regeneration._target(conn, owner, UUID(document))
         except Problem as exc:
             raise Problem(409, "conversation_undo_conflict") from exc
+        if document in letters:
+            if (
+                row["content_sha256"] != letters[document]["after_sha256"]
+                or cast(dict[str, object], row["provenance_snapshot"]).get("tone")
+                != letters[document]["after"]
+                or letter_frame.state(documents.parse_body(row["body"]), dict(row))
+                != letters[document]["letter_after"]
+            ):
+                raise Problem(409, "conversation_undo_conflict")
+            before_row = generation.revision_view(
+                conn, owner, UUID(document), UUID(str(pairs[document]["before_revision_id"]))
+            )
+            source = {
+                **row,
+                "template_version": before_row["template_version"],
+                "provenance_snapshot": before_row["provenance_snapshot"],
+            }
+            prepared.append((document, documents.parse_body(before_row["body"]), source))
+            continue
         body = documents.parse_body(row["body"])
         units = {_key(item): item for item in _targets(row, UUID(document), eligible=False)}
         replacements = {}

@@ -652,3 +652,55 @@ def test_old_template_refuses_image_payload_before_spooling(tmp_path: Path) -> N
             _portrait(),
         )
     assert not list(tmp_path.iterdir())
+
+
+@pytest.mark.parametrize(
+    "template",
+    [
+        "bonafides-evidence-v4",
+        "bonafides-compact-v4",
+        "bonafides-evidence-letter-v4",
+        "bonafides-compact-letter-v4",
+    ],
+)
+def test_edited_letter_frame_preserves_pdf_text_and_profile_signature(
+    template: str,
+    actual_renderer: Callable[[DocumentBody, str, PrintableFrame | None], bytes],
+) -> None:
+    frame = PrintableFrame(
+        display_name="Synthetic Letter Owner",
+        contact=ProfileContact(email="letter@example.test"),
+        correspondence_date="2024-02-29",
+        recipient="Recruitment panel",
+        greeting="Dear Panel,",
+        closing="With appreciation,",
+    )
+    body = _body("First supported professional fact.").model_copy(update={"title": "Cover letter"})
+    data = actual_renderer(body, template, frame)
+    text = "\n".join(page.extract_text() for page in PdfReader(io.BytesIO(data)).pages)
+    for value in (
+        "2024-02-29",
+        "Recruitment panel",
+        "Dear Panel,",
+        "With appreciation,",
+        "letter@example.test",
+    ):
+        assert value in text
+    assert text.count("Synthetic Letter Owner") == 2
+
+
+def test_legacy_frames_and_templates_remain_byte_identical() -> None:
+    legacy = {
+        "display_name": "Synthetic Owner",
+        "contact": None,
+        "correspondence_date": "2020-01-01",
+        "organization": None,
+        "role": None,
+        "recipient": "Hiring team",
+    }
+    frame = PrintableFrame.model_validate(legacy)
+    assert frame.model_dump(mode="json") == legacy
+    body = _body("First fact.").model_copy(update={"title": "Cover letter"})
+    baseline = render_service.render_html(body, "bonafides-evidence-v3", frame)
+    enriched = frame.model_copy(update={"greeting": "Dear Panel,", "closing": "With appreciation,"})
+    assert render_service.render_html(body, "bonafides-evidence-v3", enriched) == baseline
