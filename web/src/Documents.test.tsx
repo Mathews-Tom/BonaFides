@@ -1703,7 +1703,7 @@ describe('letter frame editing and friendly writing tone', () => {
       vi.setSystemTime(new Date(2026, 10, 15, 12));
       const user = userEvent.setup();
       const legacy = { ...letter, current_revision: { ...letter.current_revision, provenance_snapshot: { frame: { display_name: 'Frozen sender' } } } };
-      const server = { ...letter, version: 5, current_revision: { ...letter.current_revision, id: 'server-letter', provenance_snapshot: { frame: { display_name: 'Frozen sender', correspondence_date: '2026-11-17', greeting: 'Dear server team,', closing: 'Server closing,' } } } };
+      let server: DocumentRecord = { ...letter, version: 5, current_revision: { ...letter.current_revision, id: 'server-letter', provenance_snapshot: { frame: { display_name: 'Frozen sender', correspondence_date: '2026-11-17', greeting: 'Dear server team,', closing: 'Server closing,' } } } };
       const { api, request } = proposalFixture(async (path, method) => {
         if (path === '/documents/letter-doc' && method === 'PUT') throw new ApiError(412, 'version_conflict');
         if (path === '/documents/letter-doc') return server;
@@ -1736,6 +1736,26 @@ describe('letter frame editing and friendly writing tone', () => {
       await user.click(screen.getByRole('button', { name: 'Discard document changes' }));
       expect(screen.getByLabelText('Recipient')).toHaveValue('Hiring team');
       expect(screen.getByLabelText('Closing')).toHaveValue('Server closing,');
+      fireEvent.change(screen.getByLabelText('Recipient'), { target: { value: 'Keep my recipient edit' } });
+      server = { ...server, version: 6, current_revision: { ...server.current_revision, id: 'restored-text-only', template_version: 'bonafides-base-v1', provenance_snapshot: {} } };
+      await user.click(screen.getByRole('button', { name: 'Compare current document revision' }));
+      await user.click(await screen.findByRole('checkbox', { name: /I compared both revisions/ }));
+      await user.click(screen.getByRole('button', { name: 'Rebase my edits onto compared revision' }));
+      await screen.findByText(/restored version cannot hold letter fields/);
+      expect(screen.getByLabelText('Recipient')).toHaveValue('Keep my recipient edit');
+      expect(screen.getByLabelText('Closing')).toHaveValue('Server closing,');
+      expect(screen.getByRole('button', { name: 'Save document revision' })).toBeDisabled();
+      await user.click(screen.getByRole('button', { name: 'Save document revision' }));
+      expect(request.mock.calls.filter(call => call[1] === 'PUT')).toHaveLength(1);
+      expect(screen.getByLabelText('Recipient')).toHaveValue('Keep my recipient edit');
+      fireEvent.change(screen.getByLabelText('Recipient'), { target: { value: 'Hiring team' } });
+      fireEvent.change(screen.getByLabelText('Block text: b-1'), { target: { value: 'Body-only edit after reverting letter fields.' } });
+      await user.click(screen.getByRole('button', { name: 'Compare current document revision' }));
+      await user.click(await screen.findByRole('checkbox', { name: /I compared both revisions/ }));
+      await user.click(screen.getByRole('button', { name: 'Rebase my edits onto compared revision' }));
+      expect(screen.queryByLabelText('Recipient')).not.toBeInTheDocument();
+      expect(screen.getByLabelText('Block text: b-1')).toHaveValue('Body-only edit after reverting letter fields.');
+      expect(screen.getByRole('button', { name: 'Save document revision' })).toBeEnabled();
     } finally { vi.useRealTimers(); }
   });
 

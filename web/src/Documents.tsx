@@ -553,10 +553,12 @@ export function Documents({ api, profile, archiveRecovery, disabled = false, ext
   }
   function rebase() {
     if (!doc || !comparison || !rebaseConfirmed || locked) return;
+    const frame = comparison.current_revision.provenance_snapshot.frame;
+    const serverLetter = comparison.kind === 'cover_letter' && frame && typeof frame === 'object' && !Array.isArray(frame) ? letterParts(comparison.current_revision) : null;
+    if (!serverLetter && letterBuffer && letterBaseline && !sameLetter(letterBuffer, letterBaseline)) { setError('The restored version cannot hold letter fields. Your local letter edits are kept; restore a framed version or discard those edits before rebasing. Nothing has been saved.'); return; }
     const merged = buffer ? rebaseBody(doc.current_revision.body, buffer, comparison.current_revision.body) : null;
     if (buffer && !merged) { setError('A locally edited block was removed on the server. Copy your attempted text, then explicitly replace the editor with the server revision and edit again. Nothing has been saved.'); return; }
     let nextLetter: LetterParts | null = null;
-    const serverLetter = comparison.kind === 'cover_letter' ? letterParts(comparison.current_revision) : null;
     if (letterBuffer && letterBaseline && serverLetter) {
       const mergedLetter = { ...serverLetter };
       for (const key of Object.keys(letterBaseline) as (keyof LetterParts)[]) if (letterBuffer[key] !== letterBaseline[key]) mergedLetter[key] = letterBuffer[key];
