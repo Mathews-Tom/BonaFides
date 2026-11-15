@@ -190,6 +190,10 @@ def test_process_exit_without_new_receipt_is_not_a_completed_result(
         ("refine_documents", "failed", 1, "replacement"),
         ("refine_documents", "passed", 0, "formatting"),
         ("refine_documents", "passed", 0, "other_stage"),
+        ("write_application_email", "passed", 0, "first"),
+        ("write_application_email", "failed", 1, "replacement"),
+        ("write_application_email", "passed", 0, "formatting"),
+        ("write_application_email", "passed", 0, "other_stage"),
         ("generate_documents", "passed", 0, "other_stage"),
     ],
 )
@@ -205,7 +209,7 @@ def test_result_requires_changed_selected_stage_receipt(
     data["qualification_receipts"][stage] = qualification_receipt(
         {
             "status": status,
-            "capability_sha256": route.capability_sha256,
+            "capability_sha256": route.capability_for(stage),
             "reviewed_by": "Synthetic fixture",
             "reviewed_at": "2026-11-08T00:00:00+00:00",
             "counts": {

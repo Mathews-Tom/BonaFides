@@ -15,12 +15,13 @@ from time import monotonic
 from typing import Literal, cast
 from uuid import UUID, uuid4
 
-from pydantic import ValidationError
+from pydantic import Field, ValidationError
 
 from bonafides import document_generation as generation
 from bonafides import (
     documents,
     import_structuring,
+    letter_frame,
     local_model,
     model_calls,
     model_projections,
@@ -119,8 +120,14 @@ def load_cases(directory: Path, stage: str) -> tuple[list[dict[str, object]], st
             "tone",
             "language",
             "target",
-        } | ({"base_body"} if stage == "regenerate_section" else set()):
+        } - ({"target"} if stage == "write_application_email" else set()) | (
+            {"letter_body"} if stage == "write_application_email" else set()
+        ) | ({"base_body"} if stage == "regenerate_section" else set()):
             raise ValueError("qualification_case_invalid")
+        if stage == "write_application_email":
+            if not isinstance(case["id"], str) or not case["id"].strip():
+                raise ValueError("qualification_case_invalid")
+            projection(case, stage)
         if stage == "regenerate_section":
             body = documents.parse_body(case["base_body"])
             target = case["target"]
@@ -182,6 +189,10 @@ def projection(case: dict[str, object], stage: str) -> dict[str, object]:
         str(case["tone"]),
         str(case["language"]),
     )
+    if stage == "write_application_email":
+        return model_projections.application_email_projection(
+            *args, documents.parse_body(case["letter_body"]), frame={}
+        )
     if stage == "generate_documents":
         return model_projections.generation_projection(*args)
     return model_projections.regeneration_projection(*args, cast(dict[str, object], case["target"]))
@@ -194,6 +205,8 @@ def checked_bodies(
     target: dict[str, object],
     base_body: documents.DocumentBody | None = None,
 ) -> list[tuple[str, documents.DocumentBody]]:
+    if stage == "write_application_email":
+        return [("cover_letter", checked_email(output, plan))]
     if stage == "generate_documents":
         pair = generation.validate_pair(output, plan)
         return [(item.kind, generation._candidate_body(item, plan)) for item in pair.documents]
@@ -243,6 +256,45 @@ def statement_counts(
                     ):
                         usable += 1
     return factual, usable
+
+
+class CandidateEmail(documents.StrictModel):
+    schema_version: Literal["1"]
+    stage: Literal["write_application_email"]
+    subject: Literal["Application", "Application enquiry"] = Field(max_length=120)
+    blocks: list[generation.CandidateStatement] = Field(min_length=1, max_length=30)
+
+
+def checked_email(output: dict[str, object], plan: dict[str, object]) -> documents.DocumentBody:
+    """No factual subject text; check every body statement inside the corrective loop."""
+    candidate = generation.parse_candidate(output, CandidateEmail)
+    keys = [block.block_key for block in candidate.blocks]
+    if len(keys) != len(set(keys)):
+        raise model_calls.OutputMismatch(["blocks: duplicate_block_key"])
+    if any(letter_frame.role(block.text, {}) is not None for block in candidate.blocks):
+        raise model_calls.OutputMismatch(["blocks: correspondence_outside_body"])
+    try:
+        body = documents.DocumentBody(
+            title="Cover letter",
+            sections=[
+                documents.DocumentSection(
+                    key="email-body",
+                    heading="Application",
+                    blocks=[generation.candidate_block(block, plan) for block in candidate.blocks],
+                )
+            ],
+        )
+    except ValidationError as exc:
+        raise generation._mismatch(exc) from exc
+    issues = check_statements(
+        body,
+        cast(list[dict[str, object]], plan["facts"]),
+        cast(dict[str, object], plan["frame"]),
+        "cover_letter",
+    )
+    if issues:
+        raise model_calls.OutputMismatch([f"blocks: {issue['code']}" for issue in issues[:12]])
+    return body
 
 
 def checked_refinement(output: dict[str, object], case: dict[str, object]) -> ConversationReply:
@@ -312,7 +364,7 @@ def qualify(
                 "facts": case["facts"],
                 "frame": {"role": posting["title"], "organization": posting["organization"]},
             }
-            target = cast(dict[str, object], case["target"])
+            target = cast(dict[str, object], case.get("target", {}))
         try:
             call = partial(
                 client.call, stage, context, local_model.PROMPT_VERSIONS[stage], interrupted
@@ -405,7 +457,7 @@ def qualify(
                 and (stage != "structure_import" or correct_kind_count * 100 >= unit_count * 95)
             )
             else "failed",
-            "capability_sha256": route.capability_sha256,
+            "capability_sha256": route.capability_for(stage),
             "reviewed_by": reviewed_by,
             "reviewed_at": datetime.now(UTC).isoformat(),
             "counts": counts,

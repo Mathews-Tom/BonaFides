@@ -48,7 +48,15 @@ from test_suitability import (
 )
 from test_tracking import _application
 
-from bonafides import imports, local_model, model_context, profile_entries, suitability
+from bonafides import (
+    documents,
+    imports,
+    local_model,
+    model_context,
+    model_projections,
+    profile_entries,
+    suitability,
+)
 from bonafides.commands import canonical_json
 from bonafides.db import Database
 from bonafides.import_parser import ImportParserClient, ParsedImport
@@ -207,6 +215,62 @@ def test_document_generation_sends_the_claim_without_withheld_evidence_content(
         tmp_path, "generate_documents", cast(dict[str, object], task.input["context"])
     )
     assert sent == preview["model_projection"]
+    _assert_withheld(sent, evidence_id, claim_id)
+
+
+@pytest.mark.postgres
+@pytest.mark.parametrize(
+    ("privacy_class", "employer_owned"), [("confidential", False), ("private", True)]
+)
+def test_email_projection_reuses_current_evidence_privacy_and_body_only(
+    catalog: SourceContext,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    privacy_class: str,
+    employer_owned: bool,
+) -> None:
+    _profile(catalog)
+    application = _application(catalog, description_text=SOURCE)
+    _write(catalog, {"id": application["posting_id"]}, [_requirement(1, "Linux required.")])
+    profile, evidence_id, claim_id = _withheld_source(catalog, "private", False)
+    profile = _reclassify(catalog, profile, evidence_id, privacy_class, employer_owned)
+    _route(monkeypatch, tmp_path)
+    shared = _preview(catalog, profile, application)["model_projection"]
+    posting = shared["posting"]
+    body = documents.DocumentBody(
+        title="Cover letter",
+        sections=[
+            documents.DocumentSection(
+                key="letter",
+                heading="Letter",
+                blocks=[
+                    documents.DocumentBlock(
+                        block_key="b-1",
+                        text=CLAIM,
+                        claim_kind="factual",
+                        claim_revision_ids=[UUID(claim_id)],
+                        evidence_revision_ids=[UUID(evidence_id)],
+                    )
+                ],
+            )
+        ],
+    )
+    context = model_projections.application_email_projection(
+        {
+            "title": posting["title"],
+            "company": posting["organization"],
+            "description_text": posting["source_text"],
+        },
+        shared["requirements"],
+        shared["claims"],
+        shared["evidence"],
+        shared["tone"],
+        shared["language"],
+        body,
+        frame={},
+    )
+    sent = _transmitted(tmp_path, "write_application_email", context)
+    assert sent["letter_body"] == CLAIM
     _assert_withheld(sent, evidence_id, claim_id)
 
 

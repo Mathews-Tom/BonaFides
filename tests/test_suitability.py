@@ -1432,6 +1432,55 @@ def test_location_and_country_are_not_work_authorization_assertions() -> None:
 
 
 @pytest.mark.postgres
+def test_email_stage_preserves_baseline_policy_and_existing_assessment(
+    catalog: SourceContext, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    versions = dict(local_model.PROMPT_VERSIONS)
+    monkeypatch.setattr(local_model, "load_route", lambda _path: None)
+    monkeypatch.setattr(
+        local_model,
+        "PROMPT_VERSIONS",
+        {
+            stage: version
+            for stage, version in versions.items()
+            if stage != "write_application_email"
+        },
+    )
+    profile = _profile(catalog)
+    posting = _posting(catalog)
+    view = _write(catalog, posting, [_requirement(1, "Linux required.")])
+    saved = _save(catalog, view, _body(view, profile, [_coverage(1, profile, "Linux")])).json()
+    original = saved["latest_assessment"]
+    # Exact disabled-route policy digest computed from main 0c07b7cb.
+    expected = "3f190264d637774dabe4d2e997778b7a6bdceacf6972d62fda64a48b19b7cc1e"
+    assert suitability._sha(original["provenance"]["policy"]) == expected
+    monkeypatch.setattr(local_model, "PROMPT_VERSIONS", versions)
+    with catalog.runtime.transaction() as conn:
+        current_policy = suitability._policy(conn, catalog.owner_id, catalog.identity.settings)
+        assert suitability._sha(current_policy) == expected
+    current = _view(catalog, posting["id"])["latest_assessment"]
+    assert not current["stale"] and current["stale_reasons"] == []
+    assert current == original
+
+
+@pytest.mark.postgres
+@pytest.mark.parametrize("stage", ["extract_posting", "match_requirements"])
+def test_email_stage_preserves_preupgrade_queued_suitability_context(
+    catalog: SourceContext, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, stage: str
+) -> None:
+    email_version = local_model.PROMPT_VERSIONS["write_application_email"]
+    monkeypatch.delitem(local_model.PROMPT_VERSIONS, "write_application_email")
+    _route(monkeypatch, tmp_path)
+    profile = _profile(catalog)
+    posting = _posting(catalog)
+    view = _write(catalog, posting, [_requirement(1, "Linux required.")])
+    task = _queue(catalog, view, profile if stage == "match_requirements" else None)
+    monkeypatch.setitem(local_model.PROMPT_VERSIONS, "write_application_email", email_version)
+    with catalog.runtime.transaction() as conn:
+        suitability._check_workflow_context(conn, task, catalog.identity.settings)
+
+
+@pytest.mark.postgres
 @pytest.mark.parametrize(
     "change,reason",
     [

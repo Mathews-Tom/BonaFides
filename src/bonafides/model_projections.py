@@ -5,7 +5,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 
-from bonafides import local_model, suitability
+from bonafides import documents, letter_frame, local_model, suitability
 
 
 def _projection(
@@ -100,3 +100,28 @@ def refinement_projection(
             "targets": targets,
         }
     )
+
+
+def application_email_projection(
+    posting: Mapping[str, object],
+    requirements: list[dict[str, object]],
+    claims: list[dict[str, object]],
+    evidence: list[dict[str, object]],
+    tone: str,
+    language: str,
+    letter_body: documents.DocumentBody,
+    *,
+    frame: dict[str, object],
+) -> dict[str, object]:
+    """Use the shared, already-minimized professional sources and letter body only.
+
+    Evidence must come from model_context's current-classification projection, exactly
+    as for generation. Never pass checker facts (which retain withheld evidence text).
+    The local frame is used only to strip legacy correspondence, never transmitted.
+    """
+    projection = generation_projection(posting, requirements, claims, evidence, tone, language)
+    body = letter_frame.split(letter_body, frame)
+    projection["letter_body"] = "\n\n".join(
+        block.text for section in body.sections for block in section.blocks
+    )
+    return local_model.email_context(projection)
