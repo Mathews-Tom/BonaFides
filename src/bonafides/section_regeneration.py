@@ -36,7 +36,7 @@ MODE = "section_regeneration"
 
 
 def _require_regenerable(section_key: str) -> None:
-    if section_key in {"sender", "date", "correspondence_date", "signature"}:
+    if section_key in letter_frame.PROTECTED_BODY_KEYS:
         raise Problem(422, "letter_frame_not_regenerable")
 
 

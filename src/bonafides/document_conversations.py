@@ -304,8 +304,11 @@ def _bump(conn: Connection, owner: UUID, application: UUID) -> None:
 def request_turn(
     conn: Connection, owner: UUID, application: UUID, body: ConversationRequest, settings: Settings
 ) -> tuple[int, dict[str, object]]:
-    protected = {"sender", "date", "correspondence_date", "signature"}
-    if any(unit.section_key in protected or unit.block_key in protected for unit in body.units):
+    if any(
+        unit.section_key in letter_frame.PROTECTED_BODY_KEYS
+        or unit.block_key in letter_frame.PROTECTED_BODY_KEYS
+        for unit in body.units
+    ):
         raise Problem(
             422,
             "letter_frame_not_regenerable",

@@ -100,7 +100,7 @@ def test_email_dataset_letter_context_cannot_establish_new_claims(index: int) ->
         qualification.checked_email(candidate, plan)
 
 
-def test_email_projection_excludes_private_fields_and_legacy_correspondence() -> None:
+def test_email_projection_excludes_private_fields_and_legacy_correspondence(tmp_path: Path) -> None:
     cases, _ = qualification.load_cases(DATASET, STAGE)
     case = cases[0]
     private = {
@@ -132,9 +132,27 @@ def test_email_projection_excludes_private_fields_and_legacy_correspondence() ->
         for index, key in enumerate(("greeting", "closing"), start=98)
     ]
     section = original.model_copy(
-        update={"blocks": [frame_blocks[0], *original.blocks, frame_blocks[1]]}
+        update={
+            "blocks": [
+                frame_blocks[0],
+                *original.blocks,
+                original.blocks[0].model_copy(
+                    update={"block_key": "sender", "text": private["sender"]}
+                ),
+                frame_blocks[1],
+            ]
+        }
     )
-    body = body.model_copy(update={"sections": [section]})
+    signature = documents.DocumentSection(
+        key="signature",
+        heading="Signature",
+        blocks=[
+            original.blocks[0].model_copy(
+                update={"block_key": "private-signature", "text": private["signature"]}
+            )
+        ],
+    )
+    body = body.model_copy(update={"sections": [section, signature]})
     projection = model_projections.application_email_projection(
         posting,
         cast(list[dict[str, object]], case["requirements"]),
@@ -161,6 +179,16 @@ def test_email_projection_excludes_private_fields_and_legacy_correspondence() ->
         "organization",
         "source_text",
     }
+    encoded = response_body(
+        message={"role": "assistant", "content": canonical_json(_output(projection))}
+    )
+    with fixture_server(encoded) as (endpoint, requests):
+        client = local_model.OllamaClient(qualified_route(tmp_path, route_data(endpoint)))
+        client.call(STAGE, projection, local_model.PROMPT_VERSIONS[STAGE])
+        assert len(requests) == 1
+        wire = json.loads(requests[0])
+        assert json.loads(wire["messages"][1]["content"]) == projection
+        assert not any(secret.encode() in requests[0] for secret in private.values())
 
 
 @pytest.mark.parametrize(

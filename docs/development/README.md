@@ -1137,6 +1137,8 @@ The projection reuses the professional generation builder and its already-minimi
 
 The projection requires the local letter frame explicitly as a keyword argument, including an explicit empty frame for synthetic fixtures; callers cannot accidentally skip custom legacy greeting/closing stripping.
 
+Protected section or block keys (`sender`, `date`, `correspondence_date`, `signature`) are excluded from the email body projection even when saved inside the letter body. One shared key set also retains the existing conversation and section-regeneration refusal rules.
+
 Replies contain `subject` (maximum 120 characters) and typed factual/connective `blocks`, with no address or recipient field. Subjects are restricted to `Application` or `Application enquiry`: a closed non-factual choice avoids an unchecked factual channel. Bodies have no salutation or closing, consistent with cover-letter body/frame separation; these remain outside inference. Every body statement passes the unchanged claim-evidence checker inside the correction loop, including assertions copied from the letter. The existing checker limitations still apply.
 
 Email receipts bind an additive `ol-application-email-capability-v1` fingerprint over the unchanged common route capability and the email contract/projection. Earlier prompts, schemas, datasets and common fingerprints are untouched, so existing stages need no requalification for this addition. Earlier receipts cannot qualify email, and email contract changes invalidate only email receipts.

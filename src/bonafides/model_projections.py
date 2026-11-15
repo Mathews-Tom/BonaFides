@@ -122,6 +122,10 @@ def application_email_projection(
     projection = generation_projection(posting, requirements, claims, evidence, tone, language)
     body = letter_frame.split(letter_body, frame)
     projection["letter_body"] = "\n\n".join(
-        block.text for section in body.sections for block in section.blocks
+        block.text
+        for section in body.sections
+        if section.key not in letter_frame.PROTECTED_BODY_KEYS
+        for block in section.blocks
+        if block.block_key not in letter_frame.PROTECTED_BODY_KEYS
     )
     return local_model.email_context(projection)
