@@ -9,6 +9,8 @@ from uuid import UUID, uuid4
 
 import pytest
 from sqlalchemy import text
+from test_application_email import _generate
+from test_checked_section_regeneration import _resume
 from test_identity import identity as identity
 from test_import_parser import parser as parser
 from test_installation_control import renderer_spool as renderer_spool
@@ -16,7 +18,7 @@ from test_portable_erasure import _attachment
 from test_portable_workspace import _import
 from test_sources import SourceContext
 from test_sources import catalog as catalog
-from test_tracking import _application, _write
+from test_tracking import _write
 
 from bonafides.backup_archive import MAX_BUNDLE_BYTES, BackupError
 from bonafides.import_parser import ImportParserClient
@@ -76,8 +78,10 @@ def test_backup_workspace_matches_its_snapshot_fails_closed_and_imports(
     parser: ImportParserClient,
     renderer_spool: Path,
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    application = _application(catalog, title="Synthetic backup workspace application")
+    with _resume(catalog, monkeypatch, tmp_path) as (_, application, _):
+        email = _generate(catalog, application)
     stored = _attachment(catalog, application, b"Synthetic backup workspace attachment")
     staging = tmp_path / "staging"
     staging.mkdir(mode=0o700)
@@ -122,3 +126,11 @@ def test_backup_workspace_matches_its_snapshot_fails_closed_and_imports(
         restored = conn.execute(text("SELECT id FROM bonafides.applications")).scalars().all()
         notes = conn.execute(text("SELECT count(*) FROM bonafides.application_notes")).scalar()
     assert restored == [UUID(application["id"])] and notes == 0
+    with catalog.runtime.transaction() as conn:
+        restored_email = conn.execute(
+            text("""SELECT r.body,r.provenance_snapshot FROM bonafides.document_drafts d
+            JOIN bonafides.document_revisions r ON r.owner_id=d.owner_id AND r.id=d.current_revision_id
+            WHERE d.kind='application_email'""")
+        ).one()
+        assert restored_email.body == email["current_revision"]["body"]
+        assert restored_email.provenance_snapshot["email"] == email["current_revision"]["email"]

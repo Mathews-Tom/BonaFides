@@ -35,8 +35,9 @@ from bonafides.portable_workspace import (
 from bonafides.portable_workspace import BlobMember as BlobMember
 from bonafides.portable_workspace_v2 import WorkspaceManifest as WorkspaceManifestV2
 from bonafides.portable_workspace_v3 import WorkspaceManifest as WorkspaceManifestV3
-from bonafides.portable_workspace_v4 import FORMAT_VERSION as WORKSPACE_VERSION
 from bonafides.portable_workspace_v4 import WorkspaceManifest as WorkspaceManifestV4
+from bonafides.portable_workspace_v5 import FORMAT_VERSION as WORKSPACE_VERSION
+from bonafides.portable_workspace_v5 import WorkspaceManifest as WorkspaceManifestV5
 from bonafides.problems import Problem
 
 MAX_MANIFEST_BYTES = 16 * 1024 * 1024
@@ -56,18 +57,25 @@ EXCLUSIONS = (
 # last pre-baseline build (commit 771776e). They're refused, like every unsupported
 # format, before any write.
 LEGACY_FORMAT = "bonafides-portable"
-# Readers stay bound to their published contracts; new exports select version 4.
-Workspace = WorkspaceManifest | WorkspaceManifestV2 | WorkspaceManifestV3 | WorkspaceManifestV4
+# Readers stay bound to their published contracts; new exports select version 5.
+Workspace = (
+    WorkspaceManifest
+    | WorkspaceManifestV2
+    | WorkspaceManifestV3
+    | WorkspaceManifestV4
+    | WorkspaceManifestV5
+)
 _WORKSPACE_READERS: dict[int, type[Workspace]] = {
     1: WorkspaceManifest,
     2: WorkspaceManifestV2,
     3: WorkspaceManifestV3,
-    WORKSPACE_VERSION: WorkspaceManifestV4,
+    4: WorkspaceManifestV4,
+    WORKSPACE_VERSION: WorkspaceManifestV5,
 }
 SUPPORTED_FORMATS = frozenset((WORKSPACE_FORMAT, version) for version in _WORKSPACE_READERS)
 # Internal record views are independent of physical and published schemas.
 WORKSPACE_RECORD_SCHEMA = 1
-WORKSPACE_RECORD_SCHEMAS = {1: 1, 2: 1, 3: 1, 4: 2}
+WORKSPACE_RECORD_SCHEMAS = {1: 1, 2: 1, 3: 1, 4: 2, 5: 2}
 _MEMBER = re.compile(r"blobs/[0-9a-f]{64}\Z")
 
 
@@ -83,7 +91,7 @@ class Manifest(ArchiveModel):
     """
 
     format: Literal["bonafides-workspace"]
-    format_version: Literal[1, 2, 3, 4]
+    format_version: Literal[1, 2, 3, 4, 5]
     source_schema_version: Annotated[int, Field(ge=1)]
     created_at: AwareDatetime
     source_namespace: UUID
@@ -125,7 +133,7 @@ def _workspace(manifest: Manifest) -> Workspace:
         raise ArchiveError("incompatible_portable_format")
     records = dict(manifest.records)
     sections: dict[str, dict[str, list[dict[str, JsonValue]]]] = {}
-    if manifest.format_version == 4 and "document_conversation_turns" not in records:
+    if manifest.format_version >= 4 and "document_conversation_turns" not in records:
         raise ArchiveError("incompatible_portable_schema")
     turns = records.pop("document_conversation_turns", [])
     if manifest.format_version < 4 and turns:
@@ -134,7 +142,7 @@ def _workspace(manifest: Manifest) -> Workspace:
         if not set(tables) <= records.keys():
             raise ArchiveError("incompatible_portable_schema")
         sections[section] = {table: records.pop(table) for table in tables}
-    if manifest.format_version == 4:
+    if manifest.format_version >= 4:
         sections["documents"]["document_conversation_turns"] = turns
     if records:
         raise ArchiveError("incompatible_portable_schema")

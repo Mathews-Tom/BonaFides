@@ -213,6 +213,7 @@ def context_view(
     ids = conn.execute(
         text("""SELECT id FROM bonafides.document_drafts
         WHERE owner_id=:owner AND application_id=:app AND deleted_at IS NULL
+        AND kind IN ('resume','cover_letter')
         AND current_revision_id IS NOT NULL ORDER BY kind,id"""),
         {"owner": owner, "app": application},
     ).scalars()

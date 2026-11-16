@@ -150,6 +150,7 @@ def migrate(settings: MigrationConfig) -> None:
                 "007_profile_portrait_lifetime.up.sql",
                 "008_document_conversations.up.sql",
                 "009_conversation_tone_undo.up.sql",
+                "010_application_email.up.sql",
             )
             if len(rows) != len(names):
                 raise RuntimeError("unsupported migration ledger")
@@ -213,7 +214,7 @@ def enqueue(conn: Connection, owner_id: UUID, kind: str, input_snapshot: dict[st
             else 2
             if kind in {"posting_extract", "matching"}
             or pinned.get("mode")
-            in {"tailored_ai", "section_regeneration", "document_conversation"}
+            in {"tailored_ai", "section_regeneration", "document_conversation", "application_email"}
             else 4
             if kind == "profile_import"
             else 3,
@@ -224,7 +225,7 @@ def enqueue(conn: Connection, owner_id: UUID, kind: str, input_snapshot: dict[st
             else 480
             if kind in {"posting_extract", "matching"}
             or pinned.get("mode")
-            in {"tailored_ai", "section_regeneration", "document_conversation"}
+            in {"tailored_ai", "section_regeneration", "document_conversation", "application_email"}
             or pinned.get("model_pending") is True
             else 180,
             "source": pinned.get("source_id") if kind == "source_refresh" else None,
@@ -422,7 +423,8 @@ def _retry_block_reason(conn: Connection, row: RowMapping) -> str | None:
     snapshot = cast(dict[str, object], row["input"])
     model_task = (
         row["kind"] in {"posting_extract", "matching"}
-        or snapshot.get("mode") in {"tailored_ai", "section_regeneration", "document_conversation"}
+        or snapshot.get("mode")
+        in {"tailored_ai", "section_regeneration", "document_conversation", "application_email"}
         or snapshot.get("model_pending") is True
     )
     if model_task and row["model_network_attempts"] >= 2:
@@ -539,7 +541,8 @@ def get_workflow(conn: Connection, owner_id: UUID, workflow_id: UUID) -> dict[st
     snapshot = row["input"]
     model_task = (
         row["kind"] in {"posting_extract", "matching"}
-        or snapshot.get("mode") in {"tailored_ai", "section_regeneration", "document_conversation"}
+        or snapshot.get("mode")
+        in {"tailored_ai", "section_regeneration", "document_conversation", "application_email"}
         or (row["kind"] == "profile_import" and snapshot.get("stage") == "structure_import")
     )
     result["usage"] = {
@@ -574,6 +577,7 @@ def get_workflow(conn: Connection, owner_id: UUID, workflow_id: UUID) -> dict[st
         "tailored_ai",
         "section_regeneration",
         "document_conversation",
+        "application_email",
         "page_fit",
     }:
         result["mode"] = row["input"]["mode"]
@@ -843,7 +847,7 @@ def _claim(
         AND w.cancel_requested_at IS NULL AND w.attempt<w.max_attempts
         AND (w.token_budget=0 OR w.tokens_used<w.token_budget)
         AND (w.cost_budget_microunits=0 OR w.cost_used_microunits<w.cost_budget_microunits)
-        AND (NOT(w.kind IN ('posting_extract','matching') OR coalesce(w.input->>'mode','') IN ('tailored_ai','section_regeneration','document_conversation')
+        AND (NOT(w.kind IN ('posting_extract','matching') OR coalesce(w.input->>'mode','') IN ('tailored_ai','section_regeneration','document_conversation','application_email')
                  OR coalesce(w.input->>'model_pending','false')='true')
              OR w.model_network_attempts<2)
         AND NOT EXISTS(SELECT 1 FROM bonafides.workflow_steps s WHERE s.owner_id=w.owner_id AND s.workflow_run_id=w.id AND s.delivery_state='unknown')
@@ -1007,7 +1011,7 @@ def fail(
                 extract(epoch FROM deadline_at-clock_timestamp()) AS remaining_seconds,
                 (token_budget>0 AND tokens_used>=token_budget)
                 OR (cost_budget_microunits>0 AND cost_used_microunits>=cost_budget_microunits)
-                OR ((kind IN ('posting_extract','matching') OR coalesce(input->>'mode','') IN ('tailored_ai','section_regeneration','document_conversation')
+                OR ((kind IN ('posting_extract','matching') OR coalesce(input->>'mode','') IN ('tailored_ai','section_regeneration','document_conversation','application_email')
                      OR coalesce(input->>'model_pending','false')='true')
                     AND model_network_attempts>=2) AS budgets_exhausted,
                 EXISTS(SELECT 1 FROM bonafides.workflow_steps s WHERE s.owner_id=w.owner_id
@@ -1099,7 +1103,7 @@ def reap(conn: Connection) -> int:
             text("""SELECT w.*,EXISTS(SELECT 1 FROM bonafides.workflow_steps s
         WHERE s.owner_id=w.owner_id AND s.workflow_run_id=w.id AND s.delivery_state='unknown') AS unknown_delivery,
         w.deadline_at<=clock_timestamp() AS deadline_passed,
-        ((w.kind IN ('posting_extract','matching') OR coalesce(w.input->>'mode','') IN ('tailored_ai','section_regeneration','document_conversation')
+        ((w.kind IN ('posting_extract','matching') OR coalesce(w.input->>'mode','') IN ('tailored_ai','section_regeneration','document_conversation','application_email')
           OR coalesce(w.input->>'model_pending','false')='true')
             AND w.model_network_attempts>=2) AS model_exhausted,
         ((w.token_budget>0 AND w.tokens_used>=w.token_budget)
@@ -1114,7 +1118,7 @@ def reap(conn: Connection) -> int:
         OR (w.state IN ('pending','retryable_failure') AND (
             w.attempt>=w.max_attempts OR (w.token_budget>0 AND w.tokens_used>=w.token_budget)
             OR (w.cost_budget_microunits>0 AND w.cost_used_microunits>=w.cost_budget_microunits)
-            OR ((w.kind IN ('posting_extract','matching') OR coalesce(w.input->>'mode','') IN ('tailored_ai','section_regeneration','document_conversation')
+            OR ((w.kind IN ('posting_extract','matching') OR coalesce(w.input->>'mode','') IN ('tailored_ai','section_regeneration','document_conversation','application_email')
                  OR coalesce(w.input->>'model_pending','false')='true')
                 AND w.model_network_attempts>=2)))
         OR ((w.state<>'waiting_for_approval' OR w.last_error_code IS DISTINCT FROM 'delivery_reconciliation_required')

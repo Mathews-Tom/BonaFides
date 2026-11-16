@@ -544,6 +544,8 @@ def prepare_render(
 
     lock_workspace(conn, owner_id)
     document = _document(conn, owner_id, document_id)
+    if document["kind"] == "application_email":
+        raise Problem(422, "application_email_not_printable")
     revision = document["current_revision"]
     assert isinstance(revision, dict)
     if revision["id"] != str(revision_id):

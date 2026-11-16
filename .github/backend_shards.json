@@ -17,6 +17,7 @@
     "tests/test_suitability.py"
   ],
   "2": [
+    "tests/test_application_email.py",
     "tests/test_application_email_qualification.py",
     "tests/test_checked_generation.py",
     "tests/test_claim_mapping.py",

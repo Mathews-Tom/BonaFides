@@ -34,6 +34,7 @@ from bonafides.installation_control import InstallationMaintenance
 from bonafides.portable_archive import ArchiveError, PortableArchive
 from bonafides.portable_columns import COLUMNS
 from bonafides.portable_erasure import delete_controlled_owner_data
+from bonafides.portable_workspace_v5 import FORMAT_VERSION as WORKSPACE_VERSION
 from bonafides.profiles import content_hash
 from bonafides.workflows import enqueue
 
@@ -288,7 +289,7 @@ def test_complete_conversation_history_imports_inert_and_reexports_exactly(
     workspace: bool,
 ) -> None:
     archive = _history(catalog, monkeypatch, tmp_path)
-    assert archive.manifest.format_version == 4
+    assert archive.manifest.format_version == WORKSPACE_VERSION
     frames = [
         cast(dict[str, Any], row["provenance_snapshot"])["frame"]
         for row in archive.manifest.records["document_revisions"]
@@ -630,7 +631,7 @@ def test_older_workspaces_import_without_conversation_authority(
     )
     _import(catalog, parser, renderer_spool, _encoded(archive.manifest, archive.blobs))
     restored = _export(catalog)
-    assert restored.manifest.format_version == 4
+    assert restored.manifest.format_version == WORKSPACE_VERSION
     assert restored.manifest.records["document_conversation_turns"] == []
     assert (
         restored.manifest.records["profile_revisions"]

@@ -4,7 +4,7 @@ import { errorText, type Api, type ApplicationClaims, type ClaimOutcomes, type C
 import { stageName } from './tracking-api';
 
 export const USAGE_RULE = 'Only factual statements that passed the evidence check count as usage. Blocked statements, greetings and statements of intent are not listed.';
-const kindName = (kind: ClaimUsageItem['kind']) => kind === 'resume' ? 'Résumé' : 'Cover letter';
+const kindNames: Record<ClaimUsageItem['kind'], string> = { resume: 'Résumé', cover_letter: 'Cover letter', application_email: 'Application email' };
 
 function Pin({ item }: { item: ClaimUsageItem }) {
   return <>Claim revision {item.claim_revision_no}{item.superseded ? ' · superseded by a later edit' : ' · current'}{item.archived ? ' · claim archived' : ''}</>;
@@ -17,7 +17,7 @@ function Statements({ item }: { item: ClaimUsageItem }) {
 function placeName(item: ClaimUsageItem): string {
   if (!item.application) return 'Base résumé';
   const { title, company, attempt_no: attempt, archived } = item.application;
-  return `${title} at ${company} · attempt ${attempt}${archived ? ' · application archived' : ''} · ${kindName(item.kind)}`;
+  return `${title} at ${company} · attempt ${attempt}${archived ? ' · application archived' : ''} · ${kindNames[item.kind]}`;
 }
 
 function UsageList({ items }: { items: ClaimUsageItem[] }) {
@@ -55,7 +55,7 @@ function ApplicationOutcomes({ outcomes }: { outcomes: ClaimOutcomes }) {
         <td>{stage.reached_count}/{outcomes.application_count} ({stage.rate === null ? 'Unavailable' : stage.rate.toLocaleString('en', { style: 'percent', maximumFractionDigits: 1 })})</td>
       </tr>)}</tbody>
     </table>
-    <p className="hint">Distinct application attempts whose current, nondeleted checked résumé or cover-letter revisions use this claim, including older pinned claim revisions. Résumé and letter count once per attempt; repeats count separately. Base résumés, blocked statements and earlier document revisions do not add attempts. Expanding earlier document history does not change this cohort.</p>
+    <p className="hint">Distinct application attempts whose current, nondeleted checked résumé, cover-letter or application-email revisions use this claim, including older pinned claim revisions. Résumé, letter and email count once per attempt; repeats count separately. Base résumés, blocked statements and earlier document revisions do not add attempts. Expanding earlier document history does not change this cohort.</p>
     <p className="hint">Archived and Preparing attempts are included in every denominator. Progress uses all recorded valid events, including future-dated events; corrections replace prior events. Ordinary backward moves retain the furthest stage.</p>
     <p className="hint">Furthest stage counts each attempt at its peak only. Reached at least infers earlier stages from that peak; it does not mean every stage was recorded. Rejection without a positive stage infers Applied. Preparing or Withdrawn alone is no positive progress.</p>
     <p className="hint">Manually recorded, unverified tracking: not proof of delivery or verified employer response. Reach is not a response rate and does not show that this claim caused an outcome.</p>
@@ -82,14 +82,14 @@ export function ApplicationClaimsUsed({ api, applicationId }: { api: Api; applic
   const claims = useLoader<ApplicationClaims>();
   const read = () => claims.load(signal => api.request<ApplicationClaims>(`/applications/${encodeURIComponent(applicationId)}/claims`, 'GET', undefined, undefined, false, signal));
   return <section aria-labelledby="application-claims-title"><h4 id="application-claims-title">Claims used</h4>
-    <p className="hint">Claims cited by the current revision of this application’s résumé and cover letter. {USAGE_RULE} The base résumé is listed on each claim, not here.</p>
+    <p className="hint">Claims cited by the current revision of this application’s résumé, cover letter and application email. {USAGE_RULE} The base résumé is listed on each claim, not here.</p>
     <button type="button" className="secondary" disabled={claims.loading} onClick={() => { void read(); }}>{claims.value ? 'Refresh claims used' : 'Show claims used'}</button>
     {claims.loading && <p role="status">Loading claims used…</p>}
     {claims.error && <p className="error" role="status">Claims used unavailable, not empty. {claims.error}</p>}
-    {claims.value && (claims.value.items.length ? (['resume', 'cover_letter'] as const).map(kind => {
+    {claims.value && (claims.value.items.length ? (['resume', 'cover_letter', 'application_email'] as const).map(kind => {
       const items = claims.value?.items.filter(item => item.kind === kind) ?? [];
       const [first] = items;
-      return first && <section key={kind} aria-label={`Claims used: ${kindName(kind)}`}><h5>{kindName(kind)} · document revision {first.document_revision_no}</h5>
+      return first && <section key={kind} aria-label={`Claims used: ${kindNames[kind]}`}><h5>{kindNames[kind]} · document revision {first.document_revision_no}</h5>
         <ul>{items.map(item => <li key={item.claim_revision_id}><p><strong>{item.claim_text}</strong> · <Pin item={item} /></p><Statements item={item} /></li>)}</ul></section>;
     }) : <p>No saved document of this application cites a claim.</p>)}
   </section>;

@@ -99,6 +99,8 @@ def _source_context(
     """Recheck eligibility, but never rebase historical professional/frame pins."""
     _require_regenerable(section_key)
     row = _target(conn, owner, document)
+    if row["kind"] == "application_email":
+        raise Problem(422, "application_email_requires_whole_rewrite")
     if row["scope"] != "tailored":
         raise Problem(409, "section_regeneration_requires_tailored_document")
     revision = generation.revision_view(conn, owner, document, row["id"])

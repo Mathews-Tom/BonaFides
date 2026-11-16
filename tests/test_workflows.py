@@ -23,6 +23,7 @@ from bonafides.workflows import (
     heartbeat,
     publish,
     reap,
+    retry_workflow,
 )
 
 
@@ -388,8 +389,10 @@ def test_archive_progress_is_current_fence_owned_and_survives_input_retention(
 
 
 @pytest.mark.postgres
-def test_conversation_model_attempts_and_expired_lease_block_republication(
+@pytest.mark.parametrize("mode", ["document_conversation", "application_email"])
+def test_document_model_attempts_and_expired_lease_block_republication(
     pg_context: PGContext,
+    mode: str,
 ) -> None:
     with pg_context.runtime.begin() as conn:
         identifier = enqueue(
@@ -397,14 +400,14 @@ def test_conversation_model_attempts_and_expired_lease_block_republication(
             pg_context.owner_id,
             "document_generate",
             {
-                "mode": "document_conversation",
+                "mode": mode,
                 "stage": "refine_documents",
                 "request_text": "Keep my request.",
             },
         )
         queued = get_workflow(conn, pg_context.owner_id, identifier)
         assert queued["max_attempts"] == 2
-        assert queued["mode"] == "document_conversation"
+        assert queued["mode"] == mode
         assert cast(dict[str, object], queued["usage"])["inference_post_limit"] == 2
     task = _claim(pg_context)
     with pg_context.migrator.begin() as conn:
@@ -421,3 +424,45 @@ def test_conversation_model_attempts_and_expired_lease_block_republication(
         assert claim(conn, uuid4()) is None
         with pytest.raises(DBAPIError), conn.begin_nested():
             publish(conn, task, lambda _active: {"unexpected": "published"})
+
+
+@pytest.mark.postgres
+@pytest.mark.parametrize("state", ["pending", "retryable_failure", "running"])
+def test_email_model_attempt_cap_blocks_retry_claim_and_transient_failure(
+    pg_context: PGContext,
+    state: str,
+) -> None:
+    with pg_context.runtime.begin() as conn:
+        identifier = enqueue(
+            conn, pg_context.owner_id, "document_generate", {"mode": "application_email"}
+        )
+    task = _claim(pg_context) if state == "running" else None
+    with pg_context.migrator.begin() as conn:
+        conn.execute(
+            text("""UPDATE bonafides.workflow_runs SET model_network_attempts=2,state=:state
+            WHERE owner_id=:owner AND id=:id"""),
+            {"owner": pg_context.owner_id, "id": identifier, "state": state},
+        )
+    with pg_context.runtime.begin() as conn:
+        workflow = get_workflow(conn, pg_context.owner_id, identifier)
+        assert workflow["mode"] == "application_email"
+        assert workflow["max_attempts"] == 2
+        assert cast(dict[str, object], workflow["usage"])["inference_post_limit"] == 2
+        if state == "retryable_failure":
+            assert workflow["retryable"] is False
+            assert workflow["retry_block_reason"] == "model_attempts_exhausted"
+            with pytest.raises(Problem) as refused, conn.begin_nested():
+                retry_workflow(conn, pg_context.owner_id, identifier)
+            assert refused.value.code == "model_attempts_exhausted"
+        if task is not None:
+            fail(conn, task, "provider_unavailable", transient=True)
+        else:
+            assert claim(conn, uuid4()) is None
+            assert reap(conn) == 1
+        current = get_workflow(conn, pg_context.owner_id, identifier)
+        assert current["state"] == "permanent_failure"
+        assert current["last_error_code"] == (
+            "provider_unavailable" if task is not None else "model_attempts_exhausted"
+        )
+        assert current["max_attempts"] == 2
+        assert claim(conn, uuid4()) is None
