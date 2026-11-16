@@ -47,6 +47,7 @@ function fixture(document: DocumentRecord | null = saved, handler?: Handler, def
     }
     if (path === '/profile/base-resume' && method === 'GET') { if (document) return document as T; throw new ApiError(404, 'base_resume_not_found'); }
     if (path.endsWith('/conversation') && method === 'GET') return { application_id: application.id, application_version: application.version, context_sha256: '2'.repeat(64), turns: [], documents: [], active_workflow_id: null, route_status: route } as T;
+    if (path.endsWith('/email') && method === 'GET') throw new ApiError(404, 'application_email_not_found');
     if (handler) return await handler(path, method, body, version, key) as T;
     throw new ApiError(404, 'not_found');
   });
@@ -1788,5 +1789,99 @@ describe('letter frame editing and friendly writing tone', () => {
     await inspectSection(user);
     expect(request.mock.calls.find(call => call[0].includes('/generation-context?'))?.[0]).toContain('tone=friendly');
     expect(request.mock.calls.find(call => call[0].includes('/regeneration-context?'))?.[0]).toContain('tone=friendly');
+  });
+});
+
+describe('application email document integration', () => {
+  const email: DocumentRecord = { ...tailored, id: 'email-1', kind: 'application_email', current_revision: { ...tailored.current_revision, provenance_snapshot: { email: { recipient: '', subject: 'Application: Engineer' } } } };
+  it('opens an email task result beside the printable pair, never in the PDF editor', async () => {
+    const { api } = fixture(saved, async path => {
+      if (path === '/documents/email-1') return email;
+      if (path === '/applications/application-1/documents') return pair;
+      throw new ApiError(404, 'not_found');
+    });
+    vi.spyOn(api, 'getApplicationEmail').mockResolvedValue(email);
+    render(<Documents archiveRecovery={archiveRecovery} api={api} profile={profile} externalDocumentId="email-1" />);
+    expect(await screen.findByRole('textbox', { name: 'Email subject' })).toHaveValue('Application: Engineer');
+    expect(screen.getByRole('region', { name: 'Selected saved document' })).toHaveTextContent('Application résumé');
+    expect(screen.getByRole('region', { name: 'Application email' })).not.toContainElement(screen.getByRole('button', { name: 'Render reviewed PDF' }));
+  });
+  it('protects email edits and active writing from workspace switching without blocking mid-run email saves', async () => {
+    const user = userEvent.setup(); const onDirty = vi.fn(); const onBusy = vi.fn();
+    const { api } = fixture(saved, async path => {
+      if (path === '/applications') return { items: [application], next_cursor: null };
+      if (path === '/applications/application-1/documents') return pair;
+      if (path === '/workflows/compose-1') return { ...workflow, mode: 'application_email' };
+      throw new ApiError(404, 'not_found');
+    });
+    vi.spyOn(api, 'getApplicationEmail').mockResolvedValue(email);
+    vi.spyOn(api, 'saveApplicationEmail').mockImplementation(async (_id, body) => ({ ...email, version: 5, current_revision: { ...email.current_revision, body: body.body, provenance_snapshot: { email: body.email } } }));
+    vi.spyOn(api, 'rewriteApplicationEmail').mockResolvedValue({ ...workflow, mode: 'application_email' });
+    render(<Documents archiveRecovery={archiveRecovery} api={api} profile={profile} onDirtyChange={onDirty} onBusyChange={onBusy} />); await ready(); await openTailored(user);
+    const subject = await screen.findByLabelText('Email subject'); await waitFor(() => expect(subject).toBeEnabled());
+    fireEvent.change(subject, { target: { value: 'Email edit' } });
+    await waitFor(() => expect(onDirty).toHaveBeenLastCalledWith(true)); expect(screen.getByLabelText('Tracked application')).toBeDisabled();
+    await user.click(screen.getByRole('button', { name: 'Save email changes' }));
+    await waitFor(() => expect(onDirty).toHaveBeenLastCalledWith(false));
+    await user.click(screen.getByRole('checkbox', { name: 'I want to replace the email subject and body' }));
+    await user.click(screen.getByRole('button', { name: 'Rewrite application email' }));
+    await waitFor(() => expect(onBusy).toHaveBeenLastCalledWith(true)); expect(screen.getByLabelText('Tracked application')).toBeDisabled();
+    expect(subject).toBeEnabled(); fireEvent.change(subject, { target: { value: 'Mid-run email edit' } });
+    expect(screen.getByRole('button', { name: 'Save email changes' })).toBeEnabled();
+  });
+  it.each(['loaded', 'failed'] as const)('never offers the previous application PDFs while a task email changes applications (%s)', async outcome => {
+    const withPdfs: ApplicationDocuments = { ...pair, items: [
+      { ...tailored, artifacts: [{ id: 'application-a-resume', format: 'pdf', revision_id: tailored.current_revision.id }] },
+      { ...tailored, id: 'letter-a', kind: 'cover_letter', artifacts: [{ id: 'application-a-letter', format: 'pdf', revision_id: tailored.current_revision.id }] },
+    ] };
+    const emailB: DocumentRecord = { ...email, id: 'email-b', application_id: 'application-b', current_revision: { ...email.current_revision, provenance_snapshot: { email: { recipient: '', subject: 'Application B email' } } } };
+    const pairB: ApplicationDocuments = { ...withPdfs, application_id: 'application-b', items: withPdfs.items.map(item => ({ ...item, id: `${item.id}-b`, application_id: 'application-b', artifacts: [{ id: `application-b-${item.kind}`, format: 'pdf', revision_id: item.current_revision.id }] })) };
+    let resolve!: (value: ApplicationDocuments) => void; let reject!: (failure: unknown) => void;
+    const loadingB = new Promise<ApplicationDocuments>((yes, no) => { resolve = yes; reject = no; });
+    const { api } = fixture(saved, async path => {
+      if (path === '/documents/email-1') return email;
+      if (path === '/documents/email-b') return emailB;
+      if (path === '/applications/application-1/documents') return withPdfs;
+      if (path === '/applications/application-b/documents') return await loadingB;
+      throw new ApiError(404, 'not_found');
+    });
+    vi.spyOn(api, 'getApplicationEmail').mockImplementation(async id => id === 'application-b' ? emailB : email);
+    const view = render(<Documents archiveRecovery={archiveRecovery} api={api} profile={profile} externalDocumentId="email-1" externalRequestKey="open-a" />);
+    expect(await screen.findByRole('link', { name: 'Download résumé PDF' })).toHaveAttribute('href', '/api/v1/artifacts/application-a-resume');
+    await waitFor(() => expect(screen.getByLabelText('Email subject')).toBeEnabled());
+    view.rerender(<Documents archiveRecovery={archiveRecovery} api={api} profile={profile} externalDocumentId="email-b" externalRequestKey="open-b" />);
+    expect(await screen.findByText('Loading application documents…')).toBeVisible();
+    expect(screen.queryByRole('region', { name: 'Application email' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: 'Download résumé PDF' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: 'Download cover letter PDF' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('region', { name: 'Selected saved document' })).not.toBeInTheDocument();
+    await act(async () => { if (outcome === 'loaded') resolve(pairB); else reject(new ApiError(503, 'database_unavailable')); });
+    if (outcome === 'loaded') {
+      expect(await screen.findByLabelText('Email subject')).toHaveValue('Application B email');
+      expect(screen.getByRole('link', { name: 'Download résumé PDF' })).toHaveAttribute('href', '/api/v1/artifacts/application-b-resume');
+    } else {
+      expect(await screen.findByText('Application documents are unavailable. Reload application documents to try again.')).toBeVisible();
+      expect(screen.queryByRole('region', { name: 'Application email' })).not.toBeInTheDocument();
+      expect(screen.queryByRole('link', { name: 'Download résumé PDF' })).not.toBeInTheDocument();
+      expect(screen.queryByRole('link', { name: 'Download cover letter PDF' })).not.toBeInTheDocument();
+    }
+    expect(document.querySelector('a[href="/api/v1/artifacts/application-a-resume"]')).toBeNull();
+    expect(document.querySelector('a[href="/api/v1/artifacts/application-a-letter"]')).toBeNull();
+  });
+
+  it('reloads the email when Tasks opens a fresh result for the already selected application', async () => {
+    const { api } = fixture(saved, async path => {
+      if (path === '/documents/email-1') return email;
+      if (path === '/applications/application-1/documents') return pair;
+      throw new ApiError(404, 'not_found');
+    });
+    const get = vi.spyOn(api, 'getApplicationEmail').mockResolvedValue(email);
+    const view = render(<Documents archiveRecovery={archiveRecovery} api={api} profile={profile} externalDocumentId="email-1" externalRequestKey="first-open" />);
+    expect(await screen.findByLabelText('Email subject')).toHaveValue('Application: Engineer');
+    await waitFor(() => expect(screen.getByLabelText('Email subject')).toBeEnabled());
+    get.mockResolvedValue({ ...email, version: 8, current_revision: { ...email.current_revision, id: 'new-email-revision', provenance_snapshot: { email: { recipient: '', subject: 'New task result' } } } });
+    view.rerender(<Documents archiveRecovery={archiveRecovery} api={api} profile={profile} externalDocumentId="email-1" externalRequestKey="second-open" />);
+    await waitFor(() => expect(screen.getByLabelText('Email subject')).toHaveValue('New task result'));
+    expect(get).toHaveBeenCalledTimes(2);
   });
 });

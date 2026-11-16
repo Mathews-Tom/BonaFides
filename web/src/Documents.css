@@ -68,6 +68,12 @@
 .documents .import-source { max-width: 100%; overflow: auto; }
 .documents .download { display: grid; gap: .4rem; padding: 1rem; background: var(--soft); border-radius: .4rem; }
 .documents .download span { color: var(--muted); font-size: .875rem; }
+.documents .application-email { min-width: 0; padding: 1rem; border: 1px solid var(--line); border-radius: .65rem; }
+.documents .application-email fieldset { min-width: 0; }
+.documents .application-email input:not([type="checkbox"]), .documents .application-email textarea { width: 100%; }
+.documents .application-email textarea { resize: vertical; line-height: 1.6; }
+.documents .application-email pre { white-space: pre-wrap; overflow-wrap: anywhere; }
+.documents .application-email [aria-disabled="true"] { color: var(--muted); cursor: not-allowed; }
 
 @media (max-width: 680px) {
   .documents .document-mode-options, .documents .document-compose-fields { grid-template-columns: 1fr; }

@@ -362,18 +362,28 @@ describe('exact action review and privacy', () => {
     await user.click(screen.getByRole('button', { name: 'Open document result' })); expect(onOpenDocument).toHaveBeenCalledWith('saved-document', expect.any(String));
   });
 
-  it('reports a saved application email as API-only without offering a document result', async () => {
+  it('opens a saved application email explicitly in Documents without offering a PDF result', async () => {
+    const user = userEvent.setup();
     const initial = task({ state: 'succeeded', mode: 'application_email', result: { document_id: 'saved-email', revision_id: 'email-revision' } });
     const { api } = server(initial); const { onOpenDocument } = show(api, initial);
     await screen.findByRole('status', { name: 'Task state' });
     const result = screen.getByRole('region', { name: 'Task email result' });
     expect(within(result).getByRole('heading', { name: 'Saved application email' })).toBeVisible();
-    expect(result).toHaveTextContent('saved and available through the API only');
     expect(result).toHaveTextContent('Saving does not send email or prove delivery.');
     expect(screen.queryByRole('region', { name: 'Task document results' })).not.toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: /Open .* result/ })).not.toBeInTheDocument();
     expect(within(result).queryByRole('link')).not.toBeInTheDocument();
-    expect(onOpenDocument).not.toHaveBeenCalled();
+    await user.click(within(result).getByRole('button', { name: 'Open application email' }));
+    expect(onOpenDocument).toHaveBeenCalledWith('saved-email', expect.any(String));
+  });
+
+  it('explains why a saved email cannot open over unsaved or active workspace work', async () => {
+    const initial = task({ state: 'succeeded', mode: 'application_email', result: { document_id: 'saved-email' } });
+    const { api } = server(initial); const { onOpenDocument } = show(api, initial, { resultDisabled: true });
+    await screen.findByRole('status', { name: 'Task state' });
+    const result = screen.getByRole('region', { name: 'Task email result' });
+    expect(within(result).getByRole('button', { name: 'Open application email' })).toBeDisabled();
+    expect(result).toHaveTextContent('Save or discard edits and finish active work before opening this email.');
+    expect(result).toHaveTextContent('The saved email is retained.'); expect(onOpenDocument).not.toHaveBeenCalled();
   });
 
   it.each(['resume', 'cover_letter'] as const)('still opens a saved %s document explicitly', async kind => {
