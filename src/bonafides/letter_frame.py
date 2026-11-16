@@ -16,6 +16,7 @@ if TYPE_CHECKING:
 
 Tone = Literal["professional", "concise", "friendly"]
 _CLOSINGS = {"professional": "Yours sincerely,", "concise": "Regards,", "friendly": "Best wishes,"}
+PROTECTED_BODY_KEYS = frozenset({"sender", "date", "correspondence_date", "signature"})
 
 
 def closing_for(tone: str) -> str:

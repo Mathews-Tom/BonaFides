@@ -456,7 +456,7 @@ def _policy(conn: Connection, owner_id: UUID, settings: Settings) -> dict[str, o
         "prompt_versions": {
             stage: version
             for stage, version in local_model.PROMPT_VERSIONS.items()
-            if stage != "structure_import"
+            if stage not in {"structure_import", "write_application_email"}
         },
         "model_route": _route_status(conn, owner_id, settings),
     }

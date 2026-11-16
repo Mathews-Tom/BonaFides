@@ -76,6 +76,7 @@ def fixture_receipt(
         "regenerate_section",
         "refine_documents",
         "structure_import",
+        "write_application_email",
     ):
         return {
             "status": "passed",
@@ -117,7 +118,7 @@ def qualified_route(tmp_path: Path, data: dict[str, object]) -> LocalRoute:
     initial = load_route(route_file(tmp_path, data))
     assert initial is not None
     data["qualification_receipts"] = {
-        stage: fixture_receipt(initial.capability_sha256, stage=stage)
+        stage: fixture_receipt(initial.capability_for(stage), stage=stage)
         for stage in PROMPT_VERSIONS
         if stage != "structure_import" or data.get("import_structuring") is True
     }

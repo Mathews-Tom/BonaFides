@@ -171,9 +171,21 @@ def _conversation(projection: dict[str, object], scenario: str) -> dict[str, Any
     }
 
 
+def _email(projection: dict[str, object]) -> dict[str, Any]:
+    return {
+        "schema_version": "1",
+        "stage": "write_application_email",
+        "subject": "Application",
+        "blocks": [
+            _block(index, "factual", str(claim["text"]), str(claim["id"]))
+            for index, claim in enumerate(_items(projection, "claims"), start=1)
+        ],
+    }
+
+
 def _statements(output: dict[str, Any]) -> list[dict[str, object]]:
     """The first statement list a fabrication scenario edits."""
-    if output["stage"] == "regenerate_section":
+    if output["stage"] in {"regenerate_section", "write_application_email"}:
         return cast(list[dict[str, object]], output["blocks"])
     return cast(list[dict[str, object]], output["documents"][0]["sections"][0]["blocks"])
 
@@ -237,13 +249,15 @@ def respond(scenario: str, request: dict[str, object]) -> dict[str, object]:
     output = (
         _conversation(projection, scenario)
         if conversation
+        else _email(projection)
+        if "letter_body" in projection
         else _section(projection)
         if "target" in projection
         else _pair(projection)
     )
     if scenario == "malformed" or (scenario == "malformed-once" and not corrected):
         invalid: dict[str, object] = {"schema_version": "2", "stage": output["stage"]}
-        if output["stage"] == "regenerate_section":
+        if output["stage"] in {"regenerate_section", "write_application_email"}:
             invalid["blocks"] = []
         else:
             invalid.update({"documents": [], "gaps": []})
@@ -350,7 +364,7 @@ def serve(host: str, port: int, scenario: str, control: Path | None) -> None:
 
 
 def route(endpoint: str, address: str, output: Path, deadline: int) -> None:
-    """Write a 0600 route file with fixture-only receipts for both document stages."""
+    """Write a 0600 route with fixture-only receipts, never real qualification."""
     from bonafides.local_model import load_route, qualification_receipt
 
     data: dict[str, object] = {
@@ -384,12 +398,17 @@ def route(endpoint: str, address: str, output: Path, deadline: int) -> None:
     write()
     initial = load_route(output)
     assert initial is not None
-    stages = ("generate_documents", "regenerate_section", "refine_documents")
+    stages = (
+        "generate_documents",
+        "regenerate_section",
+        "refine_documents",
+        "write_application_email",
+    )
     data["qualification_receipts"] = {
         stage: qualification_receipt(
             {
                 "status": "passed",
-                "capability_sha256": initial.capability_sha256,
+                "capability_sha256": initial.capability_for(stage),
                 "reviewed_by": FIXTURE_REVIEWER,
                 "reviewed_at": "2026-11-01T00:00:00Z",
                 "counts": {
@@ -403,7 +422,8 @@ def route(endpoint: str, address: str, output: Path, deadline: int) -> None:
                 "dataset_sha256": hashlib.sha256(b"fixture-only-stub-route").hexdigest(),
                 "case_count": 20,
                 "duration_ms": 0,
-            }
+            },
+            stage=stage,
         )
         for stage in stages
     }

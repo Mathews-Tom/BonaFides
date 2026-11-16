@@ -1129,6 +1129,22 @@ Completion inserts an immutable owner-bound proposal and returns opaque result I
 
 Rendering checks actual painted-font missing-glyph records and selectable text against the escaped visible template content in original order. Extraction may add layout whitespace but cannot erase original word/block boundaries, drop text or introduce words. `render_text_unsupported` rejects unavailable glyphs or degraded text without publishing a ready artifact; correct the characters or use a separately qualified fixed font/template deployment. Latin/other sampled glyph success does not qualify all Unicode, RTL, multilingual layout or PDF-UA. Literal URLs/markup remain escaped text, not fetched resources or active PDF links.
 
+#### Application-email qualification (operator only)
+
+`models.sh qualify --stage write_application_email --reviewed-by 'Local owner'` measures the v1 prompt/schema on 20 bundled synthetic cases using the regular private-route transport and shared single-correction loop. It publishes only a qualification receipt: no API, workflow, persistence, document kind, portable format or sending capability is added. The app will use the stage only in a later release; database stage constraints are unchanged.
+
+The projection reuses the professional generation builder and its already-minimized claim/evidence inputs (including current-classification withheld markers). It adds only current letter body text, using the shared correspondence splitter for legacy greeting/closing blocks. Dedicated identity, contacts, private notes, portrait and the letter frame are not inputs. Professional free text can still contain personal data.
+
+The projection requires the local letter frame explicitly as a keyword argument, including an explicit empty frame for synthetic fixtures; callers cannot accidentally skip custom legacy greeting/closing stripping.
+
+Protected section or block keys (`sender`, `date`, `correspondence_date`, `signature`) are excluded from the email body projection even when saved inside the letter body. One shared key set also retains the existing conversation and section-regeneration refusal rules.
+
+Replies contain `subject` (maximum 120 characters) and typed factual/connective `blocks`, with no address or recipient field. Subjects are restricted to `Application` or `Application enquiry`: a closed non-factual choice avoids an unchecked factual channel. Bodies have no salutation or closing, consistent with cover-letter body/frame separation; these remain outside inference. Every body statement passes the unchanged claim-evidence checker inside the correction loop, including assertions copied from the letter. The existing checker limitations still apply.
+
+Email receipts bind an additive `ol-application-email-capability-v1` fingerprint over the unchanged common route capability and the email contract/projection. Earlier prompts, schemas, datasets and common fingerprints are untouched, so existing stages need no requalification for this addition. Earlier receipts cannot qualify email, and email contract changes invalidate only email receipts.
+
+The qualification-only email stage is also excluded from the existing suitability policy prompt set. Its addition preserves saved assessment freshness and the policy pins on already-queued posting extraction and requirement-matching tasks.
+
 #### Conversational-refinement qualification
 
 `models.sh qualify --stage refine_documents --reviewed-by 'Local owner'` measures the independently versioned refinement prompt/schema on 20 distinct bundled synthetic cases. The regular private-route transport, pre/post manifest observations, bounded output and single corrective attempt remain unchanged. The added contract changes the common capability fingerprint: rerun configured stages after upgrading; earlier receipts cannot carry forward or qualify refinement.

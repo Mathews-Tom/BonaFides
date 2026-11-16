@@ -12,8 +12,23 @@ not established by the claims, so it cannot be borrowed into factual statements.
 `regenerate_section.jsonl` exercises replacement blocks for the pinned section, with
 `base_body` retaining the whole original document for production's shared aggregate
 replacement-limit validation. Non-target sections are never sent to the model.
+`write_application_email.jsonl` adapts the same hand-authored synthetic role/claim
+material into 20 email cases, replacing `target` with the current `letter_body` AST.
+The letter is context, not an additional factual source. The first case is friendly;
+all three tones occur, with two cases per role and an unsupported preferred skill.
+The last two cases withhold one evidence item's text while retaining its checker facts.
+Cases 04, 08, 12 and 16 also contain a declared connective, legacy greeting/closing
+blocks, and an unsupported Kubernetes assertion in the letter. Splitting must remove
+the legacy frame; the unsupported sentence remains context but must not be copied
+into a valid email. These are adversarial inputs, not approved example outputs.
+Only body text is projected: legacy salutations/closings are split out, and no
+sender, contact, signature, recipient, frame, portrait or private notes are sent.
+Email replies use a closed neutral subject (`Application` or `Application enquiry`)
+and checked statement blocks, with no salutation/closing or address fields.
+Unsupported body assertions trigger the same single corrective attempt as malformed
+output; a second failure is invalid. Existing stage files are not changed.
 
-Each JSONL record has `id`, `posting` (title, company, description_text), `requirements`,
+Generation/rewrite JSONL records have `id`, `posting` (title, company, description_text), `requirements`,
 `claims`, `evidence`, checker `facts`, `tone`, `language` and `target`. UUIDs identify
 synthetic immutable claim/evidence revisions; no dedicated identity/contact data enters
 the projection. The runner uses the same pure projection builders and one-correction
