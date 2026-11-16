@@ -480,6 +480,7 @@ def test_workflow_output_is_not_export_permission(
     body, _ = example()
     revision_id = uuid4()
     document = {
+        "kind": "resume",
         "current_revision": {
             "id": str(revision_id),
             "body": body.model_dump(mode="json"),
@@ -504,6 +505,7 @@ def test_review_does_not_authorize_a_different_revision(monkeypatch: pytest.Monk
     body, _ = example()
     revision_id = uuid4()
     document = {
+        "kind": "resume",
         "current_revision": {
             "id": str(revision_id),
             "body": body.model_dump(mode="json"),

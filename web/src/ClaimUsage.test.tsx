@@ -36,6 +36,7 @@ describe('ClaimUsedIn', () => {
         usageItem({ scope: 'base', application: null, document_id: 'base-1', document_revision_id: 'base-revision-3', document_revision_no: 3 }),
         usageItem({ document_revision_no: 2, superseded: true, archived: true }),
         usageItem({ kind: 'cover_letter', document_id: 'letter-1', document_revision_id: 'letter-revision-1', document_revision_no: 2, superseded: true, archived: true }),
+        usageItem({ kind: 'application_email', document_id: 'email-1', document_revision_id: 'email-revision-1', document_revision_no: 3 }),
       ],
       outcomes: {
         ...emptyOutcomes, application_count: 1,
@@ -57,6 +58,7 @@ describe('ClaimUsedIn', () => {
       'Base résumé',
       'Synthetic Platform Engineer at Example Works · attempt 1 · Résumé',
       'Synthetic Platform Engineer at Example Works · attempt 1 · Cover letter',
+      'Synthetic Platform Engineer at Example Works · attempt 1 · Application email',
     ]);
     expect(entries[0]).toHaveTextContent('document revision 3 · Claim revision 1 · current');
     expect(entries[1]).toHaveTextContent('Claim revision 1 · superseded by a later edit · claim archived');
@@ -151,6 +153,24 @@ describe('ApplicationClaimsUsed', () => {
     expect(resume).toHaveTextContent('Led synthetic incident reviews. · Claim revision 2 · superseded by a later edit');
     const letter = screen.getByRole('region', { name: 'Claims used: Cover letter' });
     expect(letter).toHaveTextContent('Claim revision 1 · current · claim archived');
+  });
+
+  it('shows claims from an email-only application without empty document sections', async () => {
+    const claims: ApplicationClaims = {
+      application_id: 'application-1',
+      items: [usageItem({ kind: 'application_email', document_id: 'email-1', document_revision_id: 'email-revision-1', document_revision_no: 3 })],
+    };
+    const api = new Api();
+    vi.spyOn(api, 'request').mockResolvedValue(claims);
+    render(<ApplicationClaimsUsed api={api} applicationId="application-1" />);
+    await userEvent.click(screen.getByRole('button', { name: 'Show claims used' }));
+    const email = await screen.findByRole('region', { name: 'Claims used: Application email' });
+    expect(email).toHaveTextContent('Application email · document revision 3');
+    expect(email).toHaveTextContent('Built synthetic deployment tooling. · Claim revision 1 · current');
+    expect(within(email).getByText('Built synthetic deployment tooling.', { selector: 'q' })).toBeVisible();
+    expect(screen.queryByRole('region', { name: 'Claims used: Résumé' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('region', { name: 'Claims used: Cover letter' })).not.toBeInTheDocument();
+    expect(screen.queryByText('No saved document of this application cites a claim.')).not.toBeInTheDocument();
   });
 
   it('says when no saved document cites a claim', async () => {

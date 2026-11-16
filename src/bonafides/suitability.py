@@ -37,7 +37,9 @@ from bonafides.problems import Problem
 from bonafides.workflows import Claim, assert_fence, enqueue, publish
 
 # Stages whose claim-structured output gets one corrective call on a schema mismatch.
-CHECKED_STAGES = frozenset({"generate_documents", "regenerate_section", "refine_documents"})
+CHECKED_STAGES = frozenset(
+    {"generate_documents", "regenerate_section", "refine_documents", "write_application_email"}
+)
 
 POLICY_VERSION = "ol-suitability-policy-v2"
 TEMPLATE_VERSION = "ol-suitability-review-v1"
@@ -1139,6 +1141,8 @@ def _check_workflow_context(
             from bonafides.section_regeneration import check_context
         elif task.input.get("mode") == "document_conversation":
             from bonafides.document_conversations import check_context
+        elif task.input.get("mode") == "application_email":
+            from bonafides.application_email import check_context
         else:
             from bonafides.document_generation import check_context
 
@@ -1426,6 +1430,21 @@ def _execute_reserved_model(
                 )
                 run_id = runs[-1]
                 output_valid = True
+            elif stage == "write_application_email":
+                from bonafides.model_qualification import checked_email
+
+                email, result = _checked_call(
+                    db,
+                    settings,
+                    task,
+                    interrupted,
+                    client,
+                    active_route,
+                    runs,
+                    lambda output: checked_email(output, task.input),
+                )
+                run_id = runs[-1]
+                output_valid = True
             elif stage == "refine_documents":
                 reply, result = _checked_call(
                     db, settings, task, interrupted, client, active_route, runs, validate_reply
@@ -1472,6 +1491,8 @@ def _execute_reserved_model(
                 proposal = section_candidate.model_dump(mode="json")
             elif stage == "refine_documents":
                 proposal = reply.model_dump(mode="json")
+            elif stage == "write_application_email":
+                proposal = email.model_dump(mode="json")
             elif stage == "structure_import":
                 proposal = dict(labels)
             else:
@@ -1538,6 +1559,11 @@ def _execute_reserved_model(
 
                     assert run_id is not None
                     return publish_reply(active, task, reply, run_id, settings)
+                if stage == "write_application_email":
+                    from bonafides.application_email import publish_email
+
+                    assert run_id is not None
+                    return publish_email(active, task, settings, email, run_id, result.metadata)
                 if stage == "structure_import":
                     from bonafides.imports import publish_structured
 

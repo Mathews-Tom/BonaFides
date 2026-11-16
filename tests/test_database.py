@@ -243,7 +243,7 @@ def test_conversation_tone_undo_upgrade_preserves_history_checks(pg_context: PGC
                 ADD CHECK (undone_at IS NULL OR
                     (reply IS NOT NULL AND jsonb_array_length(reply->'applied')>0))""")
         )
-        conn.execute(text("DELETE FROM bonafides.schema_migrations WHERE version=9"))
+        conn.execute(text("DELETE FROM bonafides.schema_migrations WHERE version>=9"))
         conn.execute(
             text(
                 "UPDATE bonafides_migrations.alembic_version SET version_num='0008_document_conversations'"

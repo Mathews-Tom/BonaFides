@@ -40,7 +40,7 @@ You can download all your saved data as a single ZIP file. Use it as a personal 
 
 The export contains your profile and evidence history, postings, applications, notes, saved conversation requests and replies, document versions and the files they refer to. It doesn't include unsaved text (including conversation drafts), your password or the installation's keys.
 
-New exports use workspace format 4, which adds saved application conversations to the publication metadata, scoped writing facts, profile ordering and historical pins preserved by format 3. The exact source text and origin of owner-approved local Git and GitHub captures, including historical revisions, remain included. The receiving installation must support workspace format 4; readers supporting only formats 1, 2 or 3 cannot import a new export. This installation accepts formats 1, 2, 3 and 4. Conversations imported from format 4 are reference-only history; older formats have no conversations.
+New exports use workspace format 5, which also keeps application emails and their full revision history. Your saved application conversations, publication details, writing facts, profile ordering and historical source records remain included. The receiving installation must support workspace format 5; older installations cannot import a new export. This installation still accepts formats 1–4 as well as 5. Imported conversations are saved history only: they cannot run or undo work from the original installation.
 
 Keep in mind:
 

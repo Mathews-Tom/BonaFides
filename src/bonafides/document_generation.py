@@ -96,6 +96,8 @@ def revision_digest(
         "template_sha256": provenance["template_sha256"],
         "frame": provenance["frame"],
     }
+    if "email" in provenance:
+        content["email"] = provenance["email"]
     if "omitted_claims" in provenance:
         content["omitted_claims"] = provenance["omitted_claims"]
     if "page_fit" in provenance:
@@ -322,6 +324,7 @@ def _targets(conn: Connection, owner: UUID, application: UUID | None) -> list[di
         conn.execute(
             text("""SELECT id,kind,version,current_revision_id,deleted_at FROM bonafides.document_drafts
         WHERE owner_id=:owner AND ((CAST(:application AS uuid) IS NULL AND scope='base') OR application_id=CAST(:application AS uuid))
+        AND kind IN ('resume','cover_letter')
         ORDER BY kind,id FOR UPDATE"""),
             {"owner": owner, "application": application},
         )
@@ -446,7 +449,7 @@ def claim_json_rates(
             "failed_before_check": 0,
             "rate_percent": None,
         }
-        for stage in sorted(suitability.CHECKED_STAGES)
+        for stage in sorted(suitability.CHECKED_STAGES - {"write_application_email"})
     }
     if identity is None:
         return counts
@@ -664,6 +667,10 @@ def validation_issues(
 ) -> list[dict[str, str]]:
     """Check every revision, including ones stored before checker stamping, against its pins."""
     frame = provenance.get("frame")
+    if kind == "application_email":
+        kind = "cover_letter"
+        if body.title == "Application email":
+            body = body.model_copy(update={"title": "Cover letter"})
     return statement_check.check_statements(
         body,
         cast(list[dict[str, object]], provenance["facts"]),
@@ -1236,10 +1243,13 @@ def revision_view(
         "reason": row["reason"],
         "provenance_snapshot": provenance,
         "validation_issues": validation,
+        **({"email": provenance["email"]} if row["kind"] == "application_email" else {}),
     }
 
 
 def export_eligibility(conn: Connection, owner: UUID, revision: dict[str, object]) -> None:
+    if "email" in cast(dict[str, object], revision["provenance_snapshot"]):
+        raise Problem(422, "application_email_not_printable")
     facts = cast(
         list[dict[str, object]], cast(dict[str, object], revision["provenance_snapshot"])["facts"]
     )
@@ -1300,11 +1310,24 @@ class GenerationRequest(BaseRequest):
         return value
 
 
+class EmailParts(documents.StrictModel):
+    recipient: str = Field(default="", max_length=320)
+    subject: str = Field(min_length=1, max_length=500)
+
+    @field_validator("recipient", "subject")
+    @classmethod
+    def safe_text(cls, value: str) -> str:
+        from bonafides.document_frame import ProfileContact
+
+        return ProfileContact.safe_literal(value)
+
+
 class SaveRequest(documents.StrictModel):
     base_revision_id: Annotated[UUID, Field(strict=False)]
     body: documents.DocumentBody
     reason: str = Field(min_length=1, max_length=300)
     letter_frame: LetterParts | None = None
+    email: EmailParts | None = None
 
     @field_validator("body", mode="before")
     @classmethod
@@ -1404,7 +1427,7 @@ def install_routes(router: APIRouter, db: Database, settings: Settings) -> None:
             current = suitability._current_requirements(conn, owner.id, app["posting_id"])
             ids = conn.execute(
                 text(
-                    "SELECT id FROM bonafides.document_drafts WHERE owner_id=:owner AND application_id=:id AND deleted_at IS NULL AND current_revision_id IS NOT NULL ORDER BY kind DESC"
+                    "SELECT id FROM bonafides.document_drafts WHERE owner_id=:owner AND application_id=:id AND kind IN ('resume','cover_letter') AND deleted_at IS NULL AND current_revision_id IS NOT NULL ORDER BY kind DESC"
                 ),
                 {"owner": owner.id, "id": application_id},
             ).scalars()
@@ -1582,6 +1605,10 @@ def install_routes(router: APIRouter, db: Database, settings: Settings) -> None:
             selected = (
                 body.revision_id if isinstance(body, RestoreRequest) else body.base_revision_id
             )
+            if isinstance(body, RestoreRequest) and record["kind"] == "application_email":
+                provenance = cast(dict[str, object], current["provenance_snapshot"])
+                if provenance.get("email_restore_revision_id") != str(body.revision_id):
+                    raise Problem(409, "email_restore_conflict")
             row = (
                 conn.execute(
                     text(
@@ -1601,6 +1628,13 @@ def install_routes(router: APIRouter, db: Database, settings: Settings) -> None:
                 documents.parse_body(row["body"]) if isinstance(body, RestoreRequest) else body.body
             )
             if isinstance(body, SaveRequest):
+                if body.email is not None and record["kind"] != "application_email":
+                    raise Problem(422, "email_fields_require_application_email")
+                if record["kind"] == "application_email":
+                    provenance = dict(cast(dict[str, object], source["provenance_snapshot"]))
+                    if body.email is not None:
+                        provenance["email"] = body.email.model_dump()
+                    source["provenance_snapshot"] = provenance
                 if body.letter_frame is not None and record["kind"] != "cover_letter":
                     raise Problem(422, "letter_frame_requires_cover_letter")
                 provenance = cast(dict[str, object], source["provenance_snapshot"])
@@ -1627,6 +1661,10 @@ def install_routes(router: APIRouter, db: Database, settings: Settings) -> None:
                         raise Problem(422, "letter_body_use_greeting_closing_fields")
                     content = letter_frame.split(content, frame)
                     source = letter_frame.pin(source, parts, owner_edit=True)
+            if record["kind"] == "application_email":
+                provenance = dict(cast(dict[str, object], source["provenance_snapshot"]))
+                provenance.pop("email_restore_revision_id", None)
+                source["provenance_snapshot"] = provenance
             append_revision(
                 conn,
                 owner.id,
@@ -1675,3 +1713,6 @@ def install_routes(router: APIRouter, db: Database, settings: Settings) -> None:
     from bonafides import section_regeneration
 
     section_regeneration.install_routes(router, db, settings)
+    from bonafides import application_email
+
+    application_email.install_routes(router, db, settings)

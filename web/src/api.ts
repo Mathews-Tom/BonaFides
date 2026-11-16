@@ -55,7 +55,7 @@ export interface PinnedClaim { id: string; kind: ClaimKind; revision: ClaimRevis
 export interface ClaimRecord extends PinnedClaim { version: number; archived: boolean; current_revision_id: string }
 export interface ClaimUsageItem {
   scope: 'base' | 'tailored'; application: { id: string; title: string; company: string; attempt_no: number; archived: boolean } | null;
-  document_id: string; kind: 'resume' | 'cover_letter'; document_revision_id: string; document_revision_no: number;
+  document_id: string; kind: 'resume' | 'cover_letter' | 'application_email'; document_revision_id: string; document_revision_no: number;
   claim_id: string; claim_revision_id: string; claim_revision_no: number; claim_text: string; superseded: boolean; archived: boolean; statements: string[];
 }
 export interface ClaimOutcomes {
@@ -130,7 +130,7 @@ export interface DocumentArchivePreview {
 }
 export interface DocumentArchiveRequest { manifest_sha256: string }
 export interface Workflow {
-  id: string; version: number; state: WorkflowState; attempt: number; kind?: string; mode?: 'deterministic_base' | 'tailored_ai' | 'section_regeneration' | 'document_conversation' | 'page_fit' | 'document_archive' | 'evidence_capture';
+  id: string; version: number; state: WorkflowState; attempt: number; kind?: string; mode?: 'deterministic_base' | 'tailored_ai' | 'section_regeneration' | 'document_conversation' | 'page_fit' | 'document_archive' | 'evidence_capture' | 'application_email';
   progress?: { completed: number; total: number };
   max_attempts: number; next_attempt_at: string | null; last_error_code: string | null;
   created_at: string; updated_at: string; deadline_at: string; cancel_requested_at: string | null;

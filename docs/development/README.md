@@ -1129,9 +1129,9 @@ Completion inserts an immutable owner-bound proposal and returns opaque result I
 
 Rendering checks actual painted-font missing-glyph records and selectable text against the escaped visible template content in original order. Extraction may add layout whitespace but cannot erase original word/block boundaries, drop text or introduce words. `render_text_unsupported` rejects unavailable glyphs or degraded text without publishing a ready artifact; correct the characters or use a separately qualified fixed font/template deployment. Latin/other sampled glyph success does not qualify all Unicode, RTL, multilingual layout or PDF-UA. Literal URLs/markup remain escaped text, not fetched resources or active PDF links.
 
-#### Application-email qualification (operator only)
+#### Application-email qualification and persistence (API)
 
-`models.sh qualify --stage write_application_email --reviewed-by 'Local owner'` measures the v1 prompt/schema on 20 bundled synthetic cases using the regular private-route transport and shared single-correction loop. It publishes only a qualification receipt: no API, workflow, persistence, document kind, portable format or sending capability is added. The app will use the stage only in a later release; database stage constraints are unchanged.
+`models.sh qualify --stage write_application_email --reviewed-by 'Local owner'` measures the unchanged v1 prompt/schema on 20 bundled synthetic cases using the regular private-route transport and shared single-correction loop. A qualified route can now write one independently versioned `application_email` per tailored application. Migration 010 widens the existing kind and route-block constraints; native schema 10 adds no table. Workspace 5 carries emails and every revision without changing published workspace 1–4 schemas.
 
 The projection reuses the professional generation builder and its already-minimized claim/evidence inputs (including current-classification withheld markers). It adds only current letter body text, using the shared correspondence splitter for legacy greeting/closing blocks. Dedicated identity, contacts, private notes, portrait and the letter frame are not inputs. Professional free text can still contain personal data.
 
@@ -1143,7 +1143,13 @@ Replies contain `subject` (maximum 120 characters) and typed factual/connective 
 
 Email receipts bind an additive `ol-application-email-capability-v1` fingerprint over the unchanged common route capability and the email contract/projection. Earlier prompts, schemas, datasets and common fingerprints are untouched, so existing stages need no requalification for this addition. Earlier receipts cannot qualify email, and email contract changes invalidate only email receipts.
 
-The qualification-only email stage is also excluded from the existing suitability policy prompt set. Its addition preserves saved assessment freshness and the policy pins on already-queued posting extraction and requirement-matching tasks.
+After a saved cover letter exists, `POST /api/v1/applications/{id}/email` queues the first email (empty JSON `{}` body, application `If-Match` and `Idempotency-Key` required); repeated unfinished requests follow the same task. `GET /api/v1/applications/{id}/email` reads it. The regular `GET/PUT /api/v1/documents/{id}` and revision routes apply: save a `base_revision_id`, structured `body`, `reason` and optional `email: {recipient, subject}` with document preconditions. `POST /api/v1/documents/{id}/rewrite` queues a checked whole-email rewrite with empty JSON `{}` and document preconditions. Publication keeps the latest manual recipient and records the displaced revision in `restore_revision_id`; `POST /api/v1/documents/{id}/restore` accepts that revision only while the rewrite remains the latest change. All writes use immutable revisions and owner authorization. The stored subject is built server-side as `Application: {posting title}`; the model's neutral subject is not stored. Failed/refused/cancelled or lease-fenced work writes no revision.
+
+For emails, `/restore` is rewrite undo only: arbitrary historical revisions cannot be restored. It accepts only the most recent whole-email rewrite's displaced revision, and any subsequent email change makes that undo return `409 email_restore_conflict`. Earlier revisions remain readable.
+
+Email body statements use the existing checker; manual unsupported edits remain visibly blocked. Emails are excluded from printable-pair listings, PDF/ZIP export, section regeneration and refinement conversations. No sending or tracking-stage change is implemented. Web editing, copying and mail-client handoff follow in the next slice.
+
+The email stage is excluded from the existing suitability policy prompt set and extract/match route-block status. Its addition preserves saved assessment freshness and the policy pins on already-queued posting extraction and requirement-matching tasks.
 
 #### Conversational-refinement qualification
 

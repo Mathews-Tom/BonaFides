@@ -36,7 +36,7 @@ from bonafides.portable_archive import (
 )
 from bonafides.portable_columns import COLUMNS
 from bonafides.portable_workspace import FORMAT as WORKSPACE_FORMAT
-from bonafides.portable_workspace_v4 import FORMAT_VERSION as WORKSPACE_VERSION
+from bonafides.portable_workspace_v5 import FORMAT_VERSION as WORKSPACE_VERSION
 from bonafides.profile_breadth import snapshot_claim_ids
 from bonafides.profile_entries import ClaimPayload, ClaimWrite, WritingFactPayload
 from bonafides.profile_identity import PortraitPin, validate_portrait
