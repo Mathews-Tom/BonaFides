@@ -193,12 +193,13 @@ export interface DocumentRecord {
 }
 export interface DocumentRevisionPage { items: DocumentRevision[]; next_cursor: number | null }
 export interface DocumentTemplate { version: string; label: string; language: 'en'; paper: 'A4' | 'Letter' }
+export type DocumentLanguage = 'en' | 'de' | 'fr' | 'es';
 export interface DocumentDefaults {
-  version: number; template_version: string; tone: DocumentTone; language: 'en';
+  version: number; template_version: string; tone: DocumentTone; language: DocumentLanguage; base_resume_language: DocumentLanguage;
   revision_retention: 'until_owner_erasure'; task_input_retention_seconds: 86400;
   temporary_export_retention_seconds: 86400; extension_supported: false;
 }
-export type DocumentDefaultsPatch = Partial<Pick<DocumentDefaults, 'template_version' | 'tone'>>;
+export type DocumentDefaultsPatch = Partial<Pick<DocumentDefaults, 'template_version' | 'tone' | 'language' | 'base_resume_language'>>;
 export interface GenerationRoute { status: 'disabled' | 'unqualified' | 'qualified'; reason: string; identity: Record<string, unknown> | null }
 export interface ApplicationDocuments {
   application_id: string; version: number; items: DocumentRecord[]; generation_route: GenerationRoute; requirements_revision_id: string | null;

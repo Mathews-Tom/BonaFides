@@ -9,18 +9,18 @@ from typing import TYPE_CHECKING, Literal, cast
 from pydantic import BaseModel, ConfigDict, Field, ValidationInfo, field_validator
 
 from bonafides.document_frame import PrintableFrame, ProfileContact, template_digest
+from bonafides.languages import LABELS, RenderLanguage
 from bonafides.problems import Problem
 
 if TYPE_CHECKING:
     from bonafides.documents import DocumentBody
 
 Tone = Literal["professional", "concise", "friendly"]
-_CLOSINGS = {"professional": "Yours sincerely,", "concise": "Regards,", "friendly": "Best wishes,"}
 PROTECTED_BODY_KEYS = frozenset({"sender", "date", "correspondence_date", "signature"})
 
 
-def closing_for(tone: str) -> str:
-    return _CLOSINGS[tone]
+def closing_for(tone: str, language: RenderLanguage = "en") -> str:
+    return LABELS[language][tone]
 
 
 class LetterParts(BaseModel):
@@ -49,9 +49,22 @@ class LetterParts(BaseModel):
 
 def role(text: str, frame: dict[str, object]) -> Literal["greeting", "closing"] | None:
     text = text.strip()
-    if text in {*_CLOSINGS.values(), "Sincerely,", "Kind regards,", frame.get("closing")}:
+    if text in {
+        *(
+            labels[key]
+            for labels in LABELS.values()
+            for key in ("professional", "concise", "friendly")
+        ),
+        "Sincerely,",
+        "Kind regards,",
+        frame.get("closing"),
+    }:
         return "closing"
-    if text.startswith(("Dear ", "Hello ", "Hi ")) or text == frame.get("greeting"):
+    if (
+        text.startswith(("Dear ", "Hello ", "Hi "))
+        or text == frame.get("greeting")
+        or text in {labels["greeting"] for labels in LABELS.values()}
+    ):
         return "greeting"
     return None
 
@@ -72,6 +85,7 @@ def split(body: DocumentBody, frame: dict[str, object]) -> DocumentBody:
 
 
 def parts(frame: dict[str, object], tone: str, body: DocumentBody | None = None) -> LetterParts:
+    language = cast(RenderLanguage, frame.get("language", "en"))
     derived = {}
     if body is not None:
         for section in body.sections:
@@ -82,9 +96,13 @@ def parts(frame: dict[str, object], tone: str, body: DocumentBody | None = None)
     return LetterParts.model_validate(
         {
             "correspondence_date": frame.get("correspondence_date") or date.today().isoformat(),
-            "recipient": frame.get("recipient") or "Hiring team",
-            "greeting": frame.get("greeting") or derived.get("greeting") or "Dear Hiring Team,",
-            "closing": frame.get("closing") or derived.get("closing") or closing_for(tone),
+            "recipient": frame.get("recipient") or LABELS[language]["recipient"],
+            "greeting": frame.get("greeting")
+            or derived.get("greeting")
+            or LABELS[language]["greeting"],
+            "closing": frame.get("closing")
+            or derived.get("closing")
+            or closing_for(tone, language),
         }
     )
 
@@ -95,7 +113,11 @@ def is_custom(provenance: dict[str, object], body: DocumentBody | None = None) -
     frame = cast(dict[str, object], provenance["frame"])
     return bool(
         frame.get("closing")
-        and frame["closing"] != closing_for(str(provenance.get("tone") or "professional"))
+        and frame["closing"]
+        != closing_for(
+            str(provenance.get("tone") or "professional"),
+            cast(RenderLanguage, frame.get("language", "en")),
+        )
     )
 
 

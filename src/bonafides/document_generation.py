@@ -36,7 +36,9 @@ from bonafides.claims import claim_text
 from bonafides.commands import append_outbox, canonical_json, command, lock_installation
 from bonafides.config import Settings
 from bonafides.db import Database
+from bonafides.document_defaults import _selection, _settings
 from bonafides.document_frame import TEMPLATE_PAPER, TEMPLATES, PrintableFrame, template_digest
+from bonafides.languages import LABELS, RenderLanguage
 from bonafides.letter_frame import LetterParts, Tone
 from bonafides.problems import Problem
 from bonafides.profile_breadth import selected_claim_ids, snapshot_claim_ids
@@ -131,6 +133,7 @@ def _fact_data(
     omitted_claims: list[dict[str, str]] | None = None,
     application_id: UUID | None = None,
     writing: bool = False,
+    language: RenderLanguage = "en",
 ) -> list[dict[str, object]]:
     facts = documents._facts(conn, owner, revision, application_id=application_id, writing=writing)
     profile = conn.execute(
@@ -201,7 +204,11 @@ def _fact_data(
         printable = (
             fact.claim_text
             if claim["kind"] == "publication"
-            else statement_check.printable_text(fact.claim_text, structured)
+            else statement_check.printable_text(
+                claim_text(payload, language) if language != "en" else fact.claim_text,
+                structured,
+                language,
+            )
         )
         if len(printable) > 4000:
             raise Problem(409, "document_context_too_large")
@@ -221,6 +228,9 @@ def _fact_data(
                 "printable_text": printable,
             }
         )
+        if language != "en" and payload.get("claim") is not None:
+            accepted[-1]["localized_claim"] = payload["claim"]
+            accepted[-1]["display_language"] = language
         if claim["kind"] == "publication":
             accepted[-1]["publication"] = {
                 "text": fact.claim_text,
@@ -283,10 +293,12 @@ def _frame(
     template: str,
     references_requested: bool = False,
     facts: list[dict[str, object]] | None = None,
+    language: RenderLanguage = "en",
 ) -> dict[str, object]:
     values: dict[str, object] = {
         "display_name": snapshot.get("display_name", ""),
         "contact": snapshot.get("contact"),
+        "language": language,
     }
     if template.endswith(("-v3", "-v4")):
         if snapshot.get("include_age") is True:
@@ -490,12 +502,21 @@ def claim_json_rates(
     return counts
 
 
-def base_plan(conn: Connection, owner: UUID, revision: UUID, template: str) -> dict[str, object]:
+def base_plan(
+    conn: Connection,
+    owner: UUID,
+    revision: UUID,
+    template: str,
+    *,
+    language: RenderLanguage | None = None,
+) -> dict[str, object]:
     lock_workspace(conn, owner)
     require_template(template)
     profile = _profile(conn, owner, revision)
+    if language is None:
+        language = _selection(_settings(conn, owner)["settings"]).base_resume_language
     omitted: list[dict[str, str]] = []
-    facts = _fact_data(conn, owner, revision, omitted_claims=omitted)
+    facts = _fact_data(conn, owner, revision, omitted_claims=omitted, language=language)
     if not facts:
         raise Problem(409, "profile_content_required")
     targets = _targets(conn, owner, None)
@@ -509,9 +530,10 @@ def base_plan(conn: Connection, owner: UUID, revision: UUID, template: str) -> d
         "profile_sha256": profile["content_sha256"],
         "template_version": template,
         "template_sha256": template_digest(template),
+        "language": language,
         "facts": facts,
         "omitted_claims": omitted,
-        "frame": _frame(profile["snapshot"], template=template, facts=facts),
+        "frame": _frame(profile["snapshot"], template=template, facts=facts, language=language),
         "targets": targets,
         "policy_version": POLICY,
     }
@@ -637,11 +659,14 @@ def check_context(conn: Connection, task: Claim, settings: Settings) -> None:
             task.owner_id,
             UUID(str(task.input["profile_revision_id"])),
             str(task.input["template_version"]),
+            language=cast(RenderLanguage, task.input.get("language", "en")),
         )
         _retain_calendar_fields(plan, task.input)
         expected = {key: task.input.get(key) for key in plan}
         if "omitted_claims" not in task.input and not plan["omitted_claims"]:
             expected["omitted_claims"] = []
+        if "language" not in task.input:
+            expected["language"] = "en"
         if plan != expected:
             raise Problem(409, "stale_document_context")
         return
@@ -682,6 +707,7 @@ def validation_issues(
 
 def compose_base(plan: dict[str, object]) -> documents.DocumentBody:
     facts = cast(list[dict[str, object]], plan["facts"])
+    language = cast(RenderLanguage, plan.get("language", "en"))
     sections: dict[str, list[documents.DocumentBlock]] = {}
     seen: set[str] = set()
     for fact in facts:
@@ -706,9 +732,9 @@ def compose_base(plan: dict[str, object]) -> documents.DocumentBody:
             )
         )
     return documents.DocumentBody(
-        title="Base résumé",
+        title=LABELS[language]["base"],
         sections=[
-            documents.DocumentSection(key=key, heading=CATEGORIES[key], blocks=blocks)
+            documents.DocumentSection(key=key, heading=LABELS[language][key], blocks=blocks)
             for key, blocks in sections.items()
         ],
     )

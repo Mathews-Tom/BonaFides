@@ -9,6 +9,7 @@ from typing import Annotated, Final, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from bonafides.languages import RenderLanguage
 from bonafides.profile_breadth import citation_text, normalize_citation_url
 from bonafides.profile_identity import PortraitPin, ReferenceContact
 
@@ -120,6 +121,7 @@ class PublicationPresentation(BaseModel):
 class PrintableFrame(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True, frozen=True)
     display_name: str = Field(max_length=120)
+    language: RenderLanguage = Field(default="en", exclude_if=lambda value: value == "en")
     contact: ProfileContact | None = None
     correspondence_date: Annotated[str, Field(pattern=r"^[0-9]{4}-[0-9]{2}-[0-9]{2}$")] | None = (
         None

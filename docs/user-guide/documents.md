@@ -33,7 +33,7 @@ You need a profile with at least one supported entry (see [The one rule that mat
    - **Evidence · English · A4** or **Evidence · English · Letter**
    - **Compact · English · A4** or **Compact · English · Letter**
 
-   A4 is the usual paper size outside North America; Letter is the usual size in the US and Canada. All layouts are in English.
+   A4 is the usual paper size outside North America; Letter is the usual size in the US and Canada. The layout labels describe the original English templates; choose the base résumé display language separately below.
 4. Select **Create base résumé**.
 
 The résumé is made directly from your entries; no AI is involved.
@@ -194,3 +194,13 @@ A proposal never replaces your text by itself. If the document has changed since
 ## Remembered defaults
 
 Under **Remembered defaults and retention**, select **Save remembered defaults** to remember your preferred layout and tone for next time. Defaults only fill in future choices; they never change existing documents.
+
+## Document languages
+
+Under **Remembered defaults and retention**, choose **Document language** and **Base résumé display language**, then select **Save remembered defaults**. Both offer English, Deutsch (German), Français (French) and Español (Spanish). The two choices are independent.
+
+**Base résumé display language** applies when you next create or rebuild your base résumé. It changes built-in headings, date labels and month names, “present” dates, age labels, references and recognized proficiency descriptions. Structured entries also use fixed wording for actions and measurements. Your own descriptions, subjects, organizations, notes and other prose are kept exactly as you wrote them: choosing German does not translate an English summary. Dates still use the Gregorian calendar. Review mixed-language wording before sharing.
+
+Saving a preference does not change an existing document, approval or PDF. Rebuild the base résumé explicitly to apply it; older revisions keep their language. Built-in headings must match the language saved with the document; an unknown saved language blocks checking. Localized structured statements must keep the complete fixed rendering or its complete printable fields to pass checking; English shortening rules are unchanged.
+
+**Document language** remembers your preferred language for future application-language support. Tailored résumés, cover letters, model rewrites and application emails still use English in this version, regardless of this preference. The built-in renderer has fixed German, French and Spanish letter headings, dates and closings, but selecting a preference does not translate or generate a letter in those languages. Automatic prose translation, other languages, custom language names and right-to-left documents are not yet supported.

@@ -99,6 +99,8 @@ def test_partial_defaults_preserve_other_preferences_and_replay_without_rollback
         "document_defaults": {
             "template_version": "bonafides-compact-letter-v1",
             "tone": "concise",
+            "language": "en",
+            "base_resume_language": "en",
         },
     }
     assert saved["version"] == before["version"]
@@ -138,7 +140,7 @@ def test_partial_defaults_preserve_other_preferences_and_replay_without_rollback
         {"template_version": "bonafides-base-v1"},
         {"template_version": "file:///tmp/owned.html"},
         {"template_version": ""},
-        {"language": "fr"},
+        {"language": "it"},
         {"revision_retention": "one_day"},
         {"task_input_retention_seconds": 172800},
         {"extension_supported": True},

@@ -20,6 +20,7 @@ export interface DocumentsProps {
 const docPath = (id: string) => `/documents/${encodeURIComponent(id)}`;
 const appPath = (id: string) => `/applications/${encodeURIComponent(id)}`;
 const aborted = (error: unknown) => error instanceof DOMException && error.name === 'AbortError';
+const DOCUMENT_LANGUAGES = [{ value: 'en', label: 'English' }, { value: 'de', label: 'Deutsch' }, { value: 'fr', label: 'Français' }, { value: 'es', label: 'Español' }] as const;
 function withheldClaimText(projection: Record<string, unknown>, id: string): string {
   const claims = Array.isArray(projection.claims) ? projection.claims as { id?: unknown; text?: unknown }[] : [];
   const claim = claims.find(item => item.id === id);
@@ -117,7 +118,7 @@ export function Documents({ api, profile, archiveRecovery, disabled = false, ext
   const [templates, setTemplates] = useState<DocumentTemplate[]>([]);
   const [template, setTemplate] = useState('');
   const [defaults, setDefaults] = useState<DocumentDefaults | null>(null);
-  const [defaultsDraft, setDefaultsDraft] = useState({ template_version: '', tone: 'professional' as DocumentDefaults['tone'] });
+  const [defaultsDraft, setDefaultsDraft] = useState({ template_version: '', tone: 'professional' as DocumentDefaults['tone'], language: 'en' as DocumentDefaults['language'], base_resume_language: 'en' as DocumentDefaults['base_resume_language'] });
   const [defaultsError, setDefaultsError] = useState('');
   const [defaultsConflict, setDefaultsConflict] = useState(false);
   const defaultsState = useRef({ saved: defaults, draft: defaultsDraft });
@@ -284,6 +285,8 @@ export function Documents({ api, profile, archiveRecovery, disabled = false, ext
       const draft = {
         template_version: previous.saved && previous.draft.template_version !== previous.saved.template_version ? previous.draft.template_version : value.template_version,
         tone: previous.saved && previous.draft.tone !== previous.saved.tone ? previous.draft.tone : value.tone,
+        language: previous.saved && previous.draft.language !== previous.saved.language ? previous.draft.language : value.language,
+        base_resume_language: previous.saved && previous.draft.base_resume_language !== previous.saved.base_resume_language ? previous.draft.base_resume_language : value.base_resume_language,
       };
       setDefaults(value); setDefaultsDraft(draft); setDefaultsError(''); setDefaultsConflict(false);
       defaultsState.current = { saved: value, draft };
@@ -301,11 +304,13 @@ export function Documents({ api, profile, archiveRecovery, disabled = false, ext
     const body: DocumentDefaultsPatch = {};
     if (defaultsDraft.template_version !== defaults.template_version) body.template_version = defaultsDraft.template_version;
     if (defaultsDraft.tone !== defaults.tone) body.tone = defaultsDraft.tone;
+    if (defaultsDraft.language !== defaults.language) body.language = defaultsDraft.language;
+    if (defaultsDraft.base_resume_language !== defaults.base_resume_language) body.base_resume_language = defaultsDraft.base_resume_language;
     if (!Object.keys(body).length) return;
     void run(async signal => {
       try {
         const value = await request<DocumentDefaults>(signal, '/document-defaults', 'PATCH', body, defaults.version, keyFor('/document-defaults', body, defaults.version));
-        mutation.current = null; setDefaults(value); setDefaultsDraft({ template_version: value.template_version, tone: value.tone }); setDefaultsError(''); setDefaultsConflict(false);
+        mutation.current = null; setDefaults(value); setDefaultsDraft({ template_version: value.template_version, tone: value.tone, language: value.language, base_resume_language: value.base_resume_language }); setDefaultsError(''); setDefaultsConflict(false);
         setNotice('Remembered defaults saved for future work. Current operation choices, saved documents, history, PDFs and permissions are unchanged.');
       } catch (failure) {
         if (!aborted(failure)) {
@@ -881,7 +886,7 @@ export function Documents({ api, profile, archiveRecovery, disabled = false, ext
       <label>Built-in presentation<select value={template} onChange={event => { choicesInitialized.current = true; setTemplate(event.target.value); }}><option value="" disabled>{templates.length ? 'Choose a template' : 'Templates unavailable — reload to retry'}</option>{templates.map(item => <option key={item.version} value={item.version}>{item.label} · English · {item.paper}</option>)}</select></label>
       {!templates.length && <button className="secondary" onClick={() => { void run(async signal => { const value = await request<{ items: DocumentTemplate[] }>(signal, '/document-templates'); setTemplates(value.items); }); }}>Reload built-in templates</button>}
       </div></div>
-      <details className="document-secondary"><summary>Presentation and frozen-input details</summary><p className="hint">Current operation choices below are separate from remembered defaults. English only. No translation or user-authored HTML/CSS templates. Existing revisions retain their original template and printable contact frame.</p></details>
+      <details className="document-secondary"><summary>Presentation and frozen-input details</summary><p className="hint">Current operation choices below are separate from remembered defaults. Document languages change labels and dates only; owner-written prose is not translated. Tailored generation remains English only for now. No user-authored HTML/CSS templates. Existing revisions retain their original template and printable contact frame.</p></details>
       {mode === 'base' ? <><p className="document-mode-note">Create a model-free résumé from the selected saved profile. No posting, application or cover letter is needed.</p><details className="document-secondary"><summary>How base composition works</summary><p>This résumé copies accepted facts from the selected profile snapshot on this installation. No posting, application, letter, model or external provider is needed. No inference or ModelRun is created. An empty usable profile cannot produce a résumé.</p></details><div className="actions"><button disabled={!profile || !profileId || !template} onClick={startBase}>{doc ? 'Rebuild base from selected profile' : 'Create base résumé'}</button><button className="secondary" onClick={() => { void run(signal => loadBase(signal, selection.current)); }}>Reload saved base résumé</button></div></> : <>
         <div className="actions"><button className="secondary" onClick={() => loadApplications()}>Reload tracked applications</button>{applicationCursor && <button className="secondary" onClick={() => loadApplications(applicationCursor)}>Load more tracked applications</button>}</div>
         <label>Tracked application<select value={applicationId} onChange={event => selectApplication(event.target.value)}><option value="">Select an existing tracked application</option>{applications.map(item => <option key={item.id} value={item.id}>{item.title} · {item.company} · attempt {item.attempt_no}{item.archived_at ? ' · archived (read-only generation)' : ''}</option>)}</select></label>
@@ -981,14 +986,16 @@ export function Documents({ api, profile, archiveRecovery, disabled = false, ext
     </section> : <div className="empty"><p>{mode === 'base' ? 'No saved base résumé loaded. Save factual profile entries, choose a built-in template and create your résumé without a model.' : 'Select a tracked application and independently load its saved documents. Missing or failed generation is not an empty successful pair.'}</p><p>No invented résumé, letter or provider result is shown.</p></div>}
     <details className="document-secondary document-defaults"><summary>Remembered defaults and retention</summary>
     <fieldset disabled={locked}><legend>Remembered defaults for future work</legend>
-      <p>These owner-local defaults initialize future workspace choices, not existing documents or this operation. Saving grants no integration permissions. English only; retention is fixed, not an adjustable expiry.</p>
-      {defaults ? <p>Last loaded remembered defaults: {templates.find(item => item.version === defaults.template_version)?.label ?? defaults.template_version} · {templates.find(item => item.version === defaults.template_version)?.paper ?? 'paper metadata unavailable'} · {defaults.tone}. Version {defaults.version}.</p> : <p>Remembered defaults have not been loaded. Current choices are not confirmed saved defaults.</p>}
+      <p>These owner-local defaults initialize future workspace choices, not existing documents or this operation. Saving grants no integration permissions. Document languages change labels and dates only; owner-written prose is not translated. The base résumé display language is independent of the default document language. Tailored generation remains English only for now; retention is fixed, not an adjustable expiry.</p>
+      {defaults ? <p>Last loaded remembered defaults: {templates.find(item => item.version === defaults.template_version)?.label ?? defaults.template_version} · {templates.find(item => item.version === defaults.template_version)?.paper ?? 'paper metadata unavailable'} · {defaults.tone} · document language: {DOCUMENT_LANGUAGES.find(item => item.value === defaults.language)?.label ?? defaults.language} · base résumé display language: {DOCUMENT_LANGUAGES.find(item => item.value === defaults.base_resume_language)?.label ?? defaults.base_resume_language}. Version {defaults.version}.</p> : <p>Remembered defaults have not been loaded. Current choices are not confirmed saved defaults.</p>}
       <button className="secondary" onClick={() => { void run(signal => loadDefaults(signal)); }}>Reload remembered defaults</button>
       {defaults && <>
         <label>Remembered built-in presentation<select value={defaultsDraft.template_version} onChange={event => setDefaultsDraft(value => ({ ...value, template_version: event.target.value }))}>{!templates.length && <option value={defaultsDraft.template_version}>{defaultsDraft.template_version} · catalog unavailable</option>}{templates.map(item => <option key={item.version} value={item.version}>{item.label} · English · {item.paper}</option>)}</select></label>
         <label>Remembered writing tone<select value={defaultsDraft.tone} onChange={event => setDefaultsDraft(value => ({ ...value, tone: event.target.value as DocumentDefaults['tone'] }))}><option value="professional">Traditional formal</option><option value="concise">Concise</option><option value="friendly">Friendly</option></select></label>
+        <label>Document language<select value={defaultsDraft.language} onChange={event => setDefaultsDraft(value => ({ ...value, language: event.target.value as DocumentDefaults['language'] }))}>{DOCUMENT_LANGUAGES.map(item => <option key={item.value} value={item.value}>{item.label}</option>)}</select></label>
+        <label>Base résumé display language<select value={defaultsDraft.base_resume_language} onChange={event => setDefaultsDraft(value => ({ ...value, base_resume_language: event.target.value as DocumentDefaults['base_resume_language'] }))}>{DOCUMENT_LANGUAGES.map(item => <option key={item.value} value={item.value}>{item.label}</option>)}</select></label>
         {defaultsConflict && <p className="disclosure">The saved version changed. Reload remembered defaults, compare the last loaded values with your retained choices, then explicitly save again.</p>}
-        <button disabled={defaultsConflict || !templates.some(item => item.version === defaultsDraft.template_version) || (defaultsDraft.template_version === defaults.template_version && defaultsDraft.tone === defaults.tone)} onClick={saveDefaults}>Save remembered defaults</button>
+        <button disabled={defaultsConflict || !templates.some(item => item.version === defaultsDraft.template_version) || (defaultsDraft.template_version === defaults.template_version && defaultsDraft.tone === defaults.tone && defaultsDraft.language === defaults.language && defaultsDraft.base_resume_language === defaults.base_resume_language)} onClick={saveDefaults}>Save remembered defaults</button>
         <button className="secondary" disabled={dirty || defaultsConflict || !!defaultsError} onClick={() => { choicesInitialized.current = true; setTemplate(defaults.template_version); setTone(defaults.tone); setSectionTone(defaults.tone); setNotice('Last loaded remembered defaults selected for this operation. Saved documents are unchanged.'); }}>Use remembered defaults for current operation</button>
       </>}
       <p>Terminal task inputs are eligible for clearing after 24 hours, with a daily sweep and no extension. Temporary portable exports remain downloadable until their displayed expiry, currently 24 hours after creation; physical removal waits for the lifecycle controller. Committed document revisions do not expire automatically.</p>

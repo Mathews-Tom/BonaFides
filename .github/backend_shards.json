@@ -58,6 +58,7 @@
   "4": [
     "tests/test_backup_schedule.py",
     "tests/test_database.py",
+    "tests/test_document_languages.py",
     "tests/test_identity.py",
     "tests/test_inflation_documents.py",
     "tests/test_pipeline_views.py",
