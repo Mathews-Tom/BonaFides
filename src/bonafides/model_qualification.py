@@ -37,17 +37,26 @@ from bonafides.statement_check import check_statements
 STAGES = local_model.QUALIFICATION_STAGES
 
 
-def load_cases(directory: Path, stage: str) -> tuple[list[dict[str, object]], str]:
+def load_cases(
+    directory: Path, stage: str, *, include_languages: bool = False
+) -> tuple[list[dict[str, object]], str]:
     if stage not in STAGES:
         raise ValueError("qualification_stage_invalid")
-    raw = (directory / f"{stage}.jsonl").read_bytes()
+    sources = {
+        path.name: path.read_bytes()
+        for path in [
+            directory / f"{stage}.jsonl",
+            *(sorted(directory.glob(f"{stage}_*.jsonl")) if include_languages else []),
+        ]
+    }
+    raw = b"\n".join(value.rstrip(b"\n") for value in sources.values())
     if len(raw) > 4 * 1024 * 1024:
         raise ValueError("qualification_dataset_too_large")
     cases: list[dict[str, object]] = []
     for line in raw.splitlines():
         case = json.loads(line)
         if stage == "refine_documents":
-            if not isinstance(case, dict) or set(case) != {
+            if not isinstance(case, dict) or set(case) - {"withheld_text"} != {
                 "id",
                 "base_contexts",
                 "request",
@@ -110,7 +119,7 @@ def load_cases(directory: Path, stage: str) -> tuple[list[dict[str, object]], st
                 raise ValueError("qualification_case_invalid")
             cases.append(case)
             continue
-        if not isinstance(case, dict) or set(case) != {
+        if not isinstance(case, dict) or set(case) - {"withheld_text"} != {
             "id",
             "posting",
             "requirements",
@@ -159,7 +168,7 @@ def load_cases(directory: Path, stage: str) -> tuple[list[dict[str, object]], st
         }
     ) != len(cases):
         raise ValueError("qualification_cases_not_distinct")
-    return cases, digest({f"{stage}.jsonl": raw})
+    return cases, digest(sources)
 
 
 def projection(case: dict[str, object], stage: str) -> dict[str, object]:
@@ -323,6 +332,44 @@ def checked_refinement(output: dict[str, object], case: dict[str, object]) -> Co
     return reply
 
 
+def check_negative_control(case: dict[str, object], stage: str) -> None:
+    """A paraphrase negative control must stay withheld by the production checker."""
+    if "withheld_text" not in case:
+        return
+    if stage == "refine_documents":
+        saved = cast(list[dict[str, object]], case["documents"])[0]
+        provenance = cast(dict[str, object], saved["provenance_snapshot"])
+        facts = cast(list[dict[str, object]], provenance["facts"])
+        frame = cast(dict[str, object], provenance["frame"])
+    else:
+        facts = cast(list[dict[str, object]], case["facts"])
+        frame = {"language": case["language"]}
+    fact = facts[0]
+    language = generation.provenance_language({"frame": frame})
+    from bonafides.languages import LABELS
+
+    body = documents.DocumentBody(
+        title=LABELS[language]["resume"],
+        sections=[
+            documents.DocumentSection(
+                key="experience",
+                heading=LABELS[language]["experience"],
+                blocks=[
+                    documents.DocumentBlock(
+                        block_key="negative-1",
+                        text=str(case["withheld_text"]),
+                        claim_kind="factual",
+                        claim_revision_ids=[UUID(str(fact["claim_revision_id"]))],
+                        evidence_revision_ids=[UUID(str(fact["evidence_revision_id"]))],
+                    )
+                ],
+            )
+        ],
+    )
+    if not check_statements(body, facts, frame, "resume"):
+        raise ValueError("qualification_paraphrase_not_withheld")
+
+
 def qualify(
     route: local_model.LocalRoute,
     stage: str,
@@ -348,6 +395,7 @@ def qualify(
     factual = usable = 0
     started = monotonic()
     for case in cases:
+        check_negative_control(case, stage)
         context = projection(case, stage)
         if stage == "structure_import":
             expected = import_structuring.checked_units(
@@ -362,7 +410,12 @@ def qualify(
             plan = {
                 "context": context,
                 "facts": case["facts"],
-                "frame": {"role": posting["title"], "organization": posting["organization"]},
+                "language": case["language"],
+                "frame": {
+                    "role": posting["title"],
+                    "organization": posting["organization"],
+                    **({"language": case["language"]} if case["language"] != "en" else {}),
+                },
             }
             target = cast(dict[str, object], case.get("target", {}))
         try:
@@ -421,11 +474,16 @@ def qualify(
                 if document is None:
                     continue
                 snapshot = cast(dict[str, object], document["provenance_snapshot"])
+                language = generation.provenance_language(snapshot)
+                from bonafides.languages import LABELS
+
                 body = documents.DocumentBody(
-                    title="Cover letter" if document["kind"] == "cover_letter" else "Résumé",
+                    title=LABELS[language][str(document["kind"])],
                     sections=[
                         documents.DocumentSection(
-                            key=edit.section_key, heading="Experience", blocks=[edit.replacement]
+                            key=edit.section_key,
+                            heading=LABELS[language]["experience"],
+                            blocks=[edit.replacement],
                         )
                     ],
                 )
@@ -504,7 +562,7 @@ def main(argv: list[str] | None = None) -> int:
         route = local_model.load_route(args.route)
         if route is None:
             raise ValueError("qualification_route_required")
-        cases, dataset_sha256 = load_cases(args.dataset, args.stage)
+        cases, dataset_sha256 = load_cases(args.dataset, args.stage, include_languages=True)
         receipt = qualify(route, args.stage, cases, dataset_sha256, args.reviewed_by)
         write_receipt(args.route, original, args.stage, receipt)
     except (

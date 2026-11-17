@@ -37,6 +37,52 @@ Even a model on your own computer can see what you send it, and wording you wrot
 
 The context prepared for a task is cleared by a daily cleanup once 24 hours have passed since the task finished.
 
+## Document languages
+
+The generation API supports English, German, French and Spanish; the web language
+selector is not available yet. On the first generation, an explicit language takes
+precedence over your document default. Later generations, section rewrites and
+conversation edits keep the language saved with that application's documents, even
+if you change the global default. Requesting a different language for an application
+with saved documents is refused with `application_document_language_mismatch`.
+
+Localized headings, letter closings and fixed structured-entry wording do not
+translate your own prose, subjects or publications. Those remain exactly as written.
+The model must copy the supplied localized wording; paraphrases are still blocked.
+Application emails remain English-only. For German, French or Spanish application
+documents, drafting or rewriting an email is refused before any model call with
+`409 application_email_language_unsupported`; it does not block the model route.
+
+**After upgrading, old model receipts lose qualification** because all stages share
+a capability fingerprint covering the changed prompts. Use `models.sh qualify`
+to renew the five supported stages: `generate_documents` (prompt v9),
+`regenerate_section` (v9), `refine_documents` (v4), `write_application_email`,
+and `structure_import` if enabled.
+
+**There is no supported command to renew `extract_posting` or
+`match_requirements` receipts today**, including `bonafides models qualify`
+inside the application image. Removing and reattaching a model with
+`models.sh attach` starts with empty receipts; it does not renew them. This is a
+pre-existing qualification gap, not a
+new document-languages restriction: earlier shared-fingerprint changes, including
+the letters milestone's v8 prompts, invalidated these receipts in the same way.
+
+When these receipts are stale, **Request extraction proposal** (AI-suggested job
+requirements) and **Request matching proposal** (AI-suggested evidence coverage)
+are unavailable. You can still use **Review requirements manually** → **Save
+reviewed requirements**, and **Review evidence coverage manually** → **Save
+owner-reviewed assessment**, as described in
+[Review what the job requires](opportunities.md#review-what-the-job-requires).
+Manual review also supplies the reviewed requirements needed for tailored
+documents once their supported model stages are requalified. Restoring the two
+AI proposal features requires a supported qualification workflow that is not
+currently shipped; do not edit receipt fingerprints to bypass qualification.
+
+Only generation, regeneration and refinement now include 26 cases (the unchanged
+20 English cases plus six language cases), with paraphrase negative controls.
+Email and import structuring remain at 20 cases. Historical model results below
+are not results for these new prompts. No real-model translation quality is claimed.
+
 ## How BonaFides keeps the AI honest
 
 Every factual statement in a generated document must cite one of your entries, and its wording must be that entry's wording (or the entry cut short at a natural break). The entry's wording must appear in its source. Statements that fail are listed as problems, and **the document can't be approved or exported until they're fixed**. Approving can't override this. See [Check every statement](documents.md#check-every-statement).

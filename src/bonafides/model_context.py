@@ -19,6 +19,7 @@ from sqlalchemy import Connection, text
 from sqlalchemy.exc import SQLAlchemyError
 
 from bonafides.db import Database
+from bonafides.languages import RenderLanguage
 from bonafides.problems import Problem
 
 WithheldReason = Literal["confidential", "employer_owned"]
@@ -120,7 +121,11 @@ def evidence_item(identifier: str, content: str, withheld: bool) -> dict[str, ob
 
 
 def professional_context(
-    conn: Connection, owner: UUID, facts: Sequence[Mapping[str, object]]
+    conn: Connection,
+    owner: UUID,
+    facts: Sequence[Mapping[str, object]],
+    *,
+    language: RenderLanguage = "en",
 ) -> tuple[list[dict[str, object]], list[dict[str, object]]]:
     """Send only selected supporting excerpts, never unrelated text in shared sources."""
     withheld = withheld_evidence(
@@ -143,8 +148,9 @@ def professional_context(
             claim_id,
             {
                 "id": claim_id,
-                "text": fact["claim_text"],
-                "structured_fields": fact["structured_fields"],
+                "text": fact["printable_text"] if language != "en" else fact["claim_text"],
+                # Localized printable text already includes every reviewed display field.
+                "structured_fields": {} if language != "en" else fact["structured_fields"],
                 "evidence_revision_ids": [],
             },
         )

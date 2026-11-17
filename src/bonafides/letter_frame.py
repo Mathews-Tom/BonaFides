@@ -6,7 +6,7 @@ from __future__ import annotations
 from datetime import date
 from typing import TYPE_CHECKING, Literal, cast
 
-from pydantic import BaseModel, ConfigDict, Field, ValidationInfo, field_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, ValidationInfo, field_validator
 
 from bonafides.document_frame import PrintableFrame, ProfileContact, template_digest
 from bonafides.languages import LABELS, RenderLanguage
@@ -19,8 +19,18 @@ Tone = Literal["professional", "concise", "friendly"]
 PROTECTED_BODY_KEYS = frozenset({"sender", "date", "correspondence_date", "signature"})
 
 
+def frame_language(frame: dict[str, object]) -> RenderLanguage:
+    """Use the printable-frame contract even for untrusted imported provenance."""
+    try:
+        return PrintableFrame.model_validate(
+            {"display_name": "", "language": frame.get("language", "en")}
+        ).language
+    except ValidationError as exc:
+        raise Problem(422, "unsupported_document_language") from exc
+
+
 def closing_for(tone: str, language: RenderLanguage = "en") -> str:
-    return LABELS[language][tone]
+    return LABELS[frame_language({"language": language})][tone]
 
 
 class LetterParts(BaseModel):
@@ -85,7 +95,7 @@ def split(body: DocumentBody, frame: dict[str, object]) -> DocumentBody:
 
 
 def parts(frame: dict[str, object], tone: str, body: DocumentBody | None = None) -> LetterParts:
-    language = cast(RenderLanguage, frame.get("language", "en"))
+    language = frame_language(frame)
     derived = {}
     if body is not None:
         for section in body.sections:
@@ -108,6 +118,7 @@ def parts(frame: dict[str, object], tone: str, body: DocumentBody | None = None)
 
 
 def is_custom(provenance: dict[str, object], body: DocumentBody | None = None) -> bool:
+    language = frame_language(cast(dict[str, object], provenance["frame"]))
     if "letter_closing_edited" in provenance:
         return provenance["letter_closing_edited"] is True
     frame = cast(dict[str, object], provenance["frame"])
@@ -116,7 +127,7 @@ def is_custom(provenance: dict[str, object], body: DocumentBody | None = None) -
         and frame["closing"]
         != closing_for(
             str(provenance.get("tone") or "professional"),
-            cast(RenderLanguage, frame.get("language", "en")),
+            language,
         )
     )
 

@@ -21,6 +21,7 @@ from bonafides.db import SCHEMA_VERSION, Database, require_baseline, schema_ledg
 from bonafides.document_generation import revision_digest
 from bonafides.documents import parse_body
 from bonafides.installation_control import Control
+from bonafides.languages import LABELS
 from bonafides.portable_archive import (
     EXCLUSIONS,
     MAX_BLOBS,
@@ -481,6 +482,16 @@ def _semantic_hashes(archive: PortableArchive) -> None:
         try:
             body = parse_body(row["body"])
             provenance = cast(dict[str, object], row["provenance_snapshot"])
+            if "language" in provenance:
+                language = provenance["language"]
+                frame = provenance.get("frame")
+                if (
+                    not isinstance(language, str)
+                    or language not in LABELS
+                    or not isinstance(frame, dict)
+                    or language != frame.get("language", "en")
+                ):
+                    raise ArchiveError("invalid_portable_document")
             from bonafides.print_fitting import inventory
 
             hidden = inventory(body, provenance).omissions

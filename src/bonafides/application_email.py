@@ -55,6 +55,9 @@ def plan(conn: Connection, owner: UUID, application: UUID, settings: Settings) -
     if letter is None:
         raise Problem(409, "application_email_requires_letter")
     provenance = cast(dict[str, object], letter["provenance_snapshot"])
+    language = generation.provenance_language(provenance)
+    if language != "en":
+        raise Problem(409, "application_email_language_unsupported")
     frozen = generation.generation_plan(
         conn,
         owner,
@@ -62,7 +65,7 @@ def plan(conn: Connection, owner: UUID, application: UUID, settings: Settings) -
         letter["profile_revision_id"],
         str(letter["template_version"]),
         str(provenance.get("tone", "professional")),
-        str(provenance.get("language", "en")),
+        language,
         settings,
         active=True,
     )

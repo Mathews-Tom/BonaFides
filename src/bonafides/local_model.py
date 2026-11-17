@@ -35,6 +35,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_valida
 
 from bonafides.conversation_protocol import ConversationReply, Sha256
 from bonafides.documents import DocumentBlock, Key
+from bonafides.languages import LABELS, RenderLanguage
 from bonafides.statement_check import CHECKER_VERSION
 
 ADAPTER_VERSION = "ol-ollama-v5"
@@ -53,9 +54,9 @@ PROJECTION_VERSION = "ol-professional-wire-v4"
 PROMPT_VERSIONS = {
     "extract_posting": "ol-extract-posting-v1",
     "match_requirements": "ol-match-requirements-v1",
-    "generate_documents": "ol-generate-documents-v8",
-    "regenerate_section": "ol-regenerate-section-v8",
-    "refine_documents": "ol-refine-documents-v3",
+    "generate_documents": "ol-generate-documents-v9",
+    "regenerate_section": "ol-regenerate-section-v9",
+    "refine_documents": "ol-refine-documents-v4",
     "structure_import": "ol-structure-import-v1",
     "write_application_email": "ol-write-application-email-v1",
 }
@@ -481,7 +482,7 @@ class _SectionProjection(_WireModel):
     claims: list[_WireClaim] = Field(max_length=200)
     evidence: list[_WireEvidence | _WireWithheldEvidence] = Field(max_length=200)
     tone: Literal["professional", "concise", "friendly"]
-    language: Literal["en"]
+    language: RenderLanguage
     target: _WireTarget
 
     @model_validator(mode="after")
@@ -514,16 +515,20 @@ def section_projection(context: dict[str, object]) -> dict[str, object]:
         raise ModelFailure("model_context_invalid") from exc
 
 
-class _RefinementSource(_WireModel):
+class _ProfessionalSource(_WireModel):
     posting: _WirePosting
     requirements: list[_WireRequirement] = Field(max_length=100)
     claims: list[_WireClaim] = Field(max_length=200)
     evidence: list[_WireEvidence | _WireWithheldEvidence] = Field(max_length=200)
     tone: Literal["professional", "concise", "friendly"]
+
+
+class _RefinementSource(_ProfessionalSource):
+    language: RenderLanguage
+
+
+class _EmailProjection(_ProfessionalSource):
     language: Literal["en"]
-
-
-class _EmailProjection(_RefinementSource):
     letter_body: str = Field(min_length=1, max_length=60000)
 
 
@@ -549,7 +554,7 @@ def email_context(context: dict[str, object]) -> dict[str, object]:
 class _RefinementShared(_WireModel):
     posting: _WirePosting
     requirements: list[_WireRequirement] = Field(max_length=100)
-    language: Literal["en"]
+    language: RenderLanguage
     claims: list[_WireClaim] | None = Field(default=None, max_length=200)
     evidence: list[_WireEvidence | _WireWithheldEvidence] | None = Field(
         default=None, max_length=200
@@ -1442,10 +1447,12 @@ class OllamaClient:
                     or set(posting) != {"title", "organization", "source_text"}
                     or not all(isinstance(value, str) for value in posting.values())
                     or context.get("tone") not in {"professional", "concise", "friendly"}
-                    or context.get("language") != "en"
+                    or context.get("language") not in LABELS
                 ):
                     raise ModelFailure("model_context_invalid")
-                projected.update({"posting": posting, "tone": context["tone"], "language": "en"})
+                projected.update(
+                    {"posting": posting, "tone": context["tone"], "language": context["language"]}
+                )
             for name, allowed in fields.items():
                 values = context.get(name)
                 if not isinstance(values, list) or len(values) > 100:
@@ -1475,6 +1482,66 @@ class OllamaClient:
             context = projected
         if interrupted is not None and interrupted.is_set():
             raise ModelFailure("model_interrupted")
+        if stage in {"generate_documents", "regenerate_section", "refine_documents"}:
+            source = cast(dict[str, object], context.get("shared", context))
+            language = cast(RenderLanguage, source.get("language", "en"))
+            if language != "en":
+                from bonafides.statement_check import CATEGORIES, ConnectiveKind, connectives
+
+                posting = cast(dict[str, object], source["posting"])
+                frame = {
+                    "language": language,
+                    "role": posting["title"],
+                    "organization": posting["organization"],
+                }
+                phrases = connectives(frame)
+                english = connectives({**frame, "language": "en"})
+                native = {phrase: kind for phrase, kind in phrases.items() if phrase not in english}
+                rendering: dict[str, object] = {}
+                if stage == "generate_documents":
+                    rendering["headings"] = {
+                        key: LABELS[language][key]
+                        for key in (*CATEGORIES, "Application", "Letter", "Interest", "Summary")
+                    }
+                    rendering["allowed_connectives"] = {
+                        phrase: kind
+                        for phrase, kind in native.items()
+                        if kind == "intent" or phrase == LABELS[language]["greeting"]
+                    }
+                else:
+                    if stage == "regenerate_section":
+                        target = cast(dict[str, object], context["target"])
+                        blocks = cast(list[dict[str, object]], target["blocks"])
+                    else:
+                        targets = cast(list[dict[str, object]], context["targets"])
+                        blocks = [cast(dict[str, object], target["before"]) for target in targets]
+                    kinds = {block["claim_kind"] for block in blocks}
+                    selected: dict[str, ConnectiveKind] = {
+                        phrase: kind
+                        for phrase, kind in native.items()
+                        if kind in kinds and kind != "greeting"
+                    }
+                    # Preserve existing recognized literals, including English owner text.
+                    selected.update(
+                        {
+                            cast(str, block["text"]): phrases[cast(str, block["text"])]
+                            for block in blocks
+                            if phrases.get(cast(str, block["text"])) == block["claim_kind"]
+                        }
+                    )
+                    if selected:
+                        rendering["allowed_connectives"] = selected
+                if rendering:
+                    context = {**context, "localized_rendering": rendering}
+                messages[0]["content"] += (
+                    " For this non-English document, use each supplied claim text verbatim: "
+                    "it is the pinned localized printable rendering. Do not translate or "
+                    "paraphrase it, owner-written subjects, prose or publications. "
+                    "Use supplied allowed_connectives when present, overriding English examples. "
+                    "Keep correspondence out of body blocks."
+                )
+                if stage == "generate_documents":
+                    messages[0]["content"] += " Use only supplied localized headings."
         schema = _SCHEMAS[stage]
         try:
             payload = _json(
