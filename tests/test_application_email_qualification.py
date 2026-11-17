@@ -19,10 +19,12 @@ from test_local_model import (
     route_file,
 )
 
-from bonafides import documents, local_model, model_calls, model_projections
+from bonafides import document_generation as generation
+from bonafides import documents, letter_frame, local_model, model_calls, model_projections
 from bonafides import model_qualification as qualification
 from bonafides.commands import canonical_json
 from bonafides.fabrication_benchmark import digest
+from bonafides.languages import LABELS, RenderLanguage
 from tools import stub_model
 
 STAGE = "write_application_email"
@@ -44,7 +46,13 @@ def _plan(case: dict[str, object]) -> dict[str, object]:
     return {
         "context": context,
         "facts": case["facts"],
-        "frame": {"role": posting["title"], "organization": posting["organization"]},
+        "language": case["language"],
+        "tone": case["tone"],
+        "frame": {
+            "role": posting["title"],
+            "organization": posting["organization"],
+            **({"language": case["language"]} if case["language"] != "en" else {}),
+        },
     }
 
 
@@ -76,6 +84,136 @@ def test_email_prompt_offers_only_body_connectives() -> None:
     ):
         assert phrase not in prompt
     assert "Thank you for your consideration." in prompt
+
+
+def test_english_email_output_bytes_are_unchanged_except_schema_version() -> None:
+    cases, _ = qualification.load_cases(DATASET, STAGE)
+    for case in cases:
+        plan = _plan(case)
+        candidate = _output(cast(dict[str, object], plan["context"]))
+        claims = cast(list[dict[str, object]], case["claims"])
+        old_candidate = {
+            "schema_version": "1",
+            "stage": STAGE,
+            "subject": "Application",
+            "blocks": [
+                {
+                    "block_key": f"b-{index}",
+                    "kind": "factual",
+                    "text": claim["text"],
+                    "claim_id": claim["id"],
+                }
+                for index, claim in enumerate(claims, start=1)
+            ],
+        }
+        assert canonical_json({**candidate, "schema_version": "1"}) == canonical_json(old_candidate)
+        body = qualification.checked_email(candidate, plan)
+        expected = {
+            "title": "Cover letter",
+            "sections": [
+                {
+                    "key": "email-body",
+                    "heading": "Application",
+                    "blocks": [
+                        {
+                            "block_key": f"b-{index}",
+                            "text": claim["text"],
+                            "claim_kind": "factual",
+                            "claim_revision_ids": [claim["id"]],
+                            "evidence_revision_ids": claim["evidence_revision_ids"],
+                        }
+                        for index, claim in enumerate(claims, start=1)
+                    ],
+                }
+            ],
+        }
+        assert documents.canonical(body.model_dump(mode="json")) == documents.canonical(expected)
+
+
+@pytest.mark.parametrize("language", ("de", "fr", "es"))
+@pytest.mark.parametrize("tone", ("professional", "concise", "friendly"))
+def test_localized_email_has_exact_server_frame_and_verbatim_claims(
+    language: RenderLanguage, tone: str
+) -> None:
+    cases, _ = qualification.load_cases(DATASET, STAGE, include_languages=True)
+    case = next(case for case in cases if case["id"] == f"email-{language}-pass")
+    plan = _plan({**case, "tone": tone})
+    candidate = _output(cast(dict[str, object], plan["context"]))
+    body = qualification.checked_email(candidate, plan)
+    assert body.title == LABELS[language]["cover_letter"]
+    assert body.sections[0].heading == LABELS[language]["Application"]
+    texts = [block.text for block in body.sections[0].blocks]
+    greeting = LABELS[language]["greeting"]
+    closing = letter_frame.closing_for(tone, language)
+    assert texts[0] == greeting and texts[-1] == closing
+    assert texts.count(greeting) == texts.count(closing) == 1
+    for claim in cast(list[dict[str, object]], case["claims"]):
+        assert claim["text"] in texts
+    assert "Owner-written prose — never translate." in texts
+    saved = body.model_copy(update={"title": "Application email"})
+    assert generation.validation_issues(saved, plan, "application_email") == []
+
+
+@pytest.mark.parametrize("language", ("de", "fr", "es"))
+@pytest.mark.parametrize("channel", ("greeting", "closing", "foreign", "untranslated", "subject"))
+def test_localized_email_rejects_model_correspondence_and_undeclared_prose(
+    language: RenderLanguage, channel: str
+) -> None:
+    cases, _ = qualification.load_cases(DATASET, STAGE, include_languages=True)
+    case = next(case for case in cases if case["id"] == f"email-{language}-pass")
+    plan = _plan(case)
+    candidate = _output(cast(dict[str, object], plan["context"]))
+    if channel == "subject":
+        candidate["subject"] = LABELS[language]["Application"] + ": invented qualifications"
+        expected = "unestablished_subject"
+    else:
+        text = {
+            "greeting": LABELS[language]["greeting"],
+            "closing": letter_frame.closing_for(str(case["tone"]), language),
+            "foreign": "Sono il candidato perfetto per questa posizione.",
+            "untranslated": "I am the perfect candidate for this position.",
+        }[channel]
+        cast(list[dict[str, object]], candidate["blocks"]).append(
+            {"block_key": "b-900", "kind": "connective", "text": text, "claim_id": None}
+        )
+        expected = (
+            "correspondence_outside_body"
+            if channel in {"greeting", "closing"}
+            else "connective_not_declared"
+        )
+    with pytest.raises(model_calls.OutputMismatch) as error:
+        qualification.checked_email(candidate, plan)
+    assert any(expected in item for item in error.value.summary)
+
+
+@pytest.mark.parametrize("language", ("de", "fr", "es"))
+def test_email_wire_injects_only_localized_body_connectives(
+    language: RenderLanguage, tmp_path: Path
+) -> None:
+    cases, _ = qualification.load_cases(DATASET, STAGE, include_languages=True)
+    case = next(case for case in cases if case["id"] == f"email-{language}-pass")
+    plan = _plan(case)
+    context = cast(dict[str, object], plan["context"])
+    route = qualified_route(tmp_path, route_data("http://127.0.0.1:11434"))
+    payload = local_model.OllamaClient(route).prepare(
+        STAGE, context, local_model.PROMPT_VERSIONS[STAGE]
+    )[0]
+    request = json.loads(payload)
+    wire = json.loads(request["messages"][1]["content"])
+    rendering = wire.pop("localized_rendering")
+    assert wire == context
+    assert rendering["subject"] == LABELS[language]["Application"]
+    assert rendering["allowed_connectives"]
+    assert set(rendering["allowed_connectives"].values()) == {"intent"}
+    assert "headings" not in rendering
+    assert LABELS[language]["greeting"] not in rendering["allowed_connectives"]
+    assert "Do not translate or paraphrase" in request["messages"][0]["content"]
+    schema = request["format"]["properties"]
+    assert schema["schema_version"]["const"] == "2"
+    assert "enum" not in schema["subject"]
+    output = _output(json.loads(request["messages"][1]["content"]))
+    body = qualification.checked_email(output, plan)
+    assert body.sections[0].blocks[0].text == LABELS[language]["greeting"]
 
 
 @pytest.mark.parametrize("index", [3, 7, 11, 15])
@@ -339,7 +477,7 @@ def test_email_qualification_threshold_includes_precheck_failures(
 
 
 def test_email_cli_transports_exact_wire_and_preserves_other_receipts(tmp_path: Path) -> None:
-    cases, sha = qualification.load_cases(DATASET, STAGE)
+    cases, sha = qualification.load_cases(DATASET, STAGE, include_languages=True)
     responses = []
     for case in cases:
         output = _output(qualification.projection(case, STAGE))
@@ -373,7 +511,7 @@ def test_email_cli_transports_exact_wire_and_preserves_other_receipts(tmp_path: 
             )
             == 0
         )
-        assert len(requests) == 40
+        assert len(requests) == 52
         first, correction = (json.loads(request) for request in requests[:2])
         assert json.loads(first["messages"][1]["content"]) == qualification.projection(
             cases[0], STAGE

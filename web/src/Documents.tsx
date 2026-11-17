@@ -2,7 +2,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Api, ApiError, errorText, terminal, type ApplicationDocuments, type BaseResumeRequest, type DocumentArchivePreview, type DocumentBody, type DocumentDefaults, type DocumentDefaultsPatch, type DocumentFact, type DocumentFitRequest, type DocumentIssue, type DocumentOmissionRequest, type DocumentRecord, type DocumentRenderRequest, type DocumentRestoreRequest, type DocumentReviewRequest, type DocumentRevision, type DocumentRevisionPage, type DocumentSaveRequest, type DocumentTemplate, type DocumentTone, type LetterParts, type GenerationContext, type GenerationRequest, type Profile, type ProfileRevisionSummary, type RevisionPage, type SectionProposal, type SectionProposalApplyRequest, type SectionProposalPage, type SectionRegenerationContext, type SectionRegenerationRequest, type Workflow } from './api';
 import type { ApplicationPage, ApplicationSummary } from './tracking-api';
-import { copyBody, ISSUE_REASONS, issueAnchor, letterParts, linkedClaim, rebaseBody, sameBody, sameLetter } from './document-state';
+import { copyBody, DEFAULT_DOCUMENT_LANGUAGE, DOCUMENT_LANGUAGES, documentLanguage, ISSUE_REASONS, issueAnchor, letterParts, linkedClaim, rebaseBody, sameBody, sameLetter } from './document-state';
 import { proposalMatches, SectionProposals } from './SectionProposals';
 import { Conversation, type ConversationDraft } from './Conversation';
 import { ApplicationEmail } from './ApplicationEmail';
@@ -20,7 +20,6 @@ export interface DocumentsProps {
 const docPath = (id: string) => `/documents/${encodeURIComponent(id)}`;
 const appPath = (id: string) => `/applications/${encodeURIComponent(id)}`;
 const aborted = (error: unknown) => error instanceof DOMException && error.name === 'AbortError';
-const DOCUMENT_LANGUAGES = [{ value: 'en', label: 'English' }, { value: 'de', label: 'Deutsch' }, { value: 'fr', label: 'Français' }, { value: 'es', label: 'Español' }] as const;
 function withheldClaimText(projection: Record<string, unknown>, id: string): string {
   const claims = Array.isArray(projection.claims) ? projection.claims as { id?: unknown; text?: unknown }[] : [];
   const claim = claims.find(item => item.id === id);
@@ -133,6 +132,7 @@ export function Documents({ api, profile, archiveRecovery, disabled = false, ext
   const [conversationDrafts, setConversationDrafts] = useState<Record<string, ConversationDraft>>({});
   const [conversationBusy, setConversationBusy] = useState(false);
   const [pair, setPair] = useState<ApplicationDocuments | null>(null);
+  const [applicationLanguages, setApplicationLanguages] = useState<Record<string, DocumentDefaults['language']>>({});
   const [emailDirty, setEmailDirty] = useState(false);
   const [emailBusy, setEmailBusy] = useState(false);
   const [emailOpenKey, setEmailOpenKey] = useState('');
@@ -209,13 +209,14 @@ export function Documents({ api, profile, archiveRecovery, disabled = false, ext
   }, []);
   useEffect(() => { callbacks.current.onDirtyChange?.(dirty || emailDirty); }, [dirty, emailDirty]);
   useEffect(() => { callbacks.current.onBusyChange?.(busy || activeTask || conversationBusy || emailBusy); }, [busy, activeTask, conversationBusy, emailBusy]);
+  const generationLanguage = pair?.items.length ? documentLanguage(pair.items[0]!.current_revision) : applicationLanguages[applicationId] ?? defaults?.language ?? DEFAULT_DOCUMENT_LANGUAGE;
   useEffect(() => { if (error) errorRef.current?.focus(); }, [error]);
   useEffect(() => {
     if (!dirty && !emailDirty && !emailBusy && !busy && !activeTask && !conversationBusy) return;
     const prevent = (event: BeforeUnloadEvent) => { event.preventDefault(); event.returnValue = ''; };
     window.addEventListener('beforeunload', prevent); return () => window.removeEventListener('beforeunload', prevent);
   }, [dirty, emailDirty, emailBusy, busy, activeTask, conversationBusy]);
-  useEffect(() => { setContext(null); setContextConfirmed(false); }, [profileId, profile?.version, template, tone, applicationId, initialPageTarget]);
+  useEffect(() => { setContext(null); setContextConfirmed(false); }, [profileId, profile?.version, template, tone, applicationId, initialPageTarget, generationLanguage]);
   useEffect(() => {
     setSectionContext(null); setSectionConfirmed(false); setApplyConfirmed(false);
   }, [doc?.id, doc?.version, doc?.current_revision.id, profile?.version, profile?.current_revision.id, sectionKey, sectionTone, dirty]);
@@ -491,11 +492,11 @@ export function Documents({ api, profile, archiveRecovery, disabled = false, ext
       mutation.current = null; workflowSelection.current = epoch; setWorkflow(value); setMonitorError(''); setNotice('Base composition accepted. Existing words remain until the saved result is loaded. No inference is requested.');
     });
   }
-  function previewContext() {
+  function previewContext(language = generationLanguage) {
     if (!profile || !applicationId || !template || locked || dirty) return;
     const epoch = selection.current;
     void run(async signal => {
-      const query = new URLSearchParams({ profile_revision_id: profileId, template_version: template, tone, language: 'en' });
+      const query = new URLSearchParams({ profile_revision_id: profileId, template_version: template, tone, language });
       if (initialPageTarget && !pair?.items.some(item => item.kind === 'resume')) query.set('page_target', initialPageTarget);
       const value = await request<GenerationContext>(signal, `${appPath(applicationId)}/generation-context?${query}`);
       if (epoch !== selection.current || current.current.profile?.version !== value.profile_version) { setNotice('Profile or selection changed. Preview the current generation context again.'); return; }
@@ -886,7 +887,7 @@ export function Documents({ api, profile, archiveRecovery, disabled = false, ext
       <label>Built-in presentation<select value={template} onChange={event => { choicesInitialized.current = true; setTemplate(event.target.value); }}><option value="" disabled>{templates.length ? 'Choose a template' : 'Templates unavailable — reload to retry'}</option>{templates.map(item => <option key={item.version} value={item.version}>{item.label} · English · {item.paper}</option>)}</select></label>
       {!templates.length && <button className="secondary" onClick={() => { void run(async signal => { const value = await request<{ items: DocumentTemplate[] }>(signal, '/document-templates'); setTemplates(value.items); }); }}>Reload built-in templates</button>}
       </div></div>
-      <details className="document-secondary"><summary>Presentation and frozen-input details</summary><p className="hint">Current operation choices below are separate from remembered defaults. Document languages change labels and dates only; owner-written prose is not translated. Tailored generation remains English only for now. No user-authored HTML/CSS templates. Existing revisions retain their original template and printable contact frame.</p></details>
+      <details className="document-secondary"><summary>Presentation and frozen-input details</summary><p className="hint">Current operation choices below are separate from remembered defaults. Document languages change labels and dates only; owner-written prose is not translated. Choose a language per application; the first generation sets it for that application. No user-authored HTML/CSS templates. Existing revisions retain their original template and printable contact frame.</p></details>
       {mode === 'base' ? <><p className="document-mode-note">Create a model-free résumé from the selected saved profile. No posting, application or cover letter is needed.</p><details className="document-secondary"><summary>How base composition works</summary><p>This résumé copies accepted facts from the selected profile snapshot on this installation. No posting, application, letter, model or external provider is needed. No inference or ModelRun is created. An empty usable profile cannot produce a résumé.</p></details><div className="actions"><button disabled={!profile || !profileId || !template} onClick={startBase}>{doc ? 'Rebuild base from selected profile' : 'Create base résumé'}</button><button className="secondary" onClick={() => { void run(signal => loadBase(signal, selection.current)); }}>Reload saved base résumé</button></div></> : <>
         <div className="actions"><button className="secondary" onClick={() => loadApplications()}>Reload tracked applications</button>{applicationCursor && <button className="secondary" onClick={() => loadApplications(applicationCursor)}>Load more tracked applications</button>}</div>
         <label>Tracked application<select value={applicationId} onChange={event => selectApplication(event.target.value)}><option value="">Select an existing tracked application</option>{applications.map(item => <option key={item.id} value={item.id}>{item.title} · {item.company} · attempt {item.attempt_no}{item.archived_at ? ' · archived (read-only generation)' : ''}</option>)}</select></label>
@@ -894,7 +895,8 @@ export function Documents({ api, profile, archiveRecovery, disabled = false, ext
         {applicationId && <><button className="secondary" onClick={() => { void run(signal => loadPair(signal, applicationId, selection.current, doc?.id)); }}>Reload application documents</button>{pair && <><p>{pair.items.some(item => item.kind === 'resume') && pair.items.some(item => item.kind === 'cover_letter') ? 'Saved résumé and cover letter available.' : pair.items.length ? 'The requested pair is incomplete. A missing member is not a successful pair.' : 'No saved pair. Existing application data remains available.'}</p><div className="actions">{(['resume', 'cover_letter'] as const).map(kind => { const member = pair.items.find(item => item.kind === kind); return <button key={kind} className="secondary" disabled={!member} aria-pressed={doc?.id === member?.id} onClick={() => { if (member) { selection.current++; receive(member, true); } }}>{kind === 'resume' ? 'Résumé' : 'Cover letter'}{!member ? ' unavailable' : ''}</button>; })}</div></>}
           {route && <p className="disclosure"><strong>Generation route: {route.status}.</strong> {route.reason}</p>}{pair && <><QualificationReceipts details={pair.receipt_details} /><ClaimJsonRates rates={pair.claim_json_rates} /></>}{!pair?.requirements_revision_id && <p>Reviewed, current, nonempty requirements are required. Review them in the posting workspace before preparing a pair.</p>}{application?.archived_at && <p>Archived applications remain readable. Generation is unavailable.</p>}
           {pair && !pair.items.some(item => item.kind === 'resume') ? <label>Initial résumé page target (optional)<select value={initialPageTarget} disabled={!!application?.archived_at} onChange={event => setInitialPageTarget(event.target.value as '' | '1' | '2')}><option value="">No automatic fitting</option><option value="1">One page</option><option value="2">Two pages</option></select></label> : <p>Regenerating an existing résumé does not refit it. Use Fit saved résumé to target explicitly after generation.</p>}
-          <label>Writing tone<select value={tone} onChange={event => { choicesInitialized.current = true; setTone(event.target.value as DocumentTone); }}><option value="professional">Traditional formal</option><option value="concise">Concise</option><option value="friendly">Friendly</option></select></label><button className="secondary" disabled={!profile || !profileId || !template || !!application?.archived_at} onClick={previewContext}>Preview reviewed generation context</button>
+          <div className="document-compose-fields"><div>{pair && (pair.items.length ? <p>Application document language: <strong>{DOCUMENT_LANGUAGES.find(item => item.value === generationLanguage)?.label}</strong>. Set by the first generation; existing documents keep this language.</p> : <label>Application document language<select value={generationLanguage} disabled={!!application?.archived_at} onChange={event => { const language = event.target.value as DocumentDefaults['language']; setApplicationLanguages(previous => ({ ...previous, [applicationId]: language })); setContext(null); setContextConfirmed(false); previewContext(language); }}>{DOCUMENT_LANGUAGES.map(item => <option key={item.value} value={item.value}>{item.label}</option>)}</select></label>)}</div>
+          <div><label>Writing tone<select value={tone} onChange={event => { choicesInitialized.current = true; setTone(event.target.value as DocumentTone); }}><option value="professional">Traditional formal</option><option value="concise">Concise</option><option value="friendly">Friendly</option></select></label></div></div><button className="secondary" disabled={!profile || !profileId || !template || !pair || !!application?.archived_at} onClick={() => previewContext()}>Preview reviewed generation context</button>
           {context && <section className="disclosure"><h3>Exact minimized model projection</h3>
             <p>{context.page_target ? `After the original pair is saved, a separate model-free task will try to fit the new résumé to ${context.page_target} ${context.page_target === 1 ? 'page' : 'pages'}. It may remain above target. Original content stays in history; a failed fit leaves it available.` : 'No automatic page fitting requested.'} Fitting never applies to the cover letter.</p>
             <p>Destination from this operation’s route: <code>{typeof context.generation_route.identity?.endpoint === 'string' ? context.generation_route.identity.endpoint : 'No endpoint supplied — inspect route identity below'}</code>. Model: {typeof context.generation_route.identity?.model === 'string' ? context.generation_route.identity.model : 'Not supplied'}. A local endpoint is not a universal no-network guarantee; prose may still contain personal information, not anonymization. No hosted fallback.</p>
@@ -986,7 +988,7 @@ export function Documents({ api, profile, archiveRecovery, disabled = false, ext
     </section> : <div className="empty"><p>{mode === 'base' ? 'No saved base résumé loaded. Save factual profile entries, choose a built-in template and create your résumé without a model.' : 'Select a tracked application and independently load its saved documents. Missing or failed generation is not an empty successful pair.'}</p><p>No invented résumé, letter or provider result is shown.</p></div>}
     <details className="document-secondary document-defaults"><summary>Remembered defaults and retention</summary>
     <fieldset disabled={locked}><legend>Remembered defaults for future work</legend>
-      <p>These owner-local defaults initialize future workspace choices, not existing documents or this operation. Saving grants no integration permissions. Document languages change labels and dates only; owner-written prose is not translated. The base résumé display language is independent of the default document language. Tailored generation remains English only for now; retention is fixed, not an adjustable expiry.</p>
+      <p>These owner-local defaults initialize future workspace choices, not existing documents or this operation. Saving grants no integration permissions. Document languages change labels and dates only; owner-written prose is not translated. The base résumé display language is independent of the default document language. Choose a language per application; the first generation sets it for that application. Retention is fixed, not an adjustable expiry.</p>
       {defaults ? <p>Last loaded remembered defaults: {templates.find(item => item.version === defaults.template_version)?.label ?? defaults.template_version} · {templates.find(item => item.version === defaults.template_version)?.paper ?? 'paper metadata unavailable'} · {defaults.tone} · document language: {DOCUMENT_LANGUAGES.find(item => item.value === defaults.language)?.label ?? defaults.language} · base résumé display language: {DOCUMENT_LANGUAGES.find(item => item.value === defaults.base_resume_language)?.label ?? defaults.base_resume_language}. Version {defaults.version}.</p> : <p>Remembered defaults have not been loaded. Current choices are not confirmed saved defaults.</p>}
       <button className="secondary" onClick={() => { void run(signal => loadDefaults(signal)); }}>Reload remembered defaults</button>
       {defaults && <>

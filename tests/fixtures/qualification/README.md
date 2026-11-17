@@ -23,8 +23,10 @@ the legacy frame; the unsupported sentence remains context but must not be copie
 into a valid email. These are adversarial inputs, not approved example outputs.
 Only body text is projected: legacy salutations/closings are split out, and no
 sender, contact, signature, recipient, frame, portrait or private notes are sent.
-Email replies use a closed neutral subject (`Application` or `Application enquiry`)
-and checked statement blocks, with no salutation/closing or address fields.
+Email v2 replies copy the language's fixed application subject label and contain
+checked statement blocks, with no model-authored salutation/closing or address
+fields. The server adds deterministic localized correspondence for German, French
+and Spanish; English email body bytes stay unchanged.
 Unsupported body assertions trigger the same single corrective attempt as malformed
 output; a second failure is invalid. Existing stage files are not changed.
 
@@ -37,7 +39,7 @@ loop as production. Every schema-valid result also runs through the unchanged ch
 The CLI discovers the selected stage's original file and sorted `<stage>_*.jsonl`
 supplements. The digest is `fabrication_benchmark.digest` over all selected relative
 filenames and their exact bytes; unrelated stages and this README are not included.
-The three `*_languages.jsonl` supplements each add six cases: German, French and
+The four `*_languages.jsonl` supplements each add six cases: German, French and
 Spanish, each with a passing context and a `withheld_text` paraphrase negative
 control. Pinned structures localize only fixed renderer wording; owner prose stays
 literal. The runner verifies that every negative control is blocked by the production

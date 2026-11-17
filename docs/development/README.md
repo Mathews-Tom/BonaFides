@@ -948,7 +948,7 @@ Optional profile `contact` fields are `email`, `phone`, `location` and `postal_a
 
 Selecting an older profile snapshot deliberately preserves its contact/order choices, not withdrawn or superseded professional facts. New composition accepts that historical selection only while its claim/evidence revisions and structured factual payload remain active/current and eligible in the current owner profile. The workflow separately pins the current profile pointer/version for late-output fencing. Historical document restoration never silently substitutes newer profile data; current source-eligibility checks still govern new review/export.
 
-Remembered document defaults are owner-local selections for future workspace operations, separate from the current operation and every saved document. `GET /document-defaults` returns the current workspace `version`, `template_version`, `tone`, English-only language and fixed retention disclosures. `PATCH /document-defaults` accepts only nonempty validated partial `template_version`/`tone` changes under the ordinary Origin/CSRF, workspace `If-Match` and idempotency controls. It preserves unrelated settings, factual/profile/document revisions, PDFs and integration permissions. Corrupted stored defaults fail explicitly; they are not silently replaced. Reload a conflicting saved version, compare retained choices and explicitly save again.
+Remembered document defaults are owner-local selections for future workspace operations, separate from the current operation and every saved document. `GET /document-defaults` returns the current workspace `version`, `template_version`, `tone`, default document `language`, `base_resume_language` (each `en`, `de`, `fr` or `es`) and fixed retention disclosures. `PATCH /document-defaults` accepts only nonempty validated partial `template_version`/`tone`/`language`/`base_resume_language` changes under the ordinary Origin/CSRF, workspace `If-Match` and idempotency controls. The default language only seeds applications without tailored documents; it never changes an existing application's language. It preserves unrelated settings, factual/profile/document revisions, PDFs and integration permissions. Corrupted stored defaults fail explicitly; they are not silently replaced. Reload a conflicting saved version, compare retained choices and explicitly save again.
 
 The admitted immutable presentations are Evidence and Compact in A4 and Letter, using `bonafides-evidence-v1`, `bonafides-compact-v1`, `bonafides-evidence-letter-v1` and `bonafides-compact-letter-v1`. Existing A4 template bytes and saved revision pins are unchanged. Defaults initialize future workspace choices; an explicit action applies the last loaded defaults to the current operation. Existing saved words, frames and artifacts are never restyled by a preference change.
 
@@ -960,11 +960,11 @@ All document routes below are under `/api/v1`, require owner authentication and 
 | --- | --- |
 | `GET /document-templates` | Fixed built-in choices with `version`, `label`, `language` and `paper`. No user HTML/CSS, executable templates, translation or DOCX. |
 | `GET /document-defaults` | Owner-local remembered presentation/tone, workspace version and fixed retention/language policy; reading unset defaults does not mutate the owner. |
-| `PATCH /document-defaults` | Validated nonempty partial `{template_version?,tone?}` with workspace-version concurrency and exact replay; unrelated preferences, saved revisions and permissions remain unchanged. |
+| `PATCH /document-defaults` | Validated nonempty partial `{template_version?,tone?,language?,base_resume_language?}` with workspace-version concurrency and exact replay; unrelated preferences, saved revisions and permissions remain unchanged. |
 | `GET /profile/base-resume` | Current single owner base résumé; `404 base_resume_not_found` before one exists. |
 | `POST /profile/base-resume` | `{profile_revision_id,template_version}` queues deterministic durable composition and returns `202 Workflow`; success retains `{document_id,revision_id}`. Rebuilding appends to the same base identity and must not overwrite an intervening manual revision. |
 | `GET /applications/{id}/documents` | Application version, independently durable résumé/letter records, reviewed-requirements pin and explicit generation-route status/reason/identity. Archived pursuits remain readable but cannot start generation. |
-| `GET /applications/{id}/generation-context` | Query `profile_revision_id`, `template_version`, `tone=professional\|concise`, `language=en`. Returns immutable selection pins, trusted printable frame, exact minimized `model_projection`, separate owner-only `withheld_evidence` explanations from current record classification, context hash and route status. Explanations name source/reasons/still-sent claims but are never part of the transmitted projection. Read-only; no inference or provider metadata connection. Reviewed nonstale requirements are required. |
+| `GET /applications/{id}/generation-context` | Query `profile_revision_id`, `template_version`, `tone=professional\|concise\|friendly`, `language=en\|de\|fr\|es`. An application with tailored documents keeps their language: another value returns `409 application_document_language_mismatch`; an unknown value returns `422 unsupported_document_language`. Returns immutable selection pins, trusted printable frame, exact minimized `model_projection`, separate owner-only `withheld_evidence` explanations from current record classification, context hash and route status. Explanations name source/reasons/still-sent claims but are never part of the transmitted projection. Read-only; no inference or provider metadata connection. Reviewed nonstale requirements are required. |
 | `POST /applications/{id}/generation` | `{profile_revision_id,requirements_revision_id,template_version,tone,language,context_sha256}`. Rechecks the exact preview hash and freezes server-authored inputs. Disabled/unqualified routes fail visibly; they do not queue pretend output. |
 | `GET /documents/{id}` | Current saved record, scope/kind/application identity, revision/provenance/issues, exact review, staleness and actual revision-bound artifacts. |
 | `GET /documents/{id}/revisions` | Bounded immutable revision-number keyset, `limit=20`, optional `before`; returns `items,next_cursor`. |
@@ -1133,7 +1133,15 @@ Rendering checks actual painted-font missing-glyph records and selectable text a
 
 #### Application-email qualification and persistence (API)
 
-`models.sh qualify --stage write_application_email --reviewed-by 'Local owner'` measures the unchanged v1 prompt/schema on 20 bundled synthetic cases using the regular private-route transport and shared single-correction loop. A qualified route can now write one independently versioned `application_email` per tailored application. Migration 010 widens the existing kind and route-block constraints; native schema 10 adds no table. Workspace 5 carries emails and every revision without changing published workspace 1–4 schemas.
+`models.sh qualify --stage write_application_email --reviewed-by 'Local owner'`
+measures prompt `ol-write-application-email-v2` and schema 2 on 20 original English
+cases plus six German/French/Spanish cases, using the regular private-route
+transport and shared single-correction loop. Requalify this stage after upgrading;
+v1 receipts cannot qualify v2. A qualified route can write one independently
+versioned `application_email` per tailored application. Migration 010 widens the
+existing kind and route-block constraints; native schema 10 adds no table.
+Workspace 5 carries emails and every revision without changing published
+workspace 1–4 schemas.
 
 The projection reuses the professional generation builder and its already-minimized claim/evidence inputs (including current-classification withheld markers). It adds only current letter body text, using the shared correspondence splitter for legacy greeting/closing blocks. Dedicated identity, contacts, private notes, portrait and the letter frame are not inputs. Professional free text can still contain personal data.
 
@@ -1141,11 +1149,38 @@ The projection requires the local letter frame explicitly as a keyword argument,
 
 Protected section or block keys (`sender`, `date`, `correspondence_date`, `signature`) are excluded from the email body projection even when saved inside the letter body. One shared key set also retains the existing conversation and section-regeneration refusal rules.
 
-Replies contain `subject` (maximum 120 characters) and typed factual/connective `blocks`, with no address or recipient field. Subjects are restricted to `Application` or `Application enquiry`: a closed non-factual choice avoids an unchecked factual channel. Bodies have no salutation or closing, consistent with cover-letter body/frame separation; these remain outside inference. Every body statement passes the unchanged claim-evidence checker inside the correction loop, including assertions copied from the letter. The existing checker limitations still apply.
+Replies contain `subject` (maximum 120 characters) and typed factual/connective
+`blocks`, with no address or recipient field. The checker requires the exact
+`LABELS[language]["Application"]` subject label; publication builds the subject as
+`<label>: <posting title>`, keeping the title verbatim. Model output contains no
+salutation or closing. For German, French and Spanish, the server adds the fixed
+`LABELS[language]["greeting"]` and `closing_for(tone, language)` as checked body
+blocks, so the editor, copy and mail-client handoff all use the same text. English
+body bytes stay unchanged. Localized prompts supply only declared body connectives;
+claim text stays verbatim. Model-authored correspondence remains rejected in all
+four languages. Every body statement passes the claim-evidence checker inside the
+correction loop, including assertions copied from the letter. Existing checker
+limitations still apply.
 
-Email receipts bind an additive `ol-application-email-capability-v1` fingerprint over the unchanged common route capability and the email contract/projection. Earlier prompts, schemas, datasets and common fingerprints are untouched, so existing stages need no requalification for this addition. Earlier receipts cannot qualify email, and email contract changes invalidate only email receipts.
+Email receipts bind an additive `ol-application-email-capability-v1` fingerprint
+over the common route capability and email contract/projection. Email contract
+changes invalidate email receipts; the original English datasets stay unchanged.
 
-After a saved cover letter exists, `POST /api/v1/applications/{id}/email` queues the first email (empty JSON `{}` body, application `If-Match` and `Idempotency-Key` required); repeated unfinished requests follow the same task. `GET /api/v1/applications/{id}/email` reads it. The regular `GET/PUT /api/v1/documents/{id}` and revision routes apply: save a `base_revision_id`, structured `body`, `reason` and optional `email: {recipient, subject}` with document preconditions. `POST /api/v1/documents/{id}/rewrite` queues a checked whole-email rewrite with empty JSON `{}` and document preconditions. Publication keeps the latest manual recipient and records the displaced revision in `restore_revision_id`; `POST /api/v1/documents/{id}/restore` accepts that revision only while the rewrite remains the latest change. All writes use immutable revisions and owner authorization. The stored subject is built server-side as `Application: {posting title}`; the model's neutral subject is not stored. Failed/refused/cancelled or lease-fenced work writes no revision.
+After a saved cover letter exists, `POST /api/v1/applications/{id}/email` queues the
+first email (empty JSON `{}` body, application `If-Match` and `Idempotency-Key`
+required); repeated unfinished requests follow the same task.
+`GET /api/v1/applications/{id}/email` reads it. The regular
+`GET/PUT /api/v1/documents/{id}` and revision routes apply: save a
+`base_revision_id`, structured `body`, `reason` and optional
+`email: {recipient, subject}` with document preconditions.
+`POST /api/v1/documents/{id}/rewrite` queues a checked whole-email rewrite with
+empty JSON `{}` and document preconditions. Publication keeps the latest manual
+recipient and records the displaced revision in `restore_revision_id`;
+`POST /api/v1/documents/{id}/restore` accepts that revision only while the rewrite
+remains the latest change. All writes use immutable revisions and owner
+authorization. The stored subject uses the localized application label and
+verbatim posting title; the model's label is checked, not stored directly.
+Failed/refused/cancelled or lease-fenced work writes no revision.
 
 For emails, `/restore` is rewrite undo only: arbitrary historical revisions cannot be restored. It accepts only the most recent whole-email rewrite's displaced revision, and any subsequent email change makes that undo return `409 email_restore_conflict`. Earlier revisions remain readable.
 

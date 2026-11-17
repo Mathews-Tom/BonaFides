@@ -161,7 +161,7 @@ export interface EmailParts { recipient: string; subject: string }
 export interface ApplicationEmailSaveRequest extends DocumentSaveRequest { email: EmailParts }
 export type DocumentTone = 'professional' | 'concise' | 'friendly';
 export interface LetterParts { correspondence_date: string; recipient: string; greeting: string; closing: string }
-export interface DocumentFrame extends Partial<LetterParts> { display_name?: string; [key: string]: unknown }
+export interface DocumentFrame extends Partial<LetterParts> { display_name?: string; language?: DocumentLanguage; [key: string]: unknown }
 export interface DocumentBlock { block_key: string; text: string; claim_kind: 'factual' | 'intent' | 'greeting'; claim_revision_ids: string[]; evidence_revision_ids: string[] }
 export interface DocumentBody { title: string; sections: { key: string; heading: string; blocks: DocumentBlock[] }[] }
 export interface DocumentFact {
@@ -174,7 +174,7 @@ export interface DocumentPageFit {
   omissions: { section_key: string; block: DocumentBlock; reason: 'page_target' | 'owner' }[];
 }
 export interface DocumentProvenance {
-  facts?: DocumentFact[]; frame?: DocumentFrame; mode?: string; schema_version?: number | string;
+  facts?: DocumentFact[]; frame?: DocumentFrame; language?: DocumentLanguage; mode?: string; schema_version?: number | string;
   email?: EmailParts; email_restore_revision_id?: string | null;
   omitted_claims?: { claim_revision_id: string; claim_text: string; code: 'literal_claim_not_grounded' }[];
   page_fit?: DocumentPageFit;
@@ -477,6 +477,8 @@ export const terminal = (state: WorkflowState) => ['succeeded', 'cancelled', 'pe
 export function errorText(error: unknown): string {
   if (error instanceof ApiError) {
     if (error.code === 'workspace_reconnect_required') return 'Writes are paused. Reconnect and review the current workspace before saving. Your editor text remains here.';
+    if (error.code === 'application_document_language_mismatch') return 'This application already has documents in another language. Reload application documents to use their saved language; the first generation sets it for this application.';
+    if (error.code === 'unsupported_document_language') return 'Choose English, Deutsch, Français or Español for the document language. No documents were changed.';
     if (error.status === 412) return 'A newer revision exists. Your text remains here. Load the current revision for comparison before saving again.';
     if (error.status === 401) return 'Your session is unavailable or expired. Sign in again. Unsaved text remains here for this visit.';
     if (error.detail && (error.code === 'literal_claim_not_grounded' || error.code === 'profile_claim_not_supported')) return `The operation was not completed (${error.code}). ${error.detail} Your existing work has not been replaced.`;

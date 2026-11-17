@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Api, ApiError, errorText, terminal, type DocumentBody, type DocumentRecord, type EmailParts, type Workflow } from './api';
-import { copyBody, ISSUE_REASONS } from './document-state';
+import { copyBody, DOCUMENT_LANGUAGES, documentLanguage, ISSUE_REASONS } from './document-state';
 
 interface EmailDraft extends EmailParts { body: DocumentBody }
 interface Props {
@@ -39,6 +39,9 @@ export function ApplicationEmail({ api, applicationId, documents, disabled = fal
   const fields = useRef<Record<string, HTMLInputElement | HTMLTextAreaElement | null>>({});
   const active = !!workflow && !terminal(workflow.state);
   const displayed = draft ?? (doc ? draftOf(doc) : null);
+  const coverLetter = documents.find(item => item.kind === 'cover_letter');
+  const languageSource = coverLetter ?? doc;
+  const language = languageSource ? documentLanguage(languageSource.current_revision) : null;
   const restoreId = doc?.current_revision.provenance_snapshot.email_restore_revision_id;
   const handoff = displayed ? emailMailto(displayed.recipient, displayed.subject, bodyText(displayed.body)) : '';
   const tooLong = handoff.length > 2000;
@@ -196,6 +199,7 @@ export function ApplicationEmail({ api, applicationId, documents, disabled = fal
   return <section className="application-email disclosure" aria-labelledby="application-email-heading">
     <h3 id="application-email-heading">Application email</h3>
     <p>Prepare an email for your own mail app. Nothing here sends email, attaches files or marks an application sent.</p>
+    {language && <p>Email language: <strong>{DOCUMENT_LANGUAGES.find(item => item.value === language)?.label}</strong>. Set by the application’s cover letter; owner-written text is not translated.</p>}
     {error && <p role="alert" className="error">{error}</p>}{notice && <p role="status" aria-label="Email notice">{notice}</p>}
     <div className="actions"><button className="secondary" disabled={busy} onClick={() => { void run(load); }}>Reload email</button></div>
     {!loaded && <p>Loading saved email…</p>}
@@ -221,7 +225,7 @@ export function ApplicationEmail({ api, applicationId, documents, disabled = fal
       <div className="actions"><button disabled={disabled || busy || !draft || conflict || !displayed.subject.trim() || displayed.body.sections.some(section => section.blocks.some(block => !block.text.trim()))} onClick={save}>Save email changes</button><button className="secondary" disabled={busy || !draft} onClick={() => { current.current.draft = null; setDraft(null); if (comparison) receive(comparison, true); else setConflict(false); }}>Discard email changes</button></div>
       {conflict && <p>Your email has not been overwritten. Reload email to compare the saved version; copy any local text you want to keep before replacing it.</p>}
       {comparison && <section aria-label="Saved email comparison"><h4>Saved email to compare</h4><p>{comparison.current_revision.provenance_snapshot.email?.recipient || 'No recipient yet.'}</p><p>{comparison.current_revision.provenance_snapshot.email?.subject}</p><pre>{bodyText(comparison.current_revision.body)}</pre><button disabled={busy} onClick={() => { receive(comparison, true); intent.current = null; }}>Use saved email instead of my changes</button></section>}
-      <p id="email-rewrite-explanation">Rewrite replaces the subject and body, resets the subject to “Application: [job title]” and keeps your typed recipient. Edits saved while writing may be replaced at completion. Undo brings back the whole email saved just before completion, only until the next email change.</p>
+      <p id="email-rewrite-explanation">Rewrite replaces the subject and body, resets the subject to the application heading and job title in the email language, and keeps your typed recipient. Edits saved while writing may be replaced at completion. Undo brings back the whole email saved just before completion, only until the next email change.</p>
       <label className="check"><input type="checkbox" checked={confirmed} disabled={disabled || archived || busy || active || !!draft || conflict} onChange={event => setConfirmed(event.target.checked)} />I want to replace the email subject and body</label>
       <div className="actions"><button aria-describedby="email-rewrite-explanation" disabled={disabled || archived || busy || active || !!draft || conflict || !confirmed} onClick={start}>Rewrite application email</button>{restoreId && <button className="secondary" disabled={disabled || busy || active || !!draft || conflict} onClick={undo}>Undo email rewrite</button>}</div>
       <div className="actions">{(['recipient', 'subject', 'body'] as const).map(part => <button key={part} className="secondary" onClick={() => { void copy(part); }}>Copy {part}</button>)}</div>

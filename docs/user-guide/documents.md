@@ -203,4 +203,15 @@ Under **Remembered defaults and retention**, choose **Document language** and **
 
 Saving a preference does not change an existing document, approval or PDF. Rebuild the base résumé explicitly to apply it; older revisions keep their language. Built-in headings must match the language saved with the document; an unknown saved language blocks checking. Localized structured statements must keep the complete fixed rendering or its complete printable fields to pass checking; English shortening rules are unchanged.
 
-**Document language** remembers your preferred language for future application-language support. Tailored résumés, cover letters, model rewrites and application emails still use English in this version, regardless of this preference. The built-in renderer has fixed German, French and Spanish letter headings, dates and closings, but selecting a preference does not translate or generate a letter in those languages. Automatic prose translation, other languages, custom language names and right-to-left documents are not yet supported.
+**Document language** seeds the language choice for a new application's tailored
+résumé and cover letter. Before the first generation, you can choose English,
+German, French or Spanish beside the generation controls. After documents exist,
+their language is shown read-only. Generation, section rewrites, conversation
+edits and application emails keep that saved language even if you change your
+default later.
+
+German, French and Spanish application emails use a fixed localized subject label,
+greeting and tone-based closing. The job title and your own claims are not
+translated. English emails keep their existing wording. Automatic prose
+translation, other languages, custom language names and right-to-left documents
+are not supported.

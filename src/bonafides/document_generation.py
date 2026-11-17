@@ -732,7 +732,9 @@ def validation_issues(
     if kind == "application_email":
         kind = "cover_letter"
         if body.title == "Application email":
-            body = body.model_copy(update={"title": "Cover letter"})
+            body = body.model_copy(
+                update={"title": LABELS[provenance_language(provenance)]["cover_letter"]}
+            )
     return statement_check.check_statements(
         body,
         cast(list[dict[str, object]], provenance["facts"]),

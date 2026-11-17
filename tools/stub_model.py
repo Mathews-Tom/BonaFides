@@ -223,14 +223,39 @@ def _conversation(projection: dict[str, object], scenario: str) -> dict[str, Any
 
 
 def _email(projection: dict[str, object]) -> dict[str, Any]:
+    blocks = [
+        _block(index, "factual", str(claim["text"]), str(claim["id"]))
+        for index, claim in enumerate(_items(projection, "claims"), start=1)
+    ]
+    subject = "Application"
+    if projection.get("language", "en") != "en":
+        from bonafides.languages import LABELS, RenderLanguage
+        from bonafides.statement_check import connectives
+
+        subject = LABELS[cast(RenderLanguage, projection["language"])]["Application"]
+        posting = cast(dict[str, object], projection["posting"])
+        frame = {
+            "language": projection["language"],
+            "role": posting.get("title"),
+            "organization": posting.get("organization"),
+        }
+        english = connectives({**frame, "language": "en"})
+        phrase = next(
+            (
+                text
+                for text, kind in connectives(frame).items()
+                if kind == "intent" and text not in english
+            ),
+            None,
+        )
+        # Greeting and closing are server framing, never model-produced blocks.
+        if phrase is not None:
+            blocks.append(_block(len(blocks) + 1, "connective", phrase, None))
     return {
-        "schema_version": "1",
+        "schema_version": "2",
         "stage": "write_application_email",
-        "subject": "Application",
-        "blocks": [
-            _block(index, "factual", str(claim["text"]), str(claim["id"]))
-            for index, claim in enumerate(_items(projection, "claims"), start=1)
-        ],
+        "subject": subject,
+        "blocks": blocks,
     }
 
 

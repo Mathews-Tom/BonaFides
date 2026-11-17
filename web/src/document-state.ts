@@ -1,5 +1,11 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
-import type { DocumentBody, DocumentFact, DocumentRevision, LetterParts } from './api';
+import type { DocumentBody, DocumentFact, DocumentLanguage, DocumentRevision, LetterParts } from './api';
+
+export const DEFAULT_DOCUMENT_LANGUAGE: DocumentLanguage = 'en';
+export const DOCUMENT_LANGUAGES = [{ value: DEFAULT_DOCUMENT_LANGUAGE, label: 'English' }, { value: 'de', label: 'Deutsch' }, { value: 'fr', label: 'Français' }, { value: 'es', label: 'Español' }] as const;
+export function documentLanguage(revision: DocumentRevision): DocumentLanguage {
+  return revision.provenance_snapshot.language ?? revision.provenance_snapshot.frame?.language ?? DEFAULT_DOCUMENT_LANGUAGE;
+}
 
 export const copyBody = (body: DocumentBody): DocumentBody => ({ ...body, sections: body.sections.map(section => ({ ...section, blocks: section.blocks.map(block => ({ ...block, claim_revision_ids: [...block.claim_revision_ids], evidence_revision_ids: [...block.evidence_revision_ids] })) })) });
 export const sameBody = (left: DocumentBody, right: DocumentBody) => JSON.stringify(left) === JSON.stringify(right);

@@ -16,6 +16,7 @@ from bonafides.auth import Owner, require_owner
 from bonafides.commands import command
 from bonafides.config import Settings
 from bonafides.db import Database
+from bonafides.languages import LABELS
 from bonafides.problems import Problem
 from bonafides.workflows import Claim, assert_fence, enqueue, get_workflow
 
@@ -56,8 +57,6 @@ def plan(conn: Connection, owner: UUID, application: UUID, settings: Settings) -
         raise Problem(409, "application_email_requires_letter")
     provenance = cast(dict[str, object], letter["provenance_snapshot"])
     language = generation.provenance_language(provenance)
-    if language != "en":
-        raise Problem(409, "application_email_language_unsupported")
     frozen = generation.generation_plan(
         conn,
         owner,
@@ -138,7 +137,10 @@ def publish_email(
     parts = cast(dict[str, object], old.get("email", {}))
     provenance["email"] = generation.EmailParts(
         recipient=str(parts.get("recipient", "")),
-        subject=f"Application: {cast(dict[str, object], task.input['posting_snapshot'])['title']}",
+        subject=(
+            f"{LABELS[generation.provenance_language(task.input)]['Application']}: "
+            f"{cast(dict[str, object], task.input['posting_snapshot'])['title']}"
+        ),
     ).model_dump()
     previous = str(current["current_revision_id"]) if current else None
     provenance["email_restore_revision_id"] = previous

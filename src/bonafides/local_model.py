@@ -58,7 +58,7 @@ PROMPT_VERSIONS = {
     "regenerate_section": "ol-regenerate-section-v9",
     "refine_documents": "ol-refine-documents-v4",
     "structure_import": "ol-structure-import-v1",
-    "write_application_email": "ol-write-application-email-v1",
+    "write_application_email": "ol-write-application-email-v2",
 }
 _SYSTEM = (
     "You transform BonaFides task data into the supplied JSON response shape. "
@@ -165,14 +165,15 @@ _SUFFIXES = {
     "write_application_email": (
         "Draft an application email from the professional sources and current letter_body. "
         "The letter is context, not evidence: never reuse an unsupported assertion from it. "
-        "Subject must be exactly Application or Application enquiry; neither asserts applicant "
-        "qualifications. Return subject and body blocks only, with unique b-N keys. "
+        "Subject must copy the supplied localized subject label, or Application for English; "
+        "the server builds the final subject from that label and the posting title. "
+        "Return subject and body blocks only, with unique b-N keys. "
         "Keep salutation and closing outside body blocks, just as for cover-letter bodies. "
         "Never generate a recipient, address, sender, signature, date or correspondence frame. "
         + _STATEMENT_RULES.replace(
             "Dear Hiring team,; Dear {organization} hiring team,; Sincerely,; Kind regards,; ", ""
         )
-        + "Return version-1 typed JSON only."
+        + "Return version-2 typed JSON only."
     ),
 }
 
@@ -270,7 +271,7 @@ SCHEMA_VERSIONS = {
     "regenerate_section": "2",
     "refine_documents": "1",
     "structure_import": "1",
-    "write_application_email": "1",
+    "write_application_email": "2",
 }
 
 # The provider returns typed statements, not executable document markup.
@@ -349,13 +350,9 @@ _SCHEMAS["regenerate_section"] = _object(
 _SCHEMAS["refine_documents"] = ConversationReply.model_json_schema()
 _SCHEMAS["write_application_email"] = _object(
     {
-        "schema_version": {"const": "1"},
+        "schema_version": {"const": "2"},
         "stage": {"const": "write_application_email"},
-        "subject": {
-            "type": "string",
-            "maxLength": 120,
-            "enum": ["Application", "Application enquiry"],
-        },
+        "subject": _string(120),
         "blocks": {"type": "array", "minItems": 1, "maxItems": 30, "items": _STATEMENT},
     }
 )
@@ -528,7 +525,7 @@ class _RefinementSource(_ProfessionalSource):
 
 
 class _EmailProjection(_ProfessionalSource):
-    language: Literal["en"]
+    language: RenderLanguage
     letter_body: str = Field(min_length=1, max_length=60000)
 
 
@@ -1482,7 +1479,12 @@ class OllamaClient:
             context = projected
         if interrupted is not None and interrupted.is_set():
             raise ModelFailure("model_interrupted")
-        if stage in {"generate_documents", "regenerate_section", "refine_documents"}:
+        if stage in {
+            "generate_documents",
+            "regenerate_section",
+            "refine_documents",
+            "write_application_email",
+        }:
             source = cast(dict[str, object], context.get("shared", context))
             language = cast(RenderLanguage, source.get("language", "en"))
             if language != "en":
@@ -1507,6 +1509,11 @@ class OllamaClient:
                         phrase: kind
                         for phrase, kind in native.items()
                         if kind == "intent" or phrase == LABELS[language]["greeting"]
+                    }
+                elif stage == "write_application_email":
+                    rendering["subject"] = LABELS[language]["Application"]
+                    rendering["allowed_connectives"] = {
+                        phrase: kind for phrase, kind in native.items() if kind == "intent"
                     }
                 else:
                     if stage == "regenerate_section":

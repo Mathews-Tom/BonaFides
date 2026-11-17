@@ -10,7 +10,8 @@ from typing import Any, cast
 from uuid import UUID
 
 import pytest
-from sqlalchemy import text
+from test_application_email import _generate as _generate_email
+from test_application_email import _queue as _queue_email
 from test_checked_generation import _run, _stub
 from test_checked_section_regeneration import _proposal, _regenerate
 from test_document_conversations import _post as _conversation_post
@@ -170,6 +171,7 @@ def test_each_document_stage_fits_attach_limits_with_full_correction_reserve(
         assert queued.status_code == 202, queued.text
         task = _claim(catalog, queued.json()["workflow"]["id"])
         assert _run(catalog, task)["state"] == "succeeded"
+        _generate_email(catalog, application)
         stages = set()
         for request in stub.requests:
             stage = request["format"]["properties"]["stage"]["const"]
@@ -186,7 +188,7 @@ def test_each_document_stage_fits_attach_limits_with_full_correction_reserve(
             assert input_bound <= 12000
             if language != "en" and stage != "generate_documents":
                 assert "headings" not in wire.get("localized_rendering", {})
-        assert stages == set(STAGES)
+        assert stages == {*STAGES, "write_application_email"}
 
 
 @pytest.mark.postgres
@@ -341,7 +343,7 @@ def test_default_only_seeds_unsaved_applications_and_unknown_request_is_422(
         assert unknown.json()["code"] == "unsupported_document_language"
 
 
-@pytest.mark.parametrize("stage", STAGES)
+@pytest.mark.parametrize("stage", (*STAGES, "write_application_email"))
 def test_shipped_qualification_discovers_language_cases_and_stub_passes(
     stage: str,
     monkeypatch: pytest.MonkeyPatch,
@@ -434,7 +436,7 @@ def test_stub_paraphrases_are_withheld_by_the_existing_checker(
         assert factual > usable
 
 
-@pytest.mark.parametrize("stage", STAGES)
+@pytest.mark.parametrize("stage", (*STAGES, "write_application_email"))
 def test_english_wire_keeps_original_text_and_prompt(stage: str, tmp_path: Path) -> None:
     from test_local_model import qualified_route, route_data
 
@@ -583,7 +585,7 @@ def test_portable_language_pin_validation_preserves_legacy_revisions_and_digests
 
 @pytest.mark.postgres
 @pytest.mark.parametrize("language", LANGUAGES)
-def test_non_english_email_admission_refuses_without_writes_calls_or_route_blocks(
+def test_localized_email_generation_rewrite_keeps_language_and_verbatim_claims(
     catalog: SourceContext,
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -591,76 +593,56 @@ def test_non_english_email_admission_refuses_without_writes_calls_or_route_block
 ) -> None:
     _, application = _setup_pair(catalog)
     profile = _structured_profile(catalog)
-
-    def state() -> dict[str, object]:
-        with catalog.runtime.transaction() as conn:
-            return {
-                table: conn.execute(
-                    text(
-                        f"SELECT coalesce(jsonb_agg(to_jsonb(t) ORDER BY to_jsonb(t)::text),"
-                        f"'[]'::jsonb) FROM bonafides.{table} t WHERE owner_id=:owner"
-                    ),
-                    {"owner": catalog.owner_id},
-                ).scalar_one()
-                for table in (
-                    "owner_settings",
-                    "applications",
-                    "document_drafts",
-                    "document_revisions",
-                    "workflow_runs",
-                    "model_runs",
-                    "local_model_route_blocks",
-                    "match_assessments",
-                    "outbox_events",
-                    "idempotency_records",
-                )
-            }
-
     with _stub(monkeypatch, tmp_path, "valid") as stub:
         response = _context(catalog, profile, application, language)
         assert response.status_code == 200, response.text
         assert _run(catalog, _queue_pair(catalog, response.json()))["state"] == "succeeded"
-        version = _pair_documents(catalog, application)["version"]
         with catalog.runtime.transaction() as conn:
             policy = suitability._policy(conn, catalog.owner_id, catalog.identity.settings)
-            route = generation.route_status(
-                conn, catalog.owner_id, catalog.identity.settings, stage="write_application_email"
-            )
-        assert route["status"] == "qualified"
-        before = state()
-        calls = len(stub.requests)
-        refused = catalog.client.post(
-            f"/api/v1/applications/{application['id']}/email",
-            json={},
-            headers=catalog.headers(version),
-        )
-        assert refused.status_code == 409, refused.text
-        assert refused.json()["code"] == "application_email_language_unsupported"
-        assert len(stub.requests) == calls
-        assert state() == before
+        email = _generate_email(catalog, application)
+        for rewriting in (False, True):
+            if rewriting:
+                result = _run(catalog, _queue_email(catalog, application, email))
+                assert result["state"] == "succeeded", result
+                email = _document(catalog, email["id"])
+            revision = email["current_revision"]
+            assert revision["validation_issues"] == []
+            provenance = revision["provenance_snapshot"]
+            assert provenance["language"] == language
+            assert provenance["model_run"]["prompt_version"] == "ol-write-application-email-v2"
+            title = provenance["frame"]["role"]
+            assert revision["email"]["subject"] == f"{LABELS[language]['Application']}: {title}"
+            texts = [
+                block["text"]
+                for section in revision["body"]["sections"]
+                for block in section["blocks"]
+            ]
+            assert texts[0] == LABELS[language]["greeting"]
+            assert texts[-1] == letter_frame.closing_for(provenance["tone"], language)
+            assert texts.count(texts[0]) == texts.count(texts[-1]) == 1
+            for fact in provenance["facts"]:
+                assert fact["printable_text"] in texts
+            wire = json.loads(stub.requests[-1]["messages"][1]["content"])
+            assert wire["language"] == language
+            rendering = wire["localized_rendering"]
+            assert rendering["subject"] == LABELS[language]["Application"]
+            assert rendering["allowed_connectives"]
+            assert set(rendering["allowed_connectives"].values()) == {"intent"}
+            assert "headings" not in rendering
         with catalog.runtime.transaction() as conn:
             assert suitability._policy(conn, catalog.owner_id, catalog.identity.settings) == policy
-            assert (
-                generation.route_status(
-                    conn,
-                    catalog.owner_id,
-                    catalog.identity.settings,
-                    stage="write_application_email",
-                )
-                == route
-            )
 
 
-@pytest.mark.parametrize("language", LANGUAGES)
-def test_email_projection_stays_english_only(language: RenderLanguage) -> None:
+@pytest.mark.parametrize("language", ("en", *LANGUAGES))
+def test_email_projection_supports_declared_languages_only(language: RenderLanguage) -> None:
     cases, _ = model_qualification.load_cases(DATASET, "write_application_email")
-    context = model_qualification.projection(cases[0], "write_application_email")
+    context = {
+        **model_qualification.projection(cases[0], "write_application_email"),
+        "language": language,
+    }
     assert local_model.email_context(context) == context
-    assert (
-        local_model._EmailProjection.model_json_schema()["properties"]["language"]["const"] == "en"
-    )
     with pytest.raises(local_model.ModelFailure, match="model_context_invalid"):
-        local_model.email_context({**context, "language": language})
+        local_model.email_context({**context, "language": "xx"})
 
 
 @pytest.mark.parametrize("mounted_path", ("/stub_model.py", "/proof/stub_model.py"))

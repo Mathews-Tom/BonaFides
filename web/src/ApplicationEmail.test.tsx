@@ -52,6 +52,20 @@ const changed = (restoreId: string | null = 'revision-2'): DocumentRecord => ({ 
 afterEach(() => { vi.restoreAllMocks(); Object.defineProperty(navigator, 'clipboard', { configurable: true, value: undefined }); });
 
 describe('application email editor and handoff', () => {
+  it.each([['de', 'Deutsch'], ['fr', 'Français'], ['es', 'Español']] as const)('shows %s read-only from the cover letter before and after drafting', async (language, label) => {
+    const f = fixture(null);
+    const documents = attachments.map(item => item.kind === 'cover_letter' ? { ...item, current_revision: { ...item.current_revision, provenance_snapshot: { language } } } : item);
+    render(<ApplicationEmail {...f.props} documents={documents} />);
+    const draft = await screen.findByRole('button', { name: 'Draft application email' });
+    await waitFor(() => expect(draft).toBeEnabled());
+    expect(screen.getByText(/Email language:/)).toHaveTextContent(`${label}. Set by the application’s cover letter`);
+    expect(screen.queryByRole('combobox', { name: /language/i })).not.toBeInTheDocument();
+    await userEvent.click(draft);
+    f.store(email); await act(async () => f.poll.resolve({ ...workflow, state: 'succeeded' })); await ready();
+    expect(screen.getByText(/Email language:/)).toHaveTextContent(label);
+    expect(screen.getByText(/Rewrite replaces the subject and body/)).toHaveTextContent('in the email language');
+  });
+
   it('drafts from an honest empty state, shows progress and loads the saved email', async () => {
     const f = fixture(null); render(<ApplicationEmail {...f.props} />);
     const draft = await screen.findByRole('button', { name: 'Draft application email' }); await waitFor(() => expect(draft).toBeEnabled());

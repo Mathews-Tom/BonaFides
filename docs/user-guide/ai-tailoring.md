@@ -39,24 +39,26 @@ The context prepared for a task is cleared by a daily cleanup once 24 hours have
 
 ## Document languages
 
-The generation API supports English, German, French and Spanish; the web language
-selector is not available yet. On the first generation, an explicit language takes
-precedence over your document default. Later generations, section rewrites and
-conversation edits keep the language saved with that application's documents, even
+Choose English, German, French or Spanish beside the tailored-generation controls.
+For an application without saved documents, the choice starts with your document
+default. On the first generation, your explicit choice takes precedence. Later
+generations, section rewrites and conversation edits keep the language saved with
+that application's documents, even
 if you change the global default. Requesting a different language for an application
 with saved documents is refused with `application_document_language_mismatch`.
 
 Localized headings, letter closings and fixed structured-entry wording do not
 translate your own prose, subjects or publications. Those remain exactly as written.
 The model must copy the supplied localized wording; paraphrases are still blocked.
-Application emails remain English-only. For German, French or Spanish application
-documents, drafting or rewriting an email is refused before any model call with
-`409 application_email_language_unsupported`; it does not block the model route.
+Application emails use the same saved language when drafted or rewritten. German,
+French and Spanish emails have a fixed localized subject label, greeting and
+tone-based closing. The job title and your own claims stay as written; the model
+does not translate them. English emails keep their existing wording.
 
 **After upgrading, old model receipts lose qualification** because all stages share
 a capability fingerprint covering the changed prompts. Use `models.sh qualify`
 to renew the five supported stages: `generate_documents` (prompt v9),
-`regenerate_section` (v9), `refine_documents` (v4), `write_application_email`,
+`regenerate_section` (v9), `refine_documents` (v4), `write_application_email` (v2),
 and `structure_import` if enabled.
 
 **There is no supported command to renew `extract_posting` or
@@ -151,7 +153,11 @@ Replace `Local owner` with the name to record as the reviewer. Attaching authori
 
 Operators can independently measure bounded document-refinement replies with `refine_documents`. Adding this contract changes the route capability fingerprint: after upgrading, rerun each configured stage's qualification rather than carrying earlier receipts forward. Historical model results do not qualify this new stage; no real-model measurement is claimed for it. Qualification alone does not add an application chat interface or change saved documents.
 
-Operators can also run `sh models.sh qualify --stage write_application_email --reviewed-by 'Local owner'` on 20 bundled made-up examples. Email writing needs its own passed qualification and an existing saved cover letter. No real-model result is claimed for this stage.
+Operators can also run
+`sh models.sh qualify --stage write_application_email --reviewed-by 'Local owner'`
+on 26 bundled made-up examples, including German, French and Spanish. Email
+writing needs its own passed qualification for prompt v2 and an existing saved
+cover letter. No real-model result is claimed for this stage.
 
 To enable optional import structuring, remove an existing route first, then add `--import-structuring` to the attachment command above and run `sh models.sh qualify --stage structure_import --reviewed-by 'Local owner'`. Enabling changes the route's capabilities: rerun each document-stage qualification you use; older receipts cannot carry over. A passed import test does not authorize document tasks or opt in any upload. Import structuring and conversational refinement have synthetic integration coverage, not measured real-model results.
 
