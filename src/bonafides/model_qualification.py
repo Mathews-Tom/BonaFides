@@ -31,6 +31,7 @@ from bonafides.commands import canonical_json
 from bonafides.config import ConfigurationError, read_secret
 from bonafides.conversation_protocol import ConversationReply, validate_reply
 from bonafides.fabrication_benchmark import digest
+from bonafides.languages import LABELS
 from bonafides.problems import Problem
 from bonafides.statement_check import check_statements
 
@@ -268,28 +269,53 @@ def statement_counts(
 
 
 class CandidateEmail(documents.StrictModel):
-    schema_version: Literal["1"]
+    schema_version: Literal["2"]
     stage: Literal["write_application_email"]
-    subject: Literal["Application", "Application enquiry"] = Field(max_length=120)
+    subject: str = Field(min_length=1, max_length=120)
     blocks: list[generation.CandidateStatement] = Field(min_length=1, max_length=30)
 
 
 def checked_email(output: dict[str, object], plan: dict[str, object]) -> documents.DocumentBody:
     """No factual subject text; check every body statement inside the corrective loop."""
     candidate = generation.parse_candidate(output, CandidateEmail)
+    language = generation.provenance_language(plan)
+    labels = LABELS[language]
+    if candidate.subject != labels["Application"]:
+        raise model_calls.OutputMismatch(["subject: unestablished_subject"])
     keys = [block.block_key for block in candidate.blocks]
     if len(keys) != len(set(keys)):
         raise model_calls.OutputMismatch(["blocks: duplicate_block_key"])
     if any(letter_frame.role(block.text, {}) is not None for block in candidate.blocks):
         raise model_calls.OutputMismatch(["blocks: correspondence_outside_body"])
+    blocks = [generation.candidate_block(block, plan) for block in candidate.blocks]
+    # Historical English emails have body-only bytes. Localized correspondence is
+    # deterministic server framing, never prose authored by the model.
+    if language != "en":
+        blocks = [
+            documents.DocumentBlock(
+                block_key="email-greeting",
+                text=labels["greeting"],
+                claim_kind="greeting",
+                claim_revision_ids=[],
+                evidence_revision_ids=[],
+            ),
+            *blocks,
+            documents.DocumentBlock(
+                block_key="email-closing",
+                text=letter_frame.closing_for(str(plan.get("tone", "professional")), language),
+                claim_kind="greeting",
+                claim_revision_ids=[],
+                evidence_revision_ids=[],
+            ),
+        ]
     try:
         body = documents.DocumentBody(
-            title="Cover letter",
+            title=labels["cover_letter"],
             sections=[
                 documents.DocumentSection(
                     key="email-body",
-                    heading="Application",
-                    blocks=[generation.candidate_block(block, plan) for block in candidate.blocks],
+                    heading=labels["Application"],
+                    blocks=blocks,
                 )
             ],
         )
@@ -411,6 +437,7 @@ def qualify(
                 "context": context,
                 "facts": case["facts"],
                 "language": case["language"],
+                "tone": case["tone"],
                 "frame": {
                     "role": posting["title"],
                     "organization": posting["organization"],

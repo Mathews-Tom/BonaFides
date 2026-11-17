@@ -6,14 +6,35 @@ All notable changes to BonaFides are recorded here. The format follows [Keep a C
 
 ### Added
 
-- The document API generates tailored pairs in English, German, French or Spanish. Saved document provenance pins the application language for later generation, section rewriting and conversation edits; changing the global default does not change it. Fixed localized wording is checked without translating owner prose. Cover letters default to the localized recipient while preserving explicit overrides and English wording. Portable imports reject unsupported or mismatched explicit language pins without changing historical revision digests. The shared capability fingerprint invalidates old receipts after upgrading. `models.sh qualify` can renew generation, regeneration, refinement, application email and import structuring if enabled; it cannot renew stale `extract_posting` or `match_requirements` receipts, so the AI proposal features remain unavailable on this route. That qualification gap predates document localization; manual requirement and evidence-coverage review remain available. Only generation v9, regeneration v9 and refinement v4 now run 26 cases each; email and import structuring remain at 20. The original English datasets and response schemas are unchanged. Email localization and the web selector are not included; non-English application email drafting/rewriting is refused before queueing with 409 `application_email_language_unsupported`, without model calls or route blocks.
+- Tailored pairs and application emails support English, German, French or Spanish.
+  The web language choice starts with the saved default before the first generation;
+  after documents exist it is locked to their language. Saved provenance pins later
+  generation, section rewriting, conversation edits and email rewrites. Fixed
+  localized wording is checked without translating owner prose. Cover letters
+  default to the localized recipient while preserving explicit overrides and
+  English wording. Portable imports reject unsupported or mismatched explicit
+  language pins without changing historical revision digests. The shared capability
+  fingerprint invalidates old receipts after upgrading. `models.sh qualify` can
+  renew generation, regeneration, refinement, application email and import
+  structuring if enabled; it cannot renew stale `extract_posting` or
+  `match_requirements` receipts, so AI proposal features remain unavailable on that
+  route. Manual requirement and evidence-coverage review remain available.
+  Generation v9, regeneration v9, refinement v4 and email v2 each run 26 cases;
+  import structuring remains at 20. Original English datasets are unchanged.
+- Application email v2 uses a deterministic localized subject label, greeting and
+  tone-based closing for German, French and Spanish while preserving English
+  output bytes. Owner-written claims and job titles stay verbatim. Requalify
+  `write_application_email` after upgrading to prompt v2 and schema 2.
 - Localized generation, section rewriting and conversation edits send only stage-relevant fixed wording and avoid repeating display fields already included in printable claims, retaining installed-route input limits and the full corrective-retry reserve.
 - After upgrading, saved posting-suitability assessments show as stale (`model_prompt_or_template_changed`) because the document prompt versions changed. Saved assessments and documents are unchanged; reassess to refresh them.
 - Document preferences independently remember English, German, French or Spanish and the base résumé display language. New or rebuilt base résumés use localized headings, Gregorian dates, ongoing-date, age and proficiency labels and fixed structured-entry wording without translating your prose. The PDF renderer supports these languages and fixed letter closings. Existing documents, template pins and published workspace schemas are unchanged.
 - Application emails have a web editor beside the application documents: draft with progress, save recipient/subject/body with conflict handling, rewrite and undo, copy each part with manual-copy guidance, and open a mail-app draft. Mail links above 2,000 encoded characters are disabled without shortening the email. Résumé and letter PDFs remain separate downloads to attach yourself; nothing is sent or marked sent.
 - Application emails can be generated, edited, rewritten and restored through the owner API. Each application has one independently versioned draft with a manual-only recipient, a server-built subject and checked body. Rewrites keep your recipient and can be undone until the next change; failed or cancelled writing keeps saved content. Migration 010/native schema 10 and workspace 5 preserve emails and their history.
 - Email history remains readable, but Restore only undoes the latest whole-email rewrite; it cannot restore arbitrary older versions and is refused after any subsequent email change.
-- Operators can independently qualify the unchanged application-email writing stage on 20 bundled synthetic cases. Its bounded, non-factual subject and claim-checked body exclude recipients, correspondence frames and protected sender/date/signature body units; the separate stage capability preserves existing qualification receipts.
+- Operators can independently qualify the application-email writing stage on
+  bundled synthetic cases. Its deterministic subject and claim-checked body exclude
+  model-authored recipients, correspondence frames and protected sender/date/signature
+  body units; the separate stage capability preserves other stage receipts.
 - Cover letters support friendly, concise and traditional formal tones, with saved, independently editable correspondence dates, recipients, greetings and closings. Tone changes update eligible English closings with exact conversation undo, preserve owner-customized closings and keep sender/signature outside model context. New template pins preserve older document rendering; changed model stages require requalification.
 - Application conversations can request checked edits to selected saved résumé and cover-letter passages through a qualified model route. Replies disclose concurrent-edit skips and tone changes, preserve unsaved editor text, and offer exact all-or-nothing undo. Unsupported additions remain blocked. Additive migration 009 enables tone-only undo while keeping workspace format 4 and published schemas unchanged.
 - Coordinated conversation requests share identical professional context instead of repeating it per document, leaving more of the unchanged checked input budget for selected passages. Oversized requests still refuse before creating work; this refinement contract update requires configured model stages to be requalified.
