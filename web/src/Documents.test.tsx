@@ -104,6 +104,49 @@ describe('per-application document language', () => {
     expect(request.mock.calls.find(call => call[0] === '/applications/application-1/generation' && call[1] === 'POST')?.[2]).toEqual(expect.objectContaining({ language }));
   });
 
+  it('invalidates a confirmed context when the saved default changes an unchosen application language', async () => {
+    const user = userEvent.setup(); let stored: DocumentDefaults = { ...remembered, language: 'en' };
+    const { api, request } = fixture(saved, async path => {
+      if (path === '/applications') return { items: [application], next_cursor: null };
+      if (path === '/applications/application-1/documents') return { ...pair, items: [] };
+      if (path.includes('/generation-context?')) {
+        const language = new URL(path, 'https://bonafides.test').searchParams.get('language');
+        return { ...context, language, generation_route: { ...route, status: 'qualified' } };
+      }
+      throw new ApiError(404, 'not_found');
+    }, async (_path, method, body, version) => {
+      if (method === 'PATCH') {
+        expect(version).toBe(stored.version);
+        stored = { ...stored, ...body as DocumentDefaultsPatch, version: stored.version + 1 };
+      }
+      return stored;
+    });
+    render(<Documents archiveRecovery={archiveRecovery} api={api} profile={profile} />);
+    await openApplication(user);
+    const selector = screen.getByRole('combobox', { name: 'Application document language' });
+    expect(selector).toHaveDisplayValue('English');
+    await user.click(screen.getByRole('button', { name: 'Preview reviewed generation context' }));
+    const confirm = await screen.findByRole('checkbox', { name: /I reviewed this exact projection/ });
+    await user.click(confirm);
+    expect(screen.getByRole('button', { name: 'Generate résumé and cover letter pair' })).toBeEnabled();
+    await user.click(screen.getByText('Remembered defaults and retention'));
+    await user.selectOptions(screen.getByRole('combobox', { name: 'Document language' }), 'de');
+    expect(confirm).toBeChecked();
+    await user.click(screen.getByRole('button', { name: 'Save remembered defaults' }));
+    await waitFor(() => expect(selector).toHaveDisplayValue('Deutsch'));
+    expect(screen.queryByRole('checkbox', { name: /I reviewed this exact projection/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Generate résumé and cover letter pair' })).not.toBeInTheDocument();
+    expect(request.mock.calls.some(call => call[0] === '/applications/application-1/generation' && call[1] === 'POST')).toBe(false);
+    await user.click(screen.getByRole('button', { name: 'Preview reviewed generation context' }));
+    const refreshed = await screen.findByRole('checkbox', { name: /I reviewed this exact projection/ });
+    expect(refreshed).not.toBeChecked();
+    expect(screen.getByRole('button', { name: 'Generate résumé and cover letter pair' })).toBeDisabled();
+    const previews = request.mock.calls.filter(call => call[0].includes('/generation-context?'));
+    expect(previews.map(call => new URL(call[0], 'https://bonafides.test').searchParams.get('language'))).toEqual(['en', 'de']);
+    expect(request.mock.calls.find(call => call[0] === '/document-defaults' && call[1] === 'PATCH')?.[2]).toEqual({ language: 'de' });
+    expect(request.mock.calls.some(call => call[0] === '/applications/application-1/generation' && call[1] === 'POST')).toBe(false);
+  });
+
   it.each(['provenance', 'frame'] as const)('locks existing German documents to their %s language instead of the saved default', async source => {
     const user = userEvent.setup();
     const german: DocumentRecord = { ...tailored, current_revision: { ...tailored.current_revision, provenance_snapshot: { ...tailored.current_revision.provenance_snapshot, ...(source === 'provenance' ? { language: 'de', frame: { language: 'es' } } : { frame: { language: 'de' } }) } } };

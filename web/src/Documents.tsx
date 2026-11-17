@@ -216,7 +216,7 @@ export function Documents({ api, profile, archiveRecovery, disabled = false, ext
     const prevent = (event: BeforeUnloadEvent) => { event.preventDefault(); event.returnValue = ''; };
     window.addEventListener('beforeunload', prevent); return () => window.removeEventListener('beforeunload', prevent);
   }, [dirty, emailDirty, emailBusy, busy, activeTask, conversationBusy]);
-  useEffect(() => { setContext(null); setContextConfirmed(false); }, [profileId, profile?.version, template, tone, applicationId, initialPageTarget]);
+  useEffect(() => { setContext(null); setContextConfirmed(false); }, [profileId, profile?.version, template, tone, applicationId, initialPageTarget, generationLanguage]);
   useEffect(() => {
     setSectionContext(null); setSectionConfirmed(false); setApplyConfirmed(false);
   }, [doc?.id, doc?.version, doc?.current_revision.id, profile?.version, profile?.current_revision.id, sectionKey, sectionTone, dirty]);
