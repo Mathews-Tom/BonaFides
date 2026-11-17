@@ -57,9 +57,26 @@ documents, drafting or rewriting an email is refused before any model call with
 a capability fingerprint covering the changed prompts. Use `models.sh qualify`
 to renew the five supported stages: `generate_documents` (prompt v9),
 `regenerate_section` (v9), `refine_documents` (v4), `write_application_email`,
-and `structure_import` if enabled. Existing `extract_posting` and
-`match_requirements` receipts also become stale, but the shipped qualification CLI
-cannot renew them; those stages remain unqualified on this route.
+and `structure_import` if enabled.
+
+**There is no supported command to renew `extract_posting` or
+`match_requirements` receipts today**, including `bonafides models qualify`
+inside the application image. Removing and reattaching a model with
+`models.sh attach` starts with empty receipts; it does not renew them. This is a
+pre-existing qualification gap, not a
+new document-languages restriction: earlier shared-fingerprint changes, including
+the letters milestone's v8 prompts, invalidated these receipts in the same way.
+
+When these receipts are stale, **Request extraction proposal** (AI-suggested job
+requirements) and **Request matching proposal** (AI-suggested evidence coverage)
+are unavailable. You can still use **Review requirements manually** → **Save
+reviewed requirements**, and **Review evidence coverage manually** → **Save
+owner-reviewed assessment**, as described in
+[Review what the job requires](opportunities.md#review-what-the-job-requires).
+Manual review also supplies the reviewed requirements needed for tailored
+documents once their supported model stages are requalified. Restoring the two
+AI proposal features requires a supported qualification workflow that is not
+currently shipped; do not edit receipt fingerprints to bypass qualification.
 
 Only generation, regeneration and refinement now include 26 cases (the unchanged
 20 English cases plus six language cases), with paraphrase negative controls.

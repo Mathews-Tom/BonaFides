@@ -322,7 +322,7 @@ def _frame(
                 "correspondence_date": date.today().isoformat(),
                 "organization": posting["company"],
                 "role": posting["title"],
-                "recipient": "Hiring team",
+                "recipient": LABELS[language]["recipient"],
             }
         )
     try:

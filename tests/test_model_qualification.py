@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import copy
 import json
+import subprocess
 from pathlib import Path
 from typing import cast
 from uuid import UUID
@@ -47,6 +48,65 @@ def output(case: dict[str, object], stage: str) -> dict[str, object]:
         "gaps": [],
         "warnings": [],
     }
+
+
+@pytest.mark.parametrize("stage", ("extract_posting", "match_requirements"))
+def test_legacy_proposal_stages_have_no_supported_qualification_command(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], stage: str
+) -> None:
+    with pytest.raises(SystemExit) as error:
+        qualification.main(
+            [
+                "qualify",
+                "--route",
+                str(tmp_path / "absent-route.json"),
+                "--stage",
+                stage,
+                "--dataset",
+                str(DATASET),
+                "--reviewed-by",
+                "synthetic-fixture-author",
+            ]
+        )
+    assert error.value.code == 2
+    assert "invalid choice" in capsys.readouterr().err
+    with pytest.raises(ValueError, match="^qualification_stage_invalid$"):
+        qualification.load_cases(DATASET, stage)
+    wrapper = subprocess.run(
+        [
+            "sh",
+            str(Path(__file__).parents[1] / "deploy/models.sh"),
+            "qualify",
+            "--dir",
+            str(tmp_path / "absent-installation"),
+            "--stage",
+            stage,
+            "--reviewed-by",
+            "synthetic-fixture-author",
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert wrapper.returncode == 2
+    assert "choose generate_documents" in wrapper.stderr
+    assert not list(tmp_path.iterdir())
+
+
+@pytest.mark.parametrize(("before", "after"), ((7, 8), (8, 9)))
+def test_legacy_proposal_receipts_stale_after_shared_prompt_bumps(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, before: int, after: int
+) -> None:
+    prompts = {**local_model.PROMPT_VERSIONS, "generate_documents": before}
+    monkeypatch.setattr(local_model, "PROMPT_VERSIONS", prompts)
+    old = qualified_route(tmp_path, route_data("http://127.0.0.1:1"))
+    stages = ("extract_posting", "match_requirements")
+    assert all(old.qualified_for(stage) for stage in stages)
+    monkeypatch.setattr(local_model, "PROMPT_VERSIONS", {**prompts, "generate_documents": after})
+    current = local_model.load_route(tmp_path / "route.json")
+    assert current is not None
+    assert current.capability_sha256 != old.capability_sha256
+    assert not any(current.qualified_for(stage) for stage in stages)
 
 
 @pytest.mark.parametrize("stage", ("generate_documents", "regenerate_section"))

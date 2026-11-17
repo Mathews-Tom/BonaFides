@@ -44,12 +44,14 @@ from bonafides import (
     model_context,
     model_projections,
     model_qualification,
+    portable_data,
     suitability,
 )
 from bonafides.commands import canonical_json
 from bonafides.import_parser import ImportParserClient
 from bonafides.installed_model import verify_result
 from bonafides.languages import LABELS, RenderLanguage
+from bonafides.portable_archive import ArchiveError
 from bonafides.problems import Problem
 from bonafides.statement_check import check_statements
 from tools import stub_model
@@ -148,10 +150,16 @@ def test_each_document_stage_fits_attach_limits_with_full_correction_reserve(
         monkeypatch.setattr(local_model, "load_route", lambda _path: route)
         preview = _context(catalog, profile, application, language)
         assert preview.status_code == 200, preview.text
+        assert preview.json()["frame"]["recipient"] == LABELS[language]["recipient"]
         assert _run(catalog, _queue_pair(catalog, preview.json()))["state"] == "succeeded"
         pair = _pair_documents(catalog, application)["items"]
         resume = next(item for item in pair if item["kind"] == "resume")
         letter = next(item for item in pair if item["kind"] == "cover_letter")
+        assert (
+            letter["current_revision"]["provenance_snapshot"]["frame"]["recipient"]
+            == LABELS[language]["recipient"]
+        )
+        assert letter["current_revision"]["validation_issues"] == []
         assert _regenerate(catalog, resume)["state"] == "succeeded"
         queued = _conversation_post(
             catalog,
@@ -203,6 +211,7 @@ def test_tailored_pair_rewrites_and_refinement_keep_saved_language(
         assert response.status_code == 200, response.text
         preview = response.json()
         assert preview["language"] == preview["frame"]["language"] == language
+        assert preview["frame"]["recipient"] == LABELS[language]["recipient"]
         assert _run(catalog, _queue_pair(catalog, preview))["state"] == "succeeded"
         pair = _pair_documents(catalog, application)["items"]
         assert {item["kind"] for item in pair} == {"resume", "cover_letter"}
@@ -221,6 +230,10 @@ def test_tailored_pair_rewrites_and_refinement_keep_saved_language(
         assert (
             letter["current_revision"]["provenance_snapshot"]["frame"]["closing"]
             == LABELS[language]["professional"]
+        )
+        assert (
+            letter["current_revision"]["provenance_snapshot"]["frame"]["recipient"]
+            == LABELS[language]["recipient"]
         )
         facts = resume["current_revision"]["provenance_snapshot"]["facts"]
         localized = next(fact for fact in facts if "localized_claim" in fact)
@@ -271,6 +284,10 @@ def test_tailored_pair_rewrites_and_refinement_keep_saved_language(
         assert refined["current_revision"]["id"] != letter["current_revision"]["id"]
         assert refined["current_revision"]["provenance_snapshot"]["language"] == language
         assert refined["current_revision"]["validation_issues"] == []
+        assert (
+            refined["current_revision"]["provenance_snapshot"]["frame"]["recipient"]
+            == LABELS[language]["recipient"]
+        )
         assert (
             refined["current_revision"]["provenance_snapshot"]["frame"]["closing"]
             == LABELS[language]["concise"]
@@ -450,6 +467,45 @@ def test_english_wire_keeps_original_text_and_prompt(stage: str, tmp_path: Path)
             )
 
 
+@pytest.mark.parametrize("language", ("en", *LANGUAGES))
+def test_default_recipient_is_localized_and_explicit_frame_overrides_survive(
+    language: RenderLanguage,
+) -> None:
+    snapshot: dict[str, object] = {"display_name": "Synthetic Owner"}
+    posting = cast(Any, {"company": "Example", "title": "Engineer"})
+    frame = generation._frame(
+        snapshot, posting, template="bonafides-evidence-v1", language=language
+    )
+    assert frame["recipient"] == LABELS[language]["recipient"]
+    if language == "en":
+        assert frame["recipient"] == "Hiring team"
+        assert canonical_json(frame) == canonical_json(
+            generation._frame(snapshot, posting, template="bonafides-evidence-v1")
+        )
+    candidate = generation.CandidateDocument.model_validate(
+        {
+            "kind": "cover_letter",
+            "sections": [
+                {
+                    "heading": LABELS[language]["Letter"],
+                    "blocks": [
+                        {
+                            "block_key": "b-1",
+                            "kind": "connective",
+                            "text": LABELS[language]["greeting"],
+                            "claim_id": None,
+                        }
+                    ],
+                }
+            ],
+            "letter_frame": {"recipient": "Mx. Reviewer", "greeting": "Dear Mx. Reviewer,"},
+        }
+    )
+    parts = generation._letter_parts(candidate, {"frame": frame, "tone": "professional"})
+    assert parts.recipient == "Mx. Reviewer"
+    assert parts.greeting == "Dear Mx. Reviewer,"
+
+
 @pytest.mark.parametrize("consumer", ("parts", "is_custom", "closing_for"))
 def test_untrusted_frame_language_uses_printable_frame_validation(consumer: str) -> None:
     with pytest.raises(Problem) as error:
@@ -463,36 +519,66 @@ def test_untrusted_frame_language_uses_printable_frame_validation(consumer: str)
 
 
 @pytest.mark.postgres
-def test_unknown_language_in_imported_provenance_is_a_422_not_a_500(
+@pytest.mark.parametrize("language", ("en", *LANGUAGES))
+def test_portable_language_pin_validation_preserves_legacy_revisions_and_digests(
     catalog: SourceContext,
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
     parser: ImportParserClient,
     renderer_spool: Path,
+    language: RenderLanguage,
 ) -> None:
     profile, application = _setup_pair(catalog)
     with _stub(monkeypatch, tmp_path, "valid"):
-        assert (
-            _run(catalog, _queue_pair(catalog, _preview(catalog, profile, application)))["state"]
-            == "succeeded"
-        )
+        preview = _context(catalog, profile, application, language)
+        assert preview.status_code == 200, preview.text
+        assert _run(catalog, _queue_pair(catalog, preview.json()))["state"] == "succeeded"
     archive = _export(catalog)
-    for revision in archive.manifest.records["document_revisions"]:
+    portable_data._semantic_hashes(archive)
+    other = next(item for item in ("en", *LANGUAGES) if item != language)
+    cases: tuple[tuple[object, str | None], ...] = (
+        ("xx", None),
+        ("xx", "xx"),
+        (None, None),
+        (123, None),
+        (False, None),
+        ({}, None),
+        (other, None),
+        (language, "xx"),
+    )
+    for pin, frame_language in cases:
+        corrupted = replace(archive, manifest=archive.manifest.model_copy(deep=True))
+        for revision in corrupted.manifest.records["document_revisions"]:
+            provenance = cast(dict[str, Any], revision["provenance_snapshot"])
+            body = documents.parse_body(revision["body"])
+            template = str(revision["template_version"])
+            before = generation.revision_digest(body, template, provenance)
+            provenance["language"] = pin
+            assert generation.revision_digest(body, template, provenance) == before
+            if frame_language is not None:
+                provenance["frame"]["language"] = frame_language
+                revision["content_sha256"] = generation.revision_digest(body, template, provenance)
+        with pytest.raises(ArchiveError, match="^invalid_portable_document$"):
+            portable_data._semantic_hashes(corrupted)
+    legacy = replace(archive, manifest=archive.manifest.model_copy(deep=True))
+    for revision in legacy.manifest.records["document_revisions"]:
         provenance = cast(dict[str, Any], revision["provenance_snapshot"])
-        provenance["language"] = provenance["frame"]["language"] = "xx"
-        revision["content_sha256"] = generation.revision_digest(
-            documents.parse_body(revision["body"]),
-            str(revision["template_version"]),
-            provenance,
+        provenance.pop("language")
+        assert revision["content_sha256"] == generation.revision_digest(
+            documents.parse_body(revision["body"]), str(revision["template_version"]), provenance
         )
-    archive = _digest(archive)
-    _import(catalog, parser, renderer_spool, _encoded(archive.manifest, archive.blobs))
+    portable_data._semantic_hashes(legacy)
+    legacy = _digest(legacy)
+    _import(catalog, parser, renderer_spool, _encoded(legacy.manifest, legacy.blobs))
     login = _login(catalog.identity, catalog.client)
     assert login.status_code == 201, login.text
-    for draft in archive.manifest.records["document_drafts"]:
+    for draft in legacy.manifest.records["document_drafts"]:
         response = catalog.client.get(f"/api/v1/documents/{draft['id']}")
-        assert response.status_code == 422, response.text
-        assert response.json()["code"] == "unsupported_document_language"
+        assert response.status_code == 200, response.text
+        provenance = response.json()["current_revision"]["provenance_snapshot"]
+        assert "language" not in provenance
+        assert provenance["frame"].get("language", "en") == language
+        assert generation.provenance_language(provenance) == language
 
 
 @pytest.mark.postgres
