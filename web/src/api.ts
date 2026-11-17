@@ -156,7 +156,9 @@ export interface Workflow {
     fetched_at?: string; freshness?: 'current'; error_code?: string;
   } | null;
 }
-export type DocumentKind = 'resume' | 'cover_letter';
+export type DocumentKind = 'resume' | 'cover_letter' | 'application_email';
+export interface EmailParts { recipient: string; subject: string }
+export interface ApplicationEmailSaveRequest extends DocumentSaveRequest { email: EmailParts }
 export type DocumentTone = 'professional' | 'concise' | 'friendly';
 export interface LetterParts { correspondence_date: string; recipient: string; greeting: string; closing: string }
 export interface DocumentFrame extends Partial<LetterParts> { display_name?: string; [key: string]: unknown }
@@ -173,6 +175,7 @@ export interface DocumentPageFit {
 }
 export interface DocumentProvenance {
   facts?: DocumentFact[]; frame?: DocumentFrame; mode?: string; schema_version?: number | string;
+  email?: EmailParts; email_restore_revision_id?: string | null;
   omitted_claims?: { claim_revision_id: string; claim_text: string; code: 'literal_claim_not_grounded' }[];
   page_fit?: DocumentPageFit;
   model_run?: Record<string, unknown> | null; [key: string]: unknown;
@@ -396,6 +399,21 @@ export class Api {
   }
   sendConversation(applicationId: string, body: ConversationRequest, version: number, key: string, signal?: AbortSignal): Promise<{ turn: ConversationTurn; workflow: Workflow | null; application_version: number; context_sha256: string }> {
     return this.request(`/applications/${encodeURIComponent(applicationId)}/conversation`, 'POST', body, version, key, signal);
+  }
+  getApplicationEmail(applicationId: string, signal?: AbortSignal): Promise<DocumentRecord> {
+    return this.request(`/applications/${encodeURIComponent(applicationId)}/email`, 'GET', undefined, undefined, false, signal);
+  }
+  draftApplicationEmail(applicationId: string, version: number, key: string, signal?: AbortSignal): Promise<Workflow> {
+    return this.request(`/applications/${encodeURIComponent(applicationId)}/email`, 'POST', {}, version, key, signal);
+  }
+  saveApplicationEmail(id: string, body: ApplicationEmailSaveRequest, version: number, key: string, signal?: AbortSignal): Promise<DocumentRecord> {
+    return this.request(`/documents/${encodeURIComponent(id)}`, 'PUT', body, version, key, signal);
+  }
+  rewriteApplicationEmail(id: string, version: number, key: string, signal?: AbortSignal): Promise<Workflow> {
+    return this.request(`/documents/${encodeURIComponent(id)}/rewrite`, 'POST', {}, version, key, signal);
+  }
+  restoreApplicationEmail(id: string, revisionId: string, version: number, key: string, signal?: AbortSignal): Promise<DocumentRecord> {
+    return this.request(`/documents/${encodeURIComponent(id)}/restore`, 'POST', { revision_id: revisionId, reason: 'Owner undid the latest email rewrite' }, version, key, signal);
   }
   undoConversation(applicationId: string, turnId: string, version: number, key: string, signal?: AbortSignal): Promise<{ turn: ConversationTurn }> {
     return this.request(`/applications/${encodeURIComponent(applicationId)}/conversation/turns/${encodeURIComponent(turnId)}/undo`, 'POST', {}, version, key, signal);

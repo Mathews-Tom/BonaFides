@@ -5,6 +5,7 @@ BonaFides works fully without AI. You can build your profile, import a résumé,
 AI is an optional extra. Once it's set up, it can:
 
 - write a **résumé and cover letter tailored to one job** you're tracking,
+- draft an **application email** to review and copy into your own mail app,
 - **rewrite one section** of a tailored document,
 - **suggest the requirements** in a job posting, and
 - **suggest how your profile covers** those requirements.
@@ -16,15 +17,17 @@ Unless stated otherwise, this page describes document tailoring. [Optional résu
 ## What AI never does in BonaFides
 
 - **It never uses a cloud service.** The model must run on your own computer or private network, under your control. BonaFides refuses public internet addresses and never falls back to a hosted service.
-- **It never runs without your say-so.** For each task, you see exactly what will be sent and where, and you tick a box to allow it. Opening or reviewing a document doesn't grant access.
+- **It never runs without your say-so.** Pair and section tasks show a preview to approve. Email writing starts only when you choose **Draft application email** or confirm **Rewrite application email**, using the saved letter's professional facts and the configured email writing route.
 - **It never downloads models or lets the model take actions.** BonaFides only asks the model for text and reads the answer, with a small, fixed limit on attempts per task.
 - **It can't add facts.** It may only use your profile entries. Anything else it writes is flagged as a problem and blocks export.
 
 ## What the model receives
 
-Before each task, preview the exact content on the Documents page: **Preview reviewed generation context** for a tailored pair, or **Preview selected-section model projection** for a single-section rewrite. In general:
+For a tailored pair or a single-section rewrite, preview the exact content on the Documents page before the task runs: **Preview reviewed generation context** for a tailored pair, or **Preview selected-section model projection** for a single-section rewrite. Email writing has no preview step; it sends the inputs listed below for an application email. In general:
 
 **Sent:** the posting's title, employer and text; its reviewed requirements; your profile entries and their details; the text of their sources (except as noted below); the tone and language you chose.
+
+**Sent for an application email:** the same posting, requirements, profile entries and sources, tone and language as above, plus the body of the saved cover letter. The letter's sender, date and signature are left out. The request goes to the email writing model you configured.
 
 **Never sent:** your name and contact details, your private notes, contacts, interview details and attachments, your password, and internal settings.
 
@@ -102,9 +105,7 @@ Replace `Local owner` with the name to record as the reviewer. Attaching authori
 
 Operators can independently measure bounded document-refinement replies with `refine_documents`. Adding this contract changes the route capability fingerprint: after upgrading, rerun each configured stage's qualification rather than carrying earlier receipts forward. Historical model results do not qualify this new stage; no real-model measurement is claimed for it. Qualification alone does not add an application chat interface or change saved documents.
 
-Operators can also run `sh models.sh qualify --stage write_application_email --reviewed-by 'Local owner'` on 20 bundled made-up examples. Once qualified, it can create a saved application email through the API, after a cover letter exists. You can edit the recipient, subject and body, rewrite the email, and undo that rewrite until you change the email again. The recipient starts empty and is never invented by AI; your own address entry is kept on rewrites. Failed writing leaves the saved email unchanged. The screen controls, copying and opening your mail app come next; nothing is sent or marked as sent. No real-model result is claimed.
-
-Earlier email versions stay in history, but Restore only undoes the most recent whole-email rewrite. It cannot restore arbitrary older versions and is refused after any further change to the email.
+Operators can also run `sh models.sh qualify --stage write_application_email --reviewed-by 'Local owner'` on 20 bundled made-up examples. Email writing needs its own passed qualification and an existing saved cover letter. No real-model result is claimed for this stage.
 
 To enable optional import structuring, remove an existing route first, then add `--import-structuring` to the attachment command above and run `sh models.sh qualify --stage structure_import --reviewed-by 'Local owner'`. Enabling changes the route's capabilities: rerun each document-stage qualification you use; older receipts cannot carry over. A passed import test does not authorize document tasks or opt in any upload. Import structuring and conversational refinement have synthetic integration coverage, not measured real-model results.
 
@@ -112,7 +113,7 @@ Each completed test saves its real result and restarts this installation to appl
 
 If interrupted attachment or removal leaves a disabled managed route, run `sh models.sh remove` again before attaching another model. A lock left by an interrupted command requires [safe manual recovery](../development/README.md#optional-operator-controlled-local-model-route); do not force-unlock a running command.
 
-Open **Documents** for an application. **Generation route:** and the qualification receipts show each stage's real status. Writing a pair and rewriting a section qualify separately; a passed receipt cannot override a block caused by a malformed live answer. No document model task runs until you preview its input and explicitly approve that task.
+Open **Documents** for an application. **Generation route:** and the qualification receipts show each document stage's real status. Writing a pair, rewriting a section and drafting an email qualify separately; a passed receipt cannot override a block caused by a malformed live answer. Pair and section tasks require their input preview and approval; email writing requires the separate explicit actions described below.
 
 To disable AI and remove its managed route:
 
@@ -131,3 +132,26 @@ If the model reaches its output limit while writing a tailored pair or rewriting
 An answer in the wrong format gets one corrective retry. If that answer is still malformed, the task fails and that kind of task is blocked for the route. A block on section regeneration does not by itself block pair generation. Another qualification receipt does not clear an existing live block.
 
 On **Documents**, **Valid claim JSON rate for this route** shows separate **Pair generation** and **Section regeneration** counts. Output-limited tasks count against the rate: one output-limited task followed by one valid task gives 50% valid. Unreachable, interrupted and other failures before an answer can be evaluated are shown separately and excluded. This rate measures output format, not factual accuracy or writing quality.
+
+## Prepare an application email
+
+1. Open **Documents**, choose **Tracked application documents**, load your applications and select the job. Save a tailored cover letter first.
+2. In **Application email**, choose **Draft application email**. Progress appears while writing runs. The saved draft has a recipient, subject and body. The recipient starts empty: BonaFides never invents an address.
+3. Type the recipient yourself if you know it. Edit the subject and body passages separately, then choose **Save email changes**. These changes survive reloading. **Reload email** keeps unsaved edits when the saved wording is unchanged, including after a profile update. If the saved wording changed meanwhile, your text stays on screen for comparison: copy anything you want to keep, then explicitly choose **Use saved email instead of my changes**. Nothing is silently overwritten.
+4. Use **Copy recipient**, **Copy subject** and **Copy body**, or **Open in mail app**. They use the words currently shown, including unsaved edits. If clipboard access fails, select the fields and copy manually; copy the body passages in order, with blank lines between them.
+5. Check the recipient and wording in your mail app. Download the **résumé PDF** and **cover letter PDF** beside the email and **attach them yourself**. If a current PDF is missing, review and render that document in the document editor below. There is no email PDF.
+
+The mail link fills the recipient, subject and body; it does not send or attach anything. Your browser needs a configured mail app. Long emails can exceed a mail app's link limit: above 2,000 encoded characters, the link is unavailable and **Copy body** remains available. Nothing is shortened. Copying, opening the mail app and downloading PDFs never mark the application sent.
+
+### Rewrite, undo and recover
+
+To replace the subject and body, read the rewrite explanation, tick **I want to replace the email subject and body**, then choose **Rewrite application email**. Your typed recipient stays. The subject resets to **Application: [job title]**.
+
+**Undo email rewrite** appears only when the latest rewrite can be undone. It brings back the whole email saved just before that rewrite finished, not an arbitrary older version. Any later save removes the undo offer. If another change happens before undo reaches the server, undo is refused and the newer email stays.
+
+You can save edits while a rewrite runs. The completed rewrite may replace those saved edits; **Undo email rewrite** brings them back. Unsaved text stays on screen for comparison instead of being discarded. This screen does not offer a browser for older email versions.
+
+Failed writing leaves the existing email in place. **Retry email writing** follows the task's retry limits; for a finished failed rewrite, confirm replacement again first. If progress cannot be checked, choose **Reconnect email progress**. **Reload email** reads the saved email without starting writing.
+
+**Nothing is sent by BonaFides.** You decide whether to attach files and send in your own mail app.
+

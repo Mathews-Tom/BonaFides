@@ -5,6 +5,7 @@ import type { ApplicationPage, ApplicationSummary } from './tracking-api';
 import { copyBody, ISSUE_REASONS, issueAnchor, letterParts, linkedClaim, rebaseBody, sameBody, sameLetter } from './document-state';
 import { proposalMatches, SectionProposals } from './SectionProposals';
 import { Conversation, type ConversationDraft } from './Conversation';
+import { ApplicationEmail } from './ApplicationEmail';
 import './Documents.css';
 
 export interface DocumentArchiveRecovery {
@@ -131,6 +132,9 @@ export function Documents({ api, profile, archiveRecovery, disabled = false, ext
   const [conversationDrafts, setConversationDrafts] = useState<Record<string, ConversationDraft>>({});
   const [conversationBusy, setConversationBusy] = useState(false);
   const [pair, setPair] = useState<ApplicationDocuments | null>(null);
+  const [emailDirty, setEmailDirty] = useState(false);
+  const [emailBusy, setEmailBusy] = useState(false);
+  const [emailOpenKey, setEmailOpenKey] = useState('');
   const [context, setContext] = useState<GenerationContext | null>(null);
   const [contextConfirmed, setContextConfirmed] = useState(false);
   const [tone, setTone] = useState<DocumentTone>('professional');
@@ -188,9 +192,9 @@ export function Documents({ api, profile, archiveRecovery, disabled = false, ext
   callbacks.current = { onDirtyChange, onBusyChange };
   const activeTask = !!workflow && !terminal(workflow.state);
   const dirty = buffer !== null || letterBuffer !== null || reconcile;
-  const locked = disabled || busy || activeTask || conversationBusy;
-  const current = useRef({ doc, buffer, letterBuffer, dirty, disabled, profile, mode, applicationId, activeTask });
-  current.current = { doc, buffer, letterBuffer, dirty, disabled, profile, mode, applicationId, activeTask };
+  const locked = disabled || busy || activeTask || conversationBusy || emailBusy || emailDirty;
+  const current = useRef({ doc, buffer, letterBuffer, dirty: dirty || emailDirty, disabled, profile, mode, applicationId, activeTask: activeTask || emailBusy });
+  current.current = { doc, buffer, letterBuffer, dirty: dirty || emailDirty, disabled, profile, mode, applicationId, activeTask: activeTask || emailBusy };
   const profileId = selectedProfile || profile?.current_revision.id || '';
   const upstreamChanged = !!doc && !!profile && doc.current_revision.profile_revision_id !== profile.current_revision.id;
   const application = applications.find(item => item.id === applicationId);
@@ -202,14 +206,14 @@ export function Documents({ api, profile, archiveRecovery, disabled = false, ext
     mounted.current = true; const pending = controllers.current;
     return () => { mounted.current = false; for (const controller of pending) controller.abort(); callbacks.current.onDirtyChange?.(false); callbacks.current.onBusyChange?.(false); };
   }, []);
-  useEffect(() => { callbacks.current.onDirtyChange?.(dirty); }, [dirty]);
-  useEffect(() => { callbacks.current.onBusyChange?.(busy || activeTask || conversationBusy); }, [busy, activeTask, conversationBusy]);
+  useEffect(() => { callbacks.current.onDirtyChange?.(dirty || emailDirty); }, [dirty, emailDirty]);
+  useEffect(() => { callbacks.current.onBusyChange?.(busy || activeTask || conversationBusy || emailBusy); }, [busy, activeTask, conversationBusy, emailBusy]);
   useEffect(() => { if (error) errorRef.current?.focus(); }, [error]);
   useEffect(() => {
-    if (!dirty && !busy && !activeTask && !conversationBusy) return;
+    if (!dirty && !emailDirty && !emailBusy && !busy && !activeTask && !conversationBusy) return;
     const prevent = (event: BeforeUnloadEvent) => { event.preventDefault(); event.returnValue = ''; };
     window.addEventListener('beforeunload', prevent); return () => window.removeEventListener('beforeunload', prevent);
-  }, [dirty, busy, activeTask, conversationBusy]);
+  }, [dirty, emailDirty, emailBusy, busy, activeTask, conversationBusy]);
   useEffect(() => { setContext(null); setContextConfirmed(false); }, [profileId, profile?.version, template, tone, applicationId, initialPageTarget]);
   useEffect(() => {
     setSectionContext(null); setSectionConfirmed(false); setApplyConfirmed(false);
@@ -335,9 +339,13 @@ export function Documents({ api, profile, archiveRecovery, disabled = false, ext
       const value = await request<DocumentRecord>(signal, docPath(externalDocumentId));
       if (epoch !== selection.current) return;
       if (!current.current.dirty) {
+        if (current.current.applicationId !== (value.application_id ?? '')) {
+          setPair(null); setDoc(null); setHistory(null); setPreview(null); setContext(null);
+        }
+        if (value.kind === 'application_email') setEmailOpenKey(externalKey);
         setMode(value.scope); setApplicationId(value.application_id ?? ''); current.current.applicationId = value.application_id ?? '';
-        receive(value);
-        if (value.application_id) await loadPair(signal, value.application_id, epoch, value.id);
+        if (value.kind !== 'application_email') receive(value);
+        if (value.application_id) await loadPair(signal, value.application_id, epoch, value.kind === 'application_email' ? undefined : value.id);
       } else if (current.current.doc?.id === value.id) receive(value);
       else setNotice('A result arrived after editing began. Your local document has not been replaced; reopen the result after saving or discarding.');
       headingRef.current?.focus();
@@ -895,7 +903,10 @@ export function Documents({ api, profile, archiveRecovery, disabled = false, ext
         </>}
       </>}
     </fieldset>
-    {mode === 'tailored' && applicationId && <Conversation key={applicationId} api={api} applicationId={applicationId} disabled={disabled || busy || activeTask} archived={!!application?.archived_at} dirtyDocument={dirty} draft={conversationDrafts[applicationId] ?? { message: '' }} onDraft={draft => setConversationDrafts(previous => ({ ...previous, [applicationId]: draft }))} onBusy={setConversationBusy} onSaved={() => { setContext(null); setContextConfirmed(false); }} onRefreshDocuments={() => { void run(signal => loadPair(signal, applicationId, selection.current, doc?.id)); }} />}
+    {mode === 'tailored' && applicationId && (pair?.application_id === applicationId
+      ? <ApplicationEmail key={`email-${applicationId}-${emailOpenKey}`} api={api} applicationId={applicationId} documents={doc && doc.kind !== 'application_email' ? pair.items.map(item => item.id === doc.id ? doc : item) : pair.items} disabled={disabled || busy || activeTask || conversationBusy || dirty} archived={!!application?.archived_at} onDirty={setEmailDirty} onBusy={setEmailBusy} />
+      : <p>{busy ? 'Loading application documents…' : 'Application documents are unavailable. Reload application documents to try again.'}</p>)}
+    {mode === 'tailored' && applicationId && <Conversation key={applicationId} api={api} applicationId={applicationId} disabled={disabled || busy || activeTask || emailBusy || emailDirty} archived={!!application?.archived_at} dirtyDocument={dirty || emailDirty} draft={conversationDrafts[applicationId] ?? { message: '' }} onDraft={draft => setConversationDrafts(previous => ({ ...previous, [applicationId]: draft }))} onBusy={setConversationBusy} onSaved={() => { setContext(null); setContextConfirmed(false); }} onRefreshDocuments={() => { void run(signal => loadPair(signal, applicationId, selection.current, doc?.id)); }} />}
     {workflow && <section className="task" aria-live="polite"><h3>Document task: {workflow.state.replaceAll('_', ' ')}</h3><p>Attempt {workflow.attempt}{workflow.max_attempts === undefined ? '' : ` of ${workflow.max_attempts}`}. No estimated progress percentage.</p><small>Task {workflow.id}</small>{workflow.next_attempt_at && <p>Next scheduled attempt: {workflow.next_attempt_at}</p>}
       {workflow.mode === 'document_archive' && <p>{workflow.progress ? `${workflow.progress.completed} of ${workflow.progress.total} documents rendered. A download is available only when the entire ZIP succeeds.` : 'Waiting for recorded document progress. No completed count is inferred.'}</p>}
       {workflow.mode === 'document_archive' && workflow.last_error_code && <p className="error">{archiveErrorText(new ApiError(409, workflow.last_error_code))} Failure code: {workflow.last_error_code}.</p>}

@@ -91,4 +91,23 @@ describe('same-origin API transport', () => {
     await expect(api.request('/profile', 'PUT', {}, 9, 'next-explicit-command')).resolves.toBeUndefined();
     expect(fetcher).toHaveBeenCalledTimes(2);
   });
+  it('binds all email mutations to the existing CSRF, if-match and idempotency transport', async () => {
+    const fetcher = vi.fn().mockImplementation(async () => new Response('{}', { status: 200 }));
+    vi.stubGlobal('fetch', fetcher); const api = new Api(); api.csrf = 'email-csrf';
+    const body = { base_revision_id: 'revision-1', body: { title: 'Email', sections: [] }, email: { recipient: '', subject: 'Application' }, reason: 'Owner edit' };
+    await api.getApplicationEmail('application/one');
+    await api.draftApplicationEmail('application/one', 7, 'draft-key');
+    await api.saveApplicationEmail('email/one', body, 2, 'save-key');
+    await api.rewriteApplicationEmail('email/one', 3, 'rewrite-key');
+    await api.restoreApplicationEmail('email/one', 'revision-1', 4, 'restore-key');
+    expect(fetcher.mock.calls.map(call => [call[0], call[1].method])).toEqual([
+      ['/api/v1/applications/application%2Fone/email', 'GET'], ['/api/v1/applications/application%2Fone/email', 'POST'],
+      ['/api/v1/documents/email%2Fone', 'PUT'], ['/api/v1/documents/email%2Fone/rewrite', 'POST'], ['/api/v1/documents/email%2Fone/restore', 'POST'],
+    ]);
+    for (const [index, version, key] of [[1, 7, 'draft-key'], [2, 2, 'save-key'], [3, 3, 'rewrite-key'], [4, 4, 'restore-key']] as const) {
+      expect(fetcher.mock.calls[index]?.[1]).toEqual(expect.objectContaining({ credentials: 'same-origin', cache: 'no-store', headers: expect.objectContaining({ 'If-Match': `"${version}"`, 'Idempotency-Key': key, 'X-CSRF-Token': 'email-csrf' }) }));
+    }
+    expect(JSON.parse(fetcher.mock.calls[2]?.[1].body)).toEqual(body);
+    expect(JSON.parse(fetcher.mock.calls[4]?.[1].body)).toEqual({ revision_id: 'revision-1', reason: 'Owner undid the latest email rewrite' });
+  });
 });
