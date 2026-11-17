@@ -1165,7 +1165,7 @@ def _section_context() -> dict[str, object]:
 def test_document_prompts_pin_prefix_cut_shape(stage: str) -> None:
     from bonafides import local_model
 
-    assert PROMPT_VERSIONS[stage] == f"ol-{stage.replace('_', '-')}-v8"
+    assert PROMPT_VERSIONS[stage] == f"ol-{stage.replace('_', '-')}-v9"
     prompt = local_model._SUFFIXES[stage]
     assert "claim's exact printable text" in prompt
     assert "whole-phrase prefix of its claim text" in prompt
@@ -1632,7 +1632,7 @@ def test_friendly_generation_request_omits_private_letter_frame(tmp_path: Path) 
     frame_schema = document_schema["properties"]["letter_frame"]["anyOf"][1]
     assert set(frame_schema["properties"]) == {"recipient", "greeting"}
     assert frame_schema["additionalProperties"] is False
-    assert local_model.PROMPT_VERSIONS["refine_documents"] == "ol-refine-documents-v3"
+    assert local_model.PROMPT_VERSIONS["refine_documents"] == "ol-refine-documents-v4"
     with pytest.raises(ModelFailure, match="model_context_invalid"):
         OllamaClient(route).prepare(
             "generate_documents",

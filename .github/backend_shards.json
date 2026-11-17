@@ -14,6 +14,7 @@
     "tests/test_portable_erasure.py",
     "tests/test_runtime_proof.py",
     "tests/test_statement_check.py",
+    "tests/test_tailored_document_languages.py",
     "tests/test_suitability.py"
   ],
   "2": [

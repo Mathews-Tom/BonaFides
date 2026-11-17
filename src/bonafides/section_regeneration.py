@@ -112,8 +112,14 @@ def _source_context(
     if selected is None:
         raise Problem(404, "document_section_not_found")
     profile = generation._profile(conn, owner, row["profile_revision_id"])
+    language = generation.provenance_language(provenance)
     facts = generation._fact_data(
-        conn, owner, row["profile_revision_id"], application_id=row["application_id"], writing=True
+        conn,
+        owner,
+        row["profile_revision_id"],
+        application_id=row["application_id"],
+        writing=True,
+        language=language,
     )
     # The historical parent, not today's expanded profile, is the complete fact boundary.
     if facts != provenance.get("facts"):
@@ -146,7 +152,7 @@ def _source_context(
         "content_sha256"
     ) != suitability._posting_digest(posting):
         raise Problem(409, "stale_regeneration_posting_context")
-    claims, evidence = model_context.professional_context(conn, owner, facts)
+    claims, evidence = model_context.professional_context(conn, owner, facts, language=language)
     try:
         projection = model_projections.regeneration_projection(
             {
@@ -166,7 +172,7 @@ def _source_context(
             claims,
             evidence,
             tone,
-            cast(str, provenance.get("language", "en")),
+            language,
             None
             if refinement
             else {

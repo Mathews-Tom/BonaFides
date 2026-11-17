@@ -613,7 +613,11 @@ def publish_reply(
                         and current_parts.closing == original_parts.closing
                     ):
                         current_parts = current_parts.model_copy(
-                            update={"closing": letter_frame.closing_for(candidate.tone)}
+                            update={
+                                "closing": letter_frame.closing_for(
+                                    candidate.tone, generation.provenance_language(provenance)
+                                )
+                            }
                         )
                     change["letter_before"] = letter_frame.state(
                         documents.parse_body(row["body"]), dict(row)

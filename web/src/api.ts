@@ -215,7 +215,7 @@ export interface QualificationReceiptDetails {
 }
 export interface GenerationContext {
   application_id: string; application_version: number; profile_revision_id: string; profile_version: number;
-  requirements_revision_id: string; template_version: string; tone: DocumentTone; language: 'en';
+  requirements_revision_id: string; template_version: string; tone: DocumentTone; language: DocumentLanguage;
   context_sha256: string; model_projection: Record<string, unknown>; frame: Record<string, unknown>; generation_route: GenerationRoute;
   withheld_evidence: WithheldEvidence[];
   page_target?: 1 | 2 | null;
@@ -260,7 +260,7 @@ export interface ApplicationConversation {
 export interface ConversationRequest { message: string; context_sha256: string; document_ids?: string[]; units?: ConversationUnit[] }
 export interface BaseResumeRequest { profile_revision_id: string; template_version: string }
 export interface GenerationRequest extends BaseResumeRequest {
-  requirements_revision_id: string; tone: DocumentTone; language: 'en'; context_sha256: string;
+  requirements_revision_id: string; tone: DocumentTone; language: DocumentLanguage; context_sha256: string;
   page_target?: 1 | 2;
 }
 export interface DocumentSaveRequest { base_revision_id: string; body: DocumentBody; reason: string; letter_frame?: LetterParts }

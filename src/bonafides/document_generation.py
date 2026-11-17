@@ -539,6 +539,39 @@ def base_plan(
     }
 
 
+def provenance_language(provenance: Mapping[str, object]) -> RenderLanguage:
+    """Historical documents, including pre-localization ones, are self-describing."""
+    frame = cast(dict[str, object], provenance.get("frame", {}))
+    return letter_frame.frame_language(
+        {**frame, "language": provenance.get("language", frame.get("language", "en"))}
+    )
+
+
+def application_language(
+    conn: Connection, owner: UUID, application: UUID, requested: str | None
+) -> RenderLanguage:
+    if requested is not None:
+        letter_frame.frame_language({"language": requested})
+    saved = conn.execute(
+        text("""SELECT r.provenance_snapshot FROM bonafides.document_drafts d
+        JOIN bonafides.document_revisions r ON r.owner_id=d.owner_id
+        AND r.id=d.current_revision_id WHERE d.owner_id=:owner AND d.application_id=:app
+        AND d.kind IN ('resume','cover_letter') AND d.deleted_at IS NULL
+        ORDER BY d.created_at,d.id LIMIT 1"""),
+        {"owner": owner, "app": application},
+    ).scalar_one_or_none()
+    if saved is not None:
+        language = provenance_language(saved)
+        if requested is not None and requested != language:
+            raise Problem(409, "application_document_language_mismatch")
+        return language
+    return (
+        cast(RenderLanguage, requested)
+        if requested is not None
+        else _selection(_settings(conn, owner)["settings"]).language
+    )
+
+
 def generation_plan(
     conn: Connection,
     owner: UUID,
@@ -546,18 +579,17 @@ def generation_plan(
     revision: UUID,
     template: str,
     tone: str,
-    language: str,
+    language: str | None,
     settings: Settings,
     *,
     active: bool = False,
 ) -> dict[str, object]:
     lock_workspace(conn, owner)
     require_template(template)
-    if language != "en":
-        raise Problem(422, "unsupported_document_language")
     if tone not in {"professional", "concise", "friendly"}:
         raise Problem(422, "unsupported_document_tone")
     app = _application(conn, owner, application, active=active)
+    language = application_language(conn, owner, application, language)
     posting = suitability._posting(conn, owner, app["posting_id"])
     current = suitability._current_requirements(conn, owner, posting["id"])
     if current is None or not current["confirmed"]:
@@ -570,8 +602,10 @@ def generation_plan(
     )
     _, requirements = suitability._reviewed_requirements(conn, owner, posting, current["id"])
     profile = _profile(conn, owner, revision)
-    facts = _fact_data(conn, owner, revision, application_id=application, writing=True)
-    claims, evidence = model_context.professional_context(conn, owner, facts)
+    facts = _fact_data(
+        conn, owner, revision, application_id=application, writing=True, language=language
+    )
+    claims, evidence = model_context.professional_context(conn, owner, facts, language=language)
     projection = model_projections.generation_projection(
         cast(Mapping[str, object], posting),
         [
@@ -623,6 +657,7 @@ def generation_plan(
             template=template,
             references_requested=current["provenance"].get("references_requested") is True,
             facts=facts,
+            language=language,
         ),
         "facts": facts,
         "targets": targets,
@@ -692,6 +727,8 @@ def validation_issues(
 ) -> list[dict[str, str]]:
     """Check every revision, including ones stored before checker stamping, against its pins."""
     frame = provenance.get("frame")
+    if isinstance(frame, dict):
+        letter_frame.frame_language(frame)
     if kind == "application_email":
         kind = "cover_letter"
         if body.title == "Application email":
@@ -898,6 +935,7 @@ def _letter_parts(item: CandidateDocument, plan: dict[str, object]) -> LetterPar
 
 
 def _candidate_body(item: CandidateDocument, plan: dict[str, object]) -> documents.DocumentBody:
+    language = provenance_language(plan)
     frame = (
         {**cast(dict[str, object], plan["frame"]), **_letter_parts(item, plan).model_dump()}
         if item.kind == "cover_letter"
@@ -927,14 +965,14 @@ def _candidate_body(item: CandidateDocument, plan: dict[str, object]) -> documen
         if fact.get("category") == "publication"
     ]
     if item.kind == "resume" and publications:
-        pinned = compose_base({"facts": publications}).sections[0]
+        pinned = compose_base({"facts": publications, "language": language}).sections[0]
         literal = {str(block.claim_revision_ids[0]): block.text for block in pinned.blocks}
         kept: list[documents.DocumentSection] = []
         for section in sections:
             blocks = [
                 block
                 for block in section.blocks
-                if section.heading not in statement_check.HEADINGS
+                if section.heading not in statement_check.HEADINGS_BY_LANGUAGE[language]
                 or block.claim_kind != "factual"
                 or len(block.claim_revision_ids) != 1
                 or literal.get(str(block.claim_revision_ids[0])) != block.text
@@ -942,9 +980,7 @@ def _candidate_body(item: CandidateDocument, plan: dict[str, object]) -> documen
             if blocks:
                 kept.append(section.model_copy(update={"blocks": blocks}))
         sections = [*kept, pinned.model_copy(update={"key": "profile-publications"})]
-    return documents.DocumentBody(
-        title="Résumé" if item.kind == "resume" else "Cover letter", sections=sections
-    )
+    return documents.DocumentBody(title=LABELS[language][item.kind], sections=sections)
 
 
 def _provenance(
@@ -1324,7 +1360,7 @@ class BaseRequest(documents.StrictModel):
 class GenerationRequest(BaseRequest):
     requirements_revision_id: Annotated[UUID, Field(strict=False)]
     tone: Tone
-    language: Literal["en"]
+    language: str | None = None
     context_sha256: Annotated[str, Field(pattern=r"^[0-9a-f]{64}$")]
     page_target: Literal[1, 2] | None = None
 
@@ -1488,7 +1524,7 @@ def install_routes(router: APIRouter, db: Database, settings: Settings) -> None:
         profile_revision_id: UUID,
         template_version: str,
         tone: Tone = "professional",
-        language: str = "en",
+        language: str | None = None,
         page_target: Annotated[int | None, Query(ge=1, le=2)] = None,
     ) -> Response:
         with db.transaction() as conn:

@@ -1435,7 +1435,14 @@ def test_location_and_country_are_not_work_authorization_assertions() -> None:
 def test_email_stage_preserves_baseline_policy_and_existing_assessment(
     catalog: SourceContext, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    versions = dict(local_model.PROMPT_VERSIONS)
+    current_versions = dict(local_model.PROMPT_VERSIONS)
+    # Model historical main 0c07b7cb, not whichever prompts ship with this test.
+    versions = {
+        **current_versions,
+        "generate_documents": "ol-generate-documents-v8",
+        "regenerate_section": "ol-regenerate-section-v8",
+        "refine_documents": "ol-refine-documents-v3",
+    }
     monkeypatch.setattr(local_model, "load_route", lambda _path: None)
     monkeypatch.setattr(
         local_model,
@@ -1461,6 +1468,17 @@ def test_email_stage_preserves_baseline_policy_and_existing_assessment(
     current = _view(catalog, posting["id"])["latest_assessment"]
     assert not current["stale"] and current["stale_reasons"] == []
     assert current == original
+    # Current production code must invalidate that stored assessment after PR2a's
+    # document prompt bump, while retaining the immutable historical assessment.
+    monkeypatch.setattr(local_model, "PROMPT_VERSIONS", current_versions)
+    with catalog.runtime.transaction() as conn:
+        updated_policy = suitability._policy(conn, catalog.owner_id, catalog.identity.settings)
+    assert suitability._sha(updated_policy) != expected
+    assert _view(catalog, posting["id"])["latest_assessment"] == {
+        **original,
+        "stale": True,
+        "stale_reasons": ["model_prompt_or_template_changed"],
+    }
 
 
 @pytest.mark.postgres

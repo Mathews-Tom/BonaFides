@@ -30,6 +30,7 @@ import argparse
 import hashlib
 import ipaddress
 import json
+import os
 import re
 import sys
 from collections.abc import Callable
@@ -52,9 +53,12 @@ SCENARIOS = (
     "truncated",
     "declined",
     "no-change",
+    "qualification",
+    "paraphrase",
 )
 ABSENT_CLAIM_ID = str(uuid5(NAMESPACE_URL, "bonafides-stub-model/absent-claim"))
 FIXTURE_REVIEWER = "fixture-only-stub-route-not-a-qualification"
+PACKAGED_QUALIFICATION_DATASET = Path("/app/qualification")
 
 
 class StubFailure(Exception):
@@ -89,12 +93,38 @@ def _pair(projection: dict[str, object]) -> dict[str, Any]:
             _block(key + len(letter) + 1, "factual", str(claim["text"]), str(claim["id"]))
         )
     letter.append(_block(key + len(letter) + 1, "connective", "Sincerely,", None))
+    resume_heading, letter_heading = "Experience", "Letter"
+    if projection.get("language", "en") != "en":
+        from bonafides.languages import LABELS, RenderLanguage
+        from bonafides.statement_check import connectives
+
+        labels = LABELS[cast(RenderLanguage, projection["language"])]
+        phrases = connectives(
+            {
+                "language": projection["language"],
+                "role": posting.get("title"),
+                "organization": posting.get("organization"),
+            }
+        )
+        letter = [
+            _block(
+                key + 1,
+                "connective",
+                next(phrase for phrase, kind in phrases.items() if kind == "intent"),
+                None,
+            ),
+            *[
+                _block(key + index + 2, "factual", str(claim["text"]), str(claim["id"]))
+                for index, claim in enumerate(claims[:2])
+            ],
+        ]
+        resume_heading, letter_heading = labels["experience"], labels["Letter"]
     return {
         "schema_version": "2",
         "stage": "generate_documents",
         "documents": [
-            {"kind": "resume", "sections": [{"heading": "Experience", "blocks": resume}]},
-            {"kind": "cover_letter", "sections": [{"heading": "Letter", "blocks": letter}]},
+            {"kind": "resume", "sections": [{"heading": resume_heading, "blocks": resume}]},
+            {"kind": "cover_letter", "sections": [{"heading": letter_heading, "blocks": letter}]},
         ],
         "gaps": [],
         "warnings": [],
@@ -124,14 +154,37 @@ def _conversation(projection: dict[str, object], scenario: str) -> dict[str, Any
     from bonafides.statement_check import connectives
 
     phrases = connectives({})
+    if projection.get("localized_rendering"):
+        phrases = cast(dict[str, Any], projection["localized_rendering"])["allowed_connectives"]
     edits = []
+    tone = None
+    shared = cast(dict[str, object], projection["shared"])
+    localized = shared.get("language", "en") != "en"
     for target in _items(projection, "targets"):
         before = target["before"]
         assert isinstance(before, dict)
         replacement = dict(before)
         text = str(before["text"])
         replacement["text"] = text[:-1] if text.endswith(".") else text + "."
-        if before["claim_kind"] != "factual":
+        if localized:
+            source = shared | next(
+                item
+                for item in _items(projection, "documents")
+                if item["document_id"] == target["document_id"]
+            )
+            replacement["text"] = text
+            if before["claim_kind"] == "factual":
+                cited = cast(list[str], before["claim_revision_ids"])
+                replacement["text"] = next(
+                    claim["text"] for claim in _items(source, "claims") if claim["id"] == cited[0]
+                )
+            if scenario == "valid":
+                # Localized structured text permits no punctuation paraphrase.
+                # A supported tone change still exercises revision publication.
+                tone = "professional" if source["tone"] == "concise" else "concise"
+        if scenario == "paraphrase":
+            replacement["text"] = text + " (invented scope)"
+        if before["claim_kind"] != "factual" and not localized:
             replacement["text"] = next(
                 phrase
                 for phrase, kind in phrases.items()
@@ -140,8 +193,6 @@ def _conversation(projection: dict[str, object], scenario: str) -> dict[str, Any
         if scenario == "absent-claim":
             replacement["claim_revision_ids"] = [ABSENT_CLAIM_ID]
         elif scenario in {"posting-only-skill", "inflated"}:
-            shared = projection["shared"]
-            assert isinstance(shared, dict)
             source = shared | next(
                 item
                 for item in _items(projection, "documents")
@@ -166,7 +217,7 @@ def _conversation(projection: dict[str, object], scenario: str) -> dict[str, Any
         if scenario == "declined"
         else "Reviewed the selected text.",
         "declined": scenario == "declined",
-        "tone": None,
+        "tone": tone,
         "edits": [] if scenario in {"declined", "no-change"} else edits,
     }
 
@@ -238,6 +289,23 @@ def _inflated(projection: dict[str, object]) -> tuple[str, str]:
     raise StubFailure("no claim's text holds a later verb stronger than its own")
 
 
+def _refinement_dataset() -> Path:
+    configured = os.environ.get("BONAFIDES_QUALIFICATION_DATASET")
+    directories = (
+        [Path(configured)]
+        if configured is not None
+        else [PACKAGED_QUALIFICATION_DATASET, Path("tests/fixtures/qualification")]
+    )
+    for directory in directories:
+        dataset = directory / "refine_documents.jsonl"
+        if dataset.is_file():
+            return dataset
+    raise StubFailure(
+        "qualification requires refine_documents.jsonl; set BONAFIDES_QUALIFICATION_DATASET "
+        "to the qualification dataset directory"
+    )
+
+
 def respond(scenario: str, request: dict[str, object]) -> dict[str, object]:
     """The complete /api/chat envelope for one request under one scenario."""
     messages = request["messages"]
@@ -246,6 +314,21 @@ def respond(scenario: str, request: dict[str, object]) -> dict[str, object]:
     corrected = len(messages) == 3
     done_reason = "stop"
     conversation = "shared" in projection
+    if scenario == "qualification" and conversation:
+        dataset = _refinement_dataset()
+        expected = next(
+            (
+                json.loads(line)["expected"]
+                for line in dataset.read_text().splitlines()
+                if json.loads(line)["request"] == projection["request"]
+            ),
+            {"declined": False, "minimum_edits": 1},
+        )
+        scenario = (
+            "declined"
+            if expected["declined"]
+            else ("no-change" if expected["minimum_edits"] == 0 else "valid")
+        )
     output = (
         _conversation(projection, scenario)
         if conversation
@@ -270,6 +353,9 @@ def respond(scenario: str, request: dict[str, object]) -> dict[str, object]:
         if scenario == "absent-claim" and not conversation:
             factual = next(item for item in statements if item["kind"] == "factual")
             factual["claim_id"] = ABSENT_CLAIM_ID
+        elif scenario == "paraphrase" and not conversation:
+            factual = next(item for item in statements if item["kind"] == "factual")
+            factual["text"] = str(factual["text"]) + " (invented scope)"
         elif scenario == "posting-only-skill" and not conversation:
             claim = str(_items(projection, "claims")[0]["id"])
             statement = f"Hands-on experience with {_posting_only_term(projection)}."

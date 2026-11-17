@@ -3,7 +3,7 @@
 Original synthetic fixtures, distributed under `MIT OR Apache-2.0`. No real person,
 organization, résumé or employer data is included. No model weights are distributed.
 
-Each stage file contains 20 cases across ten professional roles. Document stages
+Each original stage file contains 20 cases across ten professional roles. Document stages
 cover professional, concise and friendly tones (the first case is friendly), with
 two separately cited claims and their evidence, a posting, reviewed requirements
 and a pinned existing section. The posting includes a preferred skill
@@ -34,17 +34,44 @@ synthetic immutable claim/evidence revisions; no dedicated identity/contact data
 the projection. The runner uses the same pure projection builders and one-correction
 loop as production. Every schema-valid result also runs through the unchanged checker.
 
-The digest is `fabrication_benchmark.digest` over the selected stage file's relative
-name and exact bytes. The other stage file and this README are not read by that run.
+The CLI discovers the selected stage's original file and sorted `<stage>_*.jsonl`
+supplements. The digest is `fabrication_benchmark.digest` over all selected relative
+filenames and their exact bytes; unrelated stages and this README are not included.
+The three `*_languages.jsonl` supplements each add six cases: German, French and
+Spanish, each with a passing context and a `withheld_text` paraphrase negative
+control. Pinned structures localize only fixed renderer wording; owner prose stays
+literal. The runner verifies that every negative control is blocked by the production
+checker before asking the model for the supported answer. A negative control does
+not instruct the model to fabricate, and does not count as a failed model response.
+
+Generation, regeneration and refinement therefore run 26 model cases each; email
+and import structuring remain at 20. The original JSONL files are byte-unchanged.
+After upgrading, old receipts lose qualification because their shared capability
+fingerprint covers the changed prompts. `models.sh qualify` can renew five stages:
+`generate_documents`, `regenerate_section`, `refine_documents`,
+`write_application_email`, and `structure_import` if enabled. Existing
+`extract_posting` and `match_requirements` receipts also become stale; the shipped
+qualification CLI cannot renew them, so those stages remain unqualified on this route.
+`load_cases(..., include_languages=False)` retains the original corpus and digest for
+historical baseline tests; the shipped CLI always enables supplement discovery.
+The development stub's `qualification` scenario follows the original refinement
+fixtures' exact refusal/no-change expectations and copies pinned text in every
+language. `valid` remains the ordinary fixture-route scenario; `paraphrase` supplies
+unsupported wording to exercise withholding. None qualifies a real model.
+For mounted stubs, qualification uses the shipped `/app/qualification` dataset.
+From a source checkout it can instead use `tests/fixtures/qualification` under the
+working directory. Set `BONAFIDES_QUALIFICATION_DATASET` to explicitly select a
+dataset directory; a missing dataset fails loudly rather than guessing from the
+stub script's mount path.
 
 ```sh
 bonafides models qualify --route /protected/route.json --stage generate_documents \
   --dataset tests/fixtures/qualification --reviewed-by 'Operator name'
 ```
 
-All 20 cases count in the valid-rate denominator, including pre-check failures.
-A passed receipt requires at least 19 valid cases (95%) after no more than one
-corrective retry. The usable-statement rate counts factual statements without checker
+All discovered cases count in the valid-rate denominator, including pre-check failures.
+A passed receipt requires at least 95% valid cases (19/20 or 25/26) after no more than
+one corrective retry. The usable-statement rate counts factual statements without checker
 blockers; it is reported, not a qualification threshold. A passed schema receipt is
 not factual approval, a semantic-entailment guarantee or permission to export an
 unsupported statement. Real-model results and durations belong in the observed run
