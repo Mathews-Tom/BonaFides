@@ -1,3 +1,10 @@
 # SPDX-License-Identifier: MIT OR Apache-2.0
 onlyBuiltDependencies:
   - esbuild
+auditConfig:
+  ignoreGhsas:
+    # picomatch <=4.0.7 ReDoS (high, no patched release). Reached only through
+    # build and lint tooling (typescript-eslint, vite, vitest via tinyglobby/fdir)
+    # matching repository-controlled globs; the shipped image copies only web/dist.
+    # Remove once a patched picomatch is published and the lockfile picks it up.
+    - GHSA-fc5q-39xc-vjpf
