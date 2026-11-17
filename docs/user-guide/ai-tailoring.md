@@ -23,9 +23,11 @@ Unless stated otherwise, this page describes document tailoring. [Optional résu
 
 ## What the model receives
 
-Before each task, preview the exact content on the Documents page: **Preview reviewed generation context** for a tailored pair, or **Preview selected-section model projection** for a single-section rewrite. In general:
+For a tailored pair or a single-section rewrite, preview the exact content on the Documents page before the task runs: **Preview reviewed generation context** for a tailored pair, or **Preview selected-section model projection** for a single-section rewrite. Email writing has no preview step; it sends the inputs listed below for an application email. In general:
 
 **Sent:** the posting's title, employer and text; its reviewed requirements; your profile entries and their details; the text of their sources (except as noted below); the tone and language you chose.
+
+**Sent for an application email:** the same posting, requirements, profile entries and sources, tone and language as above, plus the body of the saved cover letter. The letter's sender, date and signature are left out. The request goes to the email writing model you configured.
 
 **Never sent:** your name and contact details, your private notes, contacts, interview details and attachments, your password, and internal settings.
 
