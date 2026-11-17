@@ -15,6 +15,7 @@ from bonafides.auth import Owner, require_owner
 from bonafides.commands import canonical_json, command
 from bonafides.db import Database
 from bonafides.document_frame import TEMPLATES
+from bonafides.languages import RenderLanguage
 from bonafides.problems import Problem
 
 
@@ -22,6 +23,8 @@ class Selection(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True, frozen=True)
     template_version: str = Field(min_length=1, max_length=100)
     tone: Literal["professional", "concise", "friendly"]
+    language: RenderLanguage = "en"
+    base_resume_language: RenderLanguage = "en"
 
     @field_validator("template_version")
     @classmethod
@@ -35,6 +38,8 @@ class PatchRequest(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True, frozen=True)
     template_version: str | None = Field(default=None, min_length=1, max_length=100)
     tone: Literal["professional", "concise", "friendly"] | None = None
+    language: RenderLanguage | None = None
+    base_resume_language: RenderLanguage | None = None
 
     @field_validator("template_version")
     @classmethod
@@ -86,7 +91,6 @@ def _view(selection: Selection, version: int) -> dict[str, object]:
     return {
         "version": version,
         **selection.model_dump(mode="json"),
-        "language": "en",
         "revision_retention": "until_owner_erasure",
         "task_input_retention_seconds": RETENTION_SECONDS,
         "temporary_export_retention_seconds": 24 * 60 * 60,

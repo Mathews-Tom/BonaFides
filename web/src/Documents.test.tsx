@@ -34,7 +34,7 @@ const workflow: Workflow = {
   cancellation: { requested: false, local_fence_settled: false, provider_stopped: null, completed_effects_preserved: true, reason: null },
   usage: { status: 'not_applicable', model_runs: 0, inference_post_attempts: 0, inference_post_limit: null, input_tokens: null, output_tokens: null, token_budget: 0, tokens_used: 0, cost_budget_microunits: 0, cost_used_microunits: null, currency: 'USD' },
 };
-const remembered: DocumentDefaults = { version: 8, template_version: 'bonafides-evidence-v1', tone: 'professional', language: 'en', revision_retention: 'until_owner_erasure', task_input_retention_seconds: 86400, temporary_export_retention_seconds: 86400, extension_supported: false };
+const remembered: DocumentDefaults = { version: 8, template_version: 'bonafides-evidence-v1', tone: 'professional', language: 'en', base_resume_language: 'en', revision_retention: 'until_owner_erasure', task_input_retention_seconds: 86400, temporary_export_retention_seconds: 86400, extension_supported: false };
 
 type Handler = (path: string, method: string, body: unknown, version: number | undefined, key: boolean | string | undefined) => Promise<unknown>;
 function fixture(document: DocumentRecord | null = saved, handler?: Handler, defaultsHandler?: Handler) {
@@ -61,12 +61,13 @@ async function ready() {
 
 describe('remembered document defaults and current operation isolation', () => {
   it('persists only the edited presentation while retaining a dirty saved document and current choices, then uses it in a new workspace', async () => {
-    const user = userEvent.setup(); let stored: DocumentDefaults = { ...remembered, template_version: 'bonafides-evidence-letter-v1', tone: 'concise' };
+    const user = userEvent.setup(); let stored: DocumentDefaults = { ...remembered, template_version: 'bonafides-evidence-letter-v1', tone: 'concise', language: 'es', base_resume_language: 'de' };
     const { api, request } = fixture(saved, async (path, method) => {
       if (path === '/applications') return { items: [application], next_cursor: null };
       if (path === '/applications/application-1/documents') return pair;
       if (path.startsWith('/applications/application-1/generation-context?')) {
         const query = new URL(path, 'https://bonafides.test').searchParams;
+        expect(query.get('language')).toBe('en');
         return { ...context, template_version: query.get('template_version'), tone: query.get('tone'), generation_route: { ...route, status: 'qualified', identity: { endpoint: 'http://local-model.test:11434/api/chat', model: 'default-consumer-fixture' } } };
       }
       if (path === '/applications/application-1/generation' && method === 'POST') return { ...workflow, mode: 'tailored_ai' };
@@ -95,6 +96,7 @@ describe('remembered document defaults and current operation isolation', () => {
     const patch = request.mock.calls.find(call => call[1] === 'PATCH');
     expect(patch?.[2]).toEqual({ template_version: 'bonafides-compact-letter-v1' }); expect(patch?.[4]).toBeTypeOf('string');
     expect(stored.tone).toBe('concise'); expect(stored.revision_retention).toBe('until_owner_erasure');
+    expect(stored.language).toBe('es'); expect(stored.base_resume_language).toBe('de');
     expect(input).toHaveValue('Dirty words retained while defaults change.');
     expect(screen.getByLabelText('Built-in presentation')).toHaveValue('bonafides-evidence-letter-v1');
     expect(request.mock.calls.some(call => call[1] === 'PUT' || call[0].startsWith('/documents/'))).toBe(false);
@@ -113,6 +115,76 @@ describe('remembered document defaults and current operation isolation', () => {
     await user.click(screen.getByRole('button', { name: 'Generate résumé and cover letter pair' }));
     await screen.findByRole('heading', { name: 'Document task: pending' });
     expect(request.mock.calls.find(call => call[0] === '/applications/application-1/generation' && call[1] === 'POST')?.[2]).toEqual({ profile_revision_id: profile.current_revision.id, requirements_revision_id: context.requirements_revision_id, template_version: 'bonafides-compact-letter-v1', tone: 'concise', language: 'en', context_sha256: context.context_sha256 });
+  });
+
+  it.each(['de', 'fr', 'es'] as const)('saves %s as the default document language independently of the base résumé display language', async language => {
+    const user = userEvent.setup(); let stored = { ...remembered };
+    const { api, request } = fixture(saved, undefined, async (_path, method, body, version) => {
+      if (method === 'PATCH') {
+        expect(version).toBe(stored.version);
+        stored = { ...stored, ...body as DocumentDefaultsPatch, version: stored.version + 1 };
+      }
+      return stored;
+    });
+    render(<Documents archiveRecovery={archiveRecovery} api={api} profile={profile} />); const input = await ready();
+    await user.click(screen.getByText('Remembered defaults and retention'));
+    const documentLanguage = screen.getByRole('combobox', { name: 'Document language' });
+    const baseLanguage = screen.getByRole('combobox', { name: 'Base résumé display language' });
+    for (const control of [documentLanguage, baseLanguage]) {
+      expect(control).toHaveValue('en');
+      expect(within(control).getAllByRole('option').map(option => [option.getAttribute('value'), option.textContent])).toEqual([['en', 'English'], ['de', 'Deutsch'], ['fr', 'Français'], ['es', 'Español']]);
+    }
+    expect(screen.getByText(/The base résumé display language is independent/)).toHaveTextContent('Document languages change labels and dates only; owner-written prose is not translated.');
+    expect(screen.getByText(/The base résumé display language is independent/)).toHaveTextContent('Tailored generation remains English only for now');
+    expect(screen.getByRole('button', { name: 'Save remembered defaults' })).toBeDisabled();
+    fireEvent.change(input, { target: { value: 'Owner prose stays exactly as entered.' } });
+    await user.selectOptions(documentLanguage, language);
+    expect(baseLanguage).toHaveValue('en');
+    await user.click(screen.getByRole('button', { name: 'Save remembered defaults' }));
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Save remembered defaults' })).toBeDisabled());
+    expect(stored.language).toBe(language); expect(stored.base_resume_language).toBe('en');
+    await user.selectOptions(baseLanguage, language);
+    await user.click(screen.getByRole('button', { name: 'Save remembered defaults' }));
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Save remembered defaults' })).toBeDisabled());
+    const patches = request.mock.calls.filter(call => call[1] === 'PATCH');
+    expect(patches.map(call => call[2])).toEqual([{ language }, { base_resume_language: language }]);
+    expect(patches.map(call => call[3])).toEqual([8, 9]);
+    expect(stored.language).toBe(language); expect(stored.base_resume_language).toBe(language);
+    expect(input).toHaveValue('Owner prose stays exactly as entered.');
+    expect(request.mock.calls.some(call => call[1] === 'PUT' || call[0].startsWith('/documents/') || call[0].includes('/generation'))).toBe(false);
+  });
+
+  it.each(['offline', 'invalid'] as const)('retains both language drafts after an %s save failure and only retries explicitly', async failure => {
+    const user = userEvent.setup(); let writes = 0;
+    const { api, request } = fixture(saved, undefined, async (_path, method, body) => {
+      if (method === 'PATCH') {
+        if (++writes === 1) {
+          if (failure === 'offline') throw new TypeError('offline');
+          throw new ApiError(422, 'validation_error', [{ loc: ['body', 'language'], code: 'literal_error', message: 'Unsupported document language' }]);
+        }
+        return { ...remembered, ...body as DocumentDefaultsPatch, version: 9 };
+      }
+      return remembered;
+    });
+    render(<Documents archiveRecovery={archiveRecovery} api={api} profile={profile} />); const input = await ready();
+    await user.click(screen.getByText('Remembered defaults and retention'));
+    fireEvent.change(input, { target: { value: 'Keep my original prose on error.' } });
+    await user.selectOptions(screen.getByLabelText('Document language'), 'fr');
+    await user.selectOptions(screen.getByLabelText('Base résumé display language'), 'de');
+    await user.click(screen.getByRole('button', { name: 'Save remembered defaults' }));
+    expect(await screen.findByText(/Remembered defaults were not confirmed saved/)).toBeVisible();
+    expect(screen.queryByText(/Remembered defaults saved for future work/)).not.toBeInTheDocument();
+    expect(screen.getByLabelText('Document language')).toHaveValue('fr');
+    expect(screen.getByLabelText('Base résumé display language')).toHaveValue('de');
+    expect(input).toHaveValue('Keep my original prose on error.');
+    expect(writes).toBe(1);
+    await user.click(screen.getByRole('button', { name: 'Save remembered defaults' }));
+    await screen.findByText(/Remembered defaults saved for future work/);
+    const patches = request.mock.calls.filter(call => call[1] === 'PATCH');
+    expect(patches.map(call => call[2])).toEqual([{ language: 'fr', base_resume_language: 'de' }, { language: 'fr', base_resume_language: 'de' }]);
+    expect(patches[1]?.[4]).toBe(patches[0]?.[4]);
+    expect(screen.getByLabelText('Document language')).toHaveValue('fr');
+    expect(screen.getByLabelText('Base résumé display language')).toHaveValue('de');
   });
 
   it('keeps defaults loading failures visible and retries without replacing explicit choices or dirty text', async () => {
@@ -141,7 +213,7 @@ describe('remembered document defaults and current operation isolation', () => {
     const user = userEvent.setup(); let stored: DocumentDefaults = { ...remembered, tone: 'concise' }; let writes = 0;
     const { api, request } = fixture(saved, undefined, async (_path, method, body) => {
       if (method === 'PATCH') {
-        if (++writes === 1) { stored = { ...stored, version: 12, tone: 'professional' }; throw new ApiError(412, 'version_conflict'); }
+        if (++writes === 1) { stored = { ...stored, version: 12, tone: 'professional', base_resume_language: 'fr' }; throw new ApiError(412, 'version_conflict'); }
         stored = { ...stored, ...body as DocumentDefaultsPatch, version: 13 };
       }
       return stored;
@@ -149,19 +221,23 @@ describe('remembered document defaults and current operation isolation', () => {
     render(<Documents archiveRecovery={archiveRecovery} api={api} profile={profile} />); await ready();
     await user.click(screen.getByText('Remembered defaults and retention'));
     await user.selectOptions(screen.getByLabelText('Remembered built-in presentation'), 'bonafides-compact-letter-v1');
+    await user.selectOptions(screen.getByLabelText('Document language'), 'de');
     await user.click(screen.getByRole('button', { name: 'Save remembered defaults' }));
     await screen.findByText(/The saved version changed/);
     expect(screen.getByRole('button', { name: 'Save remembered defaults' })).toBeDisabled();
     await user.click(screen.getByRole('button', { name: 'Reload remembered defaults' }));
     await waitFor(() => expect(screen.getByLabelText('Remembered writing tone')).toHaveValue('professional'));
     expect(screen.getByLabelText('Remembered built-in presentation')).toHaveValue('bonafides-compact-letter-v1');
+    expect(screen.getByLabelText('Document language')).toHaveValue('de');
+    expect(screen.getByLabelText('Base résumé display language')).toHaveValue('fr');
     expect(writes).toBe(1);
     await user.click(screen.getByRole('button', { name: 'Save remembered defaults' }));
     await screen.findByText(/Remembered defaults saved for future work/);
     const patches = request.mock.calls.filter(call => call[1] === 'PATCH');
-    expect(patches.map(call => call[2])).toEqual([{ template_version: 'bonafides-compact-letter-v1' }, { template_version: 'bonafides-compact-letter-v1' }]);
+    expect(patches.map(call => call[2])).toEqual([{ template_version: 'bonafides-compact-letter-v1', language: 'de' }, { template_version: 'bonafides-compact-letter-v1', language: 'de' }]);
     expect(patches.map(call => call[3])).toEqual([8, 12]); expect(patches[1]?.[4]).not.toBe(patches[0]?.[4]);
     expect(stored.tone).toBe('professional');
+    expect(stored.language).toBe('de'); expect(stored.base_resume_language).toBe('fr');
     expect(screen.getByLabelText('Built-in presentation')).toHaveValue('bonafides-evidence-v1');
   });
 

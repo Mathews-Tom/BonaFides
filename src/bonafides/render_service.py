@@ -22,6 +22,7 @@ import subprocess
 import sys
 import time
 import unicodedata
+from collections.abc import Callable
 from html.parser import HTMLParser
 from pathlib import Path
 from typing import Annotated, Literal
@@ -43,6 +44,7 @@ from bonafides.documents import (
     StrictModel,
     canonical,
 )
+from bonafides.languages import LABELS, format_date
 from bonafides.profile_breadth import citation_runs
 from bonafides.profile_identity import MAX_PORTRAIT_BASE64, MAX_PORTRAIT_BYTES, validate_portrait
 from bonafides.spool_guard import SpoolBusy, acknowledge_pause, shared_spool
@@ -166,7 +168,13 @@ def render_html(
     template_version: str = TEMPLATE_VERSION,
     frame: PrintableFrame | None = None,
 ) -> str:
-    from jinja2 import Environment, PackageLoader, StrictUndefined, select_autoescape
+    from jinja2 import (
+        Environment,
+        FunctionLoader,
+        PackageLoader,
+        StrictUndefined,
+        select_autoescape,
+    )
 
     environment = Environment(
         loader=PackageLoader("bonafides", "templates"),
@@ -185,6 +193,43 @@ def render_html(
             raise RenderFailure("render_invalid_input") from None
     if template_version not in TEMPLATES or frame is None:
         raise RenderFailure("render_invalid_input")
+    if frame.language != "en":
+        # Localize trusted template source, never rendered HTML: owner text may
+        # itself contain labels, titles, dates, or escaped HTML. The files remain
+        # unchanged so historical template digests and English output stay pinned.
+        loader = environment.loader
+        assert loader is not None
+
+        def localized_source(
+            name: str,
+        ) -> tuple[str, str | None, Callable[[], bool] | None]:
+            source, filename, uptodate = loader.get_source(environment, name)
+            source = (
+                source.replace('<html lang="en">', '<html lang="{{ render_language }}">')
+                .replace("{{ document.title }}", "{{ document_title }}")
+                .replace("Age: {{ frame.age }}", "{{ age_label }}: {{ frame.age }}")
+                .replace("<h2>References</h2>", "<h2>{{ references_label }}</h2>")
+                .replace("frame.correspondence_date", "correspondence_date")
+            )
+            return source, filename, uptodate
+
+        labels = LABELS[frame.language]
+        environment.loader = FunctionLoader(localized_source)
+        environment.globals.update(
+            render_language=frame.language,
+            document_title=body.title,
+            age_label=labels["age"],
+            references_label=labels["references"],
+            correspondence_date=(
+                format_date(frame.correspondence_date, frame.language)
+                if frame.correspondence_date
+                else None
+            ),
+        )
+        # Frozen templates branch on the original title, including their nested
+        # includes. Only presentation uses the localized title above.
+        if body.title == labels["cover_letter"]:
+            body = body.model_copy(update={"title": "Cover letter"})
     return environment.get_template(TEMPLATES[template_version][1]).render(
         document=body,
         frame=frame,

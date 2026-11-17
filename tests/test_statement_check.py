@@ -802,3 +802,28 @@ def test_publications_cannot_use_the_ordinary_claim_prefix_rule(
         }
     ]
     assert [issue["code"] for issue in check_statements(body, facts, {}, "resume")] == expected
+
+
+@pytest.mark.parametrize("language", ["it", None, 1, ["de"], {"code": "de"}])
+def test_unsupported_saved_frame_language_blocks_checking_without_crashing(
+    language: object,
+) -> None:
+    body = DocumentBody(
+        title="Résumé",
+        sections=[
+            DocumentSection(
+                key="experience",
+                heading="Experience",
+                blocks=[
+                    _factual("Maintained PostgreSQL clusters", [CLAIM], [EVIDENCE, SECOND_EVIDENCE])
+                ],
+            )
+        ],
+    )
+    assert check_statements(body, FACTS, {**FRAME, "language": language}, "resume") == [
+        {
+            "path": "/title",
+            "code": "unsupported_document_language",
+            "statement": "Résumé",
+        }
+    ]

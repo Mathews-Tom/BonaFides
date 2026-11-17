@@ -24,9 +24,10 @@ from __future__ import annotations
 import re
 import unicodedata
 from collections.abc import Mapping, Sequence
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING, Literal, cast
 
-from bonafides.claims import _EN_VERBS, _normalise_grounding, contains_statement
+from bonafides.claims import _EN_VERBS, _normalise_grounding, contains_statement, render_claim
+from bonafides.languages import LABELS, RenderLanguage, display_field
 
 if TYPE_CHECKING:
     from bonafides.documents import DocumentBody
@@ -43,7 +44,13 @@ CATEGORIES = {
     "publication": "Publications",
     "writing_fact": "Additional facts",
 }
-HEADINGS = frozenset({*CATEGORIES.values(), "Application", "Letter", "Interest", "Summary"})
+HEADINGS_BY_LANGUAGE = {
+    language: frozenset(
+        labels[key] for key in (*CATEGORIES, "Application", "Letter", "Interest", "Summary")
+    )
+    for language, labels in LABELS.items()
+}
+HEADINGS = HEADINGS_BY_LANGUAGE["en"]
 ConnectiveKind = Literal["greeting", "intent"]
 # The closed connective set. Slots are limited to {title} and {organization} of the
 # posting; a template whose slot value is absent is not available.
@@ -88,15 +95,18 @@ _CUT_END = re.compile(
 _FIGURE = re.compile(r"[+-]?\d+(?:[.,]\d+)*(?:[%×])?")
 
 
-def title_issues(body: DocumentBody, kind: str) -> list[dict[str, str]]:
-    expected = (
-        "Cover letter" if kind == "cover_letter" else "Base résumé" if kind == "base" else "Résumé"
-    )
+def title_issues(
+    body: DocumentBody, kind: str, language: RenderLanguage = "en"
+) -> list[dict[str, str]]:
+    key = "cover_letter" if kind == "cover_letter" else "base" if kind == "base" else "resume"
+    expected = LABELS[language][key]
     return [] if body.title == expected else [{"path": "/title", "code": "unestablished_heading"}]
 
 
-def heading_issues(index: int, heading: str) -> list[dict[str, str]]:
-    if heading in HEADINGS:
+def heading_issues(
+    index: int, heading: str, language: RenderLanguage = "en"
+) -> list[dict[str, str]]:
+    if heading in HEADINGS_BY_LANGUAGE[language]:
         return []
     return [{"path": f"/sections/{index}/heading", "code": "unestablished_heading"}]
 
@@ -114,6 +124,18 @@ def connectives(frame: Mapping[str, object]) -> dict[str, ConnectiveKind]:
     """Every declared connective rendered with this posting's title and organization."""
     slots = {"title": frame.get("role"), "organization": frame.get("organization")}
     rendered: dict[str, ConnectiveKind] = {}
+    language = cast(RenderLanguage, frame.get("language", "en"))
+    if language in {"de", "fr", "es"}:
+        labels = LABELS[language]
+        for key in ("greeting", "professional", "concise", "friendly"):
+            rendered[labels[key]] = "greeting"
+        intents = {
+            "de": "Ich bewerbe mich auf die Stelle als {title} bei {organization}.",
+            "fr": "Je vous présente ma candidature au poste de {title} chez {organization}.",
+            "es": "Presento mi candidatura al puesto de {title} en {organization}.",
+        }
+        if all(isinstance(value, str) and value for value in slots.values()):
+            rendered[intents[language].format(**slots)] = "intent"
     for kind, templates in CONNECTIVES.items():
         for template in templates:
             names = _SLOT.findall(template)
@@ -123,9 +145,20 @@ def connectives(frame: Mapping[str, object]) -> dict[str, ConnectiveKind]:
     return rendered
 
 
-def printable_text(claim_text: str, fields: Mapping[str, str]) -> str:
-    """A claim's printable text: its claim text, then its reviewed structured-field lines."""
-    return "\n".join([claim_text, *(fields[key] for key in PRINTABLE_FIELDS if key in fields)])
+def printable_text(
+    claim_text: str, fields: Mapping[str, str], language: RenderLanguage = "en"
+) -> str:
+    """Literal claim prose followed by deterministic, reviewed display fields."""
+    return "\n".join(
+        [
+            claim_text,
+            *(
+                display_field(key, fields[key], language)
+                for key in PRINTABLE_FIELDS
+                if key in fields
+            ),
+        ]
+    )
 
 
 def _factual_issues(
@@ -148,6 +181,23 @@ def _factual_issues(
         return ["statement_not_in_claim_evidence"]
     if own[0].get("category") == "publication" and text != claim_text:
         return ["publication_not_literal"]
+    # Ground the source-language claim first. A localized rendering is accepted
+    # only when reproducible from that same pinned structure, never from prose
+    # supplied by a model or document editor.
+    localized = own[0].get("localized_claim")
+    if localized is not None:
+        from bonafides.claims import StructuredClaim
+
+        structure = StructuredClaim.model_validate(localized)
+        if render_claim(structure) != claim_text:
+            return ["statement_not_in_claim"]
+        language = cast(RenderLanguage, own[0].get("display_language"))
+        if language not in {"de", "fr", "es"}:
+            return ["statement_not_in_claim"]
+        claim_text = render_claim(structure, language)
+        fields = cast(Mapping[str, str], own[0].get("structured_fields", {}))
+        printable = printable_text(claim_text, fields, language)
+        return [] if text in {claim_text, printable} else ["statement_not_in_claim"]
     # The pinned printable text appends only the claim revision's own reviewed fields.
     if text in {fact.get("printable_text") for fact in own}:
         return []
@@ -223,11 +273,18 @@ def check_statements(
     kind: str,
 ) -> list[dict[str, str]]:
     """Every blocking issue of a claim-structured document, each naming its statement."""
+    raw_language = frame.get("language", "en")
+    if not isinstance(raw_language, str) or raw_language not in HEADINGS_BY_LANGUAGE:
+        return [
+            {"path": "/title", "code": "unsupported_document_language", "statement": body.title}
+        ]
+    language = cast(RenderLanguage, raw_language)
     declared = {} if kind == "base" else connectives(frame)
-    found = [{**issue, "statement": body.title} for issue in title_issues(body, kind)]
+    found = [{**issue, "statement": body.title} for issue in title_issues(body, kind, language)]
     for si, section in enumerate(body.sections):
         found.extend(
-            {**issue, "statement": section.heading} for issue in heading_issues(si, section.heading)
+            {**issue, "statement": section.heading}
+            for issue in heading_issues(si, section.heading, language)
         )
         for bi, block in enumerate(section.blocks):
             path = f"/sections/{si}/blocks/{bi}"

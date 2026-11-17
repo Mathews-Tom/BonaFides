@@ -7,6 +7,7 @@ import base64
 import hashlib
 import io
 import os
+import re
 import subprocess
 import sys
 import threading
@@ -15,7 +16,7 @@ import types
 import unicodedata
 from collections.abc import Callable, Iterator
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 from uuid import uuid4
 
 import pytest
@@ -29,8 +30,15 @@ from pypdf.generic import (
 )
 
 from bonafides import render_service
-from bonafides.document_frame import PrintableFrame, ProfileContact, template_digest
+from bonafides.document_frame import (
+    TEMPLATE_PAPER,
+    TEMPLATES,
+    PrintableFrame,
+    ProfileContact,
+    template_digest,
+)
 from bonafides.documents import DocumentBlock, DocumentBody, DocumentSection, canonical
+from bonafides.languages import LABELS, RenderLanguage, format_date
 from bonafides.profile_identity import PortraitPin, ReferenceContact
 from bonafides.render_service import RenderClient, RenderFailure, RenderReceipt, render_pdf
 from bonafides.storage import MAX_PDF_BYTES, atomic_file, directory, read_file
@@ -704,3 +712,203 @@ def test_legacy_frames_and_templates_remain_byte_identical() -> None:
     baseline = render_service.render_html(body, "bonafides-evidence-v3", frame)
     enriched = frame.model_copy(update={"greeting": "Dear Panel,", "closing": "With appreciation,"})
     assert render_service.render_html(body, "bonafides-evidence-v3", enriched) == baseline
+
+
+@pytest.mark.parametrize("language", ["de", "fr", "es"])
+@pytest.mark.parametrize("template", list(TEMPLATES))
+@pytest.mark.parametrize("kind", ["resume", "cover_letter"])
+def test_localized_template_labels_do_not_rewrite_owner_text(
+    language: RenderLanguage, template: str, kind: str
+) -> None:
+    labels = LABELS[language]
+    owner_text = (
+        "Age: References Cover letter 2024-02-29 "
+        "<h2>References</h2> {{ document.title }} frame.correspondence_date"
+    )
+    body = _body(owner_text).model_copy(update={"title": labels[kind]})
+    body = body.model_copy(
+        update={"sections": [body.sections[0].model_copy(update={"heading": "References"})]}
+    )
+    identity = template.endswith(("-v3", "-v4"))
+    frame = PrintableFrame(
+        display_name="References Age: 2024-02-29",
+        language=language,
+        contact=ProfileContact(location="Cover letter"),
+        correspondence_date="2024-02-29",
+        recipient="References Age: {{ document.title }}",
+        greeting="Owner greeting: References",
+        closing="Owner closing: Age:",
+    )
+    if identity:
+        frame = frame.model_copy(
+            update={"age": 37, "references": [ReferenceContact(name="Hidden Reference Owner")]}
+        )
+    assert frame.recipient is not None and frame.greeting is not None and frame.closing is not None
+    rendered = render_service.render_html(body, template, frame)
+    visible = render_service._VisibleText()
+    visible.feed(rendered)
+    text = "".join(visible.parts)
+    assert f'<html lang="{language}">' in rendered
+    assert f"<title>{labels[kind]}</title>" in rendered
+    assert owner_text in text
+    assert frame.display_name in text
+    assert "<h2>References</h2>" in rendered
+    assert "<h2>References</h2> {{ document.title }}" not in rendered
+    if kind == "cover_letter":
+        assert f"<p>{format_date('2024-02-29', language)}</p>" in rendered
+        assert frame.recipient in text
+        assert f"{labels['age']}: 37" not in text
+        assert "Hidden Reference Owner" not in text
+        if template.endswith("-v4"):
+            assert frame.greeting in text
+            assert frame.closing in text
+            assert text.count(frame.display_name) == 2
+    elif identity:
+        assert f"{labels['age']}: 37" in text
+        assert f"<h2>{labels['references']}</h2>" in rendered
+        assert "Hidden Reference Owner" in text
+        assert frame.recipient not in text
+
+
+@pytest.mark.parametrize("template", ["bonafides-base-v1", *TEMPLATES])
+@pytest.mark.parametrize("kind", ["resume", "cover_letter"])
+def test_english_html_is_byte_identical_to_frozen_templates(template: str, kind: str) -> None:
+    from jinja2 import Environment, PackageLoader, StrictUndefined, select_autoescape
+
+    body = _body("Owner text: Age: References <h2>Cover letter</h2>").model_copy(
+        update={"title": LABELS["en"][kind]}
+    )
+    frame = (
+        None
+        if template == "bonafides-base-v1"
+        else PrintableFrame(
+            display_name="English Owner",
+            contact=ProfileContact(email="owner@example.test"),
+            correspondence_date="2024-02-29",
+            recipient="Hiring team",
+            greeting="Dear team,",
+            closing="Regards,",
+        )
+    )
+    if frame is not None and template.endswith(("-v3", "-v4")):
+        frame = frame.model_copy(
+            update={"age": 37, "references": [ReferenceContact(name="English Reference")]}
+        )
+    environment = Environment(
+        loader=PackageLoader("bonafides", "templates"),
+        autoescape=select_autoescape(default=True),
+        undefined=StrictUndefined,
+    )
+    environment.globals["publication_html"] = render_service._publication_html
+    expected = (
+        environment.get_template("base-v1.html").render(document=body)
+        if frame is None
+        else environment.get_template(TEMPLATES[template][1]).render(
+            document=body,
+            frame=frame,
+            paper=TEMPLATE_PAPER[template],
+            compact="compact" in template,
+        )
+    )
+    assert render_service.render_html(body, template, frame).encode() == expected.encode()
+
+
+_LANGUAGE_GLYPHS = {
+    "de": "ÄÖÜẞ äöüß Straße Größe für München",
+    "fr": "ÀÂÆÇÉÈÊËÎÏÔŒÙÛÜŸ àâæçéèêëîïôœùûüÿ L’œuvre d’Élodie à Noël",
+    "es": "ÁÉÍÑÓÚÜ áéíñóúü ¡Experiencia! ¿Diseño en España?",
+}
+
+
+@pytest.mark.parametrize("language", ["de", "fr", "es"])
+@pytest.mark.parametrize("kind", ["resume", "cover_letter"])
+@pytest.mark.parametrize(
+    ("template", "width", "height"),
+    [
+        ("bonafides-evidence-v4", 210 / 25.4 * 72, 297 / 25.4 * 72),
+        ("bonafides-compact-letter-v4", 612, 792),
+    ],
+)
+def test_actual_renderer_preserves_localized_resume_and_letter_glyphs(
+    language: RenderLanguage,
+    kind: str,
+    template: str,
+    width: float,
+    height: float,
+    actual_renderer: Callable[[DocumentBody, str, PrintableFrame | None], bytes],
+) -> None:
+    labels = LABELS[language]
+    glyphs = _LANGUAGE_GLYPHS[language]
+    owner_text = f"{glyphs} — Age: References Cover letter <script>{{{{7*7}}}}</script>"
+    body = _body(owner_text, "Last owner fact.").model_copy(update={"title": labels[kind]})
+    body = body.model_copy(
+        update={"sections": [body.sections[0].model_copy(update={"heading": labels["experience"]})]}
+    )
+    frame = PrintableFrame(
+        display_name=f"Owner {glyphs}",
+        language=language,
+        contact=ProfileContact(
+            email="localized@example.test",
+            location=f"Place {glyphs}",
+        ),
+        age=37,
+        references=[ReferenceContact(name=f"Reference {glyphs}", email="ref@example.test")],
+        correspondence_date="2024-02-29",
+        recipient=f"Panel {glyphs}",
+        greeting=f"Greeting {glyphs}",
+        closing=f"Closing {glyphs}",
+    )
+    # Admission uses production Pango Font.missing after painting. Success here
+    # proves actual visible glyphs, not merely a plausible PDF ToUnicode mapping.
+    data = actual_renderer(body, template, frame)
+    reader = PdfReader(io.BytesIO(data))
+    extracted = "\n".join(page.extract_text() for page in reader.pages)
+    visible = render_service._VisibleText()
+    visible.feed(render_service.render_html(body, template, frame))
+    assert render_service._preserves_text("".join(visible.parts), extracted)
+    normalized = " ".join(unicodedata.normalize("NFC", extracted).split())
+    assert "\ufffd" not in extracted
+    assert "\u25a1" not in extracted
+
+    def matches(value: str) -> list[re.Match[str]]:
+        # PDF layout can insert whitespace inside long strings. Keep every
+        # original space mandatory; the whole-document oracle above additionally
+        # checks all text and block boundaries in order.
+        pattern = r"\s*".join(re.escape(char) for char in value)
+        return list(re.finditer(pattern, normalized))
+
+    assert matches(owner_text)
+    assert matches(labels[kind])
+    assert matches(labels["experience"])
+    assert matches(f"Owner {glyphs}")
+    assert matches(f"Place {glyphs}")
+    assert matches(owner_text)[0].start() < matches("Last owner fact.")[0].start()
+    if kind == "resume":
+        assert matches(f"{labels['age']}: 37")
+        assert matches(labels["references"])
+        assert matches(f"Reference {glyphs}")
+        assert not matches(f"Panel {glyphs}")
+    else:
+        for value in (
+            format_date("2024-02-29", language),
+            f"Panel {glyphs}",
+            f"Greeting {glyphs}",
+            f"Closing {glyphs}",
+        ):
+            assert matches(value)
+        assert not matches(f"Reference {glyphs}")
+        assert not matches(f"{labels['age']}: 37")
+        assert len(matches(frame.display_name)) == 2
+    for page in reader.pages:
+        assert float(page.mediabox.width) == pytest.approx(width, abs=0.01)
+        assert float(page.mediabox.height) == pytest.approx(height, abs=0.01)
+        # This is the shipped image's embedded DejaVu font, not a host fallback.
+        resources = cast(DictionaryObject, page["/Resources"])
+        fonts = cast(DictionaryObject, resources["/Font"]).values()
+        assert fonts
+        for resource in fonts:
+            font = resource.get_object()
+            assert "DejaVuSans" in str(font["/BaseFont"]).replace("-", "")
+            descendant = font["/DescendantFonts"][0].get_object()
+            descriptor = descendant["/FontDescriptor"].get_object()
+            assert "/FontFile2" in descriptor

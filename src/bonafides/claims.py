@@ -17,6 +17,8 @@ from typing import Literal, get_args
 from pydantic import Field, ValidationInfo, field_validator, model_validator
 
 from bonafides.auth import StrictModel
+from bonafides.languages import VERB_ROWS, format_date
+from bonafides.languages import RenderLanguage as RenderLanguage
 
 # Ordered from strongest to weakest ownership. The order is part of the schema contract.
 OwnershipVerb = Literal[
@@ -164,7 +166,6 @@ MetricRate = Literal["day", "week", "month", "quarter", "year"]
 RateWording = Literal["per", "a", "an", "each", "every", "adverbial", "annual"]
 PeriodStyle = Literal["parenthetical", "in_year", "range"]
 PeriodSeparator = Literal["hyphen", "en_dash", "em_dash"]
-RenderLanguage = Literal["en"]
 RENDER_LANGUAGES: tuple[RenderLanguage, ...] = get_args(RenderLanguage)
 STRUCTURED_KINDS = frozenset({"experience", "project"})
 
@@ -390,7 +391,107 @@ def _render_en(claim: StructuredClaim) -> str:
     return sentence
 
 
-RENDERERS: dict[RenderLanguage, Callable[[StructuredClaim], str]] = {"en": _render_en}
+def _render_localized(claim: StructuredClaim, language: RenderLanguage) -> str:
+    # Owner phrases stay literal. Labelled metric clauses avoid guessing the
+    # grammatical gender, case or language of those phrases.
+    words = [VERBS[language][claim.verb], claim.subject]
+    if claim.scope:
+        words.append(claim.scope)
+    sentence = " ".join(words)
+    index = ("de", "fr", "es").index(language)
+    metric = claim.metric
+    if metric is not None:
+        labels = {
+            "increase": ("Steigerung", "Augmentation", "Aumento"),
+            "decrease": ("Reduzierung", "Réduction", "Reducción"),
+            "improvement": ("Verbesserung", "Amélioration", "Mejora"),
+            "saving": ("Einsparung", "Économie", "Ahorro"),
+            "quantity": ("Anzahl", "Quantité", "Cantidad"),
+            None: ("Messwert", "Mesure", "Medida"),
+        }
+        units = {
+            "seconds": ("Sekunden", "secondes", "segundos"),
+            "points": ("Punkte", "points", "puntos"),
+            "milliseconds": ("Millisekunden", "millisecondes", "milisegundos"),
+            "minutes": ("Minuten", "minutes", "minutos"),
+            "hours": ("Stunden", "heures", "horas"),
+            "days": ("Tage", "jours", "días"),
+            "weeks": ("Wochen", "semaines", "semanas"),
+            "months": ("Monate", "mois", "meses"),
+        }
+        number = metric.value.replace(".", ",")
+        if metric.magnitude:
+            number += (
+                " "
+                + {
+                    "thousand": ("Tsd.", "k", "mil"),
+                    "million": ("Mio.", "M", "M"),
+                    "billion": ("Mrd.", "Md", "mil M"),
+                }[metric.magnitude][index]
+            )
+        unit = (
+            _EN_CURRENCY[metric.unit]
+            if metric.unit in _EN_CURRENCY
+            else "%"
+            if metric.unit == "percent"
+            else "×"
+            if metric.unit == "times"
+            else ""
+            if metric.unit == "count"
+            else units[metric.unit][index]
+        )
+        if float(metric.value) == 1 and metric.magnitude is None and metric.unit in units:
+            unit = {
+                "seconds": ("Sekunde", "seconde", "segundo"),
+                "points": ("Punkt", "point", "punto"),
+                "milliseconds": ("Millisekunde", "milliseconde", "milisegundo"),
+                "minutes": ("Minute", "minute", "minuto"),
+                "hours": ("Stunde", "heure", "hora"),
+                "days": ("Tag", "jour", "día"),
+                "weeks": ("Woche", "semaine", "semana"),
+                "months": ("Monat", "mois", "mes"),
+            }[metric.unit][index]
+        amount = number + (f" {unit}" if unit else "")
+        if metric.per:
+            amount += (
+                " "
+                + {
+                    "day": ("pro Tag", "par jour", "por día"),
+                    "week": ("pro Woche", "par semaine", "por semana"),
+                    "month": ("pro Monat", "par mois", "por mes"),
+                    "quarter": ("pro Quartal", "par trimestre", "por trimestre"),
+                    "year": ("pro Jahr", "par an", "por año"),
+                }[metric.per][index]
+            )
+        sentence += f"; {labels[metric.change][index]}: {amount}"
+        if metric.measure:
+            sentence += f" ({metric.measure})"
+    if claim.period:
+        period = claim.period
+        start, end = format_date(period.start, language), format_date(period.end, language)
+        if period.style == "in_year":
+            sentence += f" {('im Jahr', 'en', 'en')[index]} {start}"
+        else:
+            separator = _EN_PERIOD_SEPARATORS[period.separator or "en_dash"]
+            dates = start if start == end else f"{start}{separator}{end}"
+            sentence += f" {dates}" if period.style == "range" else f" ({dates})"
+    return sentence
+
+
+VERBS: dict[RenderLanguage, dict[OwnershipVerb, str]] = {
+    "en": _EN_VERBS,
+    "de": {verb: VERB_ROWS[verb][0] for verb in OWNERSHIP_VERBS},
+    "fr": {verb: VERB_ROWS[verb][1] for verb in OWNERSHIP_VERBS},
+    "es": {verb: VERB_ROWS[verb][2] for verb in OWNERSHIP_VERBS},
+}
+
+
+RENDERERS: dict[RenderLanguage, Callable[[StructuredClaim], str]] = {
+    "en": _render_en,
+    "de": lambda claim: _render_localized(claim, "de"),
+    "fr": lambda claim: _render_localized(claim, "fr"),
+    "es": lambda claim: _render_localized(claim, "es"),
+}
 
 
 def render_claim(claim: StructuredClaim, language: RenderLanguage = "en") -> str:
@@ -399,7 +500,7 @@ def render_claim(claim: StructuredClaim, language: RenderLanguage = "en") -> str
 
 def vocabulary(language: RenderLanguage = "en") -> dict[str, object]:
     """Editor choices; verbs keep their ownership order and carry the language's wording."""
-    labels = {"en": _EN_VERBS}[language]
+    labels = VERBS[language]
     return {
         "language": language,
         "verbs": [{"key": verb, "label": labels[verb]} for verb in OWNERSHIP_VERBS],
